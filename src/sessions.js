@@ -1,0 +1,122 @@
+/**
+ * sessions.js
+ *
+ * Finding a Claude Code session and the few facts latch needs from its
+ * transcript (~/.claude/projects/<project>/<session-id>.jsonl): which file it
+ * is, the model it last used, its running cost, and whether something else
+ * wrote to it recently. Listing and titles come from the SDK.
+ *
+ * Also the owner lock: one latch per session, so two latches never append to
+ * the same transcript at once.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { getSessionInfo, listSessions } from '@anthropic-ai/claude-agent-sdk';
+import { CLAUDE_DIR } from './auth.js';
+
+const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
+const LOCK_DIR = path.join(CLAUDE_DIR, 'latch', 'locks');
+
+export { getSessionInfo, listSessions };
+
+function safeReaddir(dir) {
+  try { return fs.readdirSync(dir); } catch { return []; }
+}
+
+/** Transcript files whose session id starts with `prefix`, across all projects. */
+export function findSessionFiles(prefix) {
+  const want = prefix.toLowerCase();
+  const hits = [];
+  for (const project of safeReaddir(PROJECTS_DIR)) {
+    for (const name of safeReaddir(path.join(PROJECTS_DIR, project))) {
+      if (name.endsWith('.jsonl') && name.toLowerCase().startsWith(want)) hits.push(path.join(PROJECTS_DIR, project, name));
+    }
+  }
+  return hits;
+}
+
+export function sessionIdOf(file) {
+  return path.basename(file, '.jsonl');
+}
+
+/** Last `bytes` of a file as text ('' when unreadable). */
+export function readTail(file, bytes = 2 * 1024 * 1024) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, bytes);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      return buf.toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return '';
+  }
+}
+
+/** Model of the last assistant message, so latch continues on the same model. */
+export function lastModel(text) {
+  const all = [...text.matchAll(/"model":"(claude-[^"]+)"/g)];
+  return all.length ? all[all.length - 1][1] : null;
+}
+
+/**
+ * The session's running cost from its last cost-state entry. A resumed run
+ * restores that total and reports total_cost_usd on top of it, so a turn's
+ * own cost is the difference.
+ */
+export function lastCostTotal(text) {
+  const all = [...text.matchAll(/"type":"cost-state"[^\n]*?"totalCostUSD":([0-9.eE+-]+)/g)];
+  return all.length ? Number(all[all.length - 1][1]) : 0;
+}
+
+/** Milliseconds since the transcript last changed, or null when it does not exist. */
+export function idleMs(file) {
+  try { return Date.now() - fs.statSync(file).mtimeMs; } catch { return null; }
+}
+
+export function mtimeMs(file) {
+  try { return fs.statSync(file).mtimeMs; } catch { return 0; }
+}
+
+/* ---------- owner lock ---------- */
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+/**
+ * Takes the lock for `sessionId`. Returns null on success, or the holder's
+ * pid when another live latch holds it. A lock left by a dead process is taken over.
+ */
+export function takeLock(sessionId, { force = false } = {}) {
+  fs.mkdirSync(LOCK_DIR, { recursive: true });
+  const file = path.join(LOCK_DIR, `${sessionId}.json`);
+  try {
+    const held = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!force && held.pid !== process.pid && pidAlive(held.pid)) return held.pid;
+  } catch { /* no lock or unreadable: take it */ }
+  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+  return null;
+}
+
+export function releaseLock(sessionId) {
+  const file = path.join(LOCK_DIR, `${sessionId}.json`);
+  try {
+    const held = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (held.pid === process.pid) fs.unlinkSync(file);
+  } catch { /* already gone */ }
+}
+
+/** "3m ago" style age. */
+export function ago(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
