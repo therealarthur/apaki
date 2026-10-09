@@ -12,10 +12,12 @@ import { test } from 'node:test';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'latch-test-'));
 process.env.CLAUDE_CONFIG_DIR = tmp; // locks and projects go here, not the real ~/.claude
+process.env.LATCH_LIVE_LOGIN_FILE = path.join(tmp, 'live-login.json'); // stands in for the login Glass writes
+process.env.LATCH_GLASS_CLI = path.join(tmp, 'no-glass.exe'); // never ask the real Glass
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const { LineRenderer, renderMarkdown } = await import('../src/render.js');
-const { childEnv, liveLogin, vaultKey } = await import('../src/auth.js');
+const { childEnv, chooseCredential, glassCredential, liveLogin, vaultKey } = await import('../src/auth.js');
 const { lastCostTotal, lastModel, releaseLock, takeLock } = await import('../src/sessions.js');
 const { hasMessageBetween } = await import('../src/runner.js');
 const { describeTool } = await import('../src/tui.js');
@@ -168,4 +170,18 @@ test('search reaches the folders a session moved to and its latest prompts and r
   assert.equal(filterItems(items, 'signalsentry ground truth').length, 1);
   assert.equal(filterItems(items, 'answer key').length, 1);
   assert.equal(filterItems(items, 'ambient').length, 1);
+});
+
+test('billing follows Glass: the live key when one is live, the subscription otherwise', () => {
+  const live = process.env.LATCH_LIVE_LOGIN_FILE;
+  fs.writeFileSync(live, JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-subscription' } }));
+  assert.deepEqual(glassCredential(), { name: 'subscription (via Glass)', key: null, source: 'subscription', follow: true });
+  assert.equal(chooseCredential({}).source, 'subscription');
+  const key = `sk-ant-usr-${'q'.repeat(40)}`;
+  fs.writeFileSync(live, JSON.stringify({ claudeAiOauth: { accessToken: key, refreshToken: null } }));
+  const c = chooseCredential({});
+  assert.equal(c.source, 'glass');
+  assert.equal(c.key, key);
+  assert.equal(c.follow, true);
+  assert.equal(chooseCredential({ subscription: true }).follow, undefined);
 });

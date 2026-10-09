@@ -219,6 +219,17 @@ export class SessionRunner {
    */
   async send(text) {
     let reloaded = false;
+    // Billing that follows Myrlin Glass: if the live login changed since the
+    // last message, restart on the new one (resuming from disk) before sending.
+    if (this.authCheck) {
+      const next = this.authCheck();
+      if (next && (next.key || null) !== (this.authKey ?? null)) {
+        if (this.running) await this.stop();
+        this.env = next.env;
+        this.authKey = next.key || null;
+        this.onAuthChange?.(next);
+      }
+    }
     if (this.running && this.changedOutside()) {
       await this.stop();
       reloaded = true;

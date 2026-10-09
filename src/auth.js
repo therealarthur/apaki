@@ -116,16 +116,30 @@ export function liveKeyName(key) {
  * Chooses the credential for this run. Returns { name, key, source } where key
  * is null for the live subscription login, or { error }.
  */
-export function chooseCredential({ keyWords, subscription } = {}) {
+export function chooseCredential({ keyWords, subscription, glass } = {}) {
   if (subscription) return { name: 'live Claude Code login', key: null, source: 'subscription' };
   if (keyWords) {
     const v = vaultKey(keyWords);
     return v.error ? v : { ...v, source: 'vault' };
   }
+  if (glass === false) {
+    const v = vaultKey(DEFAULT_KEY_WORDS);
+    return v.error ? v : { ...v, source: 'vault' };
+  }
+  return glassCredential();
+}
+
+/**
+ * Billing that follows Myrlin Glass: the live API key when Glass has switched
+ * Claude to one, otherwise the live subscription login. `follow` tells the app
+ * to re-check before every message, so a Glass swap in either direction moves
+ * the conversation with it (Arthur, 2026-10-09: when Glass switches to a
+ * subscription, "it just continues on subscription").
+ */
+export function glassCredential() {
   const live = liveLogin();
-  if (live.kind === 'key') return { name: liveKeyName(live.key), key: live.key, source: 'glass' };
-  const v = vaultKey(DEFAULT_KEY_WORDS);
-  return v.error ? v : { ...v, source: 'vault' };
+  if (live.kind === 'key') return { name: liveKeyName(live.key), key: live.key, source: 'glass', follow: true };
+  return { name: 'subscription (via Glass)', key: null, source: 'subscription', follow: true };
 }
 
 /**

@@ -8,7 +8,7 @@
 
 import { render } from 'ink';
 import { useState } from 'react';
-import { childEnv } from '../auth.js';
+import { childEnv, glassCredential } from '../auth.js';
 import { SessionRunner } from '../runner.js';
 import { releaseLock, rememberCreated, takeLock, windowsWith } from '../sessions.js';
 import { Chat, ChatStore } from './chat.js';
@@ -107,11 +107,28 @@ export function runApp(o) {
         onResume: (query) => { setScreen({ name: 'picker', query, message: '' }); },
         onExit: exit,
       });
-      // Keep the credential for the next session the user opens.
+      // Follow Myrlin Glass: before each message the runner re-reads the live
+      // login and moves to it (API key or subscription) when Glass swapped.
+      const follow = (on) => {
+        runner.authKey = o.credential.key ?? null;
+        runner.authCheck = on ? () => { const c = glassCredential(); return { ...c, env: childEnv(c.key) }; } : null;
+      };
+      runner.onAuthChange = (next) => {
+        info.credentialName = next.name;
+        o.credential = { ...o.credential, name: next.name, key: next.key ?? null };
+        store?.note(`  ⎿  Myrlin Glass switched Claude to ${next.name}; this conversation continues on it`, 'dim', { tight: true });
+      };
+      follow(Boolean(o.credential.follow));
+      // Keep the credential for the next session the user opens. Choosing a
+      // key by hand stops following Glass; "Follow Myrlin Glass" resumes it.
       const switchKey = info.switchKey;
       info.switchKey = (value) => {
         const next = switchKey(value);
-        if (!next.error) o.credential = { ...o.credential, name: next.name, key: next.key ?? null };
+        if (!next.error) {
+          o.credential = { ...o.credential, name: next.name, key: next.key ?? null, follow: Boolean(next.follow) };
+          follow(Boolean(next.follow));
+          runner.authKey = next.key ?? null;
+        }
         return next;
       };
       runner.start();

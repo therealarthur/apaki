@@ -191,7 +191,8 @@ async function main() {
         const label = s.heading.replace(/\s+-\s+added\s+\S+\s*$/i, '').replace(/^Anthropic API Key\s*\((.*)\)$/i, '$1');
         return { label, value: label };
       }),
-      { label: 'Subscription', description: 'the live Claude Code login', value: 'sub' },
+      { label: 'Follow Myrlin Glass', description: 'whatever Glass has live, API key or subscription; follows every swap', value: 'glass' },
+      { label: 'Subscription', description: 'the live Claude Code login, fixed', value: 'sub' },
     ];
     const last = await runApp({
       sessionId: directId,
@@ -200,8 +201,8 @@ async function main() {
       credential,
       keys,
       switchKey: (value) => {
-        const next = chooseCredential(value === 'sub' ? { subscription: true } : { keyWords: value });
-        return next.error ? next : { name: next.name, key: next.key, env: childEnv(next.key) };
+        const next = chooseCredential(value === 'sub' ? { subscription: true } : value === 'glass' ? {} : { keyWords: value });
+        return next.error ? next : { name: next.name, key: next.key, follow: Boolean(next.follow), env: childEnv(next.key) };
       },
       cwd: info?.cwd,
       cwdOverride: values.cwd ? path.resolve(values.cwd) : null,

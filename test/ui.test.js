@@ -5,6 +5,7 @@
  * Code process or API call is involved.
  */
 
+process.env.LATCH_NO_INDEX = '1'; // keep picker tests off the real conversation index
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { render } from 'ink-testing-library';

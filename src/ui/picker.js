@@ -17,6 +17,10 @@
 import { Box, Text, useInput, useStdout } from 'ink';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { enrichItems, filterItems, hasTypedTurns, lastPrompt, openSessions, searchInside, terms, toItems, transcriptMap } from '../picker.js';
+import { indexBin, kindLabel, searchIndex, updateIndex } from '../deepindex.js';
+
+// Wait this long after the last keystroke before asking the index.
+const DEEP_DEBOUNCE_MS = 180;
 import { ago, createdSessions, listSessions } from '../sessions.js';
 import { h, theme } from './components.js';
 
@@ -88,13 +92,60 @@ export function PickerScreen({ loader, initialQuery = '', billing = '', message 
   }, [items]);
   useEffect(() => () => inside?.cancel?.(), [inside]);
 
+  // Deep search: the latch-index full-text index over every conversation,
+  // subagents included, queried as you type. It is brought up to date first
+  // (only what changed since last time), then the search reruns.
+  const hasIndex = useMemo(() => Boolean(indexBin()), []);
+  const [indexGen, setIndexGen] = useState(0);
+  const [indexNote, setIndexNote] = useState(hasIndex ? 'updating the conversation index…' : '');
+  const [deep, setDeep] = useState(null);
+  const [extra, setExtra] = useState(new Map());
+  useEffect(() => {
+    if (!hasIndex) return undefined;
+    let live = true;
+    const t0 = Date.now();
+    updateIndex().then((r) => {
+      if (!live) return;
+      setIndexNote(r ? (r.busy ? 'index update already running elsewhere' : `index up to date (${((Date.now() - t0) / 1000).toFixed(1)}s)`) : 'index unavailable; ctrl+f scans files instead');
+      setIndexGen((n) => n + 1);
+    });
+    return () => { live = false; };
+  }, [hasIndex]);
+  useEffect(() => {
+    if (!hasIndex || !items || !terms(query).length) { setDeep(null); return undefined; }
+    let live = true;
+    const timer = setTimeout(async () => {
+      const res = await searchIndex(query);
+      if (!live || !res) return;
+      const hits = new Map(res.sessions.map((s) => [s.session, s]));
+      setDeep({ query, ids: res.sessions.map((s) => s.session), hits, elapsed: res.elapsed_ms, total: res.total_hits });
+      // Sessions the normal list hides (started headless, for example).
+      const known = new Set(items.map((it) => it.id));
+      const missing = res.sessions.map((s) => s.session).filter((id) => !known.has(id) && !extra.has(id));
+      if (missing.length) {
+        const all = await loader(true);
+        if (!live) return;
+        const next = new Map(extra);
+        for (const it of all) if (missing.includes(it.id)) next.set(it.id, it);
+        setExtra(next);
+      }
+    }, DEEP_DEBOUNCE_MS);
+    return () => { live = false; clearTimeout(timer); };
+  }, [query, items, indexGen, hasIndex]);
+
   const shown = useMemo(() => {
     if (!items) return [];
+    if (deep && deep.query === query && !inside) {
+      const byId = new Map(items.map((it) => [it.id, it]));
+      const ranked = deep.ids.map((id) => byId.get(id) || extra.get(id)).filter((it) => it && (!openOnly || it.open));
+      const seen = new Set(ranked.map((it) => it.id));
+      return [...ranked, ...filterItems(items, query, { openOnly }).filter((it) => !seen.has(it.id))];
+    }
     if (inside && inside.query === query) {
       return items.filter((it) => inside.hits.has(it.id) && (!openOnly || it.open)).sort((a, b) => b.lastModified - a.lastModified);
     }
     return filterItems(items, query, { openOnly });
-  }, [items, query, openOnly, inside, inside?.hits.size, enriched]);
+  }, [items, query, openOnly, inside, inside?.hits.size, enriched, deep, extra]);
 
   const rows = stdout?.rows || 30;
   const cols = Math.max(50, (stdout?.columns || 100) - 1);
@@ -146,9 +197,16 @@ export function PickerScreen({ loader, initialQuery = '', billing = '', message 
   }
 
   const count = items ? `${shown.length} of ${items.length}` : 'loading…';
-  const searchState = inside && inside.query === query
-    ? (inside.done ? `searched inside ${inside.total} conversations · ${inside.hits.size} found` : `searching inside conversations ${inside.scanned}/${inside.total}…`)
-    : (query ? 'ctrl+f to also search inside conversations' : '');
+  let searchState;
+  if (inside && inside.query === query) {
+    searchState = inside.done ? `searched inside ${inside.total} conversations · ${inside.hits.size} found` : `searching inside conversations ${inside.scanned}/${inside.total}…`;
+  } else if (deep && deep.query === query) {
+    searchState = `searched every conversation and subagent in ${deep.elapsed} ms · ${deep.ids.length} sessions · ${indexNote}`;
+  } else if (hasIndex) {
+    searchState = query ? `searching every conversation… · ${indexNote}` : indexNote;
+  } else {
+    searchState = query ? 'ctrl+f to also search inside conversations' : '';
+  }
 
   return h`<${Box} flexDirection="column" width=${cols}>
     <${Box}>
@@ -169,7 +227,9 @@ export function PickerScreen({ loader, initialQuery = '', billing = '', message 
     const lastFolder = it.folders && it.folders.length ? it.folders[it.folders.length - 1] : '';
     const moved = lastFolder && lastFolder.toLowerCase() !== String(it.cwd).toLowerCase() ? `→ ${cut(shortPath(lastFolder), 40)}` : '';
     const meta = [ago(Date.now() - it.lastModified), cut(shortPath(it.cwd), 34) + (moved ? ` ${moved}` : ''), fmtSize(it.size), it.branch].filter(Boolean).join(' · ');
-    const snippet = inside && inside.query === query ? inside.hits.get(it.id) : null;
+    const deepHit = !inside && deep && deep.query === query ? deep.hits.get(it.id) : null;
+    const snippet = inside && inside.query === query ? inside.hits.get(it.id)
+      : deepHit && deepHit.snippet ? `${kindLabel(deepHit.kind)}: ${deepHit.snippet}${deepHit.hits > 1 ? `  (${deepHit.hits} matches)` : ''}` : null;
     return h`<${Box} key=${it.id} flexDirection="column">
           <${Text} color=${on ? theme.suggestion : undefined} bold=${on} wrap="truncate-end">
             ${`${on ? '❯ ' : '  '}${it.title}`}
