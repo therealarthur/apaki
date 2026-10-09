@@ -149,3 +149,23 @@ test('remembers sessions latch created', async () => {
   rememberCreated('new-2');
   assert.deepEqual([...createdSessions()].sort(), ['new-1', 'new-2']);
 });
+
+test('search reaches the folders a session moved to and its latest prompts and replies', async () => {
+  const { enrichItems, filterItems, hasTypedTurns, tailFacts, toItems } = await import('../src/picker.js');
+  const f = path.join(tmp, 'moved.jsonl');
+  fs.writeFileSync(f, [
+    JSON.stringify({ type: 'user', cwd: 'C:\start\here', entrypoint: 'sdk-cli', message: { role: 'user', content: 'is this a fresh chat?' } }),
+    JSON.stringify({ type: 'assistant', cwd: 'C:\work\pantex\signalsentry-groundtruth', entrypoint: 'cli', message: { content: [{ type: 'text', text: 'The answer key rules are ready.' }] } }),
+    JSON.stringify({ type: 'user', cwd: 'C:\work\pantex\signalsentry-groundtruth', entrypoint: 'cli', message: { role: 'user', content: 'compare the ambient recordings' } }),
+  ].join('\n'));
+  const facts = tailFacts(f);
+  assert.deepEqual(facts.folders, ['C:\start\here', 'C:\work\pantex\signalsentry-groundtruth']);
+  assert.equal(facts.prompts[0], 'compare the ambient recordings');
+  assert.equal(hasTypedTurns(f), true);
+  const items = toItems([{ sessionId: 'moved1', summary: 'Fresh chat check', firstPrompt: 'is this a fresh chat?', cwd: 'C:\start\here', lastModified: 1 }], new Map([['moved1', f]]), new Map());
+  assert.equal(filterItems(items, 'signalsentry ground truth').length, 0, 'not found from how it started');
+  await new Promise((r) => enrichItems(items, { onDone: r }));
+  assert.equal(filterItems(items, 'signalsentry ground truth').length, 1);
+  assert.equal(filterItems(items, 'answer key').length, 1);
+  assert.equal(filterItems(items, 'ambient').length, 1);
+});

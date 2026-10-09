@@ -219,6 +219,75 @@ export function searchInside(items, query, { onProgress, onHit, onDone }) {
   return () => { cancelled = true; };
 }
 
+const TAIL_BYTES = 256 * 1024;
+
+/** True when the end of a transcript has turns typed by a person, in Claude Code (cli) or latch (sdk-ts). */
+export function hasTypedTurns(file) {
+  const tail = readTail(file, TAIL_BYTES);
+  return tail.includes('"entrypoint":"cli"') || tail.includes('"entrypoint":"sdk-ts"');
+}
+
+
+function isTypedPrompt(text) {
+  return text && !/^<(command-|local-command|system-reminder|task-notification|relayed-turns)/.test(text) && !/^Stop hook feedback/.test(text);
+}
+
+/**
+ * What the end of a transcript says about where a session went: every folder
+ * it ran in, its latest typed prompts and its latest reply text. Sessions are
+ * titled and filed by how they started, so a chat that began as "is this a
+ * fresh chat?" in one folder and moved on to other work was unfindable by its
+ * later subject (Arthur, 2026-10-09). Reads only the last 256 KB.
+ */
+export function tailFacts(file, bytes = TAIL_BYTES) {
+  const text = readTail(file, bytes);
+  const folders = new Set();
+  for (const m of text.matchAll(/"cwd":"((?:[^"\\]|\\.)*)"/g)) {
+    try { folders.add(JSON.parse(`"${m[1]}"`)); } catch { /* cut-off value */ }
+  }
+  const prompts = [];
+  const replies = [];
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0 && (prompts.length < 6 || replies.length < 3); i--) {
+    const line = lines[i];
+    const user = line.includes('"type":"user"');
+    if (!user && !line.includes('"type":"assistant"')) continue;
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (e.isMeta || e.isSidechain || !e.message) continue;
+    const c = e.message.content;
+    const t = oneLine(typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b.type === 'text').map((b) => b.text).join(' ') : '');
+    if (!t) continue;
+    if (e.type === 'user' && prompts.length < 6 && isTypedPrompt(t)) prompts.push(t.slice(0, 400));
+    else if (e.type === 'assistant' && replies.length < 3) replies.push(t.slice(0, 400));
+  }
+  return { folders: [...folders], prompts, replies };
+}
+
+/**
+ * Adds tailFacts to each item's search text in the background, one file at a
+ * time so the picker stays responsive. Calls onDone when finished.
+ */
+export function enrichItems(items, { onDone } = {}) {
+  let cancelled = false;
+  (async () => {
+    for (const it of items) {
+      if (cancelled) return;
+      if (it.enriched || !it.file) continue;
+      try {
+        const f = tailFacts(it.file);
+        it.folders = f.folders;
+        it.recent = f.prompts;
+        it.hay = `${it.hay} ${[...f.folders, ...f.prompts, ...f.replies].join(' ').toLowerCase()}`;
+      } catch { /* unreadable: keep the basic search text */ }
+      it.enriched = true;
+      await new Promise((r) => setImmediate(r));
+    }
+    if (!cancelled) onDone?.();
+  })();
+  return () => { cancelled = true; };
+}
+
 /** The latest prompt the user typed in a transcript (not commands or tool results). */
 export function lastPrompt(file) {
   const lines = readTail(file, 768 * 1024).split('\n');
@@ -285,7 +354,16 @@ export async function pickSession({
   const load = loadInfos || ((programmatic) => listSessions({ limit: 5000, includeProgrammatic: programmatic }));
   const cache = new Map();
   const getItems = async (programmatic) => {
-    if (!cache.has(programmatic)) cache.set(programmatic, toItems(await load(programmatic), files, liveOpen()));
+    if (!cache.has(programmatic)) {
+      let infos = await load(programmatic);
+      if (!programmatic && !loadInfos) {
+        // Same rule as the full-screen picker: hidden sessions with typed turns come back.
+        const have = new Set(infos.map((s) => s.sessionId));
+        const extra = (await load(true)).filter((s) => !have.has(s.sessionId) && files.get(s.sessionId) && hasTypedTurns(files.get(s.sessionId)));
+        if (extra.length) infos = [...infos, ...extra].sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
+      }
+      cache.set(programmatic, toItems(infos, files, liveOpen()));
+    }
     return cache.get(programmatic);
   };
 
@@ -450,5 +528,6 @@ export async function pickSession({
     input.resume?.();
     refilter();
     draw();
+    enrichItems(state.items, { onDone: () => { refilter(); draw(); } });
   });
 }

@@ -16,7 +16,7 @@
 
 import { Box, Text, useInput, useStdout } from 'ink';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { filterItems, lastPrompt, openSessions, searchInside, terms, toItems, transcriptMap } from '../picker.js';
+import { enrichItems, filterItems, hasTypedTurns, lastPrompt, openSessions, searchInside, terms, toItems, transcriptMap } from '../picker.js';
 import { ago, createdSessions, listSessions } from '../sessions.js';
 import { h, theme } from './components.js';
 
@@ -43,13 +43,22 @@ export function makeLoader({ loadInfos, files, open } = {}) {
   return async (programmatic) => {
     if (!cache.has(programmatic)) {
       let infos = await load(programmatic);
-      // Sessions started in latch begin with an SDK entry, so lists that hide
-      // headless sessions would hide them: add the ones latch created.
-      const created = programmatic ? new Set() : createdSessions();
-      if (created.size) {
+      // The SDK's list leaves out every session whose first entry is headless,
+      // which also hid real conversations: ones started with claude -p (or by
+      // Workbook, or in latch) and then continued by hand. 2 of 224 hidden
+      // sessions on this PC were like that (2026-10-09). Add back any hidden
+      // session that has turns typed in Claude Code (cli) or latch (sdk-ts),
+      // plus every session latch created; pure automation stays behind Ctrl+A.
+      if (!programmatic) {
+        const created = createdSessions();
         const have = new Set(infos.map((s) => s.sessionId));
-        const extra = (await load(true)).filter((s) => created.has(s.sessionId) && !have.has(s.sessionId));
-        infos = [...infos, ...extra].sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
+        const extra = (await load(true)).filter((s) => {
+          if (have.has(s.sessionId)) return false;
+          if (created.has(s.sessionId)) return true;
+          const file = fileMap.get(s.sessionId);
+          return Boolean(file) && hasTypedTurns(file);
+        });
+        if (extra.length) infos = [...infos, ...extra].sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
       }
       cache.set(programmatic, toItems(infos, fileMap, open || openSessions()));
     }
@@ -67,7 +76,16 @@ export function PickerScreen({ loader, initialQuery = '', billing = '', message 
   const [inside, setInside] = useState(null);
   const previews = useRef(new Map());
 
+  const [enriched, setEnriched] = useState(0);
   useEffect(() => { let live = true; loader(programmatic).then((it) => { if (live) setItems(it); }); return () => { live = false; }; }, [programmatic]);
+  // Widen the search to every folder a session ran in and its latest prompts
+  // and replies, read in the background; refilter as it goes.
+  useEffect(() => {
+    if (!items) return undefined;
+    const tick = setInterval(() => setEnriched((n) => n + 1), 400);
+    const cancel = enrichItems(items, { onDone: () => { clearInterval(tick); setEnriched((n) => n + 1); } });
+    return () => { cancel(); clearInterval(tick); };
+  }, [items]);
   useEffect(() => () => inside?.cancel?.(), [inside]);
 
   const shown = useMemo(() => {
@@ -76,7 +94,7 @@ export function PickerScreen({ loader, initialQuery = '', billing = '', message 
       return items.filter((it) => inside.hits.has(it.id) && (!openOnly || it.open)).sort((a, b) => b.lastModified - a.lastModified);
     }
     return filterItems(items, query, { openOnly });
-  }, [items, query, openOnly, inside, inside?.hits.size]);
+  }, [items, query, openOnly, inside, inside?.hits.size, enriched]);
 
   const rows = stdout?.rows || 30;
   const cols = Math.max(50, (stdout?.columns || 100) - 1);
@@ -123,7 +141,7 @@ export function PickerScreen({ loader, initialQuery = '', billing = '', message 
   let latest = '';
   if (selected) {
     first = selected.firstPrompt;
-    if (!previews.current.has(selected.id)) previews.current.set(selected.id, selected.file ? lastPrompt(selected.file) : '');
+    if (!previews.current.has(selected.id)) previews.current.set(selected.id, selected.recent?.[0] || (selected.file ? lastPrompt(selected.file) : ''));
     latest = previews.current.get(selected.id);
   }
 
@@ -138,7 +156,7 @@ export function PickerScreen({ loader, initialQuery = '', billing = '', message 
       <${Text} color=${theme.dim}>${billing}</${Text}>
     </${Box}>
     <${Box} borderStyle="round" borderColor=${theme.border} paddingX=${1} marginTop=${1}>
-      <${Box} flexGrow=${1}><${Text}><${Text} color=${theme.dim}>${'⌕ '}</${Text}>${query}<${Text} inverse>${' '}</${Text}>${!query ? h`<${Text} color=${theme.dim}>${' Search sessions by title, prompt, folder, branch or id'}</${Text}>` : null}</${Text}></${Box}>
+      <${Box} flexGrow=${1}><${Text}><${Text} color=${theme.dim}>${'⌕ '}</${Text}>${query}<${Text} inverse>${' '}</${Text}>${!query ? h`<${Text} color=${theme.dim}>${' Search titles, prompts, replies, folders, branch or id'}</${Text}>` : null}</${Text}></${Box}>
       <${Text} color=${theme.dim}>${`${openOnly ? 'open only · ' : ''}${programmatic ? 'incl. headless · ' : ''}${count}`}</${Text}>
     </${Box}>
     ${message ? h`<${Text} color=${theme.warn}>${`  ${message}`}</${Text}>` : null}
@@ -148,7 +166,9 @@ export function PickerScreen({ loader, initialQuery = '', billing = '', message 
       ${items && !shown.length ? h`<${Text} color=${theme.dim}>  No sessions match. ${query && !inside ? 'Press ctrl+f to search inside conversations.' : ''}</${Text}>` : null}
       ${page.map((it, i) => {
     const on = top + i === cur;
-    const meta = [ago(Date.now() - it.lastModified), cut(shortPath(it.cwd), 34), fmtSize(it.size), it.branch].filter(Boolean).join(' · ');
+    const lastFolder = it.folders && it.folders.length ? it.folders[it.folders.length - 1] : '';
+    const moved = lastFolder && lastFolder.toLowerCase() !== String(it.cwd).toLowerCase() ? `→ ${cut(shortPath(lastFolder), 40)}` : '';
+    const meta = [ago(Date.now() - it.lastModified), cut(shortPath(it.cwd), 34) + (moved ? ` ${moved}` : ''), fmtSize(it.size), it.branch].filter(Boolean).join(' · ');
     const snippet = inside && inside.query === query ? inside.hits.get(it.id) : null;
     return h`<${Box} key=${it.id} flexDirection="column">
           <${Text} color=${on ? theme.suggestion : undefined} bold=${on} wrap="truncate-end">
