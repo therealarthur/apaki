@@ -18,6 +18,8 @@
   --dur-fast: 150ms; --dur-exit: 120ms; --dur-sheet: 240ms;
   --radius: 10px; --radius-sm: 7px;
   --rail: 312px;
+  --w: 0, 0%, 100%; --shadow-rgb: 44, 53, 120;
+  --fill: var(--brand-strong); --fill-hover: var(--brand-deep); --fill-stop: var(--ink);
   color-scheme: light;
 }
 
@@ -43,10 +45,10 @@ code, pre, .mono { font-family: var(--font-mono); font-size: .86em; }
 .wordmark { font-family: var(--font-display); font-weight: 760; font-stretch: 112%; letter-spacing: -.01em; font-size: 16px; }
 .new {
   margin: 0 14px 12px; padding: 9px 12px; border-radius: var(--radius-sm); cursor: pointer;
-  background: var(--brand-strong); color: #fff; border: 0; font-weight: 600; text-align: left;
+  background: var(--fill); color: #fff; border: 0; font-weight: 600; text-align: left;
   transition: background var(--dur-fast) var(--ease-hover);
 }
-.new:hover { background: var(--brand-deep); }
+.new:hover { background: var(--fill-hover); }
 .new:active { transform: scale(.985); }
 .search {
   display: flex; align-items: center; gap: 8px; margin: 0 14px; padding: 0 10px;
@@ -260,7 +262,7 @@ body.dragging .pane .ground { pointer-events: none; }
 .composer-wrap { position: relative; padding: 0 22px 18px; background: linear-gradient(transparent, var(--ground) 30%); }
 .composer {
   max-width: 880px; margin: 0 auto; background: var(--card); border: 1px solid var(--hairline-strong);
-  border-radius: 14px; padding: 10px 12px 8px; box-shadow: 0 6px 24px -14px rgba(44, 53, 120, .35);
+  border-radius: 14px; padding: 10px 12px 8px; box-shadow: 0 6px 24px -14px rgba(var(--shadow-rgb), .35);
   transition: border-color var(--dur-fast) var(--ease-hover);
 }
 .composer:focus-within { border-color: var(--brand); }
@@ -277,10 +279,10 @@ textarea {
 .status { flex: 1; font-family: var(--font-mono); font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .send {
   border: 0; border-radius: var(--radius-sm); padding: 7px 16px; cursor: pointer; font-weight: 600;
-  background: var(--brand-strong); color: #fff; transition: background var(--dur-fast) var(--ease-hover);
+  background: var(--fill); color: #fff; transition: background var(--dur-fast) var(--ease-hover);
 }
-.send:hover { background: var(--brand-deep); }
-.send.stop { background: var(--ink); }
+.send:hover { background: var(--fill-hover); }
+.send.stop { background: var(--fill-stop); }
 .attachments { display: flex; gap: 8px; flex-wrap: wrap; }
 .attachments:not(:empty) { margin-bottom: 8px; }
 .chip { position: relative; }
@@ -290,7 +292,7 @@ textarea {
 .slash {
   position: absolute; bottom: calc(100% - 6px); left: 50%; transform: translateX(-50%); width: min(880px, calc(100% - 20px)); z-index: 4;
   list-style: none; margin: 0; padding: 6px; max-height: 300px; overflow-y: auto; background: var(--card);
-  border: 1px solid var(--hairline-strong); border-radius: var(--radius); box-shadow: 0 10px 30px -18px rgba(44, 53, 120, .45);
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius); box-shadow: 0 10px 30px -18px rgba(var(--shadow-rgb), .45);
 }
 .slash li { padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer; display: flex; gap: 12px; }
 .slash li.on { background: var(--brand-wash); }
@@ -318,7 +320,7 @@ textarea {
 .sheet input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); margin-top: 6px; }
 .sheet .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .sheet .row button { padding: 8px 14px; border-radius: var(--radius-sm); border: 1px solid var(--hairline-strong); background: var(--ground); cursor: pointer; font-weight: 600; }
-.sheet .row button.primary { background: var(--brand-strong); border-color: var(--brand-strong); color: #fff; }
+.sheet .row button.primary { background: var(--fill); border-color: var(--fill); color: #fff; }
 .sheet .plan { max-height: 46vh; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--radius-sm); padding: 4px 14px; margin-top: 10px; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -454,7 +456,7 @@ textarea {
 /* The popover menu (model, effort, mode, folders, right-click). */
 .menu {
   position: fixed; z-index: 20; min-width: 170px; max-width: 360px; padding: 5px; background: var(--card);
-  border: 1px solid var(--hairline-strong); border-radius: var(--radius); box-shadow: 0 14px 36px -18px rgba(44, 53, 120, .5);
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius); box-shadow: 0 14px 36px -18px rgba(var(--shadow-rgb), .5);
   animation: menu-in var(--dur-fast) var(--ease-out); transform-origin: top left;
 }
 .menu.out { animation: menu-out var(--dur-exit) var(--ease-hover) forwards; }
@@ -508,12 +510,12 @@ textarea {
   --pearl-stop-purple: 277, 87%, 63%;
   --pearl-stop-cyan: 189, 94%, 43%;
   --pearl-gradient: linear-gradient(90deg, hsla(var(--pearl-stop-blue), .35), hsla(var(--pearl-stop-purple), .35), hsla(var(--pearl-stop-cyan), .35), hsla(var(--pearl-stop-blue), .35));
-  --pearl-overlay: linear-gradient(180deg, hsla(0, 0%, 100%, .875) 50%, hsla(0, 0%, 100%, .25));
-  --pearl-overlay-rail: linear-gradient(180deg, hsla(0, 0%, 100%, .94) 40%, hsla(0, 0%, 100%, .62));
-  --halftone: radial-gradient(circle, #fff 1.4px, transparent 1.5px) 0 0 / 8px 8px, radial-gradient(circle, #fff 1.4px, transparent 1.5px) 4px 4px / 8px 8px;
+  --pearl-overlay: linear-gradient(180deg, hsla(var(--w), .875) 50%, hsla(var(--w), .25));
+  --pearl-overlay-rail: linear-gradient(180deg, hsla(var(--w), .94) 40%, hsla(var(--w), .62));
+  --halftone: radial-gradient(circle, hsl(var(--w)) 1.4px, transparent 1.5px) 0 0 / 8px 8px, radial-gradient(circle, hsl(var(--w)) 1.4px, transparent 1.5px) 4px 4px / 8px 8px;
 }
 
-.stages { isolation: isolate; overflow: hidden; background: #fff; }
+.stages { isolation: isolate; overflow: hidden; background: hsl(var(--w)); }
 .stages::before {
   content: ""; position: absolute; inset: 0 -40% 0 -40%; z-index: -2; pointer-events: none;
   background: var(--pearl-gradient);
@@ -530,21 +532,21 @@ textarea {
 .pane, .ground { background: transparent; }
 .ground { background: none; }
 .composer-wrap { background: none; }
-.pane-bar { background: hsla(0, 0%, 100%, .86); }
+.pane-bar { background: hsla(var(--w), .86); }
 .gutter { background: hsla(230, 45%, 88%, .9); }
 .stage-empty, .empty { position: relative; }
 
 /* The rail: the same pearl, held paler so the list reads first. */
-.rail { position: relative; isolation: isolate; overflow: hidden; background: #fff; }
+.rail { position: relative; isolation: isolate; overflow: hidden; background: hsl(var(--w)); }
 .rail::before {
   content: ""; position: absolute; inset: 0 -60% 0 -60%; z-index: -2; pointer-events: none;
   background: var(--pearl-gradient);
   animation: pearl-drift 60s var(--ease-hover) infinite alternate-reverse; will-change: transform;
 }
 .rail::after { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--halftone), var(--pearl-overlay-rail); }
-.rail-foot { background: hsla(0, 0%, 100%, .6); }
-.sessions li:hover { background: hsla(0, 0%, 100%, .7); }
-.search { background: hsla(0, 0%, 100%, .9); }
+.rail-foot { background: hsla(var(--w), .6); }
+.sessions li:hover { background: hsla(var(--w), .7); }
+.search { background: hsla(var(--w), .9); }
 
 @media (prefers-reduced-motion: reduce) {
   .stages::before, .rail::before { animation: none !important; transform: none; }
@@ -571,10 +573,10 @@ textarea {
      window) does not apply here.
    ========================================================================== */
 
-:root { --top: 46px; --heavy: 880; --rail-frost: hsla(0, 0%, 100%, .72); --sec-line: hsla(232, 40%, 82%, .85); }
+:root { --top: 46px; --heavy: 880; --rail-frost: hsla(var(--w), .72); --sec-line: hsla(232, 40%, 82%, .85); }
 
 /* One pearl behind everything. */
-body { background: #fff; isolation: isolate; font-weight: 460; }
+body { background: hsl(var(--w)); isolation: isolate; font-weight: 460; }
 body::before {
   content: ""; position: fixed; inset: 0 -40% 0 -40%; z-index: -2; pointer-events: none;
   background: var(--pearl-gradient);
@@ -590,7 +592,7 @@ body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-event
   background: var(--rail-frost);
   -webkit-backdrop-filter: blur(28px) saturate(1.6); backdrop-filter: blur(28px) saturate(1.6);
   border-right: 1px solid var(--sec-line);
-  box-shadow: inset -1px 0 0 hsla(0, 0%, 100%, .75), 6px 0 28px -22px rgba(44, 53, 120, .35);
+  box-shadow: inset -1px 0 0 hsla(var(--w), .75), 6px 0 28px -22px rgba(var(--shadow-rgb), .35);
   overflow: hidden;
 }
 .brand { height: var(--top); padding: 0 16px; flex: none; user-select: none; -webkit-user-select: none; }
@@ -607,7 +609,7 @@ body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-event
    band under it marks where each section starts. */
 .sec-head {
   display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px 0 18px;
-  background: hsla(0, 0%, 100%, .55); border-bottom: 1px solid hsla(232, 40%, 88%, .7);
+  background: hsla(var(--w), .55); border-bottom: 1px solid hsla(232, 40%, 88%, .7);
 }
 .sec-t { font: 900 11px/1 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-deep); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .sec-n { font: 600 11px/1 var(--font-mono); color: var(--faint); }
@@ -624,7 +626,7 @@ body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-event
 /* All / In terminals: a small segmented switch at the right of the header. */
 .rail-sessions .views { margin-left: auto; padding: 2px; gap: 0; flex-wrap: nowrap; background: hsla(232, 45%, 92%, .8); border-radius: 8px; font-size: 12px; }
 .rail-sessions .views button { padding: 4px 8px; border: 0; border-radius: 6px; color: var(--soft); font-weight: 650; white-space: nowrap; }
-.rail-sessions .views button.on { background: #fff; color: var(--ink); font-weight: 800; box-shadow: 0 1px 2px rgba(44, 53, 120, .14); border: 0; }
+.rail-sessions .views button.on { background: hsl(var(--w)); color: var(--ink); font-weight: 800; box-shadow: 0 1px 2px rgba(var(--shadow-rgb), .14); border: 0; }
 .rail-sessions .views button.drop { background: var(--brand-wash); border-radius: 6px; padding: 4px 8px; }
 .rail-sessions .views .count { font-size: 10.5px; margin-left: 5px; }
 .rail-sessions .views:empty { display: none; }
@@ -634,8 +636,8 @@ body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-event
 
 /* Rows: heavier titles, clearer separation between rows. */
 .sessions li { padding: 10px 11px; margin-bottom: 2px; }
-.sessions li:hover { background: hsla(0, 0%, 100%, .78); }
-.sessions li.on { background: #fff; border-color: var(--hairline-strong); box-shadow: 0 1px 3px rgba(44, 53, 120, .1); }
+.sessions li:hover { background: hsla(var(--w), .78); }
+.sessions li.on { background: hsl(var(--w)); border-color: var(--hairline-strong); box-shadow: 0 1px 3px rgba(var(--shadow-rgb), .1); }
 .sessions .t { font-weight: 700; font-size: 14px; letter-spacing: -.003em; }
 .sessions .m { font-weight: 500; }
 .sessions .snip { font-weight: 480; }
@@ -645,16 +647,16 @@ body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-event
 .sess-link { font-family: var(--font-mono); font-size: .9em; color: var(--brand-strong); text-decoration: underline; text-decoration-color: var(--brand-soft); text-underline-offset: 2px; cursor: pointer; }
 .sess-link:hover { color: var(--brand-deep); }
 
-.rail-foot { display: block; padding: 0; border-top: 1px solid var(--sec-line); background: hsla(0, 0%, 100%, .5); flex: none; }
+.rail-foot { display: block; padding: 0; border-top: 1px solid var(--sec-line); background: hsla(var(--w), .5); flex: none; }
 .rail-foot .glass-line { padding: 10px 18px 0; }
 .foot-row { display: flex; align-items: center; gap: 10px; padding: 8px 14px 11px 18px; font-size: 11.5px; color: var(--faint); font-weight: 520; }
 .foot-row #indexState { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Scrollbars: invisible until you are over the list, then a thin quiet thumb. */
-.sessions, .folder-list, .ground, .slash, .sheet, .sheet .plan, .tool pre {
+.sessions, .folder-list, .ground, .slash, .sheet, .sheet .plan, .tool pre, textarea {
   scrollbar-width: thin; scrollbar-color: transparent transparent;
 }
-.sessions:hover, .folder-list:hover, .ground:hover, .slash:hover, .sheet:hover, .sheet .plan:hover, .tool pre:hover {
+.sessions:hover, .folder-list:hover, .ground:hover, .slash:hover, .sheet:hover, .sheet .plan:hover, .tool pre:hover, textarea:hover {
   scrollbar-color: hsla(232, 18%, 55%, .38) transparent;
 }
 
@@ -666,10 +668,10 @@ body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-event
   background: none; border-bottom: 0;
 }
 .tab { height: 32px; border: 1px solid transparent; border-radius: 9px; padding: 0 6px 0 12px; color: var(--soft); font-weight: 640; font-size: 13px; }
-.tab:hover { background: hsla(0, 0%, 100%, .55); color: var(--ink); }
+.tab:hover { background: hsla(var(--w), .55); color: var(--ink); }
 .tab.on {
-  height: 32px; margin-bottom: 0; background: hsla(0, 0%, 100%, .92); border-color: var(--hairline-strong); color: var(--ink);
-  box-shadow: 0 1px 3px rgba(44, 53, 120, .12); font-weight: 800;
+  height: 32px; margin-bottom: 0; background: hsla(var(--w), .92); border-color: var(--hairline-strong); color: var(--ink);
+  box-shadow: 0 1px 3px rgba(var(--shadow-rgb), .12); font-weight: 800;
 }
 .tab.on .tab-t { font-weight: 820; }
 .tab.unread::before { top: auto; bottom: -1px; left: 12px; right: 12px; }
@@ -677,7 +679,7 @@ body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-event
 .tab-plus { margin: 0 2px; }
 .tabs-tools { padding: 0 2px 0 10px; }
 .tab-count { font-weight: 600; }
-.tab-tool { background: hsla(0, 0%, 100%, .7); font-weight: 650; }
+.tab-tool { background: hsla(var(--w), .7); font-weight: 650; }
 
 .winctl { display: flex; flex: none; height: var(--top); }
 .winctl button { display: grid; place-items: center; width: 46px; height: 100%; border: 0; background: none; cursor: pointer; transition: background var(--dur-fast) var(--ease-hover); }
@@ -691,8 +693,8 @@ body.maximized .winctl .i-max { display: none; }
 body.maximized .winctl .i-restore { display: block; }
 
 /* The stage is one framed surface below the tab row, on the same pearl. */
-.pane-bar { background: hsla(0, 0%, 100%, .74); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); border-bottom-color: hsla(232, 40%, 86%, .9); }
-.stage { inset: 0 8px 8px 8px; border-radius: 12px; overflow: hidden; border: 1px solid var(--sec-line); box-shadow: 0 10px 34px -26px rgba(44, 53, 120, .5); }
+.pane-bar { background: hsla(var(--w), .74); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); border-bottom-color: hsla(232, 40%, 86%, .9); }
+.stage { inset: 0 8px 8px 8px; border-radius: 12px; overflow: hidden; border: 1px solid var(--sec-line); box-shadow: 0 10px 34px -26px rgba(var(--shadow-rgb), .5); }
 body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 
 /* ---------- bolder type everywhere ---------- */
@@ -716,7 +718,7 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .cwd, .folder-chip { font-weight: 600; }
 
 /* ---------- search lens: what kind of search ran, and Ask Claude ---------- */
-.search { background: hsla(0, 0%, 100%, .92); height: 38px; }
+.search { background: hsla(var(--w), .92); height: 38px; }
 .search input { font-weight: 520; }
 .lens { display: flex; align-items: center; gap: 8px; margin: 8px 14px 0; min-height: 30px; }
 .lens[hidden] { display: none; }
@@ -725,7 +727,7 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .ask {
   display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px 0 9px; flex: none;
   border: 1px solid hsla(232, 60%, 70%, .6); border-radius: 8px; cursor: pointer;
-  background: linear-gradient(135deg, hsla(var(--pearl-stop-blue), .16), hsla(var(--pearl-stop-purple), .16)), #fff;
+  background: linear-gradient(135deg, hsla(var(--pearl-stop-blue), .16), hsla(var(--pearl-stop-purple), .16)), hsl(var(--w));
   color: var(--brand-deep); font: 800 12.5px/1 var(--font-body); font-stretch: 108%;
   transition: border-color var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-out);
 }
@@ -735,14 +737,14 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .ask.busy { pointer-events: none; color: var(--faint); }
 .ask.busy svg { animation: ask-spin 1.6s linear infinite; }
 @keyframes ask-spin { to { transform: rotate(360deg); } }
-.dig { display: block; width: calc(100% - 4px); margin: 8px 2px 4px; padding: 10px 12px; border: 1px dashed hsla(232, 50%, 70%, .8); border-radius: var(--radius-sm); background: hsla(0, 0%, 100%, .6); cursor: pointer; text-align: left; font-size: 12.5px; color: var(--soft); font-weight: 560; }
+.dig { display: block; width: calc(100% - 4px); margin: 8px 2px 4px; padding: 10px 12px; border: 1px dashed hsla(232, 50%, 70%, .8); border-radius: var(--radius-sm); background: hsla(var(--w), .6); cursor: pointer; text-align: left; font-size: 12.5px; color: var(--soft); font-weight: 560; }
 .dig b { display: block; color: var(--brand-deep); font-weight: 800; font-size: 13px; margin-bottom: 2px; }
-.dig:hover { border-color: var(--brand); background: #fff; }
+.dig:hover { border-color: var(--brand); background: hsl(var(--w)); }
 
 /* ---------- a session held by another window ---------- */
 .takeover {
   max-width: 560px; margin: 12vh auto 0; padding: 22px 24px 20px; border-radius: 14px;
-  background: hsla(0, 0%, 100%, .9); border: 1px solid var(--hairline-strong); box-shadow: 0 18px 50px -30px rgba(44, 53, 120, .55);
+  background: hsla(var(--w), .9); border: 1px solid var(--hairline-strong); box-shadow: 0 18px 50px -30px rgba(var(--shadow-rgb), .55);
   animation: rise var(--dur-sheet) var(--ease-out);
 }
 .tk-kicker { font: 900 10.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .14em; text-transform: uppercase; color: var(--action-strong); }
@@ -751,5 +753,98 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .takeover .tk-fine { font-size: 13px; color: var(--faint); }
 .tk-row { display: flex; gap: 8px; margin-top: 16px; }
 .tk-row button { padding: 9px 16px; border-radius: var(--radius-sm); border: 1px solid var(--hairline-strong); background: var(--ground); cursor: pointer; font-weight: 760; }
-.tk-row .tk-go { background: var(--brand-strong); border-color: var(--brand-strong); color: #fff; }
-.tk-row .tk-go:hover { background: var(--brand-deep); }
+.tk-row .tk-go { background: var(--fill); border-color: var(--fill); color: #fff; }
+.tk-row .tk-go:hover { background: var(--fill-hover); }
+
+/* ==========================================================================
+   Peach and dark mode (Arthur, 2026-10-10: "a dark mode here while
+   maintaining our theme - also a splash of peach").
+
+   Peach is the system's apricot (--pg-apricot, #F6C8AE, the warm pair's
+   22-degree hue). Periwinkle stays the mark; peach is the light that moves:
+   a warm stop in the pearl, the tail of every live sweep, the crest of the
+   effort ripple, the search sparkle, selection, and a diagonal in the empty
+   state. It never carries text on light, where its contrast is too low.
+
+   Dark mode keeps the same structure: the drifting pearl under a deep
+   ink-violet overlay (the --ink-deep family, the system's one dark surface),
+   the same halftone in the ground colour, frosted sidebar, periwinkle marks,
+   wide heavy Archivo. theme.js sets <html data-theme> before first paint from
+   the choice in the rail footer (Auto follows Windows).
+   ========================================================================== */
+
+:root {
+  --peach: 246, 200, 174;          /* #F6C8AE, washes */
+  --peach-glow: #F2A57E;           /* marks and gradient tails */
+  --peach-wash: rgba(246, 200, 174, .55);
+  --pearl-stop-peach: 22, 92%, 72%;
+  --pearl-gradient: linear-gradient(90deg, hsla(var(--pearl-stop-blue), .35), hsla(var(--pearl-stop-purple), .35), hsla(var(--pearl-stop-peach), .42), hsla(var(--pearl-stop-cyan), .35), hsla(var(--pearl-stop-blue), .35));
+}
+
+/* ---------- the peach splash ---------- */
+::selection { background: var(--peach-wash); }
+.stage.multi .pane.focused .pane-bar {
+  box-shadow: none;
+  background-image: linear-gradient(90deg, var(--brand), var(--peach-glow));
+  background-size: 100% 2px; background-repeat: no-repeat;
+}
+.tab.busy::after { background: linear-gradient(90deg, transparent, var(--brand), var(--peach-glow), transparent) 0 0 / 50% 100% no-repeat; }
+@keyframes ripple {
+  0%, 100% { opacity: .45; transform: scale(.8); }
+  35% { opacity: 1; transform: scale(1.15); background: var(--peach-glow); }
+  60% { opacity: .8; transform: scale(1); }
+}
+.sessions .why::before { color: var(--peach-glow); }
+.ask { background: linear-gradient(135deg, hsla(var(--pearl-stop-blue), .16), rgba(var(--peach), .42)), hsl(var(--w)); }
+.empty-grid i:nth-child(11n+1), .empty-grid i:nth-child(11n+6) { background: var(--peach-glow); }
+/* The session you are in carries a peach mark down its left; one open in another pane keeps the periwinkle one. */
+.sessions li.on { box-shadow: inset 2px 0 0 var(--peach-glow), 0 1px 3px rgba(var(--shadow-rgb), .1); }
+.sheet input[type=text] { background: var(--ground); }
+
+/* Theme switch in the rail footer, styled like the ding switch beside it. */
+.theme-btn {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
+  background: var(--ground); padding: 3px 9px 3px 7px; font-size: 11.5px; cursor: pointer; color: var(--brand-deep); font-weight: 650;
+  transition: border-color var(--dur-fast) var(--ease-hover);
+}
+.theme-btn:hover, .sound:hover { border-color: var(--brand); }
+.theme-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.theme-btn .i-fill { fill: currentColor; stroke: none; }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 180ms; animation-timing-function: var(--ease-hover); }
+
+/* ---------- dark ---------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #ECEDF8; --soft: #B7B9D3; --faint: #8D8FAD; --ink-deep: #F2F3FB;
+  --ground: #121120; --card: #1A1928; --hairline: #2A2940; --hairline-strong: #3A3956;
+  --tint: #232236; --tint-deep: #2D2C45;
+  --brand: #8E96DC; --brand-strong: #A3ABF2; --brand-deep: #C9CDF2; --brand-soft: #6F78C8; --brand-wash: #262849;
+  --action: #EE8A63; --action-strong: #F4A383; --action-tint: #3B241B;
+  --good: #74D3A0; --good-tint: #17322A;
+  --fill: #5361C9; --fill-hover: #6572D4; --fill-stop: #3A3956;
+  --w: 246, 20%, 12%; --shadow-rgb: 0, 0, 0;
+  --sec-line: hsla(244, 22%, 30%, .85);
+  --peach-glow: #F6B895; --peach-wash: rgba(246, 184, 149, .3);
+  --pearl-overlay: linear-gradient(180deg, hsla(248, 32%, 7%, .84) 45%, hsla(248, 32%, 7%, .46));
+  --pearl-overlay-rail: linear-gradient(180deg, hsla(248, 32%, 7%, .9) 40%, hsla(248, 32%, 7%, .64));
+}
+:root[data-theme="dark"] .brand .mark, :root[data-theme="dark"] .empty-mark { filter: invert(1) brightness(.94); }
+:root[data-theme="dark"] .rail { box-shadow: inset -1px 0 0 hsla(244, 30%, 40%, .25), 6px 0 28px -22px rgba(0, 0, 0, .7); }
+:root[data-theme="dark"] .sec-head { background: hsla(var(--w), .5); border-bottom-color: var(--hairline); }
+:root[data-theme="dark"] .rail-sessions .views { background: hsla(244, 22%, 20%, .85); }
+:root[data-theme="dark"] .rail-sessions .views button.on { background: var(--tint-deep); box-shadow: 0 1px 2px rgba(0, 0, 0, .45); }
+:root[data-theme="dark"] .sessions li:hover { background: hsla(244, 20%, 22%, .7); }
+:root[data-theme="dark"] .sessions li.on { background: var(--tint-deep); box-shadow: inset 2px 0 0 var(--peach-glow), 0 1px 3px rgba(0, 0, 0, .4); }
+:root[data-theme="dark"] .tab:hover { background: hsla(244, 20%, 24%, .6); }
+:root[data-theme="dark"] .tab.on { background: var(--tint-deep); box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+:root[data-theme="dark"] .pane-bar { border-bottom-color: var(--hairline); }
+:root[data-theme="dark"] .gutter { background: var(--hairline); }
+:root[data-theme="dark"] .gutter:hover, :root[data-theme="dark"] .gutter.active { background: var(--brand-soft); }
+:root[data-theme="dark"] .winctl button:hover { background: hsla(244, 30%, 70%, .12); }
+:root[data-theme="dark"] .turn-assistant pre { background: #0C0B16; color: #DADCF4; border: 1px solid var(--hairline); }
+:root[data-theme="dark"] .diff .del { background: #3A1E1A; color: #F4A99A; }
+:root[data-theme="dark"] .sheet-scrim { background: rgba(4, 4, 10, .6); }
+:root[data-theme="dark"] .ask { border-color: hsla(232, 50%, 62%, .55); }
+:root[data-theme="dark"] .dig { border-color: hsla(232, 40%, 55%, .7); }
+:root[data-theme="dark"] .sessions:hover, :root[data-theme="dark"] .folder-list:hover, :root[data-theme="dark"] .ground:hover,
+:root[data-theme="dark"] .slash:hover, :root[data-theme="dark"] .sheet:hover, :root[data-theme="dark"] .tool pre:hover { scrollbar-color: hsla(240, 20%, 70%, .3) transparent; }

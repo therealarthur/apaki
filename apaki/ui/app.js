@@ -928,6 +928,25 @@ function renderSound() {
   b.classList.toggle('off', !soundOn());
 }
 $('sound').onclick = () => { setSoundOn(!soundOn()); renderSound(); if (soundOn()) ding('done'); };
+
+/* ---------- theme (theme.js sets it before first paint) ---------- */
+
+const THEME_UI = {
+  auto: { label: 'Auto', next: 'light', icon: '<circle cx="8" cy="8" r="5.5"/><path class="i-fill" d="M8 2.5a5.5 5.5 0 0 1 0 11z"/>' },
+  light: { label: 'Light', next: 'dark', icon: '<circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/>' },
+  dark: { label: 'Dark', next: 'auto', icon: '<path class="i-fill" d="M12.8 10.2A5.6 5.6 0 0 1 5.8 3.2a5.6 5.6 0 1 0 7 7z"/>' },
+};
+function renderTheme() {
+  const t = window.apakiTheme;
+  const b = $('theme');
+  if (!t) { b.hidden = true; return; }
+  const ui = THEME_UI[t.get()];
+  b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${ui.icon}</svg>${ui.label}`;
+  b.title = t.get() === 'auto' ? `Theme follows Windows (now ${t.effective()}). Click for ${THEME_UI[ui.next].label.toLowerCase()}.` : `${ui.label} theme. Click for ${THEME_UI[ui.next].label.toLowerCase()}.`;
+}
+$('theme').onclick = () => window.apakiTheme.set(THEME_UI[window.apakiTheme.get()].next);
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderTheme);
+window.addEventListener('apaki-theme', renderTheme);
 // The webview plays sound only after a user gesture: arm on the first one.
 for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, arm, { capture: true });
 window.addEventListener('resize', closeMenu);
@@ -1291,6 +1310,7 @@ await listen('engine', ({ payload: e }) => {
 /* ---------- start ---------- */
 
 renderSound();
+renderTheme();
 restore();
 renderTabs();
 // Ask the engine for its state in case it was ready before this page loaded.
