@@ -155,6 +155,33 @@ test('chat streams a reply, shows tool lines with results and a diff, and the fo
   assert.match(frame, /\+ new line/);
   assert.match(frame, /✻ Worked for 1s · \$0\.012 · Claude Myrlin\.io/);
   assert.deepEqual(runner.sent, ['run the tests']);
+  // The box is empty again after sending: nothing is put back into it.
+  const box = plain(ui.lastFrame()).split('\n').filter((l) => l.startsWith('│ >'));
+  assert.equal(box.length, 1);
+  assert.doesNotMatch(box[0], /run the tests/);
+  assert.match(box[0], /Try "fix the failing test"/);
+  ui.unmount();
+});
+
+test('the prompt box clears the moment a message is sent, and while it runs', async () => {
+  let release;
+  const runner = fakeRunner(() => [{ wait: 1 }]);
+  const send = runner.send.bind(runner);
+  runner.send = async (t) => { await new Promise((r) => { release = r; }); return send(t); };
+  const store = new ChatStore({ runner, info: { credentialName: 'k', keys: [], switchKey: () => ({}) }, onResume: () => {}, onExit: () => {} });
+  const ui = render(h`<${Chat} store=${store} />`);
+  await tick(60);
+  ui.stdin.write('first message');
+  await tick(10);
+  ui.stdin.write(KEY.enter);
+  await tick(40);
+  const during = plain(ui.lastFrame()).split('\n').filter((l) => l.startsWith('│ >'))[0];
+  assert.doesNotMatch(during, /first message/, 'not left in the box while the turn runs');
+  assert.match(during, /Type to queue a message/);
+  release();
+  await tick(60);
+  const after = plain(ui.lastFrame()).split('\n').filter((l) => l.startsWith('│ >'))[0];
+  assert.doesNotMatch(after, /first message/, 'not restored when the reply arrives');
   ui.unmount();
 });
 
