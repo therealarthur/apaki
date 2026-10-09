@@ -1,6 +1,8 @@
 # claude-latch
 
-`latch` continues a Claude Code conversation in a terminal UI billed to an Anthropic API key. It uses Claude Code's own tools, settings, `CLAUDE.md`, hooks and MCP servers, through the Claude Agent SDK, and writes every turn into the same session file. `claude --resume <id>` picks the conversation up afterwards, latch's turns included.
+`latch` opens a Claude Code conversation in Claude Code itself, billed to an Anthropic API key instead of your subscription. You pick the session (or start a new one) and the key; latch launches the real Claude Code TUI resumed on that session, with Opus 5.5, xhigh effort and permissions skipped. Everything looks and works exactly like Claude Code because it is Claude Code.
+
+`latch --lite` keeps latch's own lighter UI over the Claude Agent SDK (see below).
 
 ## Use
 
@@ -8,16 +10,15 @@
 npm install
 npm link            # puts `latch` on PATH
 
-latch               # pick from recent sessions
-latch 636fe0ce      # continue a session by id prefix
+latch               # pick from recent sessions (all folders)
+latch 636fe0ce      # open a session by id prefix
 latch -c            # latest session started in this folder
 latch -n            # new session in this folder
 latch -l            # list recent sessions
+latch <id> --dry-run   # print the Claude Code command, folder and billing, then stop
 ```
 
-In the UI: Enter sends, a line ending in `\` continues, pastes arrive as one message, messages typed during a turn are queued. Esc or Ctrl+C interrupts a turn; Ctrl+C twice or Ctrl+D exits. `/help` lists the local commands (`/model`, `/mode`, `/effort`, `/key`, `/reload`, `/session`, `/exit`). Other `/` commands, such as `/compact`, go to Claude Code.
-
-Tool calls that need approval are asked inline: `y`, `n`, `a` (always allow that tool for this run), or type a reason to deny with it.
+Defaults: `--model claude-opus-5-5`, `--effort xhigh`, and `--dangerously-skip-permissions`. Override with `-m`, `-e`, or `--mode acceptEdits|default|plan`. Your PreToolUse hooks still run in skip-permissions mode, so the guards in `~/.claude/settings.json` still block what they block.
 
 ## Billing
 
@@ -28,29 +29,26 @@ First match wins:
 3. The live login, when Myrlin Glass has switched it to an API key.
 4. The default vault key (`LATCH_DEFAULT_KEY`, else "Arthur's Org").
 
-The child process gets exactly one auth source. Any inherited `ANTHROPIC_API_KEY` (this PC has a Machine-scope corporate one) is removed first. `/key <words>` or `/key sub` switches mid-session.
+latch passes the key to Claude Code as `ANTHROPIC_API_KEY` and removes every other inherited auth source first (this PC has a Machine-scope corporate key). Interactive Claude Code asks once per key whether to use it: choose Yes, and it remembers (latch warns you before that first time). `/status` in Claude Code shows which credential is active.
 
-Each turn's footer shows time, tokens read from cache, new tokens, and that turn's cost. The first turn after attaching writes the conversation to cache on that key; later turns read it.
+## One window per session
 
-## One owner at a time
+A Claude Code window keeps its conversation in memory, so two windows on one session fork it. latch warns when the session changed in the last two minutes, and only one latch can hold a session at a time (`--force` takes it over). To go back to your subscription, exit and run `claude --resume <id>`.
 
-An open Claude Code window keeps its conversation in memory and does not see latch's turns, so:
+## Lite mode
 
-- Stop typing in the window while latch has the session. When you go back, run `claude --resume <id>` (latch prints it on exit), or `/resume` in the window.
-- Before each message latch checks whether anything else added a message to the session. If so, it reloads from disk first and says so.
-- Only one latch can attach to a session (`--force` takes it over from another).
+`latch --lite` runs its own readline UI over the Agent SDK instead of the Claude Code TUI: streamed markdown, one line per tool call and result, inline approvals, a per-turn footer with cache and cost. Before each message it checks whether anything else wrote to the session and reloads from disk first. `/help` lists its commands (`/model`, `/mode`, `/effort`, `/key`, `/reload`, `/session`, `/exit`); other `/` commands go to Claude Code. Piped input works for scripted runs.
 
 ## Files
 
-- `bin/latch.js`: arguments, session picker, header, wiring.
-- `src/runner.js`: the Claude Code process (streaming input, interrupt, reload on outside change, per-turn cost).
-- `src/tui.js`: the readline UI, rendering of SDK messages, approvals, local commands.
-- `src/render.js`: line-by-line markdown rendering for the terminal.
+- `bin/latch.js`: arguments, session picker, the launch or lite wiring.
+- `src/launch.js`: starting the native Claude Code binary with the session, flags and key.
 - `src/auth.js`: credential choice and the child environment.
 - `src/sessions.js`: transcript facts and the owner lock.
+- `src/runner.js`, `src/tui.js`, `src/render.js`: lite mode.
 
-Runtime files live in `~/.claude/latch/`: `locks/` (one file per attached session) and `latch.log` (the Claude Code process's stderr, keys masked).
+Runtime files live in `~/.claude/latch/`: `locks/` (one file per attached session) and `latch.log` (lite mode's Claude Code stderr, keys masked).
 
 ## Test
 
-`npm test` runs the unit tests (rendering, credential choice and env scrub, transcript parsing, lock, outside-change detection).
+`npm test` runs the unit tests: rendering, credential choice and env scrub, transcript parsing, lock, outside-change detection, Claude Code arguments, key-approval lookup.

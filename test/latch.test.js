@@ -19,6 +19,7 @@ const { childEnv, liveLogin, vaultKey } = await import('../src/auth.js');
 const { lastCostTotal, lastModel, releaseLock, takeLock } = await import('../src/sessions.js');
 const { hasMessageBetween } = await import('../src/runner.js');
 const { describeTool } = await import('../src/tui.js');
+const { claudeArgs, keyApproved } = await import('../src/launch.js');
 
 test('renders headings, bullets, inline styles and code fences without color', () => {
   const out = renderMarkdown('# Title\n- **bold** and `code`\n```js\nconst a = 1;\n```\nafter', { color: false });
@@ -105,6 +106,24 @@ test('outside-change detection counts only top-level user/assistant entries', ()
   assert.equal(hasMessageBetween(f, from, fs.statSync(f).size), false);
   fs.appendFileSync(f, '{"type":"assistant","uuid":"a2","message":{}}\n');
   assert.equal(hasMessageBetween(f, from, fs.statSync(f).size), true);
+});
+
+test('builds Claude Code arguments for the real TUI', () => {
+  assert.deepEqual(
+    claudeArgs({ sessionId: 'c6e7b179-2ed4-4ae5-afac-7845f0c7b029', model: 'claude-opus-5-5', effort: 'xhigh', permissionMode: 'bypassPermissions' }),
+    ['--resume', 'c6e7b179-2ed4-4ae5-afac-7845f0c7b029', '--model', 'claude-opus-5-5', '--effort', 'xhigh', '--dangerously-skip-permissions'],
+  );
+  assert.deepEqual(claudeArgs({ model: 'opus', permissionMode: 'acceptEdits' }), ['--model', 'opus', '--permission-mode', 'acceptEdits']);
+  assert.throws(() => claudeArgs({ model: 'opus & calc' }), /unexpected argument/);
+});
+
+test('reads key approval from Claude Code config without needing the full key', () => {
+  const f = path.join(tmp, 'claude.json');
+  const key = `sk-ant-usr-${'k'.repeat(30)}abcdefghij0123456789`;
+  fs.writeFileSync(f, JSON.stringify({ customApiKeyResponses: { approved: ['abcdefghij0123456789'], rejected: [] } }));
+  assert.equal(keyApproved(key, f), true);
+  assert.equal(keyApproved(`${key}x`, f), false);
+  assert.equal(keyApproved(key, path.join(tmp, 'none.json')), false);
 });
 
 test('describes tool calls by their most telling field', () => {

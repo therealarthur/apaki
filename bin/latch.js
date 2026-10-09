@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /**
- * latch: continue a Claude Code session in a terminal UI billed to an API key.
+ * latch: continue a Claude Code session in Claude Code itself, billed to an API key.
+ *
+ * latch picks the session and the key, then opens the real Claude Code TUI on
+ * it (Opus 5.5, xhigh effort, skipping permissions unless told otherwise).
+ * --lite uses latch's own lighter UI over the Agent SDK instead.
  *
  * Usage:
  *   latch                 pick from recent sessions
@@ -11,18 +15,22 @@
  * Options:
  *   --key <words>   bill a credentials.md key whose heading has these words
  *   --sub           use the live Claude Code login (subscription) instead of a key
- *   -m, --model     model (default: the session's last model)
- *   -e, --effort    low | medium | high | xhigh | max
- *   --mode          permission mode: default | acceptEdits | plan | bypassPermissions
- *   --yolo          same as --mode bypassPermissions
+ *   -m, --model     model (default: claude-opus-5-5)
+ *   -e, --effort    low | medium | high | xhigh | max (default: xhigh)
+ *   --mode          permission mode: bypassPermissions (default, like
+ *                   --dangerously-skip-permissions) | acceptEdits | default | plan
+ *   --yolo          same as the default; kept for old habits
  *   --cwd <dir>     folder for tools (default: the session's own folder)
  *   --force         take over a session another latch holds
+ *   --lite          latch's own UI (Agent SDK) instead of the Claude Code TUI
+ *   --dry-run       print the Claude Code command, folder and billing, then stop
  *
  * Billing default: the live login when Myrlin Glass has switched it to an API
- * key, otherwise the default vault key (see src/auth.js).
+ * key, otherwise the default vault key (see src/auth.js). The first time a key
+ * is used, Claude Code asks once whether to use it: choose Yes.
  *
- * Hand back: on exit latch prints `claude --resume <id>`, which opens the same
- * conversation, latch's turns included, in regular Claude Code.
+ * Hand back: the conversation stays one Claude Code session; `claude --resume
+ * <id>` opens it on your subscription again.
  */
 
 import fs from 'node:fs';
@@ -30,10 +38,11 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { parseArgs } from 'node:util';
 import { CLAUDE_DIR, chooseCredential, childEnv } from '../src/auth.js';
+import { claudeArgs, keyApproved, launchClaude } from '../src/launch.js';
 import { styler, useColor } from '../src/render.js';
 import { SessionRunner } from '../src/runner.js';
 import {
-  ago, findSessionFiles, getSessionInfo, idleMs, lastModel, listSessions, readTail, releaseLock, sessionIdOf, takeLock,
+  ago, findSessionFiles, getSessionInfo, idleMs, listSessions, releaseLock, sessionIdOf, takeLock,
 } from '../src/sessions.js';
 import { Tui } from '../src/tui.js';
 
@@ -42,6 +51,9 @@ const LOG_FILE = path.join(CLAUDE_DIR, 'latch', 'latch.log');
 const LOG_MAX_BYTES = 2 * 1024 * 1024;
 // A session touched more recently than this may still be open elsewhere.
 const RECENT_MS = 2 * 60 * 1000;
+// Defaults Arthur asked for (2026-10-09): Opus 5.5 at xhigh effort.
+const DEFAULT_MODEL = 'claude-opus-5-5';
+const DEFAULT_EFFORT = 'xhigh';
 
 function fail(message) {
   process.stderr.write(`${st.red('latch:')} ${message}\n`);
@@ -96,13 +108,17 @@ async function main() {
       yolo: { type: 'boolean' },
       cwd: { type: 'string' },
       force: { type: 'boolean' },
+      lite: { type: 'boolean' },
+      'dry-run': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
 
   if (values.help) {
     const src = fs.readFileSync(new URL(import.meta.url), 'utf8');
-    process.stdout.write(`${src.split('\n').slice(2, 24).map((l) => l.replace(/^ \* ?/, '')).join('\n')}\n`);
+    const lines = src.split('\n');
+    const end = lines.findIndex((l, i) => i > 1 && /^\s*\*\/\s*$/.test(l));
+    process.stdout.write(`${lines.slice(2, end).map((l) => l.replace(/^ \* ?/, '')).join('\n')}\n`);
     return;
   }
 
@@ -138,15 +154,50 @@ async function main() {
   const credential = chooseCredential({ keyWords: values.key, subscription: values.sub });
   if (credential.error) fail(credential.error);
 
-  if (sessionId) {
+  if (sessionId && !values['dry-run']) {
     const holder = takeLock(sessionId, { force: values.force });
     if (holder) fail(`another latch (pid ${holder}) is attached to this session. Use --force to take it over.`);
   }
 
-  const tail = file ? readTail(file) : '';
-  const model = values.model || lastModel(tail) || undefined;
-  const effort = values.effort || process.env.LATCH_EFFORT || process.env.CLAUDE_EFFORT || undefined;
-  const permissionMode = values.yolo ? 'bypassPermissions' : values.mode;
+  const model = values.model || process.env.LATCH_MODEL || DEFAULT_MODEL;
+  const effort = values.effort || process.env.LATCH_EFFORT || DEFAULT_EFFORT;
+  // Default is the equivalent of --dangerously-skip-permissions (Arthur, 2026-10-09).
+  const permissionMode = values.mode || 'bypassPermissions';
+  const recentlyActive = file && (idleMs(file) ?? Infinity) < RECENT_MS;
+
+  if (!values.lite) {
+    // Default: the real Claude Code TUI on this session and key.
+    let args;
+    try {
+      args = claudeArgs({ sessionId, model, effort, permissionMode });
+    } catch (e) {
+      fail(e.message);
+    }
+    process.stdout.write(`${st.bold('latch')} ${st.dim('→ Claude Code')}  ${sessionId || 'new session'}  ${st.dim('·')}  ${credential.name}${st.dim(` (${credential.source})`)}\n`);
+    if (credential.key && !keyApproved(credential.key)) {
+      process.stdout.write(st.yellow('  First use of this key: Claude Code will ask whether to use the API key it found. Choose Yes; it remembers.\n'));
+    }
+    if (recentlyActive) {
+      process.stdout.write(st.yellow('  This session changed under 2 minutes ago. If another window has it open, close it there first.\n'));
+    }
+    if (values['dry-run']) {
+      if (sessionId) releaseLock(sessionId);
+      const env = childEnv(credential.key);
+      process.stdout.write(`  would run: claude ${args.join(' ')}\n  in:        ${cwd}\n  auth:      ${env.ANTHROPIC_API_KEY ? `ANTHROPIC_API_KEY = ${credential.name} (approved: ${keyApproved(credential.key)})` : 'live Claude Code login'}\n`);
+      return;
+    }
+    launchClaude({
+      args,
+      cwd,
+      env: childEnv(credential.key),
+      onExit: (code, error) => {
+        if (sessionId) releaseLock(sessionId);
+        if (error) fail(`could not start Claude Code: ${error.message}`);
+        process.exit(code);
+      },
+    });
+    return;
+  }
 
   const ui = { credentialName: credential.name };
   let tui = null;
@@ -187,7 +238,7 @@ async function main() {
   row('model', `${model || 'default'}${effort ? ` · effort ${effort}` : ''}${permissionMode ? ` · ${permissionMode}` : ''}`);
   row('billing', `${credential.name}${st.dim(` (${credential.source})`)}`);
   process.stdout.write(st.dim('  Esc interrupts · /help · Ctrl+D exits\n'));
-  if (file && (idleMs(file) ?? Infinity) < RECENT_MS) {
+  if (recentlyActive) {
     process.stdout.write(st.yellow('  This session changed under 2 minutes ago. If a Claude Code window still has it open, stop typing there;\n  latch reloads from disk when it sees outside changes, but two writers at the same moment fork the conversation.\n'));
   }
   process.stdout.write('\n');

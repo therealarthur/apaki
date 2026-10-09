@@ -132,6 +132,10 @@ export class SessionRunner {
     if (this.model) options.model = this.model;
     if (this.effort) options.effort = this.effort;
     if (this.permissionMode) options.permissionMode = this.permissionMode;
+    // Required for bypassPermissions, and lets /mode switch into it later.
+    // Hooks (the PreToolUse guards) still run in that mode, and questions and
+    // plan approvals still reach canUseTool.
+    options.allowDangerouslySkipPermissions = true;
 
     const file = this.transcript;
     this.lastTotal = file ? lastCostTotal(readTail(file)) : 0;
