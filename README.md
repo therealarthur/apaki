@@ -12,7 +12,8 @@ Interactive Claude Code is refused on these credits (`billing_error`, "Credit ba
 npm install
 npm link            # puts `latch` on PATH
 
-latch               # pick from recent sessions (all folders)
+latch               # searchable picker of all sessions (see below)
+latch ground truth  # the picker, already searching for "ground truth"
 latch 636fe0ce      # open a session by id prefix
 latch -c            # latest session started in this folder
 latch -n            # new session in this folder
@@ -21,6 +22,12 @@ latch <id> --dry-run   # print the Claude Code command, folder and billing, then
 ```
 
 Defaults: `--model claude-opus-5-5`, `--effort xhigh`, and `--dangerously-skip-permissions`. Override with `-m`, `-e`, or `--mode acceptEdits|default|plan`. Your PreToolUse hooks still run in skip-permissions mode, so the guards in `~/.claude/settings.json` still block what they block.
+
+## Finding a session
+
+`latch` with no session id opens a full-screen picker. Type to filter: every word must appear in a session's title, first prompt, folder, id or branch, and title matches rank first. **Ctrl+F** searches inside the conversations themselves, only in what was said (your prompts and Claude's replies, at word starts), skipping injected context and tool output; it shows a progress count and a snippet of the matching message. Sessions open in a running Claude Code window are marked `open` (`open ×2` when in two). The bottom pane shows the selected session's id, folder, size, age, first prompt and latest prompt.
+
+Keys: Up/Down (Ctrl+P/N), PgUp/PgDn, **Enter** opens, **Tab** open sessions only, **Ctrl+A** include headless sessions, Ctrl+U clears, Esc clears the search or quits, Ctrl+C quits. Piped input falls back to a numbered list.
 
 ## Billing
 
@@ -45,7 +52,8 @@ A Claude Code window keeps its conversation in memory, so two windows on one ses
 
 ## Files
 
-- `bin/latch.js`: arguments, session picker, the launch or lite wiring.
+- `bin/latch.js`: arguments, the launch or lite wiring.
+- `src/picker.js`: the searchable session picker.
 - `src/launch.js`: starting the native Claude Code binary with the session, flags and key.
 - `src/auth.js`: credential choice and the child environment.
 - `src/sessions.js`: transcript facts and the owner lock.

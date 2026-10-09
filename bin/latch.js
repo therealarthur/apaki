@@ -7,7 +7,9 @@
  * --lite uses latch's own lighter UI over the Agent SDK instead.
  *
  * Usage:
- *   latch                 pick from recent sessions
+ *   latch                 searchable picker of all sessions (type to filter,
+ *                         Ctrl+F searches inside conversations, Tab open only)
+ *   latch <words>         the picker, already searching for those words
  *   latch <id-prefix>     continue that session
  *   latch -c              continue the latest session started in this folder
  *   latch -n              start a new session in this folder (or --cwd)
@@ -45,6 +47,7 @@ import {
   ago, findSessionFiles, getSessionInfo, idleMs, listSessions, releaseLock, sessionIdOf, takeLock,
 } from '../src/sessions.js';
 import { Tui } from '../src/tui.js';
+import { pickSession as pickInteractive } from '../src/picker.js';
 
 const st = styler(useColor());
 const LOG_FILE = path.join(CLAUDE_DIR, 'latch', 'latch.log');
@@ -97,6 +100,12 @@ function shortPath(p) {
   return p ? p.replace(/^C:\\Users\\[^\\]+/i, '~') : '?';
 }
 
+/** True when a person is at a terminal, so the full-screen picker can run. */
+function interactive() {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
+/** Numbered list fallback for piped input. */
 async function pickSession() {
   const sessions = await listSessions({ limit: 15 });
   if (!sessions.length) fail('no Claude Code sessions found. Start one with `latch -n`.');
@@ -154,22 +163,35 @@ async function main() {
     const [latest] = await listSessions({ dir: values.cwd || process.cwd(), limit: 1 });
     if (!latest) fail(`no session found for ${values.cwd || process.cwd()}. Use -n for a new one.`);
     sessionId = latest.sessionId;
-  } else {
-    const wanted = positionals[0] || (await pickSession());
-    const files = findSessionFiles(wanted);
-    if (files.length === 0) fail(`no session id starts with "${wanted}".`);
-    if (files.length > 1) fail(`"${wanted}" matches ${files.length} sessions; give more of the id.`);
-    sessionId = sessionIdOf(files[0]);
+  }
+
+  // Which credential (chosen first so the picker can show it).
+  const credential = chooseCredential({ keyWords: values.key, subscription: values.sub });
+  if (credential.error) fail(credential.error);
+
+  if (!values.new && !values.continue) {
+    const wanted = positionals.join(' ').trim();
+    const files = wanted && /^[0-9a-f-]{4,36}$/i.test(wanted) ? findSessionFiles(wanted) : [];
+    if (files.length === 1) {
+      sessionId = sessionIdOf(files[0]);
+    } else if (interactive()) {
+      // No argument, or text that is not one session id: search for it.
+      sessionId = await pickInteractive({ query: wanted, billing: `${credential.name} (${credential.source})` });
+      if (!sessionId) process.exit(0);
+    } else if (!wanted) {
+      const picked = await pickSession();
+      const matches = findSessionFiles(picked);
+      if (matches.length !== 1) fail(`"${picked}" does not name exactly one session.`);
+      sessionId = sessionIdOf(matches[0]);
+    } else {
+      fail(files.length > 1 ? `"${wanted}" matches ${files.length} sessions; give more of the id.` : `no session id starts with "${wanted}".`);
+    }
   }
 
   const info = sessionId ? await getSessionInfo(sessionId) : null;
   const file = sessionId ? findSessionFiles(sessionId)[0] : null;
   const cwd = path.resolve(values.cwd || info?.cwd || process.cwd());
   if (!fs.existsSync(cwd)) fail(`folder does not exist: ${cwd}`);
-
-  // Which credential.
-  const credential = chooseCredential({ keyWords: values.key, subscription: values.sub });
-  if (credential.error) fail(credential.error);
 
   if (sessionId && !values['dry-run']) {
     const holder = takeLock(sessionId, { force: values.force });
