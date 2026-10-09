@@ -150,8 +150,8 @@ export function PickerScreen({ loader, initialQuery = '', billing = '', message 
       ${shown.length > visible ? h`<${Text} color=${theme.dim}>${`  ${top + 1}-${Math.min(top + visible, shown.length)} of ${shown.length}`}</${Text}>` : null}
     </${Box}>
     ${selected ? h`<${Box} borderStyle="round" borderColor=${theme.dim} paddingX=${1} flexDirection="column" marginTop=${1}>
-      <${Text} wrap="truncate-end"><${Text} color=${theme.dim}>${'First   '}</${Text}>${cut(first, cols * 2) || '—'}</${Text}>
-      <${Text} wrap="truncate-end"><${Text} color=${theme.dim}>${'Latest  '}</${Text}>${cut(latest, cols * 2) || '—'}</${Text}>
+      <${Text} wrap="truncate-end"><${Text} color=${theme.dim}>${'First   '}</${Text}>${cut(first, cols * 2) || '(none)'}</${Text}>
+      <${Text} wrap="truncate-end"><${Text} color=${theme.dim}>${'Latest  '}</${Text}>${cut(latest, cols * 2) || '(none)'}</${Text}>
       <${Text} color=${theme.dim} wrap="truncate-end">${`${selected.id}  ·  ${shortPath(selected.cwd)}`}</${Text}>
     </${Box}>` : null}
     <${Text} color=${theme.dim}>${'  ↑↓ select · enter open · tab open-in-window only · ctrl+f search inside · ctrl+a headless · esc quit'}</${Text}>
