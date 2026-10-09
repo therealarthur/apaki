@@ -52,6 +52,29 @@ function pidAlive(pid) {
 }
 
 /** Session id -> number of running Claude Code processes that have it open. */
+/**
+ * Sessions open right now in Claude Code terminal windows, from the live
+ * records Claude Code keeps in ~/.claude/sessions/<pid>.json (entrypoint
+ * "cli" = a terminal window; headless runs and latch itself are left out).
+ * sessionId -> [{ pid, name, status, cwd, updatedAt }], newest first.
+ * This is what latch auto-imports into its "Open in terminal" group.
+ */
+export function terminalSessions(dir = LIVE_DIR, alive = pidAlive) {
+  const out = new Map();
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return out; }
+  for (const f of files) {
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (!j.sessionId || !j.pid || j.entrypoint !== 'cli' || !alive(j.pid)) continue;
+      const list = out.get(j.sessionId) || [];
+      list.push({ pid: j.pid, name: j.name || '', status: j.status || '', cwd: j.cwd || '', updatedAt: j.updatedAt || j.startedAt || 0 });
+      out.set(j.sessionId, list.sort((a, b) => b.updatedAt - a.updatedAt));
+    } catch { /* a record being rewritten */ }
+  }
+  return out;
+}
+
 export function openSessions(dir = LIVE_DIR, alive = pidAlive) {
   const open = new Map();
   let files = [];

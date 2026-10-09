@@ -33,6 +33,10 @@ Defaults: `--model claude-opus-5-5`, `--effort xhigh`, and `--dangerously-skip-p
 
 Keys: Up/Down (Ctrl+P/N), PgUp/PgDn, **Enter** opens, **Tab** open sessions only, **Ctrl+A** include headless sessions, Ctrl+U clears, Esc clears the search or quits, Ctrl+C quits. Piped input falls back to a numbered list.
 
+**Deep search.** With `index/` built (`cd index && cargo build --release`), typing also searches the `latch-index` full-text index of every transcript on the machine, subagent and workflow runs included: prompts, replies, tool calls and tool output. Results come in relevance order, each labelled with where the match was (`you:`, `claude:`, `tool output:`, `subagent …`). The index updates itself when the picker opens (well under a second after the first build). Without the binary, Ctrl+F scans the files instead.
+
+**Views and folders.** Left/Right switches between **All**, **Open in terminal** and one view per folder. *Open in terminal* imports every session open in a Claude Code terminal window right now, from Claude Code's live records in `~/.claude/sessions`, refreshed every 2 seconds, with the window's name and busy/idle status; those sessions also lead the All view. **Ctrl+G** files the selected session in a folder (or a new one, or out of its folder); a session sits in one folder at a time. In a folder view, **Ctrl+R** renames it and **Ctrl+D** deletes it (its sessions are untouched). Folders live in `~/.claude/latch/folders.json`.
+
 ## Billing
 
 First match wins:

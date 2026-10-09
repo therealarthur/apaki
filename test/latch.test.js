@@ -185,3 +185,31 @@ test('billing follows Glass: the live key when one is live, the subscription oth
   assert.equal(c.follow, true);
   assert.equal(chooseCredential({ subscription: true }).follow, undefined);
 });
+
+test('folders: create, move (one folder per session), rename, delete', async () => {
+  process.env.LATCH_DIR = fs.mkdtempSync(path.join(tmp, 'folders-'));
+  const f = await import('../src/folders.js');
+  const a = f.createFolder('  Pantex   work ');
+  assert.equal(a.name, 'Pantex work');
+  assert.equal(f.createFolder('pantex WORK').id, a.id); // same name, same folder
+  const b = f.createFolder('Glass');
+  f.moveToFolder('s1', a.id);
+  f.moveToFolder('s1', b.id);
+  assert.deepEqual(f.listFolders().map((x) => x.sessions), [[], ['s1']]);
+  assert.equal(f.folderOfSessions().get('s1').name, 'Glass');
+  assert.equal(f.renameFolder(b.id, 'Myrlin Glass').name, 'Myrlin Glass');
+  f.deleteFolder(b.id);
+  assert.equal(f.folderOfSessions().has('s1'), false);
+  assert.match(f.createFolder('   ').error, /name/);
+});
+
+test('terminal sessions come from live records of cli windows only', async () => {
+  const { terminalSessions } = await import('../src/picker.js');
+  const dir = fs.mkdtempSync(path.join(tmp, 'live-'));
+  fs.writeFileSync(path.join(dir, '1.json'), JSON.stringify({ pid: 1, sessionId: 's1', entrypoint: 'cli', name: 'arthur-1', status: 'idle', updatedAt: 5 }));
+  fs.writeFileSync(path.join(dir, '2.json'), JSON.stringify({ pid: 2, sessionId: 's2', entrypoint: 'sdk-cli' }));
+  fs.writeFileSync(path.join(dir, '3.json'), JSON.stringify({ pid: 3, sessionId: 's3', entrypoint: 'cli' }));
+  const live = terminalSessions(dir, (pid) => pid !== 3);
+  assert.deepEqual([...live.keys()], ['s1']);
+  assert.equal(live.get('s1')[0].name, 'arthur-1');
+});

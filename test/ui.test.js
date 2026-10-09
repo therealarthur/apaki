@@ -6,6 +6,7 @@
  */
 
 process.env.LATCH_NO_INDEX = '1'; // keep picker tests off the real conversation index
+process.env.LATCH_DIR = (await import('node:fs')).mkdtempSync((await import('node:path')).join((await import('node:os')).tmpdir(), 'latch-ui-')); // folders.json goes here, never the real one
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { render } from 'ink-testing-library';
@@ -17,7 +18,8 @@ const { historyItems, matchCommands, summarizeTool, toolArgs, nextMode, tailItem
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 const plain = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '');
-const KEY = { up: '\x1b[A', down: '\x1b[B', enter: '\r', esc: '\x1b', tab: '\t', shiftTab: '\x1b[Z' };
+const KEY = { up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D', enter: '\r', esc: '\x1b', tab: '\t', shiftTab: '\x1b[Z', ctrlG: '\x07', ctrlD: '\x04' };
+const noTerminals = () => new Map();
 
 /* ---------- model ---------- */
 
@@ -68,7 +70,7 @@ function fakeLoader() {
 
 test('picker filters as you type and opens the selected session', async () => {
   let picked = null;
-  const ui = render(h`<${PickerScreen} loader=${fakeLoader()} billing="billing: test" onPick=${(it) => { picked = it; }} onQuit=${() => {}} />`);
+  const ui = render(h`<${PickerScreen} loader=${fakeLoader()} terminals=${noTerminals} billing="billing: test" onPick=${(it) => { picked = it; }} onQuit=${() => {}} />`);
   await tick(60);
   let frame = plain(ui.lastFrame());
   assert.match(frame, /Resume a conversation/);
@@ -82,6 +84,55 @@ test('picker filters as you type and opens the selected session', async () => {
   ui.stdin.write(KEY.enter);
   await tick(20);
   assert.equal(picked?.id, 'bbbb2222');
+  ui.unmount();
+});
+
+test('sessions open in terminal windows are imported automatically, even ones the list hides', async () => {
+  const live = new Map([
+    ['bbbb2222', [{ pid: 1, name: 'arthur-7', status: 'idle', cwd: 'C:\\Users\\Arthur', updatedAt: Date.now() }]],
+    ['cccc3333', [{ pid: 2, name: 'arthur-9', status: 'busy', cwd: 'C:\\proj', updatedAt: Date.now() - 5000 }]],
+  ]);
+  const ui = render(h`<${PickerScreen} loader=${fakeLoader()} terminals=${() => live} onPick=${() => {}} onQuit=${() => {}} />`);
+  await tick(80);
+  let frame = plain(ui.lastFrame());
+  assert.match(frame, /Open in terminal 2/);
+  // In All, terminal sessions come first.
+  assert.match(frame, /❯ Toggleable claude -p message routing\s+in terminal arthur-7 \(idle\)/);
+  ui.stdin.write(KEY.right);
+  await tick(40);
+  frame = plain(ui.lastFrame());
+  assert.match(frame, /New session \(arthur-9\)\s+in terminal arthur-9 \(busy\)/);
+  assert.doesNotMatch(frame, /Walk detector/);
+  ui.unmount();
+});
+
+test('ctrl+g files a session in a new folder, the folder becomes a view, ctrl+d deletes it', async () => {
+  const folders = await import('../src/folders.js');
+  for (const f of folders.listFolders()) folders.deleteFolder(f.id);
+  const ui = render(h`<${PickerScreen} loader=${fakeLoader()} terminals=${noTerminals} onPick=${() => {}} onQuit=${() => {}} />`);
+  await tick(60);
+  ui.stdin.write(KEY.ctrlG);
+  await tick(30);
+  assert.match(plain(ui.lastFrame()), /Move "Walk detector ground truth drafter" to[\s\S]*New folder/);
+  ui.stdin.write(KEY.enter); // "New folder…" is the only choice
+  await tick(30);
+  for (const ch of 'SignalSentry') { ui.stdin.write(ch); await tick(3); }
+  ui.stdin.write(KEY.enter);
+  await tick(40);
+  let frame = plain(ui.lastFrame());
+  assert.match(frame, /Moved to SignalSentry/);
+  assert.match(frame, /Walk detector ground truth drafter\s+in|Walk detector ground truth drafter.*▸ SignalSentry/);
+  assert.equal(folders.listFolders()[0].sessions[0], 'aaaa1111');
+  // ←/→: All -> Open in terminal -> SignalSentry
+  ui.stdin.write(KEY.right); await tick(20);
+  ui.stdin.write(KEY.right); await tick(40);
+  frame = plain(ui.lastFrame());
+  assert.match(frame, /Walk detector/);
+  assert.doesNotMatch(frame, /Toggleable/);
+  ui.stdin.write(KEY.ctrlD); await tick(30);
+  ui.stdin.write('y'); await tick(40);
+  assert.equal(folders.listFolders().length, 0);
+  assert.match(plain(ui.lastFrame()), /Toggleable/); // back to All
   ui.unmount();
 });
 
