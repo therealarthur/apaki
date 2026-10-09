@@ -490,3 +490,62 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   .egrid i, .empty-grid i { animation: none !important; }
 }
+
+/* ==========================================================================
+   Pearl ground (Arthur, 2026-10-09: "we want that kind of pearlescent
+   background"). The edition 2 pearl gesture from
+   ~/myrlin-labs/design-system (Fly.io's): the same three stops, blue
+   hsl(217 91% 60%), purple hsl(277 87% 63%), cyan hsl(189 94% 43%), at .35,
+   always washed under a white overlay (.875 at the top half, .25 at the
+   bottom), with the white halftone lattice (8px, offset 4px, .6) over it.
+   One shared layer behind every pane instead of one per pane, so six panes
+   cost the same as one. It drifts sideways over 48 s on a transformed layer
+   (compositor only, no repaint), and holds still under reduced motion.
+   ========================================================================== */
+
+:root {
+  --pearl-stop-blue: 217, 91%, 60%;
+  --pearl-stop-purple: 277, 87%, 63%;
+  --pearl-stop-cyan: 189, 94%, 43%;
+  --pearl-gradient: linear-gradient(90deg, hsla(var(--pearl-stop-blue), .35), hsla(var(--pearl-stop-purple), .35), hsla(var(--pearl-stop-cyan), .35), hsla(var(--pearl-stop-blue), .35));
+  --pearl-overlay: linear-gradient(180deg, hsla(0, 0%, 100%, .875) 50%, hsla(0, 0%, 100%, .25));
+  --pearl-overlay-rail: linear-gradient(180deg, hsla(0, 0%, 100%, .94) 40%, hsla(0, 0%, 100%, .62));
+  --halftone: radial-gradient(circle, #fff 1.4px, transparent 1.5px) 0 0 / 8px 8px, radial-gradient(circle, #fff 1.4px, transparent 1.5px) 4px 4px / 8px 8px;
+}
+
+.stages { isolation: isolate; overflow: hidden; background: #fff; }
+.stages::before {
+  content: ""; position: absolute; inset: 0 -40% 0 -40%; z-index: -2; pointer-events: none;
+  background: var(--pearl-gradient);
+  animation: pearl-drift 48s var(--ease-hover) infinite alternate; will-change: transform;
+}
+.stages::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: var(--halftone), var(--pearl-overlay);
+}
+.stages > .stage { z-index: 0; }
+@keyframes pearl-drift { from { transform: translate3d(-12%, 0, 0); } to { transform: translate3d(12%, 0, 0); } }
+
+/* Panes are see-through onto the pearl; their header stays a clean white strip. */
+.pane, .ground { background: transparent; }
+.ground { background: none; }
+.composer-wrap { background: none; }
+.pane-bar { background: hsla(0, 0%, 100%, .86); }
+.gutter { background: hsla(230, 45%, 88%, .9); }
+.stage-empty, .empty { position: relative; }
+
+/* The rail: the same pearl, held paler so the list reads first. */
+.rail { position: relative; isolation: isolate; overflow: hidden; background: #fff; }
+.rail::before {
+  content: ""; position: absolute; inset: 0 -60% 0 -60%; z-index: -2; pointer-events: none;
+  background: var(--pearl-gradient);
+  animation: pearl-drift 60s var(--ease-hover) infinite alternate-reverse; will-change: transform;
+}
+.rail::after { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--halftone), var(--pearl-overlay-rail); }
+.rail-foot { background: hsla(0, 0%, 100%, .6); }
+.sessions li:hover { background: hsla(0, 0%, 100%, .7); }
+.search { background: hsla(0, 0%, 100%, .9); }
+
+@media (prefers-reduced-motion: reduce) {
+  .stages::before, .rail::before { animation: none !important; transform: none; }
+}
