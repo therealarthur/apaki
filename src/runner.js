@@ -218,6 +218,15 @@ export class SessionRunner {
    * { reloaded: true } in `this.lastSend` when it had to reload from disk first.
    */
   async send(text) {
+    // Another window took this session over (forced takeover): writing now
+    // would fork the conversation, so refuse and say who has it.
+    const stolen = this.lockGuard?.();
+    if (stolen) {
+      const err = new Error(`${stolen.name || 'Another window'} took this session over${stolen.at ? ` at ${new Date(stolen.at).toLocaleTimeString()}` : ''}. Continue there, or take it back.`);
+      err.code = 'TAKEN_OVER';
+      err.holder = stolen;
+      throw err;
+    }
     let reloaded = false;
     // Billing that follows Myrlin Glass: if the live login changed since the
     // last message, restart on the new one (resuming from disk) before sending.

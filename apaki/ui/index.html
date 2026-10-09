@@ -8,26 +8,59 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
+  <!-- No OS title bar (decorations off): the brand row and the tab row are
+       the top of the window. Their empty space drags it, double-click
+       maximizes, and the window buttons sit at the right of the tab row. -->
   <aside class="rail">
-    <header class="brand">
-      <img src="hat.svg" alt="" class="mark">
-      <span class="wordmark">Myrlin Apaki</span>
+    <header class="brand" data-tauri-drag-region>
+      <img src="hat.svg" alt="" class="mark" data-tauri-drag-region>
+      <span class="wordmark" data-tauri-drag-region>Myrlin Apaki</span>
     </header>
-    <button class="new" id="new" title="New conversation in the focused pane (Ctrl+T for a new tab)">New conversation</button>
-    <label class="search">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
-      <input id="q" placeholder="Search every conversation" autocomplete="off" spellcheck="false">
-    </label>
-    <nav class="views" id="views"></nav>
-    <section class="folders" id="folders"></section>
-    <div class="search-state" id="searchState"></div>
-    <ol class="sessions" id="sessions"></ol>
-    <div class="glass-line" id="glassState" title="Myrlin Glass: the account Claude Code bills right now"></div>
-    <footer class="rail-foot"><span id="indexState">Loading…</span><button class="sound" id="sound" title="Ding when a session comes back"></button></footer>
+
+    <section class="rail-sec rail-find">
+      <button class="new" id="new" title="New conversation in the focused pane (Ctrl+T for a new tab)">New conversation</button>
+      <label class="search">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+        <input id="q" placeholder="Search by words or meaning" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="lens" id="lens" hidden>
+        <span class="lens-info" id="lensInfo"></span>
+        <button class="ask" id="ask" title="">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.3 3.6 3.6 1.3-3.6 1.3L8 11.6 6.7 8 3.1 6.7l3.6-1.3zM12.6 10.4l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z"/></svg>
+          <span>Ask Claude</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="rail-sec rail-folders" id="folders"></section>
+
+    <section class="rail-sec rail-sessions">
+      <div class="sec-head">
+        <span class="sec-t" id="sessionsTitle">Sessions</span><span class="sec-n" id="sessionsCount"></span>
+        <button class="sec-clear" id="clearView" hidden title="Show all sessions">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>
+        </button>
+        <nav class="views" id="views"></nav>
+      </div>
+      <div class="search-state" id="searchState"></div>
+      <ol class="sessions" id="sessions"><li class="note">Loading sessions…</li></ol>
+    </section>
+
+    <footer class="rail-foot">
+      <div class="glass-line" id="glassState" title="Myrlin Glass: the account Claude Code bills right now"></div>
+      <div class="foot-row"><span id="indexState">Loading…</span><button class="sound" id="sound" title="Ding when a session comes back"></button></div>
+    </footer>
   </aside>
 
   <main class="main">
-    <nav class="tabs" id="tabs" aria-label="Tabs"></nav>
+    <header class="topbar" data-tauri-drag-region>
+      <nav class="tabs" id="tabs" aria-label="Tabs" data-tauri-drag-region></nav>
+      <div class="winctl" id="winctl">
+        <button data-w="min" title="Minimize"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5h8"/></svg></button>
+        <button data-w="max" title="Maximize"><svg class="i-max" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.2"/></svg><svg class="i-restore" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="3.6" width="6.4" height="6.4" rx="1.1"/><path d="M4 3.6V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-.6"/></svg></button>
+        <button data-w="close" class="close-w" title="Close"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button>
+      </div>
+    </header>
     <section class="stages" id="stages"></section>
   </main>
 

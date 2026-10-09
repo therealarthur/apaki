@@ -89,6 +89,9 @@ function windowEnv(keyWords) {
   const env = childEnv(null);
   delete env.PROMPT_RELAY_CHILD; // the hook must run in this window
   delete env.CLAUDE_AGENT_SDK_CLIENT_APP;
+  // This latch process holds the session lock for the window; the hook blocks
+  // the window if someone else (Myrlin Apaki) takes the session over.
+  env.LATCH_LOCK_PID = String(process.pid);
   if (keyWords !== null) {
     env.PROMPT_RELAY_FORCE = '1';
     env.PROMPT_RELAY_KEY_WORDS = keyWords;
@@ -268,6 +271,8 @@ async function main() {
       fail(e.message);
     }
     const relayed = credential.source !== 'subscription';
+    // The lock names this as a terminal window, so a blocked writer can say so.
+    if (sessionId && !values['dry-run']) takeLock(sessionId, { force: true, app: 'latch-relay' });
     const env = windowEnv(relayed ? (credential.source === 'glass' ? '' : (values.key || DEFAULT_KEY_WORDS)) : null);
     process.stdout.write(`${st.bold('latch')} ${st.dim('→ Claude Code')}  ${sessionId || 'new session'}  ${st.dim('·')}  ${relayed ? `relays on ${credential.name}` : 'live login'}${st.dim(` (${credential.source})`)}\n`);
     if (recentlyActive) {

@@ -79,6 +79,103 @@ export function indexStatus() {
   return run(['status'], 15000);
 }
 
+/* ---------- the long-running server (2026-10-09) ---------- */
+
+/**
+ * One `latch-index serve` process kept open, so a search reuses the open
+ * keyword index, the meaning index and the loaded embedding model instead of
+ * starting a process each time. Searches go by words AND meaning
+ * (src/semantic.rs). Events (meaning-index progress) go to `onEvent`.
+ *
+ * Start it with startIndexServer(); searchHybrid() then uses it, and falls
+ * back to the one-shot keyword search while it is not running.
+ */
+let server = null;
+
+export function startIndexServer({ onEvent = () => {} } = {}) {
+  if (server) return server;
+  const bin = indexBin();
+  if (!bin) return null;
+  let child;
+  try {
+    child = spawn(bin, ['serve'], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  } catch {
+    return null;
+  }
+  const pending = new Map();
+  let seq = 0;
+  let buf = '';
+  const s = {
+    child,
+    ready: false,
+    call(op, args = {}, timeoutMs = 15000) {
+      return new Promise((resolve) => {
+        if (!s.alive) { resolve(null); return; }
+        const id = ++seq;
+        const timer = setTimeout(() => { pending.delete(id); resolve(null); }, timeoutMs);
+        pending.set(id, (v) => { clearTimeout(timer); resolve(v); });
+        try { child.stdin.write(`${JSON.stringify({ id, op, ...args })}\n`); } catch { pending.delete(id); clearTimeout(timer); resolve(null); }
+      });
+    },
+    alive: true,
+  };
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (d) => {
+    buf += d;
+    let nl;
+    while ((nl = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      let j;
+      try { j = JSON.parse(line); } catch { continue; }
+      if (j.id != null && pending.has(j.id)) { const r = pending.get(j.id); pending.delete(j.id); r(j); continue; }
+      if (j.ev === 'ready') s.ready = true;
+      if (j.ev) onEvent(j);
+    }
+  });
+  const gone = () => {
+    s.alive = false;
+    for (const r of pending.values()) r(null);
+    pending.clear();
+    if (server === s) server = null;
+  };
+  child.on('exit', gone);
+  child.on('error', gone);
+  server = s;
+  return s;
+}
+
+export function stopIndexServer() {
+  if (!server) return;
+  try { server.child.stdin.end(`${JSON.stringify({ op: 'quit' })}\n`); } catch { /* gone */ }
+  server = null;
+}
+
+/**
+ * Sessions matching `query` by words and by meaning, best first:
+ * { sessions: [{ session, sources: ['words'|'meaning'], hits, kind, snippet, latest, file }],
+ *   terms, semantic, passages, elapsed_ms }. Falls back to the keyword-only
+ * search (with semantic: false) when the server is not running.
+ */
+export async function searchHybrid(query, { limit = 80 } = {}) {
+  const q = String(query || '').trim();
+  if (!q) return null;
+  if (server?.alive) {
+    const r = await server.call('search', { query: q, limit });
+    if (r?.ok) return r;
+  }
+  const r = await searchIndex(q, { limit });
+  return r ? { ...r, semantic: false, sessions: r.sessions.map((x) => ({ ...x, sources: ['words'] })) } : null;
+}
+
+/** Keyword and meaning update in the server (progress arrives as events); false when no server. */
+export async function updateViaServer() {
+  if (!server?.alive) return false;
+  const r = await server.call('update', {}, 10000);
+  return Boolean(r?.ok);
+}
+
 /** Short label for where in a conversation a match was found. */
 export function kindLabel(kind = '') {
   const agent = kind.startsWith('agent-');

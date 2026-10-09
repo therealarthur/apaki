@@ -10,7 +10,7 @@ import { render } from 'ink';
 import { useState } from 'react';
 import { childEnv, glassCredential } from '../auth.js';
 import { SessionRunner } from '../runner.js';
-import { releaseLock, rememberCreated, takeLock, windowsWith } from '../sessions.js';
+import { lockStolen, releaseLock, rememberCreated, takeLock, windowsWith } from '../sessions.js';
 import { Chat, ChatStore } from './chat.js';
 import { h } from './components.js';
 import { PickerScreen, makeLoader } from './picker.js';
@@ -96,6 +96,8 @@ export function runApp(o) {
         onMessage: () => {},
         onStderr: o.onStderr,
       });
+      // A takeover from Apaki or another latch stops this chat from writing.
+      runner.lockGuard = () => (lockedId ? lockStolen(lockedId) : null);
       // A session started here: lock it and remember it for the picker.
       runner.onNewSession = (id) => {
         rememberCreated(id);

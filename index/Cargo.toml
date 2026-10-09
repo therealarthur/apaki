@@ -12,6 +12,10 @@ rayon = "1.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tantivy = "0.26"
+# The meaning index (src/semantic.rs): bge-small-en-v1.5 through ONNX Runtime,
+# on the GPU with DirectML when there is one. Static build, no DLL to ship.
+fastembed = { version = "7.1.1", default-features = false, features = ["ort-download-binaries-native-tls", "hf-hub-native-tls", "directml"] }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["directml"] }
 
 [profile.release]
 opt-level = 3

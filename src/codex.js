@@ -10,11 +10,33 @@
 
 import fs from 'node:fs';
 
-const HEAD_BYTES = 512 * 1024;
+const HEAD_BYTES = 2 * 1024 * 1024; // AGENTS.md and plugin lists can come first
 const INJECTED = /^\s*(# AGENTS\.md instructions|<environment_context>|<user_instructions>|<INSTRUCTIONS>|<turn_aborted>)/;
 
 export function isCodexId(id) {
   return String(id || '').startsWith('codex:');
+}
+
+/**
+ * The words a person typed in a Codex user message, or '' when it is only
+ * injected context. Codex wraps some prompts in tags (2026-10-09: titles read
+ * "Codex: <realtime_delegation> <input>..." and "<recommended_plugins> Here is
+ * a list..."): a delegation's <input> is the real request; any other leading
+ * tag block is context and is dropped.
+ */
+export function codexPromptText(raw) {
+  let t = String(raw || '').trim();
+  if (!t || INJECTED.test(t)) return '';
+  const input = t.match(/<input>([\s\S]*?)(<\/input>|$)/);
+  if (input) t = input[1];
+  for (let i = 0; i < 6 && t.startsWith('<'); i++) {
+    const m = t.match(/^<([A-Za-z][\w-]*)[^>]*>[\s\S]*?<\/\1>\s*/);
+    if (!m) break;
+    t = t.slice(m[0].length);
+  }
+  t = t.replace(/<\/?[A-Za-z][\w-]*[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (INJECTED.test(t) || /^# (Global Codex Instructions|AGENTS)/.test(t)) return '';
+  return t.length >= 4 ? t : '';
 }
 
 /** Title (first real prompt), folder and time of a Codex transcript. */
@@ -42,11 +64,21 @@ export function codexMeta(file) {
       meta.cwd = p.cwd || meta.cwd;
       meta.startedAt = Date.parse(p.timestamp || e.timestamp || '') || meta.startedAt;
     } else if (!meta.title && e.type === 'response_item' && p.type === 'message' && p.role === 'user') {
-      const t = (Array.isArray(p.content) ? p.content.map((c) => c.text || '').join(' ') : String(p.content || '')).trim();
-      if (t && !INJECTED.test(t)) meta.title = t.replace(/\s+/g, ' ').slice(0, 140);
+      // One message can hold AGENTS.md, the environment and the real prompt as separate items.
+      const parts = Array.isArray(p.content) ? p.content.map((c) => c.text || '') : [String(p.content || '')];
+      const t = parts.map(codexPromptText).find(Boolean) || '';
+      if (t) meta.title = t.slice(0, 140);
+    }
+    // Worker sessions get their task as tool traffic and have no typed
+    // prompt: their first reply says what they are doing.
+    if (!meta.reply && e.type === 'response_item' && p.type === 'message' && p.role === 'assistant') {
+      const r = (Array.isArray(p.content) ? p.content.map((c) => c.text || '').join(' ') : String(p.content || '')).replace(/\s+/g, ' ').trim();
+      if (r.length >= 8) meta.reply = r.slice(0, 140);
     }
     if (meta.title && meta.cwd) break;
   }
+  if (!meta.title && meta.reply) meta.title = meta.reply;
+  delete meta.reply;
   return meta;
 }
 

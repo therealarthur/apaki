@@ -89,19 +89,58 @@ function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 
+// Who this process is, written into every lock it takes so a blocked window
+// can say who has the session ("latch in a terminal", "Myrlin Apaki").
+// Locks from before 2026-10-09 evening carry only { pid, at }.
+let lockApp = process.env.LATCH_LOCK_APP || 'latch';
+export function setLockApp(app) { lockApp = app; }
+
+const APP_NAMES = { apaki: 'Myrlin Apaki', latch: 'latch', 'latch-relay': 'a latch terminal window' };
+export const lockAppName = (app) => APP_NAMES[app] || 'another latch';
+
 /**
  * Takes the lock for `sessionId`. Returns null on success, or the holder's
  * pid when another live latch holds it. A lock left by a dead process is taken over.
+ * A forced take records who it was taken from, so that holder can tell it lost
+ * the session (see lockStolen).
  */
-export function takeLock(sessionId, { force = false } = {}) {
+export function takeLock(sessionId, { force = false, app = lockApp } = {}) {
   fs.mkdirSync(LOCK_DIR, { recursive: true });
   const file = path.join(LOCK_DIR, `${sessionId}.json`);
+  let from = null;
   try {
     const held = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (!force && held.pid !== process.pid && pidAlive(held.pid)) return held.pid;
+    if (held.pid !== process.pid && pidAlive(held.pid)) {
+      if (!force) return held.pid;
+      from = { pid: held.pid, app: held.app || null, at: held.at || null };
+    }
   } catch { /* no lock or unreadable: take it */ }
-  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+  const rec = { pid: process.pid, app, at: new Date().toISOString() };
+  if (from) rec.takenFrom = from;
+  fs.writeFileSync(file, JSON.stringify(rec));
   return null;
+}
+
+/** The lock record for a session with `alive` filled in, or null when nobody holds it. */
+export function lockInfo(sessionId) {
+  try {
+    const held = JSON.parse(fs.readFileSync(path.join(LOCK_DIR, `${sessionId}.json`), 'utf8'));
+    return { ...held, alive: pidAlive(held.pid), name: lockAppName(held.app) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The live holder that took this session away from process `pid` (default:
+ * this process), or null while `pid` still holds it or nobody else is alive
+ * on it. Writers call it before every message so a takeover can never fork
+ * the conversation.
+ */
+export function lockStolen(sessionId, pid = process.pid) {
+  const held = lockInfo(sessionId);
+  if (!held || held.pid === pid || !held.alive) return null;
+  return held;
 }
 
 export function releaseLock(sessionId) {

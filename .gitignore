@@ -2,3 +2,4 @@ node_modules/
 *.log
 index/target/
 apaki/dist/
+apaki/target-dev/

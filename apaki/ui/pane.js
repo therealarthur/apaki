@@ -187,11 +187,60 @@ export class Pane {
   /* ---------- open ---------- */
 
   /** Opens a session here (null for a new conversation). warm=false waits for the first message to start Claude Code. */
-  open(s, { warm = true } = {}) {
+  open(s, { warm = true, force = false } = {}) {
     const sessionId = s?.id || null;
     if (s?.title) this.setTitle(s.title);
     if (!sessionId) this.setTitle('New conversation');
-    this.send('open', { sessionId, cwd: s?.cwd || this.cwd || null, warm, model: this.model, effort: this.effort, mode: this.mode });
+    this.lockedBy = null;
+    this.lastOpen = s ? { id: s.id, cwd: s.cwd, title: s.title } : null;
+    this.send('open', { sessionId, cwd: s?.cwd || this.cwd || null, warm, force, model: this.model, effort: this.effort, mode: this.mode });
+  }
+
+  /**
+   * The session is held by another window (latch in a terminal, another
+   * Apaki): say who, and offer to take it over here. A takeover stops the
+   * other window before it writes again, so the conversation cannot fork.
+   * `lost` = this pane had it and the other window took it.
+   */
+  showLocked(e, { lost = false } = {}) {
+    const h = e.holder || {};
+    const who = h.name || 'Another window';
+    const when = h.at ? new Date(h.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+    this.lockedBy = h;
+    this.sessionId = e.sessionId || this.sessionId;
+    if (e.title) this.setTitle(e.title);
+    if (e.cwd) this.cwd = e.cwd;
+    this.setCwdLine();
+    this.setBusy(false);
+    this.setStatus('');
+    if (!lost) this.$.T.innerHTML = '';
+    this.$.T.querySelector('.takeover')?.remove();
+    const terminal = h.app === 'latch-relay' || !h.app;
+    const card = el('div', 'takeover', `
+      <div class="tk-kicker">${lost ? 'Taken over' : 'Session in use'}</div>
+      <h3>${lost ? `${esc(who)} took this session` : `Open in ${esc(who)}`}</h3>
+      <p>${lost
+        ? `It moved there${when ? ` at ${esc(when)}` : ''}, so this pane stopped before it could write anything. Take it back to continue here.`
+        : `${esc(who.charAt(0).toUpperCase() + who.slice(1))} has had it since ${esc(when || 'earlier')}${h.pid ? ` (pid ${h.pid})` : ''}. Take it over to work on it here.`}</p>
+      <p class="tk-fine">${terminal
+        ? 'That terminal window is blocked as soon as you take over: its next message is stopped with a note to continue here, so nothing forks.'
+        : 'That window stops before its next message, with a note to continue here, so nothing forks.'} Anything it already did is on disk and loads here.</p>
+      <div class="tk-row"><button class="tk-go">${lost ? 'Take it back' : 'Take over here'}</button><button class="tk-no">${lost ? 'Close pane' : 'Cancel'}</button></div>`);
+    card.querySelector('.tk-go').onclick = () => {
+      this.$.T.innerHTML = '';
+      this.open(this.lastOpen || { id: this.sessionId, cwd: this.cwd, title: this.title }, { warm: true, force: true });
+    };
+    card.querySelector('.tk-no').onclick = () => {
+      if (lost) { this.host.close(this); return; }
+      this.lockedBy = null;
+      this.sessionId = null;
+      this.setTitle('New conversation');
+      this.setCwdLine();
+      this.open(null, { warm: false });
+    };
+    this.$.T.append(card);
+    this.scrollDown(true);
+    this.host.changed(this);
   }
 
   showEmpty() {
@@ -231,6 +280,7 @@ export class Pane {
   addAssistant(text) {
     if (!text || !text.trim()) return null;
     const a = el('div', 'turn-assistant', md(text));
+    this.host.linkSessions?.(a);
     this.$.T.append(a);
     this.scrollDown();
     return a;
@@ -291,7 +341,13 @@ export class Pane {
       if (m.type === 'user' && typeof c === 'string' && (/^\s*<(command-|local-command-|system-reminder)/.test(c))) continue;
       this.renderBlocks(m.type, c);
     }
+    this.flushOpenNotes();
     this.scrollDown(true);
+  }
+
+  flushOpenNotes() {
+    for (const [text, tone] of this.openNotes || []) this.note(text, tone);
+    this.openNotes = [];
   }
 
   /* ---------- live SDK messages ---------- */
@@ -325,7 +381,7 @@ export class Pane {
         if (!this.streams.has(key)) key = [...this.streams.keys()].find((k) => k.startsWith(`${id}:`)) || key;
         const live = this.streams.get(key);
         if (b.type === 'text') {
-          if (live) { live.classList.remove('streaming'); live.innerHTML = md(b.text); this.streams.delete(key); } else this.addAssistant(b.text);
+          if (live) { live.classList.remove('streaming'); live.innerHTML = md(b.text); this.host.linkSessions?.(live); this.streams.delete(key); } else this.addAssistant(b.text);
         } else if (b.type === 'tool_use') {
           this.addTool(b);
         }
@@ -382,6 +438,8 @@ export class Pane {
 
   submit() {
     if (this.busy) { this.send('interrupt'); this.setStatus('Stopping…'); return; }
+    // Held elsewhere: the card's button is the way forward, not a message.
+    if (this.lockedBy) { this.$.T.querySelector('.takeover')?.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }], { duration: 220, easing: 'ease-out' }); return; }
     const { input } = this.$;
     const text = input.value.trim();
     if (!text && !this.attachments.length) return;
@@ -468,7 +526,10 @@ export class Pane {
 
   handle(e) {
     switch (e.ev) {
+      case 'locked': this.showLocked(e); break;
+      case 'taken_over': this.showLocked(e, { lost: true }); break;
       case 'opened':
+        this.lockedBy = null;
         this.sessionId = e.sessionId; this.cwd = e.cwd; this.billing = e.billing;
         this.streams.clear(); this.tools.clear();
         this.setTitle(e.title || 'New conversation');
@@ -476,7 +537,12 @@ export class Pane {
         this.renderBilling();
         if (e.sessionId) this.$.T.innerHTML = '';
         else this.showEmpty();
-        if (e.terminal?.length) this.note(`This session is also open in a Claude Code terminal window (${e.terminal.map((t) => t.name).join(', ')}). Stop typing there while you work here; that window must /resume to see these turns.`, 'warn');
+        // Notes about how this session opened go below its history, which
+        // arrives next and redraws the transcript (they were wiped before).
+        this.openNotes = [];
+        if (e.tookOver) this.openNotes.push(['Taken over: the other window is stopped before its next message, so this conversation continues only here.', '']);
+        if (e.terminal?.length) this.openNotes.push([`This session is also open in a Claude Code terminal window (${e.terminal.map((t) => t.name).join(', ')}). Stop typing there while you work here; that window must /resume to see these turns.`, 'warn']);
+        if (!e.sessionId) this.flushOpenNotes();
         this.send('commands');
         this.host.changed(this);
         break;

@@ -47,7 +47,7 @@ const DRAG_SESSION = 'application/x-apaki-session';
 const DRAG_PANE = 'application/x-apaki-pane';
 
 const S = {
-  sessions: [], folders: [], view: 'all', query: '', results: null, searchInfo: '',
+  sessions: [], folders: [], view: 'all', query: '', results: null, searchInfo: '', ai: null, asking: null, lastSearch: null,
   voice: false, seq: 0, engineLost: false,
   defaults: { model: 'claude-opus-5-5', effort: 'xhigh', mode: 'bypassPermissions', billing: null },
   tabs: [], active: null, panes: new Map(), drag: null,
@@ -72,12 +72,18 @@ const kindLabel = (kind = '', codex = false) => {
   const who = { prompt: 'you', reply: codex ? 'codex' : 'claude', tool: 'tool call', result: 'tool output' }[base] || base;
   return agent ? `subagent ${who}` : who;
 };
+/**
+ * Bolds the words the search actually used (the server's terms, without
+ * filler like "the" or "find"), at word starts only, so "in" never lights up
+ * inside "leading".
+ */
 function highlight(text, query) {
   let h = esc(text || '');
-  for (const w of query.toLowerCase().split(/\s+/).filter((x) => x.length > 1)) {
-    h = h.replace(new RegExp(`(${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'), '<b>$1</b>');
-  }
-  return h;
+  const terms = S.searchTerms?.length ? S.searchTerms : query.split(/\s+/);
+  const words = [...new Set(terms.flatMap((t) => String(t).replace(/"/g, '').toLowerCase().split(/[^\p{L}\p{N}]+/u)).filter((w) => w.length > 2))];
+  if (!words.length) return h;
+  const re = new RegExp(`(^|[^\\p{L}\\p{N}])(${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'giu');
+  return h.replace(re, '$1<b>$2</b>');
 }
 
 /* ---------- panes and tabs ---------- */
@@ -113,6 +119,7 @@ const host = {
     document.body.classList.add('dragging');
   },
   dragEnd: () => endDrag(),
+  linkSessions: (node) => linkSessions(node),
 };
 
 function createPane(settings = {}) {
@@ -596,7 +603,7 @@ function folderDropTarget(node, onSession) {
 function renderFolders() {
   const box = $('folders');
   box.innerHTML = '';
-  const head = el('div', 'folders-head', '<span>Folders</span>');
+  const head = el('div', 'sec-head folders-head', `<span class="sec-t">Folders</span><span class="sec-n">${S.folders.length || ''}</span>`);
   const add = el('button', 'folder-add', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>');
   add.title = 'New folder (drop a session here to make one with it)';
   add.onclick = () => startNewFolder();
@@ -728,12 +735,17 @@ function renderRail() {
   }
   let rows;
   if (S.results) {
-    rows = S.results.filter((r) => inView(r.item)).map((r) => ({ ...r.item, kind: r.kind, snippet: r.snippet, hits: r.hits }));
+    rows = S.results.filter((r) => inView(r.item)).map((r) => ({ ...r.item, kind: r.kind, snippet: r.snippet, hits: r.hits, why: r.why || '', sources: r.sources || null }));
   } else {
     rows = S.sessions.filter(inView).sort((a, b) => (Boolean(b.terminal) - Boolean(a.terminal)) || (b.lastModified - a.lastModified));
   }
   renderFolders();
-  $('searchState').textContent = S.results ? S.searchInfo : (S.folders.find((f) => f.id === S.view) ? `In ${S.folders.find((f) => f.id === S.view).name}` : '');
+  const folder = S.folders.find((f) => f.id === S.view);
+  $('sessionsTitle').textContent = S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : 'Sessions';
+  $('sessionsCount').textContent = String(Math.min(rows.length, 400));
+  $('clearView').hidden = !folder;
+  $('searchState').textContent = S.results ? S.searchInfo : '';
+  $('searchState').hidden = !S.results;
   const list = $('sessions');
   list.innerHTML = '';
   const folderName = (id) => S.folders.find((f) => f.id === id)?.name;
@@ -746,7 +758,9 @@ function renderRail() {
       ago(s.lastModified), esc(short(s.cwd)),
       S.view === 'all' && s.folder ? `▸ ${esc(folderName(s.folder) || '')}` : '',
     ].filter(Boolean).join(' · ');
-    li.innerHTML = `<div class="t">${esc(s.title || '(untitled)')}</div><div class="m">${meta}</div>${s.snippet ? `<div class="snip">${esc(kindLabel(s.kind, s.codex))}: ${highlight(s.snippet, S.query)}${s.hits > 1 ? ` <span class="mono">(${s.hits})</span>` : ''}</div>` : ''}`;
+    const byMeaning = s.sources && !s.sources.includes('words');
+    const snip = s.snippet ? `<div class="snip">${byMeaning ? '<span class="by-meaning" title="Found by what it is about, not by your words">by meaning</span> ' : ''}${esc(kindLabel(s.kind, s.codex))}: ${highlight(s.snippet, S.query)}${s.hits > 1 ? ` <span class="mono">(${s.hits})</span>` : ''}</div>` : '';
+    li.innerHTML = `<div class="t">${esc(s.title || '(untitled)')}</div><div class="m">${meta}</div>${s.why ? `<div class="why">${esc(s.why)}</div>` : snip}`;
     li.onclick = (e) => openFromRail(s, e);
     li.oncontextmenu = (e) => sessionMenu(s, e);
     li.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); openFromRail(s, { ctrlKey: true }); } };
@@ -764,6 +778,13 @@ function renderRail() {
     list.append(li);
   }
   if (!rows.length) list.append(el('li', 'note', S.results ? 'Nothing matches in this view.' : 'No sessions here yet.'));
+  if (S.results && S.query) {
+    const dig = el('button', 'dig', '<b>Dig deeper in a dedicated session</b>Claude searches every transcript with its tools and reports what it finds.');
+    dig.onclick = () => digDeeper(S.query);
+    const li = el('li', 'dig-row');
+    li.append(dig);
+    list.append(li);
+  }
   renderRailMarks();
 }
 
@@ -794,17 +815,109 @@ function openFromRail(s, e = {}) {
 let searchTimer = null;
 $('q').addEventListener('input', (e) => {
   S.query = e.target.value.trim();
+  S.ai = null;
   clearTimeout(searchTimer);
+  renderLens();
   if (!S.query) { S.results = null; renderRail(); return; }
   searchTimer = setTimeout(() => send('search', { query: S.query }), SEARCH_DEBOUNCE_MS);
 });
-$('q').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; S.query = ''; S.results = null; renderRail(); } });
+$('q').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.target.value = ''; S.query = ''; S.results = null; S.ai = null; renderLens(); renderRail(); }
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && S.query) { e.preventDefault(); askClaude(); }
+});
+
+/* ---------- advanced search (Arthur, 2026-10-09) ---------- */
+
+// Three depths, cheapest first:
+//   1. As you type (free, local, about a tenth of a second): the keyword
+//      index and the meaning index together, so "marketing and growth on
+//      forge.myrlin.io" also finds GA4 funnels and landing-page work.
+//   2. Ask Claude (Ctrl+Enter, about a cent, a few seconds): Claude turns the
+//      question into searches, the local indexes run them, and Claude reads
+//      the best candidates and keeps the ones that fit, with a reason each.
+//      Billed to the focused pane's account; no session is saved.
+//   3. Dig deeper: a dedicated Claude Code session that searches with its
+//      own tools; it says so before it opens.
+function billingName() {
+  return focusedPane()?.billing?.name || S.defaults.billing?.name || 'the live account';
+}
+
+function renderLens() {
+  const lens = $('lens');
+  lens.hidden = !S.query;
+  if (!S.query) return;
+  const ask = $('ask');
+  ask.classList.toggle('busy', Boolean(S.asking));
+  ask.querySelector('span').textContent = S.asking ? 'Asking…' : 'Ask Claude';
+  ask.title = `Claude turns your question into searches, reads the best matches and keeps the sessions that fit, with a reason for each. Billed to ${billingName()}, about a cent. Ctrl+Enter`;
+  const info = $('lensInfo');
+  if (S.asking) { info.innerHTML = esc(S.asking); return; }
+  if (S.ai) { info.innerHTML = `<b>Claude</b> · ${esc(S.ai.summary)}`; return; }
+  const r = S.lastSearch;
+  info.innerHTML = r && r.query === S.query ? `<b>${r.n}</b> · ${esc(r.how)} · ${r.ms} ms` : 'Searching…';
+}
+
+function askClaude() {
+  if (!S.query || S.asking) return;
+  S.asking = 'Claude is reading your question…';
+  renderLens();
+  send('askSearch', { query: S.query, paneId: focusedPane()?.id || null });
+}
+$('ask').onclick = askClaude;
+
+function digDeeper(query) {
+  const who = billingName();
+  sheet(`<h2>Dig deeper</h2>
+    <p>This opens a <b>dedicated Claude Code session</b> in a new tab. Claude searches every transcript on this PC with its own tools (the index, grep, reading files), follows leads, and reports the sessions that match, with ids you can click to open.</p>
+    <p class="note">It runs on Opus 5.5 billed to <b>${esc(who)}</b>, usually a few minutes and between ten cents and a couple of dollars. It is a normal session: keep it, or delete it when you are done. It changes no files.</p>
+    <div class="q">Looking for</div><div class="from" style="white-space:normal">${esc(query)}</div>
+    <div class="row"><button data-k="x">Cancel</button><button class="primary" data-k="go">Open search session</button></div>`, (root, close) => {
+    root.querySelector('[data-k=x]').onclick = close;
+    root.querySelector('[data-k=go]').onclick = () => { close(); send('digPrompt', { query, candidates: (S.results || []).slice(0, 15).map((r) => r.item.id) }); };
+  });
+}
+
+/** Session ids in a reply become links that open the session in a new tab. */
+const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g;
+function linkSessions(node) {
+  const known = new Map(S.sessions.map((x) => [x.id, x]));
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+  const hits = [];
+  for (let t = walker.nextNode(); t; t = walker.nextNode()) { UUID_RE.lastIndex = 0; if (UUID_RE.test(t.nodeValue)) hits.push(t); }
+  for (const t of hits) {
+    if (t.parentElement?.closest('a, pre')) continue;
+    const v = t.nodeValue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    for (const m of v.matchAll(UUID_RE)) {
+      const s = known.get(m[0]);
+      if (!s) continue;
+      frag.append(v.slice(last, m.index));
+      const a = el('a', 'sess-link', esc(m[0]));
+      a.href = '#';
+      a.title = `Open "${s.title}" in a new tab`;
+      a.onclick = (e) => { e.preventDefault(); openFromRail(s, { ctrlKey: true }); };
+      frag.append(a);
+      last = m.index + m[0].length;
+    }
+    if (!last) continue;
+    frag.append(v.slice(last));
+    t.replaceWith(frag);
+  }
+}
 
 $('new').onclick = () => newConversation(focusedPane());
+$('clearView').onclick = () => { S.view = 'all'; renderRail(); };
 
 function paneFolder(p, v) {
   if (v === '__new') { startNewFolder(p.sessionId); return; }
   send('folder', { action: 'move', sessionId: p.sessionId, folderId: v || null });
+}
+
+/** The footer line: meaning-index progress while it builds, else the index state. */
+function renderIndexState() {
+  const building = /%/.test(S.meaningLine || '');
+  $('indexState').textContent = building ? S.meaningLine : [S.indexLine, S.meaningLine].filter(Boolean).join(' · ') || 'Loading…';
 }
 
 /* ---------- sound ---------- */
@@ -1035,7 +1148,7 @@ function restore() {
 
 /* ---------- engine events ---------- */
 
-const PANE_EVENTS = new Set(['opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings']);
+const PANE_EVENTS = new Set(['locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings']);
 
 // Registered before anything is sent: `listen` is async, and events that
 // arrive before it resolves are lost (a reload lost restored panes' opens).
@@ -1045,6 +1158,7 @@ await listen('engine', ({ payload: e }) => {
     if (!p) return; // a pane closed while its event was on the way
     p.handle(e);
     if (e.ev === 'result') cameBack(p, 'done');
+    if (e.ev === 'taken_over') cameBack(p, 'ask');
     if (e.ev === 'opened' || e.ev === 'session_id') { p.renderFolderSelect(S.folders, S.sessions); renderTabs(); renderRailMarks(); save(); }
     return;
   }
@@ -1062,7 +1176,15 @@ await listen('engine', ({ payload: e }) => {
       send('sessions');
       break;
     case 'index':
-      $('indexState').textContent = e.ok ? `Index up to date · ${e.stats?.blocks_added ?? 0} new blocks · ${(e.ms / 1000).toFixed(1)}s` : 'Conversation index unavailable; search uses titles only.';
+      S.indexLine = e.ok ? `Words index up to date · ${e.stats?.blocks_added ?? 0} new · ${(e.ms / 1000).toFixed(1)}s` : 'Conversation index unavailable; search uses titles only.';
+      renderIndexState();
+      break;
+    case 'meaning':
+      // The meaning index (embeddings): its first build takes a few minutes on the GPU.
+      if (e.stage === 'loading') S.meaningLine = 'Meaning index: loading the model…';
+      else if (e.stage === 'embedding' && e.total) S.meaningLine = e.total > 200 ? `Meaning index ${Math.round((e.done / e.total) * 100)}% · ${e.done.toLocaleString()} of ${e.total.toLocaleString()} passages · ${e.device === 'gpu' ? 'GPU' : 'CPU'}` : '';
+      else if (e.stage === 'ready') S.meaningLine = e.result?.ok ? `Meaning index ready · ${(e.result.passages || 0).toLocaleString()} passages` : 'Meaning index unavailable; searching by words';
+      renderIndexState();
       break;
     case 'sessions':
       if (e.voice !== undefined) { S.voice = Boolean(e.voice); for (const p of S.panes.values()) p.setVoice(S.voice); }
@@ -1081,11 +1203,37 @@ await listen('engine', ({ payload: e }) => {
       send('sessions');
       break;
     case 'search':
-      if (e.query !== S.query) break;
+      if (e.query !== S.query || S.ai) break;
       S.results = e.results;
-      S.searchInfo = e.deep ? `${e.results.length} sessions · every conversation, subagent and Codex session searched in ${e.elapsed} ms` : `${e.results.length} sessions by title (index unavailable)`;
+      S.searchTerms = e.terms || null;
+      S.lastSearch = { query: e.query, n: e.results.length, ms: e.elapsed, how: e.semantic ? 'words + meaning' : e.deep ? 'words' : 'titles only' };
+      S.searchInfo = e.deep ? `Every conversation, subagent and Codex session${e.semantic ? ', matched by words and by meaning' : ''}. Not it? Ask Claude (Ctrl+Enter).` : 'The conversation index is unavailable; matching titles only.';
+      renderLens();
       renderRail();
       break;
+    case 'askProgress':
+      if (e.query !== S.query) break;
+      S.asking = e.text;
+      renderLens();
+      break;
+    case 'askSearch':
+      if (e.query !== S.query) break;
+      S.asking = null;
+      if (e.error) { S.ai = null; renderLens(); $('lensInfo').innerHTML = `<b>Claude</b> · ${esc(e.error)}`; break; }
+      S.searchTerms = [...(S.searchTerms || []), ...(e.terms || [])];
+      S.ai = { summary: `${e.results.length} of ${e.considered} fit · ${e.model} on ${e.billing} · ${(e.ms / 1000).toFixed(1)} s${e.cost != null ? ` · $${e.cost.toFixed(3)}` : ''}` };
+      S.results = e.results;
+      S.searchInfo = e.note || (e.terms?.length ? `Searched for: ${e.terms.join(' · ')}` : '');
+      renderLens();
+      renderRail();
+      break;
+    case 'digReady': {
+      // A dedicated search session: a new tab, its first message already written and sent.
+      const t = addTab();
+      const p = S.panes.get(t.focused);
+      if (p) { p.$.input.value = e.prompt; p.autosize(); p.submit(); }
+      break;
+    }
     case 'open_elsewhere': {
       const p = S.panes.get(e.paneId);
       const other = S.panes.get(e.otherPane);
@@ -1118,6 +1266,27 @@ await listen('engine', ({ payload: e }) => {
     default: break;
   }
 });
+
+/* ---------- window buttons (the OS title bar is off) ---------- */
+
+// Arthur, 2026-10-09: the title bar "needs to not be a separate section -
+// should seamlessly be a part of the application". The brand row and the tab
+// row are the top of the window (data-tauri-drag-region on their empty space:
+// drag moves, double-click maximizes); these are its three buttons.
+{
+  const win = window.__TAURI__.window.getCurrentWindow();
+  const box = $('winctl');
+  box.querySelector('[data-w=min]').onclick = () => win.minimize();
+  box.querySelector('[data-w=max]').onclick = () => win.toggleMaximize();
+  box.querySelector('[data-w=close]').onclick = () => win.close();
+  const syncMax = async () => {
+    const max = await win.isMaximized().catch(() => false);
+    document.body.classList.toggle('maximized', max);
+    box.querySelector('[data-w=max]').title = max ? 'Restore' : 'Maximize';
+  };
+  win.onResized(syncMax);
+  syncMax();
+}
 
 /* ---------- start ---------- */
 

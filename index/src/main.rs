@@ -23,7 +23,18 @@
 //!   latch-index update            bring the index up to date, print JSON stats
 //!   latch-index search <words>    best sessions as JSON (--limit N, default 40)
 //!   latch-index status            entries, files, size on disk
-//! Env: LATCH_INDEX_DIR (default ~/.claude/latch/index), CLAUDE_CONFIG_DIR.
+//!   latch-index serve             stay running: JSON commands on stdin, one
+//!                                 JSON reply per line (search by words and
+//!                                 meaning, update, status); see serve()
+//!   latch-index hybrid <words>    one search by words and meaning (testing)
+//! Env: LATCH_INDEX_DIR (default ~/.claude/latch/index), CLAUDE_CONFIG_DIR,
+//!      LATCH_MODEL_DIR (embedding model, default ~/.claude/latch/models),
+//!      LATCH_EMBED_CPU=1 (never use the GPU).
+//!
+//! The meaning index (semantic.rs, 2026-10-09) lives in ~/.claude/latch/semantic
+//! (LATCH_SEMANTIC_DIR) and is searched together with the keyword index.
+
+mod semantic;
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -649,6 +660,384 @@ fn search(query: &str, limit: usize) -> Result<Value> {
     }))
 }
 
+/* ---------- search by words and meaning (2026-10-09) ---------- */
+
+/// Words that say how to search rather than what for ("find the session
+/// where we talked about..."), dropped before the keyword search. The meaning
+/// search still sees the whole question.
+const FILLER: &[&str] = &[
+    "a", "about", "after", "all", "also", "an", "and", "any", "are", "around", "as", "at", "be", "been", "before", "but", "by",
+    "can", "chat", "chats", "conversation", "conversations", "could", "did", "discussed", "do", "does", "doing", "find", "for",
+    "from", "had", "has", "have", "how", "i", "if", "in", "into", "involved", "involving", "is", "it", "its", "just", "like",
+    "looking", "me", "mentioned", "my", "of", "on", "one", "ones", "or", "our", "related", "relating", "session", "sessions",
+    "show", "so", "some", "specifically", "stuff", "talked", "that", "the", "their", "them", "there", "these", "thing", "things",
+    "this", "those", "thread", "threads", "to", "us", "want", "was", "we", "were", "what", "when", "where", "which", "while",
+    "who", "why", "will", "with", "work", "worked", "working", "would", "you", "your",
+];
+
+/// The keyword searches for a question: one per meaningful word, a phrase for
+/// dotted or hyphenated names (forge.myrlin.io, claude-latch), quoted phrases
+/// kept whole. At most 10.
+fn lexical_terms(q: &str) -> Vec<String> {
+    let mut terms: Vec<String> = Vec::new();
+    let mut rest = String::new();
+    for (i, part) in q.split('"').enumerate() {
+        if i % 2 == 1 {
+            let p = part.trim();
+            if !p.is_empty() {
+                terms.push(format!("\"{p}\""));
+            }
+        } else {
+            rest.push(' ');
+            rest.push_str(part);
+        }
+    }
+    for raw in rest.split_whitespace() {
+        let w = raw.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+        if w.is_empty() || FILLER.contains(&w.as_str()) || (w.len() < 2 && !w.chars().all(|c| c.is_ascii_digit())) {
+            continue;
+        }
+        let pieces: Vec<&str> = w.split(|c: char| !c.is_alphanumeric()).filter(|s| !s.is_empty()).collect();
+        // Dots, hyphens and underscores join a name (forge.myrlin.io,
+        // claude-latch): one phrase. Anything else (a slash) separates words.
+        let named = pieces.len() > 1 && w.contains(['.', '-', '_']);
+        let found: Vec<String> = if named {
+            vec![format!("\"{}\"", pieces.join(" "))]
+        } else {
+            pieces.iter().filter(|p| !FILLER.contains(p) && (p.len() > 1 || p.chars().all(|c| c.is_ascii_digit()))).map(|p| p.to_string()).collect()
+        };
+        for t in found {
+            if !terms.contains(&t) {
+                terms.push(t);
+            }
+        }
+    }
+    terms.truncate(10);
+    terms
+}
+
+struct LexSession {
+    score: f32,
+    coverage: usize,
+    hits: u32,
+    best: (f32, tantivy::DocAddress),
+    /// The best prompt or reply (coverage, score, doc): shown as the snippet
+    /// when it matches nearly as many terms, since a raw tool call reads poorly.
+    spoken: Option<(usize, f32, tantivy::DocAddress)>,
+    latest: String,
+}
+
+/// Sessions by words, scored by their best PASSAGE: how many of the terms
+/// appear together in one prompt, reply or tool block, then how well. A
+/// session where one reply talks about forge.myrlin.io marketing and growth
+/// beats a 15 MB session that mentions each word somewhere. A second signal,
+/// how many blocks match at least two terms, says how much of the session is
+/// about it.
+fn lexical_rank(searcher: &tantivy::Searcher, parser: &QueryParser, f: &Fields, terms: &[String]) -> Result<Vec<(String, LexSession)>> {
+    use tantivy::collector::DocSetCollector;
+    use tantivy::query::{BooleanQuery, Occur, Query};
+    let mut sets = Vec::new();
+    let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+    for term in terms {
+        let (q, _) = parser.parse_query_lenient(term);
+        sets.push(searcher.search(&q, &DocSetCollector)?);
+        clauses.push((Occur::Should, q));
+    }
+    // Blocks ranked by BM25 over all terms (more terms matched, higher).
+    let any = BooleanQuery::new(clauses);
+    let hits = searcher.search(&any, &TopDocs::with_limit(6000).order_by_score())?;
+    let mut sessions: HashMap<String, LexSession> = HashMap::new();
+    for (score, addr) in hits {
+        let coverage = sets.iter().filter(|s| s.contains(&addr)).count();
+        let d: TantivyDocument = searcher.doc(addr)?;
+        let session = d.get_first(f.session).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let kind = d.get_first(f.kind).and_then(|v| v.as_str()).unwrap_or("");
+        let ts = d.get_first(f.ts).and_then(|v| v.as_str()).unwrap_or("");
+        let spoken = kind == "prompt" || kind == "reply";
+        let w = if spoken { score * 1.4 } else { score };
+        let e = sessions.entry(session).or_insert(LexSession { score: 0.0, coverage: 0, hits: 0, best: (0.0, addr), spoken: None, latest: String::new() });
+        e.hits += 1;
+        if spoken && e.spoken.map_or(true, |(c, sc, _)| coverage > c || (coverage == c && w > sc)) {
+            e.spoken = Some((coverage, w, addr));
+        }
+        if ts > e.latest.as_str() {
+            e.latest = ts.to_string();
+        }
+        // Best passage: most terms together first, then score.
+        if coverage > e.coverage || (coverage == e.coverage && w > e.score) {
+            e.coverage = coverage;
+            e.score = w;
+            e.best = (w, addr);
+        }
+    }
+    let mut ranked: Vec<(String, LexSession)> = sessions.into_iter().collect();
+    let key = |s: &LexSession| s.score * (1.0 + (s.hits as f32).ln() * 0.05);
+    ranked.sort_by(|a, b| b.1.coverage.cmp(&a.1.coverage).then(key(&b.1).partial_cmp(&key(&a.1)).unwrap_or(std::cmp::Ordering::Equal)));
+    Ok(ranked)
+}
+
+/// What a search by words and meaning needs open: the keyword index reader,
+/// the meaning index, and the query embedder (CPU; ~15 ms per query).
+struct Searchers {
+    index: Option<(Index, tantivy::IndexReader)>,
+    store: std::sync::Arc<std::sync::RwLock<semantic::Store>>,
+    embedder: std::sync::Arc<std::sync::Mutex<Option<fastembed::TextEmbedding>>>,
+}
+
+impl Searchers {
+    fn open_index() -> Option<(Index, tantivy::IndexReader)> {
+        let dir = index_dir();
+        if !dir.join("meta.json").exists() {
+            return None;
+        }
+        let index = Index::open_in_dir(&dir).ok()?;
+        let reader = index.reader().ok()?;
+        Some((index, reader))
+    }
+}
+
+/// Reciprocal-rank fusion of the word ranking and the meaning ranking, per
+/// session. A session found both ways rises; one found only by meaning still
+/// shows, so "marketing and growth" finds GA4 and landing-page work.
+fn hybrid(s: &mut Searchers, query: &str, limit: usize) -> Result<Value> {
+    // Small K: the top of each ranking counts much more than its tail.
+    const K: f32 = 20.0;
+    let started = Instant::now();
+    if s.index.is_none() {
+        s.index = Searchers::open_index();
+    }
+    let terms = lexical_terms(query);
+    let (_, f) = schema();
+    let mut lex: Vec<(String, LexSession)> = Vec::new();
+    let mut searcher_opt = None;
+    if let Some((index, reader)) = &s.index {
+        reader.reload().ok();
+        let searcher = reader.searcher();
+        if !terms.is_empty() {
+            let parser = QueryParser::for_index(index, vec![f.text]);
+            lex = lexical_rank(&searcher, &parser, &f, &terms)?;
+        }
+        searcher_opt = Some(searcher);
+    }
+    let lex_ms = started.elapsed().as_millis() as u64;
+
+    let mut sem: Vec<(String, f32, semantic::ChunkMeta)> = Vec::new();
+    let mut semantic_on = false;
+    let qv = {
+        let mut guard = s.embedder.lock().unwrap();
+        match guard.as_mut() {
+            Some(m) => semantic::embed_query(m, query).ok(),
+            None => None,
+        }
+    };
+    let store = s.store.read().unwrap();
+    if let Some(qv) = qv {
+        if store.len() > 0 {
+            semantic_on = true;
+            sem = store.search(&qv, 200);
+        }
+    }
+
+    struct Fused {
+        score: f32,
+        lex: Option<usize>,
+        sem: Option<usize>,
+    }
+    let mut fused: HashMap<String, Fused> = HashMap::new();
+    for (r, (session, _)) in lex.iter().take(300).enumerate() {
+        fused.entry(session.clone()).or_insert(Fused { score: 0.0, lex: None, sem: None }).lex = Some(r);
+    }
+    for (r, (session, _, _)) in sem.iter().enumerate() {
+        fused.entry(session.clone()).or_insert(Fused { score: 0.0, lex: None, sem: None }).sem = Some(r);
+    }
+    // A long question in plain words leans on meaning; a few names lean on words.
+    let wordy = query.split_whitespace().count() >= 6;
+    let w_sem = if wordy { 1.25 } else { 0.9 };
+    for v in fused.values_mut() {
+        v.score = v.lex.map_or(0.0, |r| 1.0 / (K + r as f32)) + w_sem * v.sem.map_or(0.0, |r| 1.0 / (K + r as f32));
+    }
+    let mut ranked: Vec<(String, Fused)> = fused.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.score.partial_cmp(&a.1.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    let words = query_words(query);
+    let mut out = Vec::new();
+    for (session, fz) in ranked.into_iter().take(limit) {
+        let mut sources = Vec::new();
+        let mut snippet_text = String::new();
+        let mut kind = String::new();
+        let mut hits = 0u32;
+        let mut latest = String::new();
+        let mut file = String::new();
+        if let (Some(r), Some(searcher)) = (fz.lex, searcher_opt.as_ref()) {
+            sources.push("words");
+            let ls = &lex[r].1;
+            hits = ls.hits;
+            latest = ls.latest.clone();
+            let pick = match ls.spoken { Some((c, _, a)) if c + 1 >= ls.coverage => a, _ => ls.best.1 };
+            let d: TantivyDocument = searcher.doc(pick)?;
+            file = d.get_first(f.file).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let offset = d.get_first(f.offset).and_then(|v| v.as_u64()).unwrap_or(0);
+            kind = d.get_first(f.kind).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            snippet_text = snippet(&file, offset, &kind, &words);
+        }
+        if let Some(r) = fz.sem {
+            sources.push("meaning");
+            if snippet_text.is_empty() {
+                let c = sem[r].2;
+                kind = semantic::kind_name(c.kind).to_string();
+                file = store.file_of(c.fid).to_string();
+                if c.kind != 2 {
+                    snippet_text = snippet(&file, c.offset, &kind, &words);
+                }
+            }
+        }
+        out.push(json!({
+            "session": session,
+            "score": fz.score,
+            "sources": sources,
+            "meaning": fz.sem.map(|r| sem[r].1),
+            "ranks": { "words": fz.lex, "meaning": fz.sem, "coverage": fz.lex.map(|r| lex[r].1.coverage) },
+            "hits": hits,
+            "kind": kind,
+            "latest": latest,
+            "file": file,
+            "snippet": snippet_text,
+        }));
+    }
+    Ok(json!({
+        "ok": true,
+        "query": query,
+        "terms": terms,
+        "semantic": semantic_on,
+        "passages": store.len(),
+        "words_ms": lex_ms,
+        "elapsed_ms": started.elapsed().as_millis() as u64,
+        "sessions": out,
+    }))
+}
+
+/// Every transcript, Claude Code and Codex.
+fn all_transcripts() -> Vec<(PathBuf, String, u64)> {
+    let mut files = transcripts(&claude_dir().join("projects"));
+    files.extend(codex_transcripts(&codex_dir().join("sessions")));
+    files
+}
+
+/// `latch-index serve`: one long-running process for the app, so every search
+/// reuses the open indexes and the loaded model instead of starting a process.
+///
+/// Commands, one JSON object per line on stdin:
+///   {"id":1,"op":"search","query":"...","limit":60}   words + meaning
+///   {"id":2,"op":"update"}       keyword update, then meaning update (background)
+///   {"id":3,"op":"status"}
+/// Replies carry the command's id. Background work reports with "ev" lines:
+///   {"ev":"semantic","stage":"loading|embedding|ready","done":n,"total":n,"device":"gpu|cpu"}
+///   {"ev":"updated","keyword":{...},"semantic":{...}}
+fn serve() -> Result<()> {
+    use std::sync::{Arc, Mutex, RwLock};
+    let say = |v: Value| {
+        let mut out = std::io::stdout().lock();
+        let _ = std::io::Write::write_all(&mut out, format!("{v}\n").as_bytes());
+        let _ = std::io::Write::flush(&mut out);
+    };
+    let store = Arc::new(RwLock::new(semantic::Store::open()));
+    let embedder: Arc<Mutex<Option<fastembed::TextEmbedding>>> = Arc::new(Mutex::new(None));
+    {
+        // The query embedder loads in the background; searches use words only until then.
+        let embedder = embedder.clone();
+        std::thread::spawn(move || {
+            if let Ok((m, _)) = semantic::load_model(true) {
+                *embedder.lock().unwrap() = Some(m);
+            }
+        });
+    }
+    let updating = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut s = Searchers { index: Searchers::open_index(), store: store.clone(), embedder };
+    say(json!({ "ev": "ready", "passages": store.read().unwrap().len() }));
+
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else { break };
+        let Ok(cmd) = serde_json::from_str::<Value>(&line) else { continue };
+        let id = cmd.get("id").cloned().unwrap_or(Value::Null);
+        match cmd.get("op").and_then(Value::as_str).unwrap_or("") {
+            "search" => {
+                let q = cmd.get("query").and_then(Value::as_str).unwrap_or("");
+                let limit = cmd.get("limit").and_then(Value::as_u64).unwrap_or(60) as usize;
+                let mut r = hybrid(&mut s, q, limit).unwrap_or_else(|e| json!({ "ok": false, "error": format!("{e:#}") }));
+                r["id"] = id;
+                say(r);
+            }
+            "status" => {
+                let st = store.read().unwrap();
+                let mut r = status().unwrap_or_else(|e| json!({ "ok": false, "error": format!("{e:#}") }));
+                r["passages"] = json!(st.len());
+                r["semantic_sessions"] = json!(st.session_count());
+                r["updating"] = json!(updating.load(Ordering::Relaxed));
+                r["id"] = id;
+                say(r);
+            }
+            "update" => {
+                if updating.swap(true, Ordering::SeqCst) {
+                    say(json!({ "id": id, "ok": true, "busy": true }));
+                    continue;
+                }
+                say(json!({ "id": id, "ok": true, "started": true }));
+                let store = store.clone();
+                let updating = updating.clone();
+                std::thread::spawn(move || {
+                    let say = |v: Value| {
+                        let mut out = std::io::stdout().lock();
+                        let _ = std::io::Write::write_all(&mut out, format!("{v}\n").as_bytes());
+                        let _ = std::io::Write::flush(&mut out);
+                    };
+                    let keyword = update().unwrap_or_else(|e| json!({ "ok": false, "error": format!("{e:#}") }));
+                    say(json!({ "ev": "keyword", "result": keyword }));
+                    let sem = (|| -> Result<Value> {
+                        // Copy the store, embed into the copy, then swap it in, so
+                        // searches keep running on the old one during a long build.
+                        let mut work = semantic::Store::open();
+                        say(json!({ "ev": "semantic", "stage": "loading" }));
+                        let (mut model, device) = semantic::load_model(false)?;
+                        let started = Instant::now();
+                        let mut last = Instant::now();
+                        let (added, reset) = work.update(&mut model, &all_transcripts(), |done, total| {
+                            if last.elapsed().as_millis() > 700 || done == total {
+                                last = Instant::now();
+                                say(json!({ "ev": "semantic", "stage": "embedding", "done": done, "total": total, "device": device }));
+                            }
+                        })?;
+                        let n = work.len();
+                        *store.write().unwrap() = work;
+                        Ok(json!({ "ok": true, "added": added, "files_reset": reset, "passages": n, "device": device, "elapsed_ms": started.elapsed().as_millis() as u64 }))
+                    })()
+                    .unwrap_or_else(|e| json!({ "ok": false, "error": format!("{e:#}") }));
+                    say(json!({ "ev": "semantic", "stage": "ready", "result": sem.clone() }));
+                    say(json!({ "ev": "updated", "keyword": keyword, "semantic": sem }));
+                    updating.store(false, Ordering::SeqCst);
+                });
+            }
+            "quit" => break,
+            other => say(json!({ "id": id, "ok": false, "error": format!("unknown op {other}") })),
+        }
+    }
+    Ok(())
+}
+
+/// `latch-index semantic-update`: builds or updates the meaning index from the command line.
+fn semantic_update(cpu: bool) -> Result<Value> {
+    let mut store = semantic::Store::open();
+    let (mut model, device) = semantic::load_model(cpu)?;
+    let started = Instant::now();
+    let mut last = Instant::now();
+    let (added, reset) = store.update(&mut model, &all_transcripts(), |done, total| {
+        if last.elapsed().as_secs() >= 5 || done == total {
+            last = Instant::now();
+            eprintln!("{done}/{total} passages ({device}, {:.0}/s)", done as f64 / started.elapsed().as_secs_f64().max(0.001));
+        }
+    })?;
+    Ok(json!({ "ok": true, "added": added, "files_reset": reset, "passages": store.len(), "sessions": store.session_count(), "device": device, "elapsed_ms": started.elapsed().as_millis() as u64 }))
+}
+
 fn status() -> Result<Value> {
     let dir = index_dir();
     let state = load_state(&dir);
@@ -689,7 +1078,18 @@ fn main() {
                 search(&words.join(" "), limit)
             }
         }
-        _ => Err(anyhow::anyhow!("usage: latch-index update | search <words> [--limit N] | status")),
+        Some("serve") => serve().map(|_| json!({ "ok": true, "stopped": true })),
+        Some("semantic-update") => semantic_update(args.iter().any(|a| a == "--cpu")),
+        Some("hybrid") => {
+            let words: Vec<String> = args.iter().skip(1).cloned().collect();
+            let mut s = Searchers {
+                index: Searchers::open_index(),
+                store: std::sync::Arc::new(std::sync::RwLock::new(semantic::Store::open())),
+                embedder: std::sync::Arc::new(std::sync::Mutex::new(semantic::load_model(true).ok().map(|(m, _)| m))),
+            };
+            hybrid(&mut s, &words.join(" "), 20)
+        }
+        _ => Err(anyhow::anyhow!("usage: latch-index update | search <words> [--limit N] | status | serve | hybrid <words> | semantic-update [--cpu]")),
     };
     match result {
         Ok(v) => println!("{v}"),
@@ -728,6 +1128,15 @@ mod tests {
     #[test]
     fn query_words_drop_operators_and_quotes() {
         assert_eq!(query_words("\"ground truth\" AND SignalSentry"), vec!["ground", "truth", "signalsentry"]);
+    }
+
+    #[test]
+    fn lexical_terms_drop_filler_and_keep_names_whole() {
+        assert_eq!(
+            lexical_terms("i want to find a conversation/session that was involved in forge.myrlin.io, specifically the marketing and growth related sessions"),
+            vec!["\"forge myrlin io\"", "marketing", "growth"]
+        );
+        assert_eq!(lexical_terms("\"ground truth\" SignalSentry"), vec!["\"ground truth\"", "signalsentry"]);
     }
 
     #[test]

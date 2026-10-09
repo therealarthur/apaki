@@ -17,7 +17,7 @@
  *     and the deep index (src/deepindex.js, latch-index).
  *
  * Commands (op): sessions, search, open, send, interrupt, answer, model,
- * effort, mode, billing, commands, folder, close. Events (ev): ready, index,
+ * effort, mode, billing, commands, folder, close, askSearch, digPrompt. Events (ev): ready, index,
  * sessions, search, opened, history, sdk, result, ask, billing, commands, note,
  * error, open_elsewhere, closed, settings (a pane's model, effort and mode,
  * shown in its message box instead of as notes in the conversation).
@@ -37,12 +37,16 @@ import readline from 'node:readline';
 import { getSessionInfo, getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
 import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
-import { searchIndex, updateIndex } from '../../src/deepindex.js';
+import { searchHybrid, startIndexServer, updateIndex, updateViaServer } from '../../src/deepindex.js';
+import { askSearch, digPrompt } from './asksearch.js';
 import * as folders from '../../src/folders.js';
 import { filterItems, terminalSessions } from '../../src/picker.js';
 import { SessionRunner } from '../../src/runner.js';
-import { releaseLock, rememberCreated, takeLock } from '../../src/sessions.js';
+import { lockInfo, lockStolen, releaseLock, rememberCreated, setLockApp, takeLock } from '../../src/sessions.js';
 import { makeLoader } from '../../src/ui/picker.js';
+
+// Locks this engine takes name it, so a blocked terminal window can say who has the session.
+setLockApp('apaki');
 
 // stdout is the event channel: nothing else may print there.
 console.log = (...a) => process.stderr.write(`${a.join(' ')}\n`);
@@ -121,7 +125,7 @@ async function search(reqId, query) {
   const folderOf = folders.folderOfSessions();
   const term = terminalSessions();
   const t0 = Date.now();
-  const res = await searchIndex(query, { limit: 80 });
+  const res = await searchHybrid(query, { limit: 80 });
   if (!res) {
     const quick = filterItems(state.items, query).map((it) => ({ item: compact(it, term.get(it.id)?.[0], folderOf), kind: null, snippet: '' }));
     emit({ ev: 'search', reqId, query, elapsed: Date.now() - t0, deep: false, results: quick });
@@ -132,9 +136,43 @@ async function search(reqId, query) {
     let it = state.byId.get(hit.session);
     if (!it && isCodexId(hit.session)) it = codexItem(hit);
     if (!it) it = { id: hit.session, title: '(session hidden from the list)', cwd: '', lastModified: Date.parse(hit.latest || '') || 0 };
-    results.push({ item: compact(it, term.get(it.id)?.[0], folderOf), kind: hit.kind, snippet: hit.snippet, hits: hit.hits });
+    results.push({ item: compact(it, term.get(it.id)?.[0], folderOf), kind: hit.kind, snippet: hit.snippet, hits: hit.hits, sources: hit.sources || ['words'] });
   }
-  emit({ ev: 'search', reqId, query, elapsed: res.elapsed_ms, total: res.total_hits, deep: true, results });
+  emit({ ev: 'search', reqId, query, elapsed: res.elapsed_ms, total: res.total_hits, deep: true, semantic: Boolean(res.semantic), terms: res.terms || null, results });
+}
+
+/** A list item for a session the list does not show (hidden headless, Codex). */
+function itemFor(id, hit) {
+  if (state.byId.get(id)) return state.byId.get(id);
+  if (isCodexId(id) && hit) return codexItem(hit);
+  return { id, title: '(session hidden from the list)', cwd: '', lastModified: Date.parse(hit?.latest || '') || 0 };
+}
+
+/**
+ * Ask Claude (asksearch.js): billed to the focused pane's account, or to what
+ * Glass has live when no pane is focused or the pane follows Glass.
+ */
+async function askSearchOp(reqId, query, paneId) {
+  if (!state.items) await loadSessions();
+  const p = paneId ? panes.get(String(paneId)) : null;
+  const credential = !p || p.credential.follow ? glassCredential() : p.credential;
+  const r = await askSearch({
+    query,
+    credential,
+    items: state.byId,
+    makeItem: itemFor,
+    progress: (text) => emit({ ev: 'askProgress', reqId, query, text }),
+  });
+  if (r.error) { emit({ ev: 'askSearch', reqId, query, error: r.error }); return; }
+  const folderOf = folders.folderOfSessions();
+  const term = terminalSessions();
+  const results = r.results.map(({ id, why, hit }) => ({ item: compact(itemFor(id, hit), term.get(id)?.[0], folderOf), why, kind: hit?.kind || null, snippet: hit?.snippet || '' }));
+  emit({ ev: 'askSearch', reqId, query, results, terms: r.terms, considered: r.considered, model: r.model, billing: credential.name, cost: r.cost, ms: r.ms, note: r.note });
+}
+
+function digPromptOp(reqId, query, candidateIds = []) {
+  const candidates = candidateIds.map((id) => state.byId.get(id)).filter(Boolean).map((it) => ({ id: it.id, title: it.title, cwd: it.cwd }));
+  emit({ ev: 'digReady', reqId, query, prompt: digPrompt(query, candidates) });
 }
 
 /* ---------- history ---------- */
@@ -201,8 +239,15 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   if (opts.mode) p.mode = opts.mode;
   let info = null;
   if (sessionId) {
-    const holder = takeLock(sessionId);
-    if (holder) { emit({ ev: 'error', reqId, paneId: p.id, message: `Another latch or Apaki window (pid ${holder}) has this session open.` }); return; }
+    // Held by a live latch or another Apaki: the pane offers "Take over here",
+    // which comes back as open with force. The old holder is stopped before it
+    // writes again (runner.lockGuard there, the relay hook in terminal windows).
+    const holder = takeLock(sessionId, { force: Boolean(opts.force) });
+    if (holder) {
+      info = await getSessionInfo(sessionId).catch(() => null);
+      emit({ ev: 'locked', reqId, paneId: p.id, sessionId, holder: lockInfo(sessionId), title: info?.customTitle || info?.summary || null, cwd: cwd || info?.cwd || '' });
+      return;
+    }
     info = await getSessionInfo(sessionId).catch(() => null);
   }
   p.sessionId = sessionId || null;
@@ -239,8 +284,10 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     p.credential = { ...next, follow: true };
     emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: announced ? undefined : `Myrlin Glass switched Claude to ${next.name}; this conversation continues on it.` });
   };
+  // Taken over by another window since: stop instead of forking the conversation.
+  runner.lockGuard = () => (p.sessionId ? lockStolen(p.sessionId) : null);
   p.runner = runner;
-  emit({ ev: 'opened', reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
+  emit({ ev: 'opened', tookOver: Boolean(opts.force),  reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
   if (opts.warm !== false) runner.start();
   if (sessionId) {
     const msgs = await getSessionMessages(sessionId).catch(() => []);
@@ -250,6 +297,13 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
 
 async function send(reqId, paneId, text, images = []) {
   const p = getPane(paneId);
+  if (!p.runner && p.sessionId) {
+    // This pane lost its session to a takeover: never start a new one in its place.
+    const holder = lockStolen(p.sessionId);
+    if (holder) { emit({ ev: 'taken_over', reqId, paneId: p.id, sessionId: p.sessionId, holder }); return; }
+    await open(null, p.id, p.sessionId, null, {});
+    if (!p.runner) return;
+  }
   if (!p.runner) await open(null, p.id, null, null);
   const content = images.length
     ? [...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })), ...(text ? [{ type: 'text', text }] : [])]
@@ -258,6 +312,14 @@ async function send(reqId, paneId, text, images = []) {
     const r = await p.runner.send(content);
     emit({ ev: 'result', reqId, paneId: p.id, sessionId: p.sessionId, subtype: r.subtype, isError: Boolean(r.is_error), durationMs: r.duration_ms, usage: r.usage, cost: r.latchTurnCost ?? null, errors: r.errors || null, result: typeof r.result === 'string' ? r.result.slice(0, 2000) : null });
   } catch (e) {
+    if (e.code === 'TAKEN_OVER') {
+      // Stop this pane's process; the lock is the other window's now.
+      const r = p.runner;
+      p.runner = null;
+      await r?.stop();
+      emit({ ev: 'taken_over', reqId, paneId: p.id, sessionId: p.sessionId, holder: e.holder });
+      return;
+    }
     emit({ ev: 'error', reqId, paneId: p.id, message: e.message || String(e) });
   }
 }
@@ -310,7 +372,9 @@ const handlers = {
   transcribe: (c) => transcribe(c.reqId, c.wav, c.paneId || null),
   sessions: (c) => sessions(c.reqId),
   search: (c) => search(c.reqId, String(c.query || '')),
-  open: (c) => open(c.reqId, c.paneId, c.sessionId || null, c.cwd || null, { warm: c.warm, model: c.model, effort: c.effort, mode: c.mode }),
+  askSearch: (c) => askSearchOp(c.reqId, String(c.query || ''), c.paneId || null),
+  digPrompt: (c) => digPromptOp(c.reqId, String(c.query || ''), Array.isArray(c.candidates) ? c.candidates : []),
+  open: (c) => open(c.reqId, c.paneId, c.sessionId || null, c.cwd || null, { warm: c.warm, model: c.model, effort: c.effort, mode: c.mode, force: c.force }),
   send: (c) => send(c.reqId, c.paneId, String(c.text || ''), Array.isArray(c.images) ? c.images : []),
   close: (c) => closePane(c.reqId, c.paneId),
   interrupt: (c) => getPane(c.paneId).runner?.interrupt(),
@@ -454,6 +518,23 @@ fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => { glassChanged().catch(() => 
 glassChanged().catch(() => {});
 
 emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady() });
-// Keep the conversation index current in the background.
-const t0 = Date.now();
-updateIndex().then((r) => emit({ ev: 'index', ok: Boolean(r), ms: Date.now() - t0, stats: r }));
+// Keep the conversation indexes current in the background. The index server
+// (latch-index serve) holds the keyword index, the meaning index and the
+// embedding model open for searches, and updates both: keyword first (under a
+// second), then meaning (the first build takes a few minutes on the GPU).
+const UPDATE_EVERY_MS = 3 * 60 * 1000;
+let indexStarted = Date.now();
+const indexServer = startIndexServer({
+  onEvent: (j) => {
+    if (j.ev === 'keyword') emit({ ev: 'index', ok: Boolean(j.result?.ok), ms: Date.now() - indexStarted, stats: j.result });
+    if (j.ev === 'semantic') emit({ ev: 'meaning', stage: j.stage, done: j.done ?? null, total: j.total ?? null, device: j.device || j.result?.device || null, result: j.result || null });
+  },
+});
+async function refreshIndexes() {
+  indexStarted = Date.now();
+  if (indexServer && (await updateViaServer())) return;
+  const r = await updateIndex();
+  emit({ ev: 'index', ok: Boolean(r), ms: Date.now() - indexStarted, stats: r });
+}
+refreshIndexes();
+setInterval(() => { refreshIndexes().catch(() => {}); }, UPDATE_EVERY_MS).unref();
