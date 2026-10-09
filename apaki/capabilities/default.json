@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Myrlin Apaki main window: core events and invoking the app's own commands (engine bridge).",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

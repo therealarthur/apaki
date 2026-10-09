@@ -1,0 +1,28 @@
+[package]
+name = "myrlin-apaki"
+version = "0.1.0"
+edition = "2021"
+description = "Myrlin Apaki: a desktop home for every Claude Code session on this PC, linked to Myrlin Glass."
+publish = false
+
+[[bin]]
+name = "myrlin-apaki"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.11", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Every plain `cargo build` is a production build that serves ui/ from the
+# embedded assets (same setup as Myrlin Glass).
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+opt-level = 3
+codegen-units = 8
