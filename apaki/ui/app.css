@@ -226,3 +226,7 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Recording: the mic carries the action colour, the one hot control. */
+.icon-btn.rec { background: var(--action-tint); }
+.icon-btn.rec svg { stroke: var(--action-strong); }

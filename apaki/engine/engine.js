@@ -21,7 +21,10 @@
  * search, opened, history, sdk, result, ask, billing, commands, note, error.
  */
 
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import readline from 'node:readline';
 import { getSessionInfo, getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
@@ -90,7 +93,7 @@ async function sessions(reqId) {
   for (const [id, recs] of term) {
     if (!state.byId.has(id)) list.push(compact({ id, title: `New session (${recs[0].name || 'terminal'})`, cwd: recs[0].cwd, lastModified: recs[0].updatedAt }, recs[0], folderOf));
   }
-  emit({ ev: 'sessions', reqId, items: list, folders: folders.listFolders(), billing: billingInfo() });
+  emit({ ev: 'sessions', reqId, items: list, folders: folders.listFolders(), billing: billingInfo(), voice: voiceReady() });
 }
 
 async function search(reqId, query) {
@@ -218,9 +221,42 @@ async function send(reqId, text, images = []) {
   }
 }
 
+/* ---------- voice (local Whisper) ---------- */
+
+// whisper.cpp (CPU build) and a free English model, installed next to the app
+// (Arthur, 2026-10-09: "local whisper model - something free"). Nothing leaves
+// the PC: the window records 16 kHz WAV, this transcribes it.
+const VOICE_DIR = process.env.APAKI_VOICE_DIR || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Myrlin Apaki', 'voice');
+const WHISPER = path.join(VOICE_DIR, 'bin', 'Release', process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli');
+const WHISPER_MODEL = process.env.APAKI_WHISPER_MODEL || path.join(VOICE_DIR, 'models', 'ggml-base.en.bin');
+const voiceReady = () => fs.existsSync(WHISPER) && fs.existsSync(WHISPER_MODEL);
+const VOICE_VOCAB = process.env.APAKI_VOICE_VOCAB || 'Myrlin, Myrlin Glass, Myrlin Apaki, Myrlin Forge, Myrlin Jobs, Claude, Claude Code, Codex, Opus, Sonnet, Haiku, Fable, SignalSentry, Pantex, Hytale, Tauri, latch.';
+
+function transcribe(reqId, wavBase64) {
+  if (!voiceReady()) { emit({ ev: 'error', reqId, message: `Voice is not installed (${WHISPER}).` }); return Promise.resolve(); }
+  const file = path.join(os.tmpdir(), `apaki-voice-${process.pid}-${Date.now()}.wav`);
+  fs.writeFileSync(file, Buffer.from(String(wavBase64 || ''), 'base64'));
+  const t0 = Date.now();
+  return new Promise((resolve) => {
+    let out = '';
+    // The vocabulary prompt keeps names Whisper does not know spelled right.
+    const child = spawn(WHISPER, ['-m', WHISPER_MODEL, '-f', file, '-nt', '-np', '-l', 'en', '-t', String(Math.min(8, os.cpus().length)), '--prompt', VOICE_VOCAB], { windowsHide: true });
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('error', (e) => { emit({ ev: 'error', reqId, message: `Whisper failed: ${e.message}` }); });
+    child.on('close', () => {
+      fs.rm(file, { force: true }, () => {});
+      // "Myrlin" sounds exactly like "Merlin"; in Arthur's work it is always Myrlin.
+      const text = out.replace(/\[(BLANK_AUDIO|MUSIC|NOISE)\]/gi, '').replace(/\s+/g, ' ').trim().replace(/\bMerlin\b/g, 'Myrlin');
+      emit({ ev: 'transcript', reqId, text, ms: Date.now() - t0 });
+      resolve();
+    });
+  });
+}
+
 /* ---------- command loop ---------- */
 
 const handlers = {
+  transcribe: (c) => transcribe(c.reqId, c.wav),
   sessions: (c) => sessions(c.reqId),
   search: (c) => search(c.reqId, String(c.query || '')),
   open: (c) => open(c.reqId, c.sessionId || null, c.cwd || null),
@@ -274,7 +310,7 @@ rl.on('line', async (line) => {
 });
 rl.on('close', async () => { await closeRunner(); process.exit(0); });
 
-emit({ ev: 'ready', billing: billingInfo(), model: state.model, effort: state.effort, pid: process.pid });
+emit({ ev: 'ready', billing: billingInfo(), model: state.model, effort: state.effort, pid: process.pid, voice: voiceReady() });
 // Keep the conversation index current in the background.
 const t0 = Date.now();
 updateIndex().then((r) => emit({ ev: 'index', ok: Boolean(r), ms: Date.now() - t0, stats: r }));
