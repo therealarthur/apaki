@@ -131,3 +131,21 @@ test('describes tool calls by their most telling field', () => {
   assert.equal(describeTool('Read', { file_path: 'C:/a.txt' }), 'C:/a.txt');
   assert.equal(describeTool('X', {}), '');
 });
+
+test('finds Claude Code windows that have a session open, ignoring headless and dead ones', async () => {
+  const { windowsWith } = await import('../src/sessions.js');
+  const dir = path.join(tmp, 'live');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, '1.json'), JSON.stringify({ pid: process.pid, sessionId: 's1', entrypoint: 'cli', kind: 'interactive', startedAt: 5 }));
+  fs.writeFileSync(path.join(dir, '2.json'), JSON.stringify({ pid: process.pid, sessionId: 's1', entrypoint: 'sdk-ts', kind: 'interactive' }));
+  fs.writeFileSync(path.join(dir, '3.json'), JSON.stringify({ pid: 999999, sessionId: 's1', entrypoint: 'cli', kind: 'interactive' }));
+  fs.writeFileSync(path.join(dir, '4.json'), JSON.stringify({ pid: process.pid, sessionId: 's2', entrypoint: 'cli', kind: 'interactive' }));
+  assert.deepEqual(windowsWith('s1', dir), [{ pid: process.pid, startedAt: 5 }]);
+});
+
+test('remembers sessions latch created', async () => {
+  const { createdSessions, rememberCreated } = await import('../src/sessions.js');
+  rememberCreated('new-1');
+  rememberCreated('new-2');
+  assert.deepEqual([...createdSessions()].sort(), ['new-1', 'new-2']);
+});

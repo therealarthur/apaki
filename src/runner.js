@@ -136,6 +136,9 @@ export class SessionRunner {
     // Hooks (the PreToolUse guards) still run in that mode, and questions and
     // plan approvals still reach canUseTool.
     options.allowDangerouslySkipPermissions = true;
+    // File checkpoints go into the session like Claude Code's own, so /rewind
+    // back on the subscription can undo edits made in latch.
+    options.enableFileCheckpointing = true;
     // In bypassPermissions mode the SDK never consults canUseTool, so the
     // tools that need a person (questions, plan approval) are answered from a
     // PreToolUse hook instead, which runs in every mode (verified 2026-10-09).
@@ -169,7 +172,11 @@ export class SessionRunner {
   async pump(q) {
     try {
       for await (const msg of q) {
-        if (msg.type === 'system' && msg.subtype === 'init' && msg.session_id) this.sessionId = msg.session_id;
+        if (msg.type === 'system' && msg.subtype === 'init' && msg.session_id) {
+          const created = !this.sessionId;
+          this.sessionId = msg.session_id;
+          if (created) this.onNewSession?.(msg.session_id);
+        }
         if (msg.type === 'result') this.finishTurn(msg);
         this.onMessage(msg);
       }

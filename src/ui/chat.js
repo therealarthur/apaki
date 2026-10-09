@@ -114,6 +114,17 @@ export class ChatStore {
       ['billing', this.info.credentialName],
     ];
     const items = [{ kind: 'banner', title: 'latch', rows }];
+    const windows = this.info.openWindows || [];
+    if (windows.length) {
+      const which = windows.length === 1 ? 'a Claude Code window' : `${windows.length} Claude Code windows`;
+      items.push({
+        kind: 'note',
+        tone: 'warn',
+        text: `This session is also open in ${which} (pid ${windows.map((w) => w.pid).join(', ')}).\n`
+          + 'Everything you do here is saved into the session, but that window will not show it until it reloads.\n'
+          + `When you go back to it, run /resume ${r.sessionId} there before typing (it will remind you).`,
+      });
+    }
     const prompts = [];
     if (r.sessionId) {
       try {

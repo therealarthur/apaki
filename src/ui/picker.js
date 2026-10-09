@@ -17,7 +17,7 @@
 import { Box, Text, useInput, useStdout } from 'ink';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { filterItems, lastPrompt, openSessions, searchInside, terms, toItems, transcriptMap } from '../picker.js';
-import { ago, listSessions } from '../sessions.js';
+import { ago, createdSessions, listSessions } from '../sessions.js';
 import { h, theme } from './components.js';
 
 function fmtSize(n) {
@@ -41,7 +41,18 @@ export function makeLoader({ loadInfos, files, open } = {}) {
   const load = loadInfos || ((programmatic) => listSessions({ limit: 5000, includeProgrammatic: programmatic }));
   const cache = new Map();
   return async (programmatic) => {
-    if (!cache.has(programmatic)) cache.set(programmatic, toItems(await load(programmatic), fileMap, open || openSessions()));
+    if (!cache.has(programmatic)) {
+      let infos = await load(programmatic);
+      // Sessions started in latch begin with an SDK entry, so lists that hide
+      // headless sessions would hide them: add the ones latch created.
+      const created = programmatic ? new Set() : createdSessions();
+      if (created.size) {
+        const have = new Set(infos.map((s) => s.sessionId));
+        const extra = (await load(true)).filter((s) => created.has(s.sessionId) && !have.has(s.sessionId));
+        infos = [...infos, ...extra].sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
+      }
+      cache.set(programmatic, toItems(infos, fileMap, open || openSessions()));
+    }
     return cache.get(programmatic);
   };
 }

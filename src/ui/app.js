@@ -10,7 +10,7 @@ import { render } from 'ink';
 import { useState } from 'react';
 import { childEnv } from '../auth.js';
 import { SessionRunner } from '../runner.js';
-import { releaseLock, takeLock } from '../sessions.js';
+import { releaseLock, rememberCreated, takeLock, windowsWith } from '../sessions.js';
 import { Chat, ChatStore } from './chat.js';
 import { h } from './components.js';
 import { PickerScreen, makeLoader } from './picker.js';
@@ -78,6 +78,9 @@ export function runApp(o) {
         lockedId = sessionId;
       }
       const info = {
+        // Claude Code windows that still have this session open: their copy
+        // will not show latch's turns until they /resume (see the banner).
+        openWindows: sessionId ? windowsWith(sessionId) : [],
         credentialName: o.credential.name,
         keys: o.keys,
         switchKey: o.switchKey,
@@ -93,6 +96,11 @@ export function runApp(o) {
         onMessage: () => {},
         onStderr: o.onStderr,
       });
+      // A session started here: lock it and remember it for the picker.
+      runner.onNewSession = (id) => {
+        rememberCreated(id);
+        if (!takeLock(id, { force: true })) lockedId = id;
+      };
       store = new ChatStore({
         runner,
         info,

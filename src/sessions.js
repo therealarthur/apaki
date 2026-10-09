@@ -120,3 +120,43 @@ export function ago(ms) {
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86400)}d ago`;
 }
+
+/* ---------- sessions latch created, and windows that have a session open ---------- */
+
+const CREATED_FILE = path.join(CLAUDE_DIR, 'latch', 'created.json');
+const LIVE_RECORDS_DIR = path.join(CLAUDE_DIR, 'sessions');
+
+/**
+ * Remembers a session latch started. Its first entry comes from the Agent SDK,
+ * so session lists that hide headless sessions would hide it too; latch's
+ * picker shows the ones listed here.
+ */
+export function rememberCreated(id) {
+  let all = {};
+  try { all = JSON.parse(fs.readFileSync(CREATED_FILE, 'utf8')); } catch { /* first one */ }
+  all[id] = new Date().toISOString();
+  fs.mkdirSync(path.dirname(CREATED_FILE), { recursive: true });
+  fs.writeFileSync(CREATED_FILE, JSON.stringify(all, null, 2));
+}
+
+export function createdSessions() {
+  try { return new Set(Object.keys(JSON.parse(fs.readFileSync(CREATED_FILE, 'utf8')))); } catch { return new Set(); }
+}
+
+/**
+ * Interactive Claude Code windows that have `sessionId` open, from the live
+ * records Claude Code keeps in ~/.claude/sessions/<pid>.json: [{ pid, startedAt }].
+ */
+export function windowsWith(sessionId, dir = LIVE_RECORDS_DIR) {
+  const out = [];
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return out; }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const rec = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+      if (rec.sessionId === sessionId && rec.entrypoint === 'cli' && rec.kind !== 'daemon' && pidAlive(rec.pid)) out.push({ pid: rec.pid, startedAt: rec.startedAt });
+    } catch { /* partial write */ }
+  }
+  return out;
+}

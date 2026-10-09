@@ -211,7 +211,12 @@ async function main() {
       force: values.force,
       onStderr: stderrLogger(),
     });
-    if (last) process.stdout.write(`${st.dim('Continue later with:')} latch ${last}\n`);
+    if (last) {
+      process.stdout.write(`${st.dim('Everything from latch is saved in session')} ${last}\n`
+        + `  ${st.dim('on your subscription:')}           claude --resume ${last}\n`
+        + `  ${st.dim('in a window that has it open:')}   /resume ${last}\n`
+        + `  ${st.dim('back in latch:')}                  latch ${last}\n`);
+    }
     process.exit(0);
   }
 
