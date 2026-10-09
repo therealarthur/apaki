@@ -10,10 +10,13 @@
 #   shortcuts                               Desktop\Desktop\Apps and the Start menu,
 #                                           next to Myrlin Glass's
 #
-# Usage: powershell -File apaki\scripts\install-apaki.ps1 [-DryRun] [-NoPackage]
+# Usage: powershell -File apaki\scripts\install-apaki.ps1 [-DryRun] [-NoPackage] [-WaitForClose]
 #   (packages first unless -NoPackage; package-apaki.ps1 builds the release exe)
+#   -WaitForClose: instead of refusing while Apaki runs, wait (up to 12 hours)
+#   until it is closed, install, then open the new version. Lets an update be
+#   staged while Apaki is in use (2026-10-09).
 
-param([switch]$DryRun, [switch]$NoPackage)
+param([switch]$DryRun, [switch]$NoPackage, [switch]$WaitForClose)
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -34,8 +37,15 @@ if ($DryRun) { return }
 if (-not $NoPackage) { & (Join-Path $PSScriptRoot 'package-apaki.ps1') -SkipBuild:$false }
 if (-not (Test-Path (Join-Path $dist 'myrlin-apaki.exe'))) { throw "not packaged yet: $dist" }
 
-$running = Get-Process -Name myrlin-apaki -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$dest*" }
-if ($running) { throw 'Myrlin Apaki is running from the install folder; close it first.' }
+$isRunning = { Get-Process -Name myrlin-apaki -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$dest*" } }
+$waited = $false
+if ($WaitForClose) {
+  $deadline = (Get-Date).AddHours(12)
+  while ((& $isRunning) -and (Get-Date) -lt $deadline) { $waited = $true; Start-Sleep -Seconds 3 }
+  # The engine releases its session locks as it shuts down.
+  if ($waited) { Start-Sleep -Seconds 3 }
+}
+if (& $isRunning) { throw 'Myrlin Apaki is running from the install folder; close it first (or use -WaitForClose).' }
 
 # Mirror the package in, keeping voice\ (the Whisper model is installed separately).
 New-Item -ItemType Directory -Force $dest | Out-Null
@@ -65,3 +75,5 @@ foreach ($dir in @($apps, $startMenu)) {
   $s.Save()
 }
 'installed'
+# Waited for the old version to close: open the new one in its place.
+if ($waited) { Start-Process -FilePath $exe -WorkingDirectory $dest }
