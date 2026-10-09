@@ -17,8 +17,15 @@
  *     and the deep index (src/deepindex.js, latch-index).
  *
  * Commands (op): sessions, search, open, send, interrupt, answer, model,
- * effort, mode, billing, commands, folder. Events (ev): ready, index, sessions,
- * search, opened, history, sdk, result, ask, billing, commands, note, error.
+ * effort, mode, billing, commands, folder, close. Events (ev): ready, index,
+ * sessions, search, opened, history, sdk, result, ask, billing, commands, note,
+ * error, open_elsewhere, closed.
+ *
+ * Panes (2026-10-09, Arthur: tabs and up to 6 split panes, each its own
+ * session): every conversation command carries a paneId and every event about
+ * a conversation carries it back. Each pane has its own runner (its own Claude
+ * Code process), model, effort, mode and billing, so panes work at the same
+ * time. One session can be open in one pane only.
  */
 
 import { spawn } from 'node:child_process';
@@ -48,17 +55,29 @@ function emit(ev) {
   process.stdout.write(`${JSON.stringify(ev)}\n`);
 }
 
+// Session list shared by every pane.
 const state = {
-  runner: null,
-  sessionId: null,
-  credential: glassCredential(),
-  model: DEFAULT_MODEL,
-  effort: DEFAULT_EFFORT,
-  mode: 'bypassPermissions',
-  asks: new Map(), // reqId -> resolve
+  asks: new Map(), // askId -> { resolve, paneId }
   items: null,
   byId: new Map(),
+  commandsByCwd: new Map(),
 };
+
+// New panes start from these; the window can pass its own per pane.
+const defaults = { credential: glassCredential(), model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, mode: 'bypassPermissions' };
+
+/** paneId -> { id, runner, sessionId, credential, model, effort, mode } */
+const panes = new Map();
+
+function getPane(paneId) {
+  const id = String(paneId || 'main');
+  let p = panes.get(id);
+  if (!p) {
+    p = { id, runner: null, sessionId: null, credential: defaults.credential, model: defaults.model, effort: defaults.effort, mode: defaults.mode };
+    panes.set(id, p);
+  }
+  return p;
+}
 
 /* ---------- session list ---------- */
 
@@ -144,81 +163,110 @@ function compactMessages(msgs) {
   });
 }
 
-/* ---------- the open conversation ---------- */
+/* ---------- the open conversations (one per pane) ---------- */
 
-function billingInfo() {
-  return { name: state.credential.name, source: state.credential.source, follow: Boolean(state.credential.follow) };
+function billingInfo(p) {
+  const c = p ? p.credential : defaults.credential;
+  return { name: c.name, source: c.source, follow: Boolean(c.follow) };
 }
 
-async function closeRunner() {
-  const r = state.runner;
-  state.runner = null;
+async function closeRunner(p) {
+  const r = p.runner;
+  p.runner = null;
   if (!r) return;
   await r.stop();
-  if (state.sessionId) releaseLock(state.sessionId);
+  if (p.sessionId) releaseLock(p.sessionId);
 }
 
-async function open(reqId, sessionId, cwd) {
-  if (isCodexId(sessionId)) { emit({ ev: 'note', reqId, tone: 'warn', text: codexResumeHint(sessionId) }); return; }
-  await closeRunner();
+/** The other pane that already has this session open, if any. */
+function paneWith(sessionId, exceptId) {
+  for (const p of panes.values()) if (p.id !== exceptId && p.sessionId && p.sessionId === sessionId) return p;
+  return null;
+}
+
+/**
+ * Opens a session (or a new conversation) in a pane. warm=false defers
+ * starting Claude Code to the first message, so restoring six panes at launch
+ * does not start six processes.
+ */
+async function open(reqId, paneId, sessionId, cwd, opts = {}) {
+  const p = getPane(paneId);
+  if (isCodexId(sessionId)) { emit({ ev: 'note', reqId, paneId: p.id, tone: 'warn', text: codexResumeHint(sessionId) }); return; }
+  const other = sessionId ? paneWith(sessionId, p.id) : null;
+  if (other) { emit({ ev: 'open_elsewhere', reqId, paneId: p.id, sessionId, otherPane: other.id }); return; }
+  await closeRunner(p);
+  if (opts.model) p.model = opts.model;
+  if (opts.effort) p.effort = opts.effort;
+  if (opts.mode) p.mode = opts.mode;
   let info = null;
   if (sessionId) {
     const holder = takeLock(sessionId);
-    if (holder) { emit({ ev: 'error', reqId, message: `Another latch or Apaki window (pid ${holder}) has this session open.` }); return; }
+    if (holder) { emit({ ev: 'error', reqId, paneId: p.id, message: `Another latch or Apaki window (pid ${holder}) has this session open.` }); return; }
     info = await getSessionInfo(sessionId).catch(() => null);
   }
-  state.sessionId = sessionId || null;
-  state.credential = state.credential.follow ? glassCredential() : state.credential;
+  p.sessionId = sessionId || null;
+  p.credential = p.credential.follow ? glassCredential() : p.credential;
   const runner = new SessionRunner({
     sessionId: sessionId || null,
     cwd: cwd || info?.cwd || os.homedir(),
-    env: childEnv(state.credential.key),
-    model: state.model,
-    effort: state.effort,
-    permissionMode: state.mode,
+    env: childEnv(p.credential.key),
+    model: p.model,
+    effort: p.effort,
+    permissionMode: p.mode,
     canUseTool: async (_name, input) => ({ behavior: 'allow', updatedInput: input }),
-    onMessage: (msg) => emit({ ev: 'sdk', sessionId: state.sessionId, msg }),
+    onMessage: (msg) => emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg }),
     onStderr: (d) => process.stderr.write(String(d).replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***')),
   });
   // Questions and plan approval go to the window and wait for its answer.
   runner.onInteractiveTool = (toolName, input) => new Promise((resolve) => {
     const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    state.asks.set(id, resolve);
-    emit({ ev: 'ask', askId: id, toolName, input });
+    state.asks.set(id, { resolve, paneId: p.id });
+    emit({ ev: 'ask', askId: id, paneId: p.id, toolName, input });
   });
   runner.onNewSession = (id) => {
     rememberCreated(id);
-    state.sessionId = id;
+    p.sessionId = id;
     takeLock(id, { force: true });
-    emit({ ev: 'session_id', sessionId: id });
+    emit({ ev: 'session_id', paneId: p.id, sessionId: id });
   };
   // Follow Myrlin Glass before every message (see SessionRunner.send).
-  runner.authKey = state.credential.key ?? null;
-  runner.authCheck = state.credential.follow ? () => { const c = glassCredential(); return { ...c, env: childEnv(c.key) }; } : null;
+  runner.authKey = p.credential.key ?? null;
+  runner.authCheck = p.credential.follow ? () => { const c = glassCredential(); return { ...c, env: childEnv(c.key) }; } : null;
   runner.onAuthChange = (next) => {
-    state.credential = { ...next, follow: true };
-    emit({ ev: 'billing', ...billingInfo(), note: `Myrlin Glass switched Claude to ${next.name}; this conversation continues on it.` });
+    p.credential = { ...next, follow: true };
+    emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: `Myrlin Glass switched Claude to ${next.name}; this conversation continues on it.` });
   };
-  state.runner = runner;
-  emit({ ev: 'opened', reqId, sessionId: state.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: state.model, effort: state.effort, mode: state.mode, billing: billingInfo(), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
-  runner.start();
+  p.runner = runner;
+  emit({ ev: 'opened', reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
+  if (opts.warm !== false) runner.start();
   if (sessionId) {
     const msgs = await getSessionMessages(sessionId).catch(() => []);
-    emit({ ev: 'history', sessionId, messages: compactMessages(msgs), total: msgs.length });
+    emit({ ev: 'history', paneId: p.id, sessionId, messages: compactMessages(msgs), total: msgs.length });
   }
 }
 
-async function send(reqId, text, images = []) {
-  if (!state.runner) await open(null, null, null);
+async function send(reqId, paneId, text, images = []) {
+  const p = getPane(paneId);
+  if (!p.runner) await open(null, p.id, null, null);
   const content = images.length
     ? [...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })), ...(text ? [{ type: 'text', text }] : [])]
     : text;
   try {
-    const r = await state.runner.send(content);
-    emit({ ev: 'result', reqId, sessionId: state.sessionId, subtype: r.subtype, isError: Boolean(r.is_error), durationMs: r.duration_ms, usage: r.usage, cost: r.latchTurnCost ?? null, errors: r.errors || null, result: typeof r.result === 'string' ? r.result.slice(0, 2000) : null });
+    const r = await p.runner.send(content);
+    emit({ ev: 'result', reqId, paneId: p.id, sessionId: p.sessionId, subtype: r.subtype, isError: Boolean(r.is_error), durationMs: r.duration_ms, usage: r.usage, cost: r.latchTurnCost ?? null, errors: r.errors || null, result: typeof r.result === 'string' ? r.result.slice(0, 2000) : null });
   } catch (e) {
-    emit({ ev: 'error', reqId, message: e.message || String(e) });
+    emit({ ev: 'error', reqId, paneId: p.id, message: e.message || String(e) });
   }
+}
+
+/** Closes a pane: its Claude Code process stops and its session lock is freed. */
+async function closePane(reqId, paneId) {
+  const p = panes.get(String(paneId));
+  if (!p) return;
+  for (const [id, a] of state.asks) if (a.paneId === p.id) { state.asks.delete(id); a.resolve({ behavior: 'deny', message: 'The pane was closed.' }); }
+  await closeRunner(p);
+  panes.delete(p.id);
+  emit({ ev: 'closed', reqId, paneId: p.id });
 }
 
 /* ---------- voice (local Whisper) ---------- */
@@ -232,8 +280,8 @@ const WHISPER_MODEL = process.env.APAKI_WHISPER_MODEL || path.join(VOICE_DIR, 'm
 const voiceReady = () => fs.existsSync(WHISPER) && fs.existsSync(WHISPER_MODEL);
 const VOICE_VOCAB = process.env.APAKI_VOICE_VOCAB || 'Myrlin, Myrlin Glass, Myrlin Apaki, Myrlin Forge, Myrlin Jobs, Claude, Claude Code, Codex, Opus, Sonnet, Haiku, Fable, SignalSentry, Pantex, Hytale, Tauri, latch.';
 
-function transcribe(reqId, wavBase64) {
-  if (!voiceReady()) { emit({ ev: 'error', reqId, message: `Voice is not installed (${WHISPER}).` }); return Promise.resolve(); }
+function transcribe(reqId, wavBase64, paneId = null) {
+  if (!voiceReady()) { emit({ ev: 'error', reqId, paneId, message: `Voice is not installed (${WHISPER}).` }); return Promise.resolve(); }
   const file = path.join(os.tmpdir(), `apaki-voice-${process.pid}-${Date.now()}.wav`);
   fs.writeFileSync(file, Buffer.from(String(wavBase64 || ''), 'base64'));
   const t0 = Date.now();
@@ -242,12 +290,12 @@ function transcribe(reqId, wavBase64) {
     // The vocabulary prompt keeps names Whisper does not know spelled right.
     const child = spawn(WHISPER, ['-m', WHISPER_MODEL, '-f', file, '-nt', '-np', '-l', 'en', '-t', String(Math.min(8, os.cpus().length)), '--prompt', VOICE_VOCAB], { windowsHide: true });
     child.stdout.on('data', (d) => { out += d; });
-    child.on('error', (e) => { emit({ ev: 'error', reqId, message: `Whisper failed: ${e.message}` }); });
+    child.on('error', (e) => { emit({ ev: 'error', reqId, paneId, message: `Whisper failed: ${e.message}` }); });
     child.on('close', () => {
       fs.rm(file, { force: true }, () => {});
       // "Myrlin" sounds exactly like "Merlin"; in Arthur's work it is always Myrlin.
       const text = out.replace(/\[(BLANK_AUDIO|MUSIC|NOISE)\]/gi, '').replace(/\s+/g, ' ').trim().replace(/\bMerlin\b/g, 'Myrlin');
-      emit({ ev: 'transcript', reqId, text, ms: Date.now() - t0 });
+      emit({ ev: 'transcript', reqId, paneId, text, ms: Date.now() - t0 });
       resolve();
     });
   });
@@ -256,40 +304,71 @@ function transcribe(reqId, wavBase64) {
 /* ---------- command loop ---------- */
 
 const handlers = {
-  transcribe: (c) => transcribe(c.reqId, c.wav),
+  transcribe: (c) => transcribe(c.reqId, c.wav, c.paneId || null),
   sessions: (c) => sessions(c.reqId),
   search: (c) => search(c.reqId, String(c.query || '')),
-  open: (c) => open(c.reqId, c.sessionId || null, c.cwd || null),
-  send: (c) => send(c.reqId, String(c.text || ''), Array.isArray(c.images) ? c.images : []),
-  interrupt: () => state.runner?.interrupt(),
-  answer: (c) => { const r = state.asks.get(c.askId); state.asks.delete(c.askId); r?.(c.result || null); },
-  model: async (c) => { state.model = c.model; await state.runner?.setModel(c.model); emit({ ev: 'note', text: `Model: ${c.model}` }); },
-  mode: async (c) => { state.mode = c.mode; await state.runner?.setPermissionMode(c.mode); emit({ ev: 'note', text: `Permission mode: ${c.mode}` }); },
-  effort: async (c) => { state.effort = c.effort; if (state.runner) await state.runner.restart({ effort: c.effort }); emit({ ev: 'note', text: `Effort: ${c.effort}` }); },
+  open: (c) => open(c.reqId, c.paneId, c.sessionId || null, c.cwd || null, { warm: c.warm, model: c.model, effort: c.effort, mode: c.mode }),
+  send: (c) => send(c.reqId, c.paneId, String(c.text || ''), Array.isArray(c.images) ? c.images : []),
+  close: (c) => closePane(c.reqId, c.paneId),
+  interrupt: (c) => getPane(c.paneId).runner?.interrupt(),
+  answer: (c) => { const a = state.asks.get(c.askId); state.asks.delete(c.askId); a?.resolve(c.result || null); },
+  model: async (c) => {
+    const p = getPane(c.paneId);
+    p.model = c.model; defaults.model = c.model;
+    await p.runner?.setModel(c.model);
+    emit({ ev: 'note', paneId: p.id, text: `Model: ${c.model}` });
+  },
+  mode: async (c) => {
+    const p = getPane(c.paneId);
+    p.mode = c.mode; defaults.mode = c.mode;
+    await p.runner?.setPermissionMode(c.mode);
+    emit({ ev: 'note', paneId: p.id, text: `Permission mode: ${c.mode}` });
+  },
+  effort: async (c) => {
+    const p = getPane(c.paneId);
+    p.effort = c.effort; defaults.effort = c.effort;
+    if (p.runner?.running) await p.runner.restart({ effort: c.effort });
+    else if (p.runner) p.runner.effort = c.effort;
+    emit({ ev: 'note', paneId: p.id, text: `Effort: ${c.effort}` });
+  },
   billing: async (c) => {
+    const p = getPane(c.paneId);
     const v = String(c.value || 'glass');
     const next = chooseCredential(v === 'sub' ? { subscription: true } : v === 'glass' ? {} : { keyWords: v });
-    if (next.error) { emit({ ev: 'error', reqId: c.reqId, message: next.error }); return; }
-    state.credential = next;
-    if (state.runner) {
-      state.runner.authKey = next.key ?? null;
-      state.runner.authCheck = next.follow ? () => { const g = glassCredential(); return { ...g, env: childEnv(g.key) }; } : null;
-      await state.runner.restart({ env: childEnv(next.key) });
+    if (next.error) { emit({ ev: 'error', reqId: c.reqId, paneId: p.id, message: next.error }); return; }
+    p.credential = next;
+    defaults.credential = next;
+    if (p.runner) {
+      p.runner.authKey = next.key ?? null;
+      p.runner.authCheck = next.follow ? () => { const g = glassCredential(); return { ...g, env: childEnv(g.key) }; } : null;
+      if (p.runner.running) await p.runner.restart({ env: childEnv(next.key) });
+      else p.runner.env = childEnv(next.key);
     }
-    emit({ ev: 'billing', ...billingInfo() });
+    emit({ ev: 'billing', paneId: p.id, ...billingInfo(p) });
   },
   billingOptions: (c) => emit({
-    ev: 'billingOptions', reqId: c.reqId,
+    ev: 'billingOptions', reqId: c.reqId, paneId: c.paneId || null,
     options: [
       { label: 'Follow Myrlin Glass', value: 'glass' },
       { label: 'Subscription (live login)', value: 'sub' },
       ...keySections().map((s) => { const label = s.heading.replace(/\s+-\s+added\s+\S+\s*$/i, '').replace(/^Anthropic API Key\s*\((.*)\)$/i, '$1'); return { label, value: label }; }),
     ],
   }),
+  // Commands come from a running Claude Code process. A pane that has not
+  // started yet (restored, waiting for its first message) gets the list last
+  // seen for its folder instead of starting a process just for the menu.
   commands: async (c) => {
-    if (!state.runner) { emit({ ev: 'commands', reqId: c.reqId, commands: [] }); return; }
-    const list = await state.runner.supportedCommands().catch(() => []);
-    emit({ ev: 'commands', reqId: c.reqId, commands: list.map((x) => ({ name: x.name, description: x.description || '', argumentHint: x.argumentHint || '' })) });
+    const p = getPane(c.paneId);
+    const shape = (list) => list.map((x) => ({ name: x.name, description: x.description || '', argumentHint: x.argumentHint || '' }));
+    if (!p.runner) { emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: [] }); return; }
+    if (!p.runner.running) {
+      const cached = state.commandsByCwd.get(p.runner.cwd) || [...state.commandsByCwd.values()][0] || [];
+      emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: cached, cached: true });
+      return;
+    }
+    const list = shape(await p.runner.supportedCommands().catch(() => []));
+    if (list.length) state.commandsByCwd.set(p.runner.cwd, list);
+    emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: list });
   },
   folder: async (c) => {
     if (c.action === 'create') { const f = folders.createFolder(c.name); if (!f.error && c.sessionId) folders.moveToFolder(c.sessionId, f.id); }
@@ -300,17 +379,30 @@ const handlers = {
   },
 };
 
+const SERIAL_OPS = new Set(['open', 'send', 'close', 'model', 'mode', 'effort', 'billing']);
+
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', async (line) => {
   let c;
   try { c = JSON.parse(line); } catch { return; }
   const h = handlers[c.op];
   if (!h) { emit({ ev: 'error', reqId: c.reqId, message: `unknown op ${c.op}` }); return; }
-  try { await h(c); } catch (e) { emit({ ev: 'error', reqId: c.reqId, message: e.message || String(e) }); }
+  const run = async () => { try { await h(c); } catch (e) { emit({ ev: 'error', reqId: c.reqId, paneId: c.paneId, message: e.message || String(e) }); } };
+  // A pane's opens, sends, closes and setting changes run one after another.
+  // Without this, a message sent while the pane was still switching
+  // conversations started a second runner and its turn landed in a new
+  // session (found in the 2026-10-09 smoke test). interrupt and answer must
+  // not wait: the running turn is what they act on.
+  if (c.paneId && SERIAL_OPS.has(c.op)) {
+    const p = getPane(c.paneId);
+    p.queue = (p.queue || Promise.resolve()).then(run);
+    return;
+  }
+  await run();
 });
-rl.on('close', async () => { await closeRunner(); process.exit(0); });
+rl.on('close', async () => { await Promise.all([...panes.values()].map((p) => closeRunner(p))); process.exit(0); });
 
-emit({ ev: 'ready', billing: billingInfo(), model: state.model, effort: state.effort, pid: process.pid, voice: voiceReady() });
+emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady() });
 // Keep the conversation index current in the background.
 const t0 = Date.now();
 updateIndex().then((r) => emit({ ev: 'index', ok: Boolean(r), ms: Date.now() - t0, stats: r }));

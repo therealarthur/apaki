@@ -13,7 +13,7 @@
       <img src="hat.svg" alt="" class="mark">
       <span class="wordmark">Myrlin Apaki</span>
     </header>
-    <button class="new" id="new">New conversation</button>
+    <button class="new" id="new" title="New conversation in the focused pane (Ctrl+T for a new tab)">New conversation</button>
     <label class="search">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
       <input id="q" placeholder="Search every conversation" autocomplete="off" spellcheck="false">
@@ -21,64 +21,71 @@
     <nav class="views" id="views"></nav>
     <div class="search-state" id="searchState"></div>
     <ol class="sessions" id="sessions"></ol>
-    <footer class="rail-foot" id="indexState">Loading…</footer>
+    <footer class="rail-foot"><span id="indexState">Loading…</span><button class="sound" id="sound" title="Ding when a session comes back"></button></footer>
   </aside>
 
   <main class="main">
-    <header class="bar" id="bar">
-      <div class="title-block">
-        <h1 id="title">Myrlin Apaki</h1>
-        <div class="cwd" id="cwd">Pick a conversation, or start a new one.</div>
-      </div>
-      <div class="controls">
-        <select id="folder" title="Folder"></select>
-        <select id="model" title="Model">
-          <option value="claude-opus-5-5">Opus 5.5</option>
-          <option value="claude-sonnet-5-5">Sonnet 5.5</option>
-          <option value="claude-haiku-5-5">Haiku 5.5</option>
-          <option value="claude-fable-5-1">Fable 5.1</option>
-        </select>
-        <select id="effort" title="Effort">
-          <option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option>
-        </select>
-        <select id="mode" title="Permission mode">
-          <option value="bypassPermissions">Skip permissions</option>
-          <option value="acceptEdits">Accept edits</option>
-          <option value="plan">Plan</option>
-          <option value="default">Ask</option>
-        </select>
-        <button class="billing" id="billing" title="Billing"></button>
-      </div>
-    </header>
-
-    <section class="ground">
-      <div class="transcript" id="transcript">
-        <div class="empty">
-          <img src="hat.svg" alt="" class="empty-mark">
-          <p>Every Claude Code session on this PC, in one place. Search inside all of them, pick one up where it left off, or start fresh. Every turn is saved in the session itself, so <code>claude --resume</code> continues it anywhere.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="composer-wrap">
-      <ul class="slash" id="slash" hidden></ul>
-      <div class="composer" id="composer">
-        <div class="attachments" id="attachments"></div>
-        <textarea id="input" rows="1" placeholder="Message Claude, / for commands, paste or drop images" spellcheck="true"></textarea>
-        <div class="composer-row">
-          <label class="icon-btn" title="Attach images">
-            <input type="file" id="file" accept="image/*" multiple hidden>
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 4.5 5.4 9.6a1.6 1.6 0 0 0 2.3 2.3l5.4-5.4a3 3 0 0 0-4.3-4.3L3.4 7.6a4.4 4.4 0 0 0 6.2 6.2l4-4"/></svg>
-          </label>
-          <button class="icon-btn" id="mic" disabled title="Dictate with the local Whisper model">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5V15"/></svg>
-          </button>
-          <span class="status" id="status"></span>
-          <button class="send" id="sendBtn">Send</button>
-        </div>
-      </div>
-    </section>
+    <nav class="tabs" id="tabs" aria-label="Tabs"></nav>
+    <section class="stages" id="stages"></section>
   </main>
+
+  <template id="paneTpl">
+    <section class="pane">
+      <header class="pane-bar">
+        <span class="grip" draggable="true" title="Drag to move this pane">
+          <svg viewBox="0 0 10 16" aria-hidden="true"><circle cx="3" cy="3" r="1.2"/><circle cx="7" cy="3" r="1.2"/><circle cx="3" cy="8" r="1.2"/><circle cx="7" cy="8" r="1.2"/><circle cx="3" cy="13" r="1.2"/><circle cx="7" cy="13" r="1.2"/></svg>
+        </span>
+        <div class="title-block">
+          <h2 class="title">New conversation</h2>
+          <div class="cwd"></div>
+        </div>
+        <button class="icon-btn gear" title="Model, effort, mode, billing, folder">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h1M6.5 11.5h7"/><circle cx="11" cy="4.5" r="1.5"/><circle cx="5" cy="11.5" r="1.5"/></svg>
+        </button>
+        <div class="controls">
+          <select class="folder" title="Folder"></select>
+          <select class="model" title="Model">
+            <option value="claude-opus-5-5">Opus 5.5</option>
+            <option value="claude-sonnet-5-5">Sonnet 5.5</option>
+            <option value="claude-haiku-5-5">Haiku 5.5</option>
+            <option value="claude-fable-5-1">Fable 5.1</option>
+          </select>
+          <select class="effort" title="Effort">
+            <option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option>
+          </select>
+          <select class="mode" title="Permission mode">
+            <option value="bypassPermissions">Skip permissions</option>
+            <option value="acceptEdits">Accept edits</option>
+            <option value="plan">Plan</option>
+            <option value="default">Ask</option>
+          </select>
+          <button class="billing" title="Billing"></button>
+        </div>
+        <button class="icon-btn close" title="Close pane (Ctrl+W)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+      <div class="ground"><div class="transcript"></div></div>
+      <section class="composer-wrap">
+        <ul class="slash" hidden></ul>
+        <div class="composer">
+          <div class="attachments"></div>
+          <textarea rows="1" placeholder="Message Claude, / for commands, paste or drop images" spellcheck="true"></textarea>
+          <div class="composer-row">
+            <label class="icon-btn" title="Attach images">
+              <input type="file" accept="image/*" multiple hidden>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 4.5 5.4 9.6a1.6 1.6 0 0 0 2.3 2.3l5.4-5.4a3 3 0 0 0-4.3-4.3L3.4 7.6a4.4 4.4 0 0 0 6.2 6.2l4-4"/></svg>
+            </label>
+            <button class="icon-btn mic" disabled title="Dictate with the local Whisper model">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5V15"/></svg>
+            </button>
+            <span class="status"></span>
+            <button class="send">Send</button>
+          </div>
+        </div>
+      </section>
+    </section>
+  </template>
 
   <div class="sheet-scrim" id="scrim" hidden>
     <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
