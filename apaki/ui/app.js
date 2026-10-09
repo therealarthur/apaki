@@ -1100,6 +1100,13 @@ await listen('engine', ({ payload: e }) => {
       break;
     }
     case 'billingOptions': billingSheet(e.options, e.paneId); break;
+    case 'glass': {
+      // What Myrlin Glass has Claude Code on right now; updates the moment Glass swaps.
+      const g = $('glassState');
+      g.innerHTML = e.installed ? `<span class="gl">Glass</span>${esc(e.name)}${e.headroom != null ? `<span class="gh">${Math.round(e.headroom)}% left</span>` : ''}` : '<span class="gl">Glass</span>not installed';
+      if (e.changed) { g.classList.remove('flash'); void g.offsetWidth; g.classList.add('flash'); }
+      break;
+    }
     case 'closed': break;
     case 'note': focusedPane()?.note(e.text, e.tone || ''); break;
     case 'error': focusedPane()?.note(e.message, 'error'); break;

@@ -549,3 +549,11 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   .stages::before, .rail::before { animation: none !important; transform: none; }
 }
+
+/* What Myrlin Glass has Claude on: one quiet line over the rail footer, flashing once on a swap. */
+.glass-line { display: flex; align-items: baseline; gap: 8px; padding: 8px 18px 0; font-size: 12px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.glass-line:empty { display: none; }
+.glass-line .gl { font: var(--heavy) 10px/1 var(--font-display); font-stretch: var(--wide); letter-spacing: .1em; text-transform: uppercase; color: var(--brand-strong); }
+.glass-line .gh { margin-left: auto; font: 11px var(--font-mono); color: var(--faint); }
+.glass-line.flash { animation: glass-flash 1.2s var(--ease-out); }
+@keyframes glass-flash { 0% { background: var(--brand-wash); } 100% { background: transparent; } }

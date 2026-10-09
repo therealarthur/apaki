@@ -15,8 +15,18 @@
 //!   - If the engine exits, it is restarted (at most a few times a minute) and
 //!     the UI is told, so a crash never leaves a dead window.
 //!
-//! The repo root is where this crate was built (APAKI_ROOT overrides), since
-//! the engine runs latch's code from there.
+//! Where the engine comes from (2026-10-09, Arthur: "built and packaged in
+//! such a way where they're together"):
+//!   1. Packaged: `<exe dir>\engine` holds the engine with latch's code, its
+//!      node_modules and latch-index, and `<exe dir>\node\node.exe` runs it,
+//!      so the installed app needs neither the repo nor a Node install.
+//!      apaki\scripts\package-apaki.ps1 builds that folder.
+//!   2. APAKI_ROOT, if set (a checkout to run instead).
+//!   3. The checkout this crate was built in (development).
+//!
+//! Only one Apaki runs at a time: starting it again (the `apaki` command, the
+//! shortcut) brings the open window forward instead of a second engine
+//! fighting over the same session locks.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -36,10 +46,29 @@ struct Engine {
     restarts: Mutex<Vec<Instant>>,
 }
 
+fn exe_dir() -> Option<PathBuf> {
+    std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from))
+}
+
+/// The engine's root folder: the packaged copy next to the exe, else APAKI_ROOT, else the build checkout.
 fn repo_root() -> PathBuf {
+    if let Some(dir) = exe_dir() {
+        let packaged = dir.join("engine");
+        if packaged.join("apaki").join("engine").join("engine.js").is_file() {
+            return packaged;
+        }
+    }
     std::env::var_os("APAKI_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().map(PathBuf::from).unwrap_or_default())
+}
+
+/// The bundled Node runtime when packaged, else `node` on PATH.
+fn node_path() -> PathBuf {
+    exe_dir()
+        .map(|d| d.join("node").join(if cfg!(windows) { "node.exe" } else { "node" }))
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("node"))
 }
 
 fn log_path() -> PathBuf {
@@ -54,8 +83,13 @@ fn start_engine(app: &AppHandle) -> Result<(), String> {
     let root = repo_root();
     let script = root.join("apaki").join("engine").join("engine.js");
     let log = OpenOptions::new().create(true).append(true).open(log_path()).map_err(|e| e.to_string())?;
-    let mut cmd = Command::new("node");
+    let mut cmd = Command::new(node_path());
     cmd.arg(&script).current_dir(&root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::from(log));
+    // The packaged index binary sits in the engine folder; tell latch where.
+    let index = root.join("index").join("target").join("release").join(if cfg!(windows) { "latch-index.exe" } else { "latch-index" });
+    if index.is_file() && std::env::var_os("LATCH_INDEX_BIN").is_none() {
+        cmd.env("LATCH_INDEX_BIN", &index);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -114,6 +148,14 @@ fn engine_send(state: State<Engine>, msg: Value) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
+        // A second launch focuses the window that is already open.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .manage(Engine { stdin: Mutex::new(None), child: Mutex::new(None), restarts: Mutex::new(Vec::new()) })
         .invoke_handler(tauri::generate_handler![engine_send])
         .setup(|app| {

@@ -29,13 +29,13 @@
  * time. One session can be open in one pane only.
  */
 
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { getSessionInfo, getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
-import { chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
+import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
 import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
 import { searchIndex, updateIndex } from '../../src/deepindex.js';
 import * as folders from '../../src/folders.js';
@@ -234,8 +234,10 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   runner.authKey = p.credential.key ?? null;
   runner.authCheck = p.credential.follow ? () => { const c = glassCredential(); return { ...c, env: childEnv(c.key) }; } : null;
   runner.onAuthChange = (next) => {
+    // The Glass watcher below usually announced this swap already.
+    const announced = (p.credential.key ?? null) === (next.key ?? null);
     p.credential = { ...next, follow: true };
-    emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: `Myrlin Glass switched Claude to ${next.name}; this conversation continues on it.` });
+    emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: announced ? undefined : `Myrlin Glass switched Claude to ${next.name}; this conversation continues on it.` });
   };
   p.runner = runner;
   emit({ ev: 'opened', reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
@@ -401,7 +403,55 @@ rl.on('line', async (line) => {
   }
   await run();
 });
-rl.on('close', async () => { await Promise.all([...panes.values()].map((p) => closeRunner(p))); process.exit(0); });
+rl.on('close', async () => {
+  fs.unwatchFile(LIVE_LOGIN); await Promise.all([...panes.values()].map((p) => closeRunner(p))); process.exit(0); });
+
+/* ---------- Myrlin Glass, live ---------- */
+
+// Apaki follows Glass as it happens (Arthur, 2026-10-09: "meant to integrate
+// with and dynamically respond to choices made in myrlin glass"). Glass swaps
+// Claude Code's login by rewriting ~/.claude/.credentials.json; the engine
+// watches that file, and on a change every pane that follows Glass shows its
+// new billing at once (its runner restarts on the new login with its next
+// message, see SessionRunner.send). The account's label and plan come from
+// `glass status`, asynchronously, so the engine never waits on Glass.
+const LIVE_LOGIN = process.env.LATCH_LIVE_LOGIN_FILE || path.join(CLAUDE_DIR, '.credentials.json');
+const GLASS_CLI = process.env.LATCH_GLASS_CLI || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Myrlin Glass', 'glass.exe');
+let glassSeen = null;
+
+function glassActive() {
+  return new Promise((resolve) => {
+    if (!fs.existsSync(GLASS_CLI)) { resolve(null); return; }
+    execFile(GLASS_CLI, ['status', '--provider', 'claude', '--json'], { timeout: 10000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+      if (err) { resolve(null); return; }
+      try {
+        const live = (JSON.parse(stdout).accounts || []).find((a) => a.provider === 'claude' && a.active);
+        resolve(live ? { label: live.label || live.email || '', plan: live.plan || '', headroom: live.headroom ?? null } : null);
+      } catch { resolve(null); }
+    });
+  });
+}
+
+async function glassChanged() {
+  const c = glassCredential();
+  const id = `${c.source}:${c.key ? c.key.slice(-12) : ''}`;
+  const account = await glassActive();
+  const name = c.key ? c.name : account?.label ? `${account.label} (${account.plan || 'subscription'})` : c.name;
+  const changed = glassSeen !== null && glassSeen !== id;
+  glassSeen = id;
+  const next = { ...c, name };
+  if (defaults.credential.follow) defaults.credential = next;
+  for (const p of panes.values()) {
+    if (!p.credential.follow) continue;
+    const moved = (p.credential.key ?? null) !== (next.key ?? null);
+    p.credential = next;
+    if (changed || moved) emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: moved ? `Myrlin Glass switched Claude to ${name}; the next message here uses it.` : undefined });
+  }
+  emit({ ev: 'glass', installed: fs.existsSync(GLASS_CLI), name, source: c.source, plan: account?.plan || null, headroom: account?.headroom ?? null, changed });
+}
+
+fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => { glassChanged().catch(() => {}); });
+glassChanged().catch(() => {});
 
 emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady() });
 // Keep the conversation index current in the background.
