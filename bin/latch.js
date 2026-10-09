@@ -37,8 +37,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { parseArgs } from 'node:util';
-import { CLAUDE_DIR, chooseCredential, childEnv } from '../src/auth.js';
-import { claudeArgs, keyApproved, launchClaude } from '../src/launch.js';
+import { CLAUDE_DIR, DEFAULT_KEY_WORDS, chooseCredential, childEnv } from '../src/auth.js';
+import { claudeArgs, launchClaude } from '../src/launch.js';
 import { styler, useColor } from '../src/render.js';
 import { SessionRunner } from '../src/runner.js';
 import {
@@ -67,6 +67,23 @@ function stderrLogger() {
   return (data) => {
     try { fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${String(data).replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***')}`); } catch { /* best effort */ }
   };
+}
+
+/**
+ * Environment for a latch-opened Claude Code window: no inherited auth source
+ * (the window uses the live login), and, when `keyWords` is not null, the
+ * switches that make the prompt-relay hook relay every message of this window
+ * on that key ('' = the live Glass key, or the default when none is live).
+ */
+function windowEnv(keyWords) {
+  const env = childEnv(null);
+  delete env.PROMPT_RELAY_CHILD; // the hook must run in this window
+  delete env.CLAUDE_AGENT_SDK_CLIENT_APP;
+  if (keyWords !== null) {
+    env.PROMPT_RELAY_FORCE = '1';
+    env.PROMPT_RELAY_KEY_WORDS = keyWords;
+  }
+  return env;
 }
 
 function prompt(question) {
@@ -166,30 +183,31 @@ async function main() {
   const recentlyActive = file && (idleMs(file) ?? Infinity) < RECENT_MS;
 
   if (!values.lite) {
-    // Default: the real Claude Code TUI on this session and key.
+    // Default: the real Claude Code TUI on this session. Interactive Claude Code
+    // is refused on Platform credits (billing_error) while headless runs are
+    // accepted, so the window stays on the live login and the prompt-relay hook
+    // runs each message headless on the chosen key (PROMPT_RELAY_FORCE).
     let args;
     try {
       args = claudeArgs({ sessionId, model, effort, permissionMode });
     } catch (e) {
       fail(e.message);
     }
-    process.stdout.write(`${st.bold('latch')} ${st.dim('→ Claude Code')}  ${sessionId || 'new session'}  ${st.dim('·')}  ${credential.name}${st.dim(` (${credential.source})`)}\n`);
-    if (credential.key && !keyApproved(credential.key)) {
-      process.stdout.write(st.yellow('  First use of this key: Claude Code will ask whether to use the API key it found. Choose Yes; it remembers.\n'));
-    }
+    const relayed = credential.source !== 'subscription';
+    const env = windowEnv(relayed ? (credential.source === 'glass' ? '' : (values.key || DEFAULT_KEY_WORDS)) : null);
+    process.stdout.write(`${st.bold('latch')} ${st.dim('→ Claude Code')}  ${sessionId || 'new session'}  ${st.dim('·')}  ${relayed ? `relays on ${credential.name}` : 'live login'}${st.dim(` (${credential.source})`)}\n`);
     if (recentlyActive) {
       process.stdout.write(st.yellow('  This session changed under 2 minutes ago. If another window has it open, close it there first.\n'));
     }
     if (values['dry-run']) {
       if (sessionId) releaseLock(sessionId);
-      const env = childEnv(credential.key);
-      process.stdout.write(`  would run: claude ${args.join(' ')}\n  in:        ${cwd}\n  auth:      ${env.ANTHROPIC_API_KEY ? `ANTHROPIC_API_KEY = ${credential.name} (approved: ${keyApproved(credential.key)})` : 'live Claude Code login'}\n`);
+      process.stdout.write(`  would run: claude ${args.join(' ')}\n  in:        ${cwd}\n  window:    live Claude Code login\n  messages:  ${relayed ? `relayed headless on ${credential.name} (PROMPT_RELAY_FORCE=1, key words "${env.PROMPT_RELAY_KEY_WORDS}")` : 'answered by the window itself'}\n`);
       return;
     }
     launchClaude({
       args,
       cwd,
-      env: childEnv(credential.key),
+      env,
       onExit: (code, error) => {
         if (sessionId) releaseLock(sessionId);
         if (error) fail(`could not start Claude Code: ${error.message}`);

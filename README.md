@@ -1,6 +1,8 @@
 # claude-latch
 
-`latch` opens a Claude Code conversation in Claude Code itself, billed to an Anthropic API key instead of your subscription. You pick the session (or start a new one) and the key; latch launches the real Claude Code TUI resumed on that session, with Opus 5.5, xhigh effort and permissions skipped. Everything looks and works exactly like Claude Code because it is Claude Code.
+`latch` opens a Claude Code conversation in the real Claude Code TUI and bills its messages to an Anthropic API key (Platform credits) instead of your subscription. You pick the session (or start a new one) and the key; latch launches Claude Code resumed on that session, with Opus 5.5, xhigh effort and permissions skipped.
+
+Interactive Claude Code is refused on these credits (`billing_error`, "Credit balance is too low"), while headless Claude Code on the same key is accepted. So the window runs on your normal login, and the prompt-relay hook (`~/.claude/hooks/prompt-relay.js`) runs each message as a headless `claude -p --resume <this session>` on the key. Replies come back into the window laid out like Claude Code (tool lines, then the reply, then a footer with time, cache and cost), and every turn lands in the same session.
 
 `latch --lite` keeps latch's own lighter UI over the Claude Agent SDK (see below).
 
@@ -29,7 +31,9 @@ First match wins:
 3. The live login, when Myrlin Glass has switched it to an API key.
 4. The default vault key (`LATCH_DEFAULT_KEY`, else "Arthur's Org").
 
-latch passes the key to Claude Code as `ANTHROPIC_API_KEY` and removes every other inherited auth source first (this PC has a Machine-scope corporate key). Interactive Claude Code asks once per key whether to use it: choose Yes, and it remembers (latch warns you before that first time). `/status` in Claude Code shows which credential is active.
+latch never gives the window itself an API key; any inherited `ANTHROPIC_API_KEY` (this PC has a Machine-scope corporate one) is removed. It sets `PROMPT_RELAY_FORCE=1` and `PROMPT_RELAY_KEY_WORDS` on the window, and the relay hook bills each headless run to that key. `--sub` skips the relay and lets the window answer on your subscription.
+
+Limits of the relayed window: a reply appears when its run finishes (no live streaming), and a headless run cannot stop for questions or approvals, so the model asks in its reply instead. Window commands (`/status`, `/model`, `/resume`...) stay local; other slash commands and skills are relayed.
 
 ## One window per session
 
