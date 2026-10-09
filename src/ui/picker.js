@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { enrichItems, filterItems, hasTypedTurns, lastPrompt, openSessions, searchInside, terminalSessions, terms, toItems, transcriptMap } from '../picker.js';
 import { indexBin, kindLabel, searchIndex, updateIndex } from '../deepindex.js';
 import * as folderApi from '../folders.js';
+import { codexItem, codexResumeHint, isCodexId } from '../codex.js';
 
 // How often the "Open in terminal" group re-reads Claude Code's live records.
 const TERMINAL_POLL_MS = 2000;
@@ -160,7 +161,16 @@ export function PickerScreen({
       setDeep({ query, ids: res.sessions.map((s) => s.session), hits, elapsed: res.elapsed_ms, total: res.total_hits });
       // Sessions the normal list hides (started headless, for example).
       const known = new Set(items.map((it) => it.id));
-      const missing = res.sessions.map((s) => s.session).filter((id) => !known.has(id) && !extra.has(id));
+      // Codex sessions are read from their own transcripts, not the list.
+      const codexHits = res.sessions.filter((s) => isCodexId(s.session) && !extra.has(s.session));
+      if (codexHits.length) {
+        setExtra((prev) => {
+          const next = new Map(prev);
+          for (const s of codexHits) next.set(s.session, codexItem(s));
+          return next;
+        });
+      }
+      const missing = res.sessions.map((s) => s.session).filter((id) => !isCodexId(id) && !known.has(id) && !extra.has(id));
       if (missing.length) {
         const all = await loader(true);
         if (!live) return;
@@ -349,7 +359,11 @@ export function PickerScreen({
       });
       return;
     }
-    if (key.return) { if (selected) onPick(selected); return; }
+    if (key.return) {
+      if (selected?.codex) { setFlash(codexResumeHint(selected.id)); return; }
+      if (selected) onPick(selected);
+      return;
+    }
     if (key.upArrow || (key.ctrl && input === 'p')) { setSel(Math.max(0, cur - 1)); return; }
     if (key.downArrow || (key.ctrl && input === 'n')) { setSel(Math.min(shown.length - 1, cur + 1)); return; }
     if (key.pageUp) { setSel(Math.max(0, cur - visible)); return; }
@@ -417,7 +431,7 @@ export function PickerScreen({
     const meta = [ago(Date.now() - it.lastModified), cut(shortPath(it.cwd), 34) + (moved ? ` ${moved}` : ''), fmtSize(it.size), it.branch].filter(Boolean).join(' · ');
     const deepHit = !inside && deep && deep.query === query ? deep.hits.get(it.id) : null;
     const snippet = inside && inside.query === query ? inside.hits.get(it.id)
-      : deepHit && deepHit.snippet ? `${kindLabel(deepHit.kind)}: ${deepHit.snippet}${deepHit.hits > 1 ? `  (${deepHit.hits} matches)` : ''}` : null;
+      : deepHit && deepHit.snippet ? `${it.codex ? kindLabel(deepHit.kind).replace("claude", "codex").replace("you", "you (codex)") : kindLabel(deepHit.kind)}: ${deepHit.snippet}${deepHit.hits > 1 ? `  (${deepHit.hits} matches)` : ''}` : null;
     const term = termMap.get(it.id)?.[0];
     const filed = view === 'all' ? folderOf.get(it.id) : null;
     return h`<${Box} key=${it.id} flexDirection="column">

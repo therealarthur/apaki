@@ -137,6 +137,35 @@ fn save_state(dir: &Path, state: &State) -> Result<()> {
     Ok(())
 }
 
+fn codex_dir() -> PathBuf {
+    std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".codex"))
+}
+
+/// Codex sessions (~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<uuid>.jsonl),
+/// as session "codex:<uuid>". Added 2026-10-09 (Arthur: "yes index codex
+/// sessions too"); they are shown read-only, continued in Codex itself.
+fn codex_transcripts(sessions: &Path) -> Vec<(PathBuf, String, u64)> {
+    fn walk(dir: &Path, out: &mut Vec<(PathBuf, String, u64)>) {
+        let Ok(rd) = fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "jsonl") {
+                let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                let id = if stem.len() >= 36 { stem[stem.len() - 36..].to_string() } else { stem.clone() };
+                if let Ok(m) = e.metadata() {
+                    out.push((p, format!("codex:{id}"), m.len()));
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(sessions, &mut out);
+    out
+}
+
 /// Every transcript with the session it belongs to. A top-level
 /// `<project>/<id>.jsonl` is session <id>; anything under `<project>/<id>/`
 /// (subagents, workflows) belongs to session <id>.
@@ -240,6 +269,78 @@ fn tool_use_text(block: &Value) -> String {
     parts.join(" ")
 }
 
+/// Codex instructions and environment blocks it injects as user messages.
+fn codex_injected(t: &str) -> bool {
+    let t = t.trim_start();
+    ["# AGENTS.md instructions", "<environment_context>", "<user_instructions>", "<INSTRUCTIONS>", "<turn_aborted>"]
+        .iter()
+        .any(|p| t.starts_with(p))
+}
+
+fn text_items(content: Option<&Value>) -> String {
+    match content {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|c| c.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+/// The searchable blocks of one Codex `response_item` entry as (kind, text).
+fn extract_codex(entry: &Value) -> Vec<(String, String)> {
+    if entry.get("type").and_then(Value::as_str) != Some("response_item") {
+        return vec![];
+    }
+    let Some(p) = entry.get("payload") else { return vec![] };
+    let mut out = Vec::new();
+    let mut push = |kind: &str, text: String, max: usize| {
+        let t = text.trim();
+        if !t.is_empty() {
+            out.push((kind.to_string(), cap(t, max).to_string()));
+        }
+    };
+    let name = p.get("name").and_then(Value::as_str).unwrap_or("");
+    match p.get("type").and_then(Value::as_str) {
+        Some("message") => {
+            let text = text_items(p.get("content"));
+            match p.get("role").and_then(Value::as_str) {
+                Some("user") if !codex_injected(&text) => push("prompt", text, MAX_SPOKEN_CHARS),
+                Some("assistant") => push("reply", text, MAX_SPOKEN_CHARS),
+                _ => {}
+            }
+        }
+        Some("agent_message") => {
+            let text = p.get("message").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| text_items(p.get("content")));
+            push("reply", text, MAX_SPOKEN_CHARS);
+        }
+        Some("function_call") => {
+            push("tool", format!("{name} {}", p.get("arguments").and_then(Value::as_str).unwrap_or("")), MAX_TOOL_CHARS)
+        }
+        Some("custom_tool_call") => {
+            let input = p.get("input").map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).unwrap_or_default();
+            push("tool", format!("{name} {input}"), MAX_TOOL_CHARS)
+        }
+        Some("function_call_output") | Some("custom_tool_call_output") => {
+            let o = p.get("output").map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).unwrap_or_default();
+            push("result", o, MAX_TOOL_CHARS)
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Blocks of an entry from either transcript format.
+fn extract_any(entry: &Value) -> Vec<(String, String)> {
+    if entry.get("payload").is_some() {
+        extract_codex(entry)
+    } else {
+        extract(entry)
+    }
+}
+
 /// The searchable blocks of one transcript entry as (kind, text).
 fn extract(entry: &Value) -> Vec<(String, String)> {
     let kind_of = entry.get("type").and_then(Value::as_str).unwrap_or("");
@@ -299,6 +400,7 @@ fn index_file(writer: &IndexWriter, f: &Fields, path: &Path, session: &str, from
     let path_str = path.to_string_lossy().to_string();
     let finder_user = memchr::memmem::Finder::new(b"\"type\":\"user\"");
     let finder_assistant = memchr::memmem::Finder::new(b"\"type\":\"assistant\"");
+    let finder_codex = memchr::memmem::Finder::new(b"\"type\":\"response_item\"");
     let mut offset = from;
     let mut added = 0u64;
     let mut line = Vec::with_capacity(64 * 1024);
@@ -310,12 +412,12 @@ fn index_file(writer: &IndexWriter, f: &Fields, path: &Path, session: &str, from
         }
         let line_offset = offset;
         offset += n as u64;
-        if finder_user.find(&line).is_none() && finder_assistant.find(&line).is_none() {
+        if finder_user.find(&line).is_none() && finder_assistant.find(&line).is_none() && finder_codex.find(&line).is_none() {
             continue;
         }
         let Ok(entry) = serde_json::from_slice::<Value>(&line) else { continue };
         let ts = entry.get("timestamp").and_then(Value::as_str).unwrap_or("").to_string();
-        for (kind, text) in extract(&entry) {
+        for (kind, text) in extract_any(&entry) {
             writer.add_document(doc!(
                 f.text => text,
                 f.session => session,
@@ -344,7 +446,8 @@ fn update() -> Result<Value> {
         Err(e) => return Err(e.into()),
     };
 
-    let files = transcripts(&claude_dir().join("projects"));
+    let mut files = transcripts(&claude_dir().join("projects"));
+    files.extend(codex_transcripts(&codex_dir().join("sessions")));
     let on_disk: std::collections::HashSet<String> = files.iter().map(|(p, _, _)| p.to_string_lossy().to_string()).collect();
 
     // Removed transcripts lose their entries.
@@ -427,7 +530,7 @@ fn snippet(file: &str, offset: u64, kind: &str, words: &[String]) -> String {
         return String::new();
     }
     let Ok(entry) = serde_json::from_slice::<Value>(&line) else { return String::new() };
-    let blocks = extract(&entry);
+    let blocks = extract_any(&entry);
     let lower_words: Vec<&str> = words.iter().map(String::as_str).collect();
     let pick = blocks
         .iter()
@@ -630,5 +733,22 @@ mod tests {
     #[test]
     fn cap_respects_char_boundaries() {
         assert_eq!(cap("héllo", 2), "h");
+    }
+}
+
+#[cfg(test)]
+mod codex_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_codex_prompts_replies_and_tools_but_not_injected_instructions() {
+        let user: Value = serde_json::from_str(r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"fix the walk detector"}]}}"#).unwrap();
+        assert_eq!(extract_any(&user), vec![("prompt".to_string(), "fix the walk detector".to_string())]);
+        let agents: Value = serde_json::from_str(r##"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions\n..."}]}}"##).unwrap();
+        assert!(extract_any(&agents).is_empty());
+        let call: Value = serde_json::from_str(r#"{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"cmd\":\"ls\"}"}}"#).unwrap();
+        assert_eq!(extract_any(&call), vec![("tool".to_string(), "shell {\"cmd\":\"ls\"}".to_string())]);
+        let meta: Value = serde_json::from_str(r#"{"type":"session_meta","payload":{"id":"x"}}"#).unwrap();
+        assert!(extract_any(&meta).is_empty());
     }
 }
