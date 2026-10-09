@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 /**
- * latch: continue a Claude Code session in Claude Code itself, billed to an API key.
+ * latch: continue a Claude Code session on Platform (API) credits.
  *
- * latch picks the session and the key, then opens the real Claude Code TUI on
- * it (Opus 5.5, xhigh effort, skipping permissions unless told otherwise).
- * --lite uses latch's own lighter UI over the Agent SDK instead.
+ * Default (in a terminal): a full-screen app. A searchable session picker,
+ * then Claude Code's layout over the Agent SDK: streamed replies, tool lines
+ * and diffs, question / permission / plan dialogs, Shift+Tab modes, and the
+ * `/` menu with every command, skill and plugin Claude Code has here. Opus
+ * 5.5, xhigh effort, permissions skipped unless told otherwise.
+ * --relay opens the real Claude Code TUI instead, with each message relayed
+ * headless by the prompt-relay hook (interactive Claude Code is refused on
+ * Platform credits). --lite is the line-based UI, also used for piped input.
  *
  * Usage:
  *   latch                 searchable picker of all sessions (type to filter,
@@ -24,7 +29,8 @@
  *   --yolo          same as the default; kept for old habits
  *   --cwd <dir>     folder for tools (default: the session's own folder)
  *   --force         take over a session another latch holds
- *   --lite          latch's own UI (Agent SDK) instead of the Claude Code TUI
+ *   --relay         the real Claude Code TUI, messages relayed headless by the hook
+ *   --lite          the line-based UI (Agent SDK)
  *   --dry-run       print the Claude Code command, folder and billing, then stop
  *
  * Billing default: the live login when Myrlin Glass has switched it to an API
@@ -39,7 +45,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { parseArgs } from 'node:util';
-import { CLAUDE_DIR, DEFAULT_KEY_WORDS, chooseCredential, childEnv } from '../src/auth.js';
+import { CLAUDE_DIR, DEFAULT_KEY_WORDS, chooseCredential, childEnv, keySections } from '../src/auth.js';
 import { claudeArgs, launchClaude } from '../src/launch.js';
 import { styler, useColor } from '../src/render.js';
 import { SessionRunner } from '../src/runner.js';
@@ -47,6 +53,7 @@ import {
   ago, findSessionFiles, getSessionInfo, idleMs, listSessions, releaseLock, sessionIdOf, takeLock,
 } from '../src/sessions.js';
 import { Tui } from '../src/tui.js';
+import { runApp } from '../src/ui/app.js';
 import { pickSession as pickInteractive } from '../src/picker.js';
 
 const st = styler(useColor());
@@ -135,6 +142,7 @@ async function main() {
       cwd: { type: 'string' },
       force: { type: 'boolean' },
       lite: { type: 'boolean' },
+      relay: { type: 'boolean' },
       'dry-run': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -168,6 +176,44 @@ async function main() {
   // Which credential (chosen first so the picker can show it).
   const credential = chooseCredential({ keyWords: values.key, subscription: values.sub });
   if (credential.error) fail(credential.error);
+
+  // Default with a terminal: latch's own full-screen app (picker, then
+  // Claude Code's layout over the Agent SDK). --relay keeps the real Claude
+  // Code TUI with the prompt-relay hook; --lite and piped input use the
+  // line-based UI below.
+  if (interactive() && !values.lite && !values.relay && !values['dry-run']) {
+    const wanted = positionals.join(' ').trim();
+    const files = wanted && /^[0-9a-f-]{4,36}$/i.test(wanted) ? findSessionFiles(wanted) : [];
+    const directId = sessionId || (files.length === 1 ? sessionIdOf(files[0]) : null);
+    const info = directId ? await getSessionInfo(directId) : null;
+    const keys = [
+      ...keySections().map((s) => {
+        const label = s.heading.replace(/\s+-\s+added\s+\S+\s*$/i, '').replace(/^Anthropic API Key\s*\((.*)\)$/i, '$1');
+        return { label, value: label };
+      }),
+      { label: 'Subscription', description: 'the live Claude Code login', value: 'sub' },
+    ];
+    const last = await runApp({
+      sessionId: directId,
+      newSession: Boolean(values.new),
+      query: directId ? '' : wanted,
+      credential,
+      keys,
+      switchKey: (value) => {
+        const next = chooseCredential(value === 'sub' ? { subscription: true } : { keyWords: value });
+        return next.error ? next : { name: next.name, key: next.key, env: childEnv(next.key) };
+      },
+      cwd: info?.cwd,
+      cwdOverride: values.cwd ? path.resolve(values.cwd) : null,
+      model: values.model || process.env.LATCH_MODEL || DEFAULT_MODEL,
+      effort: values.effort || process.env.LATCH_EFFORT || DEFAULT_EFFORT,
+      permissionMode: values.mode || 'bypassPermissions',
+      force: values.force,
+      onStderr: stderrLogger(),
+    });
+    if (last) process.stdout.write(`${st.dim('Continue later with:')} latch ${last}\n`);
+    process.exit(0);
+  }
 
   if (!values.new && !values.continue) {
     const wanted = positionals.join(' ').trim();

@@ -1,10 +1,14 @@
 # claude-latch
 
-`latch` opens a Claude Code conversation in the real Claude Code TUI and bills its messages to an Anthropic API key (Platform credits) instead of your subscription. You pick the session (or start a new one) and the key; latch launches Claude Code resumed on that session, with Opus 5.5, xhigh effort and permissions skipped.
+`latch` continues Claude Code conversations on Platform (API) credits instead of your subscription.
 
-Interactive Claude Code is refused on these credits (`billing_error`, "Credit balance is too low"), while headless Claude Code on the same key is accepted. So the window runs on your normal login, and the prompt-relay hook (`~/.claude/hooks/prompt-relay.js`) runs each message as a headless `claude -p --resume <this session>` on the key. Replies come back into the window laid out like Claude Code (tool lines, then the reply, then a footer with time, cache and cost), and every turn lands in the same session.
+**Default (in a terminal): a full-screen app** built with Ink, the library Claude Code's own TUI uses.
+- **Picker:** a search box, a two-line row per session (title, then age · folder · size · branch, and "open in N windows"), a preview of the first and latest prompts, Ctrl+F to search inside every conversation, Tab for sessions open in a window, Ctrl+A to include headless sessions.
+- **Chat:** Claude Code's layout over the Agent SDK. Streamed replies with markdown, `⏺ Tool(args)` lines with `⎿` results, red/green diffs for edits, todo lists, subagent progress under Task, the spinner with time and tokens, a rounded prompt box (`\` or Alt+Enter for new lines, ↑↓ history), Shift+Tab through default / accept edits / plan / bypass, Esc to interrupt, and real dialogs for permissions, AskUserQuestion and plan approval. The last 12 turns of the session show on open.
+- **Commands:** the `/` menu lists everything Claude Code has here (about 140: built-ins, your skills, the GSD / superpowers / impeccable plugins, custom commands). Those run in Claude Code. The interactive-only built-ins are done by latch: /help /clear /resume /model /effort /status /cost /mcp /agents /key /reload /exit.
+- Tools, MCP servers, hooks, CLAUDE.md and settings load exactly as in Claude Code (`claude_code` system prompt, all setting sources). Questions and plan approval are answered through a PreToolUse hook, because the SDK skips the permission callback in bypass mode.
 
-`latch --lite` keeps latch's own lighter UI over the Claude Agent SDK (see below).
+`--relay` opens the real Claude Code TUI instead. Interactive Claude Code is refused on these credits (`billing_error`) while headless runs are accepted, so in that mode the prompt-relay hook runs each message as a headless `claude -p --resume` on the key, and the reply arrives as a hook notice after the run. `--lite` is the line-based UI, also used for piped input.
 
 ## Use
 

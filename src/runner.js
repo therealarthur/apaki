@@ -136,6 +136,28 @@ export class SessionRunner {
     // Hooks (the PreToolUse guards) still run in that mode, and questions and
     // plan approvals still reach canUseTool.
     options.allowDangerouslySkipPermissions = true;
+    // In bypassPermissions mode the SDK never consults canUseTool, so the
+    // tools that need a person (questions, plan approval) are answered from a
+    // PreToolUse hook instead, which runs in every mode (verified 2026-10-09).
+    if (this.onInteractiveTool) {
+      options.hooks = {
+        PreToolUse: [{
+          matcher: 'AskUserQuestion|ExitPlanMode',
+          hooks: [async (input) => {
+            const r = await this.onInteractiveTool(input.tool_name, input.tool_input || {});
+            if (!r) return {};
+            const allow = r.behavior === 'allow';
+            return {
+              hookSpecificOutput: {
+                hookEventName: 'PreToolUse',
+                permissionDecision: allow ? 'allow' : 'deny',
+                ...(allow ? { updatedInput: r.updatedInput } : { permissionDecisionReason: r.message || 'The user declined.' }),
+              },
+            };
+          }],
+        }],
+      };
+    }
 
     const file = this.transcript;
     this.lastTotal = file ? lastCostTotal(readTail(file)) : 0;
@@ -205,6 +227,21 @@ export class SessionRunner {
     });
     return result;
   }
+
+  /** Runs a query control call, starting the process first if needed. */
+  async ask(method) {
+    if (!this.running) this.start();
+    return this.q[method]();
+  }
+
+  /** Slash commands Claude Code knows here: built-ins, skills, plugins, custom commands. */
+  supportedCommands() { return this.ask('supportedCommands'); }
+
+  supportedModels() { return this.ask('supportedModels'); }
+
+  supportedAgents() { return this.ask('supportedAgents'); }
+
+  mcpServerStatus() { return this.ask('mcpServerStatus'); }
 
   async interrupt() {
     try { await this.q?.interrupt(); } catch { /* not running */ }
