@@ -101,7 +101,15 @@ fn schema() -> (Schema, Fields) {
 fn open_index(dir: &Path, state: &mut State) -> Result<(Index, Fields)> {
     let (schema, fields) = schema();
     if state.version != FORMAT_VERSION && dir.join("meta.json").exists() {
-        fs::remove_dir_all(dir).ok();
+        // Remove the old index files but keep the folder's provenance note.
+        if let Ok(rd) = fs::read_dir(dir) {
+            for e in rd.flatten() {
+                if e.file_name() != "_WHY_THIS_IS_HERE.md" {
+                    let p = e.path();
+                    if p.is_dir() { fs::remove_dir_all(&p).ok(); } else { fs::remove_file(&p).ok(); }
+                }
+            }
+        }
         state.files.clear();
     }
     state.version = FORMAT_VERSION;
