@@ -19,6 +19,7 @@
       <input id="q" placeholder="Search every conversation" autocomplete="off" spellcheck="false">
     </label>
     <nav class="views" id="views"></nav>
+    <section class="folders" id="folders"></section>
     <div class="search-state" id="searchState"></div>
     <ol class="sessions" id="sessions"></ol>
     <footer class="rail-foot"><span id="indexState">Loading…</span><button class="sound" id="sound" title="Ding when a session comes back"></button></footer>
@@ -37,29 +38,7 @@
         </span>
         <div class="title-block">
           <h2 class="title">New conversation</h2>
-          <div class="cwd"></div>
-        </div>
-        <button class="icon-btn gear" title="Model, effort, mode, billing, folder">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h1M6.5 11.5h7"/><circle cx="11" cy="4.5" r="1.5"/><circle cx="5" cy="11.5" r="1.5"/></svg>
-        </button>
-        <div class="controls">
-          <select class="folder" title="Folder"></select>
-          <select class="model" title="Model">
-            <option value="claude-opus-5-5">Opus 5.5</option>
-            <option value="claude-sonnet-5-5">Sonnet 5.5</option>
-            <option value="claude-haiku-5-5">Haiku 5.5</option>
-            <option value="claude-fable-5-1">Fable 5.1</option>
-          </select>
-          <select class="effort" title="Effort">
-            <option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option>
-          </select>
-          <select class="mode" title="Permission mode">
-            <option value="bypassPermissions">Skip permissions</option>
-            <option value="acceptEdits">Accept edits</option>
-            <option value="plan">Plan</option>
-            <option value="default">Ask</option>
-          </select>
-          <button class="billing" title="Billing"></button>
+          <div class="meta-line"><button class="folder-chip" title="Folder"></button><span class="cwd"></span></div>
         </div>
         <button class="icon-btn close" title="Close pane (Ctrl+W)">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
@@ -67,6 +46,7 @@
       </header>
       <div class="ground"><div class="transcript"></div></div>
       <section class="composer-wrap">
+        <div class="status-line"><span class="egrid-slot"></span><span class="status"></span></div>
         <ul class="slash" hidden></ul>
         <div class="composer">
           <div class="attachments"></div>
@@ -79,7 +59,12 @@
             <button class="icon-btn mic" disabled title="Dictate with the local Whisper model">
               <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5V15"/></svg>
             </button>
-            <span class="status"></span>
+            <div class="chips">
+              <button class="chip-btn model" title="Model"></button>
+              <button class="chip-btn effort" title="Effort"></button>
+              <button class="chip-btn mode" title="Permission mode (Shift+Tab to cycle)"></button>
+              <button class="chip-btn billing" title="Billing"></button>
+            </div>
             <button class="send">Send</button>
           </div>
         </div>

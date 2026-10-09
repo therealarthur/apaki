@@ -26,6 +26,7 @@
 import { esc, md } from './markdown.js';
 import * as L from './layout-tree.js';
 import { Pane, short } from './pane.js';
+import { closeMenu, menu } from './menu.js';
 import { arm, ding, setSoundOn, soundOn } from './sound.js';
 
 const { invoke } = window.__TAURI__.core;
@@ -102,6 +103,7 @@ const host = {
   close: (p) => closePane(p),
   voice: (p) => toggleVoice(p),
   folder: (p, value) => paneFolder(p, value),
+  folderMenu: (p, anchor) => folderMenu(p.sessionId, anchor),
   newConversation: (p) => newConversation(p),
   changed: () => { renderTabs(); renderRailMarks(); save(); },
   dragPane: (p, e) => {
@@ -546,9 +548,165 @@ function viewList() {
   const term = S.sessions.filter((s) => s.terminal).length;
   return [
     { id: 'all', label: 'All', n: S.sessions.length },
-    { id: 'terminal', label: 'Open in terminal', n: term },
-    ...S.folders.map((f) => ({ id: f.id, label: f.name, n: f.sessions.length, folder: f })),
+    { id: 'terminal', label: 'In terminals', n: term },
   ];
+}
+
+/* ---------- folders ---------- */
+
+// Folders (Arthur, 2026-10-09: "very clean and simple and easy to organize,
+// move things in and out of"). One folder per session. Drag a session (or a
+// pane's grip) onto a folder to move it in, onto All to take it out. Click a
+// folder to show it, double-click to rename, the x deletes it (its sessions
+// stay). Right-click a session for the same moves.
+const folderUI = { creating: false, pendingSession: null, renaming: null };
+
+function moveToFolder(sessionId, folderId) {
+  if (!sessionId) return;
+  send('folder', { action: 'move', sessionId, folderId: folderId || null });
+}
+
+function startNewFolder(sessionId = null) {
+  folderUI.creating = true;
+  folderUI.pendingSession = sessionId;
+  renderFolders();
+}
+
+/** Drop handling shared by folder rows, the new-folder row and All. */
+function folderDropTarget(node, onSession) {
+  node.addEventListener('dragover', (e) => {
+    const kind = dragKind(e);
+    if (kind !== 'session' && kind !== 'pane') return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    node.classList.add('drop');
+  });
+  node.addEventListener('dragleave', () => node.classList.remove('drop'));
+  node.addEventListener('drop', (e) => {
+    const kind = dragKind(e);
+    if (kind !== 'session' && kind !== 'pane') return;
+    e.preventDefault();
+    node.classList.remove('drop');
+    const sid = kind === 'pane' ? S.panes.get(e.dataTransfer.getData(DRAG_PANE))?.sessionId : JSON.parse(e.dataTransfer.getData(DRAG_SESSION) || 'null')?.id;
+    endDrag();
+    if (sid) onSession(sid);
+  });
+}
+
+function renderFolders() {
+  const box = $('folders');
+  box.innerHTML = '';
+  const head = el('div', 'folders-head', '<span>Folders</span>');
+  const add = el('button', 'folder-add', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>');
+  add.title = 'New folder (drop a session here to make one with it)';
+  add.onclick = () => startNewFolder();
+  folderDropTarget(add, (sid) => startNewFolder(sid));
+  head.append(add);
+  box.append(head);
+  const list = el('ul', 'folder-list');
+  if (folderUI.creating) {
+    const li = el('li', 'folder-row editing');
+    const input = el('input');
+    input.placeholder = 'Folder name';
+    input.spellcheck = false;
+    const done = (ok) => {
+      const name = input.value.trim();
+      folderUI.creating = false;
+      if (ok && name) send('folder', { action: 'create', name, sessionId: folderUI.pendingSession });
+      folderUI.pendingSession = null;
+      renderFolders();
+    };
+    input.onkeydown = (e) => { if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); };
+    input.onblur = () => done(true);
+    li.append(input);
+    list.append(li);
+    setTimeout(() => input.focus(), 0);
+  }
+  for (const f of S.folders) {
+    const li = el('li', `folder-row${S.view === f.id ? ' on' : ''}`);
+    if (folderUI.renaming === f.id) {
+      const input = el('input');
+      input.value = f.name;
+      const done = (ok) => {
+        folderUI.renaming = null;
+        const name = input.value.trim();
+        if (ok && name && name !== f.name) send('folder', { action: 'rename', folderId: f.id, name });
+        renderFolders();
+      };
+      input.onkeydown = (e) => { if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); };
+      input.onblur = () => done(true);
+      li.classList.add('editing');
+      li.append(input);
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+    } else {
+      li.innerHTML = `<svg class="fi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5c0-.8.7-1.5 1.5-1.5h3l1.5 1.5h4.5c.8 0 1.5.7 1.5 1.5v5.5c0 .8-.7 1.5-1.5 1.5h-9c-.8 0-1.5-.7-1.5-1.5z"/></svg><span class="fn">${esc(f.name)}</span><span class="count">${f.sessions.length}</span>`;
+      const x = el('button', 'folder-x', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>');
+      x.title = 'Delete folder (its sessions stay)';
+      x.onclick = (e) => {
+        e.stopPropagation();
+        if (!window.confirm(`Delete folder "${f.name}"? Its ${f.sessions.length} session(s) stay, just without a folder.`)) return;
+        send('folder', { action: 'delete', folderId: f.id });
+        if (S.view === f.id) S.view = 'all';
+      };
+      li.append(x);
+      li.onclick = () => { S.view = S.view === f.id ? 'all' : f.id; renderRail(); };
+      li.ondblclick = () => { folderUI.renaming = f.id; renderFolders(); };
+      li.title = 'Click to show · double-click to rename · drop sessions here to move them in';
+    }
+    folderDropTarget(li, (sid) => moveToFolder(sid, f.id));
+    list.append(li);
+  }
+  if (!S.folders.length && !folderUI.creating) list.append(el('li', 'folder-empty', 'Drag sessions onto + to group them.'));
+  box.append(list);
+}
+
+/** The folder menu for one session: move into a folder, a new folder, or out. */
+function folderMenu(sessionId, anchor) {
+  if (!sessionId) return;
+  const cur = S.sessions.find((x) => x.id === sessionId)?.folder || null;
+  const items = [
+    ...S.folders.map((f) => ({ value: f.id, label: f.name, checked: f.id === cur })),
+    ...(S.folders.length ? [{ divider: true }] : []),
+    { value: '__new', label: 'New folder…' },
+    ...(cur ? [{ value: '__out', label: 'Remove from folder' }] : []),
+  ];
+  menu(anchor, items, {
+    above: false,
+    width: 200,
+    onPick: (v) => {
+      if (v === '__new') { startNewFolder(sessionId); return; }
+      moveToFolder(sessionId, v === '__out' ? null : v);
+    },
+  });
+}
+
+/** Right-click on a session row. */
+function sessionMenu(s, e) {
+  e.preventDefault();
+  if (s.codex) return;
+  const cur = s.folder || null;
+  const items = [
+    { value: 'here', label: 'Open here' },
+    { value: 'tab', label: 'Open in new tab', hint: 'Ctrl+click' },
+    { value: 'split', label: 'Split right', hint: 'Shift+click' },
+    { divider: true },
+    { heading: 'Move to folder' },
+    ...S.folders.map((f) => ({ value: `f:${f.id}`, label: f.name, checked: f.id === cur })),
+    { value: 'new', label: 'New folder…' },
+    ...(cur ? [{ value: 'out', label: 'Remove from folder' }] : []),
+  ];
+  menu({ x: e.clientX, y: e.clientY }, items, {
+    above: false,
+    width: 210,
+    onPick: (v) => {
+      if (v === 'here') openFromRail(s, {});
+      else if (v === 'tab') openFromRail(s, { ctrlKey: true });
+      else if (v === 'split') openFromRail(s, { shiftKey: true });
+      else if (v === 'new') startNewFolder(s.id);
+      else if (v === 'out') moveToFolder(s.id, null);
+      else if (v.startsWith('f:')) moveToFolder(s.id, v.slice(2));
+    },
+  });
 }
 
 function inView(s) {
@@ -564,15 +722,8 @@ function renderRail() {
   for (const v of viewList()) {
     const b = el('button', v.id === S.view ? 'on' : '', `${esc(v.label)}<span class="count">${v.n}</span>`);
     b.onclick = () => { S.view = v.id; renderRail(); };
-    if (v.folder) {
-      b.oncontextmenu = (e) => {
-        e.preventDefault();
-        const name = window.prompt(`Rename folder "${v.folder.name}" (leave empty to delete it; sessions stay where they are)`, v.folder.name);
-        if (name === null) return;
-        if (!name.trim()) { if (window.confirm(`Delete folder "${v.folder.name}"?`)) { send('folder', { action: 'delete', folderId: v.folder.id }); S.view = 'all'; } return; }
-        send('folder', { action: 'rename', folderId: v.folder.id, name });
-      };
-    }
+    // Dropping a session on All takes it out of its folder.
+    if (v.id === 'all') { b.title = 'Drop a session here to take it out of its folder'; folderDropTarget(b, (sid) => moveToFolder(sid, null)); }
     views.append(b);
   }
   let rows;
@@ -581,7 +732,8 @@ function renderRail() {
   } else {
     rows = S.sessions.filter(inView).sort((a, b) => (Boolean(b.terminal) - Boolean(a.terminal)) || (b.lastModified - a.lastModified));
   }
-  $('searchState').textContent = S.results ? S.searchInfo : '';
+  renderFolders();
+  $('searchState').textContent = S.results ? S.searchInfo : (S.folders.find((f) => f.id === S.view) ? `In ${S.folders.find((f) => f.id === S.view).name}` : '');
   const list = $('sessions');
   list.innerHTML = '';
   const folderName = (id) => S.folders.find((f) => f.id === id)?.name;
@@ -596,10 +748,11 @@ function renderRail() {
     ].filter(Boolean).join(' · ');
     li.innerHTML = `<div class="t">${esc(s.title || '(untitled)')}</div><div class="m">${meta}</div>${s.snippet ? `<div class="snip">${esc(kindLabel(s.kind, s.codex))}: ${highlight(s.snippet, S.query)}${s.hits > 1 ? ` <span class="mono">(${s.hits})</span>` : ''}</div>` : ''}`;
     li.onclick = (e) => openFromRail(s, e);
+    li.oncontextmenu = (e) => sessionMenu(s, e);
     li.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); openFromRail(s, { ctrlKey: true }); } };
     if (!s.codex) {
       li.draggable = true;
-      li.title = 'Click: open here · Ctrl+click: new tab · Shift+click: split right · drag onto a pane edge to split';
+      li.title = 'Click: open here · Ctrl+click: new tab · Shift+click: split right · drag onto a pane edge to split, or onto a folder · right-click for more';
       li.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData(DRAG_SESSION, JSON.stringify({ id: s.id, cwd: s.cwd, title: s.title }));
         e.dataTransfer.effectAllowed = 'copyMove';
@@ -650,12 +803,7 @@ $('q').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.v
 $('new').onclick = () => newConversation(focusedPane());
 
 function paneFolder(p, v) {
-  if (v === '__new') {
-    const name = window.prompt('New folder name');
-    if (name && name.trim()) send('folder', { action: 'create', name, sessionId: p.sessionId });
-    p.renderFolderSelect(S.folders, S.sessions);
-    return;
-  }
+  if (v === '__new') { startNewFolder(p.sessionId); return; }
   send('folder', { action: 'move', sessionId: p.sessionId, folderId: v || null });
 }
 
@@ -669,6 +817,7 @@ function renderSound() {
 $('sound').onclick = () => { setSoundOn(!soundOn()); renderSound(); if (soundOn()) ding('done'); };
 // The webview plays sound only after a user gesture: arm on the first one.
 for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, arm, { capture: true });
+window.addEventListener('resize', closeMenu);
 
 /** A pane came back (turn finished) or needs an answer: ding, and mark it if you are not looking at it. */
 function cameBack(p, kind) {
@@ -886,7 +1035,7 @@ function restore() {
 
 /* ---------- engine events ---------- */
 
-const PANE_EVENTS = new Set(['opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript']);
+const PANE_EVENTS = new Set(['opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings']);
 
 // Registered before anything is sent: `listen` is async, and events that
 // arrive before it resolves are lost (a reload lost restored panes' opens).
@@ -928,6 +1077,7 @@ await listen('engine', ({ payload: e }) => {
       break;
     case 'folders':
       S.folders = e.folders;
+      if (S.view !== 'all' && S.view !== 'terminal' && !S.folders.some((f) => f.id === S.view)) S.view = 'all';
       send('sessions');
       break;
     case 'search':

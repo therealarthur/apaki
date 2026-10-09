@@ -19,7 +19,8 @@
  * Commands (op): sessions, search, open, send, interrupt, answer, model,
  * effort, mode, billing, commands, folder, close. Events (ev): ready, index,
  * sessions, search, opened, history, sdk, result, ask, billing, commands, note,
- * error, open_elsewhere, closed.
+ * error, open_elsewhere, closed, settings (a pane's model, effort and mode,
+ * shown in its message box instead of as notes in the conversation).
  *
  * Panes (2026-10-09, Arthur: tabs and up to 6 split panes, each its own
  * session): every conversation command carries a paneId and every event about
@@ -316,20 +317,20 @@ const handlers = {
     const p = getPane(c.paneId);
     p.model = c.model; defaults.model = c.model;
     await p.runner?.setModel(c.model);
-    emit({ ev: 'note', paneId: p.id, text: `Model: ${c.model}` });
+    emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
   },
   mode: async (c) => {
     const p = getPane(c.paneId);
     p.mode = c.mode; defaults.mode = c.mode;
     await p.runner?.setPermissionMode(c.mode);
-    emit({ ev: 'note', paneId: p.id, text: `Permission mode: ${c.mode}` });
+    emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
   },
   effort: async (c) => {
     const p = getPane(c.paneId);
     p.effort = c.effort; defaults.effort = c.effort;
     if (p.runner?.running) await p.runner.restart({ effort: c.effort });
     else if (p.runner) p.runner.effort = c.effort;
-    emit({ ev: 'note', paneId: p.id, text: `Effort: ${c.effort}` });
+    emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
   },
   billing: async (c) => {
     const p = getPane(c.paneId);

@@ -14,6 +14,7 @@
  */
 
 import { esc, md } from './markdown.js';
+import { EFFORTS, effortGrid, menu } from './menu.js';
 
 // Images go in at most this many pixels on the long edge (the API's sweet
 // spot, and under the 2000 px limit that breaks a session).
@@ -28,6 +29,16 @@ const LOCAL = [
   { name: 'folder', description: 'Move this conversation to a folder (name)' },
 ];
 const MODELS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-1' };
+const MODEL_NAMES = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5', 'claude-fable-5-1': 'Fable 5.1' };
+// Permission modes, in Shift+Tab order, worded like Claude Code's footer.
+// bypassPermissions is "full access" in Codex terms.
+export const MODES = [
+  { value: 'bypassPermissions', label: 'Bypass permissions', mark: '⏵⏵', hint: 'Full access: every tool runs without asking' },
+  { value: 'acceptEdits', label: 'Auto-accept edits', mark: '⏵⏵', hint: 'File edits run; other tools follow your settings' },
+  { value: 'plan', label: 'Plan mode', mark: '⏸', hint: 'Claude plans and asks before changing anything' },
+  { value: 'default', label: 'Ask permissions', mark: '?', hint: 'Your Claude Code permission rules decide' },
+];
+const EFFORT_HINTS = { low: 'Fastest, least thinking', medium: 'Balanced', high: 'Thinks harder', xhigh: 'Thinks much harder', max: 'Everything it has' };
 
 export const short = (p) => String(p || '').replace(/^C:\\Users\\[^\\]+/i, '~');
 
@@ -72,12 +83,11 @@ export class Pane {
     this.$ = {
       title: q('.title'), cwd: q('.cwd'), T: q('.transcript'), ground: q('.ground'), input: q('textarea'),
       send: q('.send'), status: q('.status'), slash: q('.slash'), attachments: q('.attachments'), composer: q('.composer'),
-      file: q('input[type=file]'), mic: q('.mic'), model: q('.model'), effort: q('.effort'), mode: q('.mode'),
-      folder: q('.folder'), billing: q('.billing'), close: q('.close'), gear: q('.gear'), grip: q('.grip'),
+      file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
+      folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'),
+      statusLine: q('.status-line'), egridSlot: q('.egrid-slot'),
     };
-    this.$.model.value = this.model;
-    this.$.effort.value = this.effort;
-    this.$.mode.value = this.mode;
+    this.renderChips();
     this.setTitle(this.title);
     this.wire();
     this.renderBilling();
@@ -97,13 +107,12 @@ export class Pane {
     this.$.send.onclick = () => this.submit();
     this.$.file.addEventListener('change', async (e) => { for (const f of e.target.files) await this.addImageFile(f); e.target.value = ''; });
     this.$.mic.onclick = () => this.host.voice(this);
-    this.$.model.onchange = (e) => this.setModel(e.target.value);
-    this.$.effort.onchange = (e) => this.setEffort(e.target.value);
-    this.$.mode.onchange = (e) => this.setMode(e.target.value);
-    this.$.folder.onchange = (e) => this.host.folder(this, e.target.value);
+    this.$.model.onclick = () => menu(this.$.model, Object.entries(MODEL_NAMES).map(([value, label]) => ({ value, label, checked: value === this.model })), { onPick: (v) => this.setModel(v) });
+    this.$.effort.onclick = () => menu(this.$.effort, EFFORTS.map((value) => ({ value, html: `${effortGrid(value)}<span class="ml">${value}</span>`, hint: EFFORT_HINTS[value], checked: value === this.effort })), { onPick: (v) => this.setEffort(v), width: 250 });
+    this.$.mode.onclick = () => menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 });
+    this.$.folder.onclick = () => this.host.folderMenu(this, this.$.folder);
     this.$.billing.onclick = () => this.send('billingOptions');
     this.$.close.onclick = () => this.host.close(this);
-    this.$.gear.onclick = () => this.el.classList.toggle('show-controls');
     this.$.grip.addEventListener('dragstart', (e) => this.host.dragPane(this, e));
     this.$.grip.addEventListener('dragend', () => this.host.dragEnd());
   }
@@ -120,7 +129,25 @@ export class Pane {
       if (e.key === 'Escape') { this.hideSlash(); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.submit(); return; }
+    // Shift+Tab cycles the permission mode, as in Claude Code.
+    if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); this.cycleMode(); return; }
     if (e.key === 'Escape' && this.busy) { this.send('interrupt'); this.setStatus('Stopping…'); }
+  }
+
+  cycleMode() {
+    const i = MODES.findIndex((m) => m.value === this.mode);
+    this.setMode(MODES[(i + 1) % MODES.length].value);
+  }
+
+  /** The settings line under the message box: model, effort grid, mode, billing. */
+  renderChips() {
+    const { model, effort, mode } = this.$;
+    model.textContent = MODEL_NAMES[this.model] || this.model;
+    effort.innerHTML = `${effortGrid(this.effort)}<span>${esc(this.effort)}</span>`;
+    const m = MODES.find((x) => x.value === this.mode) || MODES[0];
+    mode.innerHTML = `<span class="mm">${m.mark}</span>${esc(m.label)}`;
+    mode.dataset.mode = m.value;
+    mode.title = `${m.hint} · Shift+Tab to cycle`;
   }
 
   /* ---------- header ---------- */
@@ -138,21 +165,24 @@ export class Pane {
   renderBilling() {
     const b = this.billing;
     if (!b) return;
-    this.$.billing.innerHTML = `${esc(b.name)}<span class="src">${b.follow ? 'via Glass' : esc(b.source)}</span>`;
-    this.$.billing.title = `Billing: ${b.name}`;
+    this.$.billing.innerHTML = `${esc(b.name)}${b.follow && !/glass/i.test(b.name) ? '<span class="src">Glass</span>' : ''}`;
+    this.$.billing.title = `Billing: ${b.name}${b.follow ? ' (follows Myrlin Glass)' : ''} · click to change`;
   }
 
+  /** The folder chip under the title: the folder's name, or a quiet "Add to folder". */
   renderFolderSelect(folders, sessions) {
-    const sel = this.$.folder;
+    const chip = this.$.folder;
     const cur = sessions.find((s) => s.id === this.sessionId)?.folder || '';
-    sel.innerHTML = `<option value="">No folder</option>${folders.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join('')}<option value="__new">New folder…</option>`;
-    sel.value = cur;
-    sel.disabled = !this.sessionId;
+    const f = folders.find((x) => x.id === cur);
+    chip.textContent = f ? f.name : 'Add to folder';
+    chip.classList.toggle('set', Boolean(f));
+    chip.hidden = !this.sessionId;
+    this.folderId = f?.id || null;
   }
 
-  setModel(m) { this.model = m; this.$.model.value = m; this.send('model', { model: m }); this.host.changed(this); }
-  setEffort(x) { this.effort = x; this.$.effort.value = x; this.send('effort', { effort: x }); this.host.changed(this); }
-  setMode(x) { this.mode = x; this.$.mode.value = x; this.send('mode', { mode: x }); this.host.changed(this); }
+  setModel(m) { this.model = m; this.renderChips(); this.send('model', { model: m }); this.host.changed(this); }
+  setEffort(x) { this.effort = x; this.renderChips(); this.send('effort', { effort: x }); this.host.changed(this); }
+  setMode(x) { this.mode = x; this.renderChips(); this.send('mode', { mode: x }); this.host.changed(this); }
 
   /* ---------- open ---------- */
 
@@ -166,7 +196,7 @@ export class Pane {
 
   showEmpty() {
     this.$.T.innerHTML = '';
-    this.$.T.append(el('div', 'empty', `<img src="hat.svg" alt="" class="empty-mark"><p>New conversation. It becomes a Claude Code session with your first message.</p><p class="hint">Drag a session from the left onto an edge of this pane to split the view, up to six panes per tab. Ctrl+click a session to open it in a new tab.</p>`));
+    this.$.T.append(el('div', 'empty', `<div class="empty-grid" aria-hidden="true">${'<i></i>'.repeat(40)}</div><h3>New conversation</h3><p>It becomes a Claude Code session with your first message.</p><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
   }
 
   /* ---------- transcript ---------- */
@@ -313,7 +343,10 @@ export class Pane {
 
   /* ---------- status, busy state ---------- */
 
-  setStatus(text) { this.$.status.textContent = text; }
+  setStatus(text) {
+    this.$.status.textContent = text;
+    this.$.statusLine.classList.toggle('on', Boolean(text));
+  }
 
   setBusy(on) {
     this.busy = on;
@@ -321,6 +354,8 @@ export class Pane {
     this.$.send.classList.toggle('stop', on);
     this.el.classList.toggle('busy', on);
     clearInterval(this.tick);
+    // While working, the status line above the message box carries a live grid.
+    this.$.egridSlot.innerHTML = on ? effortGrid('max', { live: true }) : '';
     if (on) {
       this.turnStart = Date.now();
       this.tick = setInterval(() => this.setStatus(`Working · ${Math.round((Date.now() - this.turnStart) / 1000)}s · esc to stop`), 500);
@@ -462,6 +497,7 @@ export class Pane {
       }
       case 'billing': this.billing = e; this.renderBilling(); if (e.note) this.note(e.note); break;
       case 'commands': this.commands = e.commands || []; break;
+      case 'settings': this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode; this.renderChips(); break;
       case 'note': this.note(e.text, e.tone || ''); break;
       case 'error': this.setBusy(false); this.setStatus(''); this.note(e.message, 'error'); break;
       case 'transcript': {

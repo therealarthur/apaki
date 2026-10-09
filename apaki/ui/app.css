@@ -183,15 +183,11 @@ body.dragging .pane .ground { pointer-events: none; }
 /* Narrow panes (splits of three or more): settings fold behind the sliders
    button, padding tightens, the folder line goes. */
 @container pane (max-width: 760px) {
-  .pane-bar .controls { display: none; }
-  .pane-bar .gear { display: inline-grid; }
-  .pane.show-controls .pane-bar .controls { display: flex; flex-basis: 100%; padding-left: 24px; }
   .transcript { padding: 16px 16px 26px; }
   .composer-wrap { padding: 0 10px 10px; }
   .composer { padding: 8px 10px 6px; }
 }
 @container pane (max-width: 470px) {
-  .pane-bar .cwd { display: none; }
   .transcript { padding: 12px 12px 20px; font-size: 14px; }
   .send { padding: 6px 12px; }
   .composer-row .status { font-size: 10.5px; }
@@ -332,3 +328,165 @@ textarea {
 /* Recording: the mic carries the action colour, the one hot control. */
 .icon-btn.rec { background: var(--action-tint); }
 .icon-btn.rec svg { stroke: var(--action-strong); }
+
+/* ==========================================================================
+   2026-10-09 refresh (Arthur: Archivo and Archivo Wide, big bold heavy
+   headers, very simple and clean, subtle light animations, an animated grid
+   like Claude's top effort level, clean folders, settings in the message box).
+   Archivo Wide is the bundled variable Archivo at font-stretch 125%.
+   ========================================================================== */
+
+:root { --wide: 125%; --heavy: 820; --dur-grid: 1.6s; }
+
+/* Heavy, wide headers. */
+.wordmark { font-weight: 860; font-stretch: var(--wide); font-size: 17px; letter-spacing: -.012em; }
+.pane-bar .title { font-weight: var(--heavy); font-stretch: var(--wide); font-size: 17px; letter-spacing: -.014em; line-height: 1.2; }
+.stage.multi .pane-bar .title { font-size: 15.5px; }
+.tab-t { font-stretch: 112%; }
+.tab.on .tab-t { font-weight: 720; }
+.sheet h2 { font-weight: var(--heavy); font-stretch: var(--wide); font-size: 19px; letter-spacing: -.012em; }
+.turn-assistant h1, .turn-assistant h2, .turn-assistant h3 { font-weight: 800; font-stretch: 115%; }
+.new { font-weight: 760; font-stretch: 112%; letter-spacing: .005em; }
+.sessions .t { font-weight: 620; }
+
+/* Header: grip, title, a quiet meta line, close. Nothing else. */
+.pane-bar { min-height: 58px; padding: 10px 10px 10px 6px; }
+.meta-line { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 2px; }
+.meta-line .cwd { flex: 1; min-width: 0; }
+.folder-chip {
+  flex: none; border: 0; background: none; padding: 0; cursor: pointer; font: 600 11.5px/1.4 var(--font-body);
+  color: var(--faint); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-hover);
+}
+.folder-chip::before { content: '▸ '; color: var(--hairline-strong); }
+.folder-chip.set { color: var(--brand-strong); }
+.folder-chip.set::before { color: var(--brand-soft); }
+.folder-chip:hover { color: var(--brand-deep); }
+.folder-chip[hidden] { display: none; }
+
+/* Settings live in the message box, like Claude Code and Codex. */
+.composer-row { flex-wrap: wrap; row-gap: 4px; }
+.chips { flex: 1; display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; }
+.chip-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 0; border-radius: var(--radius-sm);
+  background: none; cursor: pointer; font: 560 12.5px/1 var(--font-body); color: var(--soft); white-space: nowrap;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+  transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.chip-btn:hover { background: var(--tint); color: var(--ink); }
+.chip-btn .src { font: 500 10.5px var(--font-mono); color: var(--faint); }
+.chip-btn.mode .mm { font-size: 10px; letter-spacing: -.12em; margin-right: 1px; }
+.chip-btn.mode[data-mode=bypassPermissions] { color: var(--action-strong); }
+.chip-btn.mode[data-mode=acceptEdits] { color: var(--brand-strong); }
+.chip-btn.mode[data-mode=plan] { color: var(--good); }
+.chip-btn.billing { color: var(--brand-deep); font-weight: 650; }
+.send { flex: none; }
+
+/* The working line above the message box. */
+.status-line {
+  display: flex; align-items: center; gap: 9px; height: 0; overflow: hidden; max-width: 880px; margin: 0 auto;
+  padding: 0 4px; opacity: 0; transition: height var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.status-line.on { height: 26px; opacity: 1; }
+.status-line .status { flex: 1; font: 500 11.5px var(--font-mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.composer-row .status { display: none; }
+
+/* The effort grid: 5 columns x 3 rows of dots, one column lit per level.
+   At max the lit grid ripples (a diagonal wave of light), and while a pane
+   works its status line carries a live one. Transform and opacity only. */
+.egrid { display: inline-grid; grid-template-columns: repeat(5, 3px); grid-template-rows: repeat(3, 3px); gap: 2px; flex: none; }
+.egrid i { width: 3px; height: 3px; border-radius: 1px; background: var(--hairline-strong); }
+.egrid i.lit { background: var(--brand-strong); }
+.egrid.max i.lit, .egrid.live i { animation: ripple var(--dur-grid) var(--ease-hover) infinite; animation-delay: calc((var(--c) + var(--r)) * 90ms); }
+.egrid.live i { background: var(--brand); }
+@keyframes ripple {
+  0%, 100% { opacity: .45; transform: scale(.8); }
+  35% { opacity: 1; transform: scale(1.15); background: var(--brand); }
+  60% { opacity: .8; transform: scale(1); }
+}
+
+/* Empty conversation: a faint dot field breathing behind a heavy title. */
+.empty h3 { margin: 14px 0 4px; font: var(--heavy) 26px/1.15 var(--font-display); font-stretch: var(--wide); letter-spacing: -.02em; color: var(--ink); }
+.empty p { margin: 6px auto; }
+.empty-grid { display: inline-grid; grid-template-columns: repeat(10, 5px); gap: 7px; opacity: .9; }
+.empty-grid i { width: 5px; height: 5px; border-radius: 1.5px; background: var(--brand-soft); opacity: .25; animation: breathe 3.2s var(--ease-hover) infinite; }
+.empty-grid i:nth-child(10n+1) { animation-delay: 0ms; } .empty-grid i:nth-child(10n+2) { animation-delay: 120ms; }
+.empty-grid i:nth-child(10n+3) { animation-delay: 240ms; } .empty-grid i:nth-child(10n+4) { animation-delay: 360ms; }
+.empty-grid i:nth-child(10n+5) { animation-delay: 480ms; } .empty-grid i:nth-child(10n+6) { animation-delay: 600ms; }
+.empty-grid i:nth-child(10n+7) { animation-delay: 720ms; } .empty-grid i:nth-child(10n+8) { animation-delay: 840ms; }
+.empty-grid i:nth-child(10n+9) { animation-delay: 960ms; } .empty-grid i:nth-child(10n) { animation-delay: 1080ms; }
+.empty-grid i:nth-child(n+11):nth-child(-n+20) { margin-top: 0; filter: brightness(.95); }
+@keyframes breathe { 0%, 100% { opacity: .18; } 45% { opacity: .7; } }
+.empty { margin-top: 9vh; }
+
+/* Rail: All / In terminals, then folders, then sessions. */
+.views { padding: 14px 18px 4px; }
+.folders { padding: 6px 10px 6px; }
+.folders-head {
+  display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 4px;
+  font: var(--heavy) 10.5px/1 var(--font-display); font-stretch: var(--wide); letter-spacing: .1em; text-transform: uppercase; color: var(--faint);
+}
+.folder-add { display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; cursor: pointer; }
+.folder-add:hover, .folder-add.drop { background: var(--brand-wash); }
+.folder-add svg, .folder-x svg { width: 12px; height: 12px; fill: none; stroke: var(--soft); stroke-width: 1.6; stroke-linecap: round; }
+.folder-list { list-style: none; margin: 0; padding: 0; max-height: 34vh; overflow-y: auto; }
+.folder-row {
+  display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 6px 0 8px; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 13.5px; border: 1px solid transparent;
+  transition: background var(--dur-fast) var(--ease-hover), border-color var(--dur-fast) var(--ease-hover);
+}
+.folder-row:hover { background: var(--tint); }
+.folder-row.on { background: var(--brand-wash); font-weight: 650; }
+.folder-row.drop, .views button.drop { border-color: var(--brand); background: var(--brand-wash); }
+.folder-row .fi { width: 15px; height: 15px; fill: none; stroke: var(--brand-soft); stroke-width: 1.3; flex: none; }
+.folder-row.on .fi { stroke: var(--brand-strong); }
+.folder-row .fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-row .count { font: 11px var(--font-mono); color: var(--faint); }
+.folder-x { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 5px; background: none; cursor: pointer; opacity: 0; }
+.folder-row:hover .folder-x { opacity: 1; }
+.folder-x:hover { background: var(--tint-deep); }
+.folder-row.editing { padding: 0 4px; cursor: default; }
+.folder-row input { width: 100%; height: 26px; border: 1px solid var(--brand); border-radius: 6px; padding: 0 8px; outline: 0; background: var(--card); font-size: 13.5px; }
+.folder-empty { padding: 4px 8px 6px; font-size: 12px; color: var(--faint); }
+.views button { border-bottom-width: 2px; }
+.views button.drop { border-radius: 6px; padding: 2px 6px; }
+
+/* The popover menu (model, effort, mode, folders, right-click). */
+.menu {
+  position: fixed; z-index: 20; min-width: 170px; max-width: 360px; padding: 5px; background: var(--card);
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius); box-shadow: 0 14px 36px -18px rgba(44, 53, 120, .5);
+  animation: menu-in var(--dur-fast) var(--ease-out); transform-origin: top left;
+}
+.menu.out { animation: menu-out var(--dur-exit) var(--ease-hover) forwards; }
+@keyframes menu-in { from { opacity: 0; transform: translateY(3px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes menu-out { to { opacity: 0; transform: translateY(2px); } }
+.menu-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; border-radius: var(--radius-sm);
+  background: none; cursor: pointer; text-align: left; font-size: 13.5px; color: var(--ink);
+}
+.menu-item:hover, .menu-item.kb { background: var(--tint); }
+.menu-item.on { font-weight: 650; }
+.menu-item.on::after { content: '✓'; margin-left: auto; color: var(--brand-strong); font-weight: 700; }
+.menu-item .ml { white-space: nowrap; }
+.menu-item .mh { margin-left: auto; padding-left: 14px; font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-item.on .mh { display: none; }
+.menu-item .mm { width: 18px; font-size: 10px; letter-spacing: -.12em; color: var(--soft); }
+.menu-item .mm.bypassPermissions { color: var(--action-strong); }
+.menu-item .mm.acceptEdits { color: var(--brand-strong); }
+.menu-item .mm.plan { color: var(--good); }
+.menu-div { height: 1px; margin: 5px 6px; background: var(--hairline); }
+.menu-head { padding: 7px 10px 3px; font: var(--heavy) 10px/1 var(--font-display); font-stretch: var(--wide); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+
+/* Narrow panes: chips stay, smaller; the folder chip and path fold away first. */
+@container pane (max-width: 560px) {
+  .chip-btn { padding: 0 6px; font-size: 12px; max-width: 150px; }
+  .chip-btn.billing .src { display: none; }
+}
+@container pane (max-width: 420px) {
+  .meta-line { display: none; }
+  .chip-btn.billing { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .egrid i, .empty-grid i { animation: none !important; }
+}
