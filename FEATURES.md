@@ -42,15 +42,18 @@ Written 2026-10-10 from what is built and tested.
   compare a 6-digit code, and the phone becomes a remote window onto the
   Apaki on your PC. Everything is end-to-end encrypted between the two
   (P-256 key exchange, AES-256-GCM, fresh keys per connection); the hosted
-  relay at apaki.myrlin.io forwards opaque frames, holds no keys and stores
-  nothing, and your Claude and Codex logins never leave the PC. Anyone's
+  relay at apaki.myrlin.io forwards sealed frames it cannot read and keeps
+  nothing about your conversations, and your Claude and Codex logins never
+  leave the PC. Anyone's
   Apaki can use it: each install gets its own room, and an account is
   optional.
 - Sign in on any phone with a passkey and your PCs are there. An Apaki
   account is a passkey (Face ID or a fingerprint, no password, no email) and
   a vault of your PCs that only that passkey can open: the key comes from
-  the passkey itself (WebAuthn PRF), so apaki.myrlin.io stores ciphertext and
-  public keys and can never connect to anything. Pair a PC once from any
+  the passkey itself (WebAuthn PRF), so apaki.myrlin.io stores only
+  ciphertext and public keys and cannot open the vault. The page that opens
+  it on your phone comes from apaki.myrlin.io, as with any web app (the
+  native app will ship its own copy). Pair a PC once from any
   phone and every phone signed in to the account can reach it; remove the
   account on the PC and they all stop at once.
 - It feels like an app on the phone. The sessions list is home with a large
@@ -61,8 +64,10 @@ Written 2026-10-10 from what is built and tested.
 - Your PC checks the phone page before trusting it. The page your phone runs
   is a reproducible build of Apaki's own code, published at an address that
   never changes. Before showing a pairing code, Apaki builds that page itself
-  and compares every file with what the site serves; if one byte differs, it
-  will not show a code.
+  and compares every file with what the site serves; if a file it fetches
+  differs, it will not show a code. The check sees what the site sends your
+  PC when you pair; it cannot see what a phone is sent later. Details and
+  limits: apaki/SECURITY.md.
 
 ## Conversations
 
@@ -134,10 +139,13 @@ Written 2026-10-10 from what is built and tested.
 - Pairing needs the one-time secret in the QR, which stays in the link's
   fragment and never reaches a server. The PC approves each phone after both
   screens show the same code.
-- A phone can only talk to its own conversations and the session list.
-  Billing, account switching, settings, the shell and the file system are
-  out of its reach.
-- Remove a phone on the PC and it can never reconnect without a new QR.
+- A phone works in conversations and the session list, with the same
+  Claude Code a desktop pane has: Claude can run commands and edit files
+  there, as on the PC. Billing, account switching, pairing and settings are
+  controls only the PC has.
+- Remove a phone on the PC and it can never reconnect without a new QR. If
+  it was signed in to an Apaki account linked to that PC, remove the account
+  there too.
 - An account connects with the same handshake as a paired phone, as one
   device the PC lists by name ("Apaki account (Arthur)", with which phone is
   using it right now). Signing in needs the passkey; the server only checks

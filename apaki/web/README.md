@@ -64,7 +64,8 @@ any static host (HTTPS is required for WebCrypto and the service worker).
 ## What a phone cannot do
 
 Change billing, pair or remove phones, use the PC's dictation, edit folders,
-run Ask Claude or Dig deeper, or reach the shell or the filesystem: the
-engine refuses those commands from a phone (apaki/engine/remote-policy.js).
-Within its own conversations a phone has the same Claude Code a desktop pane
-has, with the permission mode the pane is set to.
+or run Ask Claude or Dig deeper: the engine refuses those commands from a
+phone (apaki/engine/remote-policy.js). Within its conversations a phone has
+the same Claude Code a desktop pane has, with the permission mode the pane is
+set to, so Claude can run commands and edit files there as on the PC (see
+apaki/SECURITY.md).

@@ -124,9 +124,10 @@ Worker) can see:**
   closes; the client reconnects);
 - claim the PC side of a room (needs the room token; the room id is its hash).
 
-**What it can do:** refuse service. It can drop or delay frames, close
-sockets, or inject the plaintext alerts and control messages, and the
-clients will see failures. That is all.
+**What it can do as a relay:** refuse service. It can drop or delay frames,
+close sockets, or inject the plaintext alerts and control messages, and the
+clients will see failures. The same server also serves the phone page, which
+is a larger power; see the next section and apaki/SECURITY.md.
 
 ### The weak spot: the website supplies the code, and how the PC checks it
 
@@ -150,13 +151,17 @@ the site's word for it (since 2026-10-10):
   that version from the site and compares the hashes. Only an exact match
   gets a pairing code, and the code opens that exact version
   (`https://apaki.myrlin.io/v/<version>/#p=...`). A changed or missing file
-  means no code, and the Phone sheet says why. Every Apaki that pairs is
-  checking the same address, so a site swap shows up at once.
-- **What the check cannot catch:** a site that serves the right files to the
-  PC and other files to one chosen phone. Doing that needs the operator to
-  single the phone out; running your own copy (below) removes even that.
-- **Installable PWA.** Once installed, the phone keeps the version it
-  installed; a changed bundle is a visible update, not a silent swap.
+  means no code, and the Phone sheet says why. A swap the site also serves to
+  PCs shows up the next time any Apaki pairs.
+- **What the check cannot catch:** a site that serves the right files to PCs
+  and other files to browsers (a PC's fetch is easy to tell from a phone's),
+  a site that makes the check fail (an unreachable site still gets a code
+  today; see apaki/SECURITY.md, hardening item 1), and every page load after
+  pairing. Running your own copy (below), or the native app, removes this.
+- **Installable PWA.** It works offline. It does not pin the code: the page
+  is fetched from the network on every open and the service worker updates
+  itself (apaki/web/src/sw.js), so a changed page at the same address is used
+  without notice. Only a native app can pin its code.
 - **Open source.** With the client, the protocol and this relay published,
   anyone can build the bundle and compare hashes with the `manifest.json` of
   each version. The repository (therealarthur/claude-latch) is private today,
@@ -165,12 +170,17 @@ the site's word for it (since 2026-10-10):
   (WebCrypto keeps it out of reach of page scripts; IndexedDB stores the key
   object, not the bytes), and the PC decides what a phone may do
   (`apaki/engine/remote-policy.js`: an allowlist of conversation and
-  session-list commands; never billing, pairing, folders or anything that
-  reaches the shell or the filesystem).
+  session-list commands; never billing, pairing or folders). Conversations
+  run Claude Code as a desktop pane does, so Claude can run commands and edit
+  files there (tools are approved automatically in every permission mode, see
+  apaki/engine/engine.js).
 - **A strict page policy** (in place): the phone page's
-  Content-Security-Policy allows only its own files and a WebSocket to the one
-  relay it was built for (`connect-src wss://apaki.myrlin.io`), so even an
-  injected script in the page could not send anything anywhere else.
+  Content-Security-Policy allows only its own files, its own origin's account
+  API and a WebSocket to the one relay it was built for (`connect-src 'self'
+  wss://apaki.myrlin.io`), so script injected into the page (by a reply, say)
+  cannot run, and fetches and sockets reach only this origin and the relay.
+  That does not limit the site itself, and the policy does not cover
+  navigation or WebRTC.
 
 ### Stolen or lost phone
 
@@ -180,8 +190,9 @@ the web client's storage intact, can connect. Defences:
 - **Revocation:** remove the phone in Apaki on the PC. Its record (public key
   and secret) is deleted, every later reconnect is refused with
   `unknown-device`, and any live connection is closed (the PC sends `kick`).
-- The phone's lock screen and browser profile protect the stored key; it
-  cannot be copied off the phone as bytes.
+- The phone's lock screen and browser profile protect the stored key: the
+  device's private key cannot be copied off as bytes, though page code can use
+  it; its psk is stored as data.
 - Pairing again needs a fresh QR from the PC screen, so a removed phone cannot
   quietly come back.
 
@@ -251,8 +262,9 @@ is encrypted on the phone under a key that only the user's passkey can
 produce (the WebAuthn PRF extension: the secret never leaves the
 authenticator), so the server cannot read the list of PCs, the account's
 device key or any PC's secret, and neither can anyone who copies its storage.
-It keeps no email, phone number, password or IP address, and logs nothing
-(no bodies, no tokens, platform logs off).
+It stores no email, phone number, password or IP address. The Worker writes
+no logs and platform logs are off; whoever runs the Cloudflare account could
+turn logging on, and Cloudflare sees every request as the TLS endpoint.
 
 **Threat model, in plain words:**
 
@@ -264,15 +276,17 @@ It keeps no email, phone number, password or IP address, and logs nothing
   sees that an account exists, its name, how many passkeys it has, when it is
   used and from which IP, and the size of the vault. It cannot sign in as the
   user (it would need a passkey assertion) and cannot open the vault. It could
-  refuse service, delete an account, or hand back an older vault (the phone
-  then sees an older version than it knows).
+  refuse service, delete an account, or hand back an older vault; the phone
+  does not detect that today (apaki/SECURITY.md, hardening item 6).
 - Like the QR flow, a phone that signs in runs the page this site serves, so
-  the weak spot is the same as for pairing (see above): a page swapped for one
-  phone could read the vault once the passkey opens it.
+  the weak spot is the same as for pairing (see above): a swapped page could
+  read the vault on any signed-in phone without a passkey prompt, because the
+  vault key is kept on the phone (apaki/web/src/store.js).
 - Sessions are bearer tokens (30 days) signed with `ACCOUNT_KEY`; stealing the
   key lets someone mint sessions, which reach the account's metadata and the
-  encrypted vault but still not the vault's contents or any PC. Rotating the
-  key signs everyone out.
+  encrypted vault but still not the vault's contents or any PC; it also lets
+  someone delete accounts and overwrite vaults. Rotating the key signs
+  everyone out.
 
 **How it checks a passkey** (`src/webauthn.js`): the client data type, the
 challenge the relay issued, the origin (`ACCOUNT_ORIGIN`, not cross-origin),

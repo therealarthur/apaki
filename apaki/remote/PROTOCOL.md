@@ -12,7 +12,9 @@ threat model are in `relay/README.md`.
 - "Scan this QR code" connects a phone to the Apaki on your PC. No accounts:
   the pairing is the identity.
 - The PC does all the work with its own Claude and Codex logins. The relay
-  and the website never see credentials or content and hold no keys.
+  never sees credentials or content and holds no keys. The website serves the
+  phone page, so this holds for the site only while it serves the published
+  page (apaki/SECURITY.md, section 1.3).
 - A phone without the QR cannot pair. A relay, a network attacker, or someone
   who only knows the room id cannot read, change, replay or reorder anything.
 - Forward secrecy: every connection uses fresh ephemeral keys.
