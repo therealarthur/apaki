@@ -138,5 +138,12 @@ export function createDemoEngine({ now = () => Date.now() } = {}) {
   /** What the PC sends right after the channel opens (apaki/engine/remote.js). */
   const ready = () => ({ ev: 'ready', billing: BILLING, model: MODEL, effort: 'xhigh', mode: 'bypassPermissions', pid: 0, voice: false });
 
-  return { handle, ready, sessions };
+  /** The first events of a connection: ready, then the search indexes' state (broadcast to phones), which fills the list's footer. */
+  const opening = () => [
+    { delay: 30, ev: ready() },
+    { delay: 260, ev: { ev: 'index', ok: true, stats: { blocks_added: 14 }, ms: 640 } },
+    { delay: 300, ev: { ev: 'meaning', stage: 'ready', result: { ok: true, passages: 48210 } } },
+  ];
+
+  return { handle, ready, opening, sessions };
 }

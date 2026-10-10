@@ -72,7 +72,7 @@ export class Link {
     this.on.open?.(true);
     this.hello = { t: 'hello', v: 1, pcName: this.pairing?.pcName || DEMO_PC, ops: ['sessions', 'search', 'open', 'attach', 'send', 'interrupt', 'answer', 'model', 'effort', 'mode', 'commands', 'close'], features: [] };
     this.on.hello?.(this.hello);
-    this.later(30, () => this.onEvent?.(this.engine.ready()));
+    for (const { delay, ev } of this.engine.opening()) this.later(delay, () => this.onEvent?.(ev));
   }
 
   wake() {}

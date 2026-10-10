@@ -182,4 +182,5 @@ test('demo engine: sessions, a conversation with history, a streamed reply that 
   assert.deepEqual(engine.handle(null), []);
   assert.equal(engine.handle({ op: 'search', reqId: 'r5', query: 'relay' })[0].ev.results.length, 1);
   assert.equal(engine.ready().ev, 'ready');
+  assert.deepEqual(engine.opening().map((x) => x.ev.ev), ['ready', 'index', 'meaning']);
 });

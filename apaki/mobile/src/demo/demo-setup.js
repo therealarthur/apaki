@@ -32,11 +32,14 @@ export function setupDemo(mode = 'list') {
   if (mode === 'chat') openFirstSession();
 }
 
-/** Waits for the sessions list, then opens the first conversation the way a tap does. */
+/** The sample conversation with the most in it (demo-engine.js). */
+const SHOWCASE = '5f0c1b2a-0001-4c1e-9d3a-a1b2c3d4e5f6';
+
+/** Waits for the sessions list, then opens the sample conversation the way a tap does. */
 function openFirstSession() {
   const t0 = Date.now();
   const tick = () => {
-    const row = document.querySelector('#sessions li[data-id]');
+    const row = document.querySelector(`#sessions li[data-id="${SHOWCASE}"]`) || document.querySelector('#sessions li[data-id]');
     if (row) { row.click(); return; }
     if (Date.now() - t0 < 8000) setTimeout(tick, 120);
   };
