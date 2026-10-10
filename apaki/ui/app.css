@@ -1005,6 +1005,13 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 }
 .q-act:hover { background: hsla(var(--pearl-stop-blue), .16); }
 .q-act:active { transform: scale(.97); }
+/* Edit (2026-10-10): puts the queued message back in the box; quieter than Steer. */
+.q-edit {
+  flex: none; padding: 4px 10px; border-radius: 8px; cursor: pointer; border: 1px solid var(--hairline-strong);
+  background: none; color: var(--soft); font: 750 12px var(--font-body);
+  transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.q-edit:hover { background: var(--tint); color: var(--ink); }
 .q-x { flex: none; width: 26px; height: 26px; border: 0; border-radius: 7px; background: none; cursor: pointer; color: var(--faint); font-size: 16px; line-height: 1; }
 .q-x:hover { background: var(--tint); color: var(--ink); }
 :root[data-theme="dark"] .queue { border-color: hsla(0, 0%, 100%, .08); }
@@ -1952,3 +1959,20 @@ mark.find-hit.cur { background: var(--peach-glow); color: #1E1B33; box-shadow: 0
 .gp-form-act { display: flex; justify-content: flex-end; gap: 6px; }
 :root[data-theme="dark"] .glass-panel { background: linear-gradient(160deg, hsla(var(--pearl-stop-blue), .05), hsla(var(--pearl-stop-purple), .04) 55%, hsla(var(--pearl-stop-cyan), .04)), hsla(var(--w), .97); border-color: hsla(0, 0%, 100%, .08); box-shadow: 0 22px 50px -20px rgba(0, 0, 0, .8); }
 :root[data-theme="dark"] .gp-form, :root[data-theme="dark"] .gp-form input, :root[data-theme="dark"] .gp-rename { background: var(--tint); }
+
+/* ---------- the context meter (pane.js renderContext, 2026-10-10) ----------
+   A chip at the end of the settings line: a thin bar filling with the
+   context window and the percentage; warm past 70%, the action color past
+   88% (Claude Code compacts on its own near the top). The fill is a scaleX
+   transform, so it moves without layout work. */
+.chip-btn.ctx { display: inline-flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; }
+.chip-btn.ctx[hidden] { display: none; }
+.ctx-bar { position: relative; display: block; width: 34px; height: 4px; border-radius: 2px; overflow: hidden; background: hsla(232, 40%, 60%, .18); }
+.ctx-bar i { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(90deg, var(--btn-a, #2C3578), var(--btn-b, #5A3FB0)); transform: scaleX(var(--ctx, 0)); transform-origin: left center; transition: transform 300ms var(--ease-out); }
+.ctx-n { font: 650 11.5px var(--font-mono); color: var(--soft); }
+.chip-btn.ctx.warm .ctx-bar i { background: linear-gradient(90deg, #E9A23B, #E0803A); }
+.chip-btn.ctx.warm .ctx-n { color: #B5651D; }
+.chip-btn.ctx.full .ctx-bar i { background: linear-gradient(90deg, var(--action), var(--action-strong)); }
+.chip-btn.ctx.full .ctx-n { color: var(--action-strong); font-weight: 750; }
+:root[data-theme="dark"] .chip-btn.ctx.warm .ctx-n { color: #F0B062; }
+@media (prefers-reduced-motion: reduce) { .ctx-bar i { transition: none; } }

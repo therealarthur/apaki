@@ -332,6 +332,16 @@ export class SessionRunner {
     return this.q[method]();
   }
 
+  /**
+   * How full the context window is, the numbers behind /context ('summary':
+   * from the last response's usage and local estimates, no token-count API
+   * calls). Null when no Claude Code process runs (nothing to measure).
+   */
+  async contextUsage() {
+    if (!this.running || typeof this.q?.getContextUsage !== 'function') return null;
+    return this.q.getContextUsage({ detail: 'summary' });
+  }
+
   /** Slash commands Claude Code knows here: built-ins, skills, plugins, custom commands. */
   supportedCommands() { return this.ask('supportedCommands'); }
 

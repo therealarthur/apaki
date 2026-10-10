@@ -128,7 +128,7 @@ export class Pane {
       title: q('.title'), cwd: q('.cwd'), T: q('.transcript'), ground: q('.ground'), input: q('textarea'),
       send: q('.send'), status: q('.status'), slash: q('.slash'), attachments: q('.attachments'), composer: q('.composer'),
       file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
-      folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'),
+      folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'), ctx: q('.chip-btn.ctx'),
       statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
       pin: q('.prompt-pin'), artReopen: q('.art-reopen'), tasksBtn: q('.tasks-btn'),
     };
@@ -168,6 +168,7 @@ export class Pane {
     this.$.mode.onclick = () => menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 });
     this.$.folder.onclick = () => this.host.folderMenu(this, this.$.folder);
     this.$.billing.onclick = () => this.send('billingOptions');
+    if (this.$.ctx) this.$.ctx.onclick = () => this.contextMenu();
     this.$.close.onclick = () => this.host.close(this);
     if (this.$.artReopen) this.$.artReopen.onclick = () => this.artifactsMenu();
     if (this.$.tasksBtn) this.$.tasksBtn.onclick = () => this.host.openTasksPanel?.(this, this.$.tasksBtn);
@@ -262,7 +263,52 @@ export class Pane {
     this.folderId = f?.id || null;
   }
 
-  setModel(m) { this.model = m; this.renderChips(); this.send('model', { model: m }); this.host.changed(this); }
+  setModel(m) { this.model = m; this.renderChips(); this.send('model', { model: m }); this.host.changed(this); this.askContext(1500); }
+
+  /* ---------- the context meter (2026-10-10) ---------- */
+
+  /** Asks the engine how full this conversation's context window is (it also says so after every turn). */
+  askContext(ms = 1200) {
+    clearTimeout(this.ctxTimer);
+    this.ctxTimer = setTimeout(() => { if (this.sessionId || this.busy) this.send('contextUsage'); }, ms);
+  }
+
+  /** The meter in the settings line: a thin bar and the percentage, warmer as the window fills. */
+  renderContext() {
+    const b = this.$.ctx;
+    const c = this.ctx;
+    if (!b) return;
+    if (!c || c.percentage == null) { b.hidden = true; return; }
+    const pct = Math.max(0, Math.round(c.percentage));
+    b.hidden = false;
+    b.querySelector('.ctx-n').textContent = `${pct}%`;
+    b.style.setProperty('--ctx', Math.min(1, pct / 100).toFixed(3));
+    b.classList.toggle('warm', pct >= 70 && pct < 88);
+    b.classList.toggle('full', pct >= 88);
+    const k = (n) => (n == null ? '?' : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+    const auto = typeof c.autoCompact === 'number' ? ` Claude Code compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off.' : '';
+    b.title = `Context: ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens used (${pct}%).${auto} Click for the breakdown.`;
+    b.setAttribute('aria-label', `Context ${pct}% used`);
+  }
+
+  /** The breakdown: what fills the window, and Compact now. */
+  contextMenu() {
+    const c = this.ctx;
+    if (!c) { this.askContext(0); return; }
+    const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
+    const items = [{ heading: `Context ${Math.round(c.percentage)}% · ${k(c.totalTokens || 0)} of ${k(c.maxTokens || 0)}` }];
+    for (const u of c.used || []) items.push({ label: u.name, hint: `${k(u.tokens)} tokens`, value: null, disabled: true });
+    items.push({ divider: true });
+    items.push({ label: 'Compact now', hint: 'summarize the conversation to free the window', value: 'compact', disabled: this.busy ? 'Wait until Claude finishes' : false });
+    items.push({ label: 'Measure again', value: 'refresh' });
+    menu(this.$.ctx, items, {
+      width: 300,
+      onPick: (v) => {
+        if (v === 'refresh') this.askContext(0);
+        if (v === 'compact' && !this.busy) { this.$.input.value = '/compact'; this.submit(); }
+      },
+    });
+  }
   setEffort(x) { this.effort = x; this.renderChips(); this.send('effort', { effort: x }); this.host.changed(this); }
   setMode(x) { this.mode = x; this.renderChips(); this.send('mode', { mode: x }); this.host.changed(this); }
 
@@ -1101,6 +1147,9 @@ export class Pane {
         this.setTitle(e.title || 'New conversation');
         this.setCwdLine();
         this.renderBilling();
+        // The context meter belongs to the session: another one starts empty, then measures.
+        if (this.ctx && this.ctx.sessionId !== e.sessionId) { this.ctx = null; this.renderContext(); }
+        this.askContext(1500);
         if (e.sessionId) this.$.T.innerHTML = '';
         else this.showEmpty();
         // Re-attached after a reconnect (the phone client): busy says whether a turn is still running.
@@ -1137,6 +1186,7 @@ export class Pane {
         break;
       }
       case 'billing': this.billing = e; this.renderBilling(); if (e.note) this.note(e.note); break;
+      case 'context': if (!e.none && (!e.sessionId || !this.sessionId || e.sessionId === this.sessionId)) { this.ctx = e; this.renderContext(); } break;
       case 'commands': this.commands = e.commands || []; break;
       case 'artifact': this.onArtifact(e); break;
       case 'openUrl': this.onOpenUrl(e); break;

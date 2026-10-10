@@ -456,6 +456,34 @@ async function takeFrom(other, taker) {
 }
 
 /**
+ * The context meter (Arthur, 2026-10-10: "theres no context percentage bar"):
+ * asks the pane's Claude Code process how full its context window is (the
+ * numbers behind /context, summary detail: no extra API calls) and sends the
+ * window { ev: 'context' } with the percentage, the tokens, the window and
+ * the biggest categories. Debounced per pane; quiet when no process runs.
+ */
+function contextSoon(p, ms = 400) {
+  clearTimeout(p.contextTimer);
+  p.contextTimer = setTimeout(() => sendContext(p).catch(() => {}), ms);
+}
+
+async function sendContext(p, reqId = null) {
+  const u = await p.runner?.contextUsage?.();
+  if (!u) { if (reqId) emit({ ev: 'context', reqId, paneId: p.id, none: true }); return; }
+  const used = (u.categories || []).filter((c) => (c.kind ? c.kind === 'used' : !/free|buffer/i.test(c.name)) && !c.isDeferred && c.tokens > 0)
+    .sort((a, b) => b.tokens - a.tokens).slice(0, 6).map((c) => ({ name: c.name, tokens: c.tokens }));
+  const max = u.rawMaxTokens || u.maxTokens || null;
+  // autoCompactThreshold comes in tokens (967000 of a 1M window, measured 2026-10-10): the window shows a percentage.
+  const thr = Number(u.autoCompactThreshold);
+  const autoPct = Number.isFinite(thr) && thr > 0 ? (thr > 100 && max ? Math.round((100 * thr) / max) : Math.round(thr)) : null;
+  emit({
+    ev: 'context', reqId, paneId: p.id, sessionId: p.sessionId,
+    percentage: Math.round(Number(u.percentage) || 0), totalTokens: u.totalTokens ?? null, maxTokens: max,
+    autoCompact: u.isAutoCompactEnabled ? autoPct : false, model: u.model || p.model, used,
+  });
+}
+
+/**
  * Questions (AskUserQuestion, plan approval) of a pane that no longer wait
  * for anyone: the turn ended, or Claude Code gave up and asked again. Each is
  * settled with no answer and the window drops its sheet (ask_gone), so a
@@ -527,6 +555,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
       // A turn cannot end while a question really waits (its tool call is held), so any still open now went stale.
       if (msg?.type === 'result' || msg?.type === 'latch_error') dropStaleAsks(p.id);
       emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
+      // The context meter: measured once the process is up, after every turn and after a compaction.
+      if (msg?.type === 'result' || (msg?.type === 'system' && (msg.subtype === 'init' || msg.subtype === 'compact_boundary'))) contextSoon(p);
     },
     onStderr: (d) => process.stderr.write(String(d).replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***')),
   });
@@ -690,6 +720,12 @@ const handlers = {
   // Steer: add a message to the running turn without stopping it (Claude
   // Code takes it in at its next step). If the turn already ended, it goes
   // out as a normal message instead.
+  // The context meter on demand (the window asks when a pane comes into view or its meter is clicked).
+  contextUsage: async (c) => {
+    const p = panes.get(String(c.paneId || ''));
+    if (!p) { emit({ ev: 'context', reqId: c.reqId, paneId: c.paneId, none: true }); return; }
+    await sendContext(p, c.reqId || null).catch(() => emit({ ev: 'context', reqId: c.reqId, paneId: c.paneId, none: true }));
+  },
   steer: async (c) => {
     const p = getPane(c.paneId);
     const images = Array.isArray(c.images) ? c.images : [];
