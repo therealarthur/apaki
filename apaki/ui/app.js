@@ -32,6 +32,7 @@ import { MARK_SVG } from './mark.js';
 import { folderSheet } from './startfolder.js';
 import { initGlassCard } from './glasscard.js';
 import { initSettings } from './settings.js';
+import { findStep, openFind } from './find.js';
 import { DRAG_TASK, KIND_LABEL, TaskPane, closeTasksPanel, newTaskViewerId, specKey, taskGlyph, tasksPanel, tasksPanelPane } from './tasks.js';
 import { ArtifactPane, newViewerId } from './artifacts.js';
 
@@ -1429,8 +1430,12 @@ document.addEventListener('drop', (e) => { if (dragKind(e) === 'files') e.preven
 /* ---------- keyboard ---------- */
 
 document.addEventListener('keydown', (e) => {
+  // F3 / Shift+F3: the next or previous match in the focused pane (find.js).
+  if (e.key === 'F3' && !e.ctrlKey && !e.altKey) { e.preventDefault(); findStep(focusedPane(), e.shiftKey ? -1 : 1); return; }
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
   const k = e.key.toLowerCase();
+  // Ctrl+F: find in the focused pane (its conversation, task or artifact), not the browser's own find.
+  if (k === 'f' && !e.shiftKey) { e.preventDefault(); openFind(focusedPane()); return; }
   if (k === 't') { e.preventDefault(); addTab(); return; }
   if (k === 'w') { e.preventDefault(); const p = focusedPane(); if (p) closePane(p); return; }
   if (e.key === 'Tab') {

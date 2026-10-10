@@ -365,7 +365,8 @@ export class Pane {
     if (key === this._pinKey && !pin.hidden && this._pinEl === t.el) return;
     this._pinKey = key;
     this._pinEl = t.el;
-    const words = [...t.el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join('').trim();
+    // Its own text (Ctrl+F's marks included), not the steer tag or image row.
+    const words = [...t.el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE || n.matches?.('mark.find-hit')).map((n) => n.textContent).join('').trim();
     const imgs = t.el.querySelectorAll('.imgs img, .imgs .img-marker').length;
     const text = words || (imgs ? `${imgs} image${imgs > 1 ? 's' : ''}` : 'Your message');
     pin.innerHTML = `<button class="pin-card" title="Scroll up to this message"><span class="pin-head"><span class="pin-who">${t.el.classList.contains('steered') ? 'You, steered in' : 'You asked'}</span><span class="pin-n">${t.n} of ${t.of}</span><span class="pin-go">Jump up<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2"/></svg></span></span><span class="pin-text">${esc(text)}</span></button>`;
@@ -700,6 +701,8 @@ export class Pane {
   }
 
   renderHistory(messages, total) {
+    // Ctrl+F says when it can only search the messages loaded here.
+    this.historyCut = total > messages.length ? { shown: messages.length, total } : null;
     this.$.T.innerHTML = '';
     this.tools.clear();
     this.cardKeys.clear();
