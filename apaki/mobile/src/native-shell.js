@@ -117,6 +117,8 @@ async function launchPayload() {
   });
   let url = null;
   try { url = (await App.getLaunchUrl())?.url || null; } catch { url = null; }
+  // Debug builds only (ApakiApp.info reads -apakiLink under #if DEBUG): a link handed over at launch, for Simulator tests.
+  if (!url) { try { url = (await AppInfo.info())?.link || null; } catch { url = null; } }
   const p = url ? pairingPayloadFrom(url) : null;
   if (!p || sessionStorage.getItem(USED_LINK) === p) return null;
   sessionStorage.setItem(USED_LINK, p);

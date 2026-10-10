@@ -7,7 +7,8 @@
 #   scripts/ios-sim.sh install            install the built app on it
 #   scripts/ios-sim.sh demo pair|list|chat   launch the demo mode (a demo build, Debug only)
 #   scripts/ios-sim.sh launch             launch normally
-#   scripts/ios-sim.sh open <url>         open a link in the Simulator (a pairing link: apaki://pair#p=...)
+#   scripts/ios-sim.sh open <url>         open a link in the Simulator (custom schemes stop at a system prompt)
+#   scripts/ios-sim.sh link < file        launch with a pairing link from stdin (Debug builds, -apakiLink)
 #   scripts/ios-sim.sh shot <name>        screenshot into screenshots/<name>.png, at most 1400 px tall
 #   scripts/ios-sim.sh appearance light|dark
 #
@@ -54,6 +55,12 @@ case "${1:-}" in
     xcrun simctl launch "$(udid)" "$BUNDLE"
     ;;
   open) xcrun simctl openurl "$(udid)" "$2" ;;
+  link)
+    # Debug builds: launch with a pairing link (no "Open in Apaki?" prompt to tap). Reads the link from stdin.
+    read -r link
+    xcrun simctl terminate "$(udid)" "$BUNDLE" >/dev/null 2>&1 || true
+    xcrun simctl launch "$(udid)" "$BUNDLE" -apakiLink "$link"
+    ;;
   shot)
     mkdir -p screenshots
     tmp=$(mktemp -d)
@@ -64,5 +71,5 @@ case "${1:-}" in
     echo "screenshots/$2.png"
     ;;
   appearance) xcrun simctl ui "$(udid)" appearance "$2" ;;
-  *) sed -n '2,16p' "$0"; exit 1 ;;
+  *) sed -n '2,17p' "$0"; exit 1 ;;
 esac
