@@ -2174,3 +2174,33 @@ button:disabled { cursor: default; }
   .tab.busy::after { display: none; }
   .tab.busy .tab-t { color: var(--brand-strong); }
 }
+
+/* ---------- the session menu and the archived link (2026-10-10) ---------- */
+/* Long menus (the session menu with folders) scroll inside the window instead of running off it. */
+.menu { max-height: calc(100vh - 16px); overflow-y: auto; scrollbar-width: thin; }
+/* "N archived" under the session list: a quiet text button that opens the Archived view. */
+.sessions li.archived-link { padding: 8px 12px 14px; text-align: center; background: none; cursor: default; }
+.link-btn { padding: 4px 8px; border: 0; border-radius: 7px; background: none; cursor: pointer; font: 650 12px var(--font-body); color: var(--faint); }
+.link-btn:hover { color: var(--brand-deep); background: hsla(232, 60%, 62%, .08); }
+.link-btn:focus-visible { outline: 2px solid hsla(var(--pearl-stop-blue), .5); outline-offset: 1px; }
+
+/* ---------- the sidebar: resize and collapse (app.js wireRail, 2026-10-10) ----------
+   The handle sits over the sidebar's right edge; hovering shows a soft band
+   centred on the edge (not a one-sided line). Collapsed, the grid has one
+   column and a button at the left of the tab row brings the sidebar back. */
+.rail-resize { position: fixed; z-index: 30; top: 0; bottom: 0; left: calc(var(--rail) - 4px); width: 8px; cursor: col-resize; touch-action: none; }
+.rail-resize::after { content: ''; position: absolute; inset: 0; opacity: 0; background: linear-gradient(90deg, transparent, hsla(var(--pearl-stop-blue), .38), transparent); transition: opacity 140ms var(--ease-hover); }
+.rail-resize:hover::after, body.rail-dragging .rail-resize::after { opacity: 1; }
+body.rail-dragging, body.rail-dragging * { cursor: col-resize !important; user-select: none !important; }
+body.rail-collapsed { grid-template-columns: minmax(0, 1fr); }
+body.rail-collapsed .rail, body.rail-collapsed .rail-resize { display: none; }
+.rail-toggle { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; background: none; cursor: pointer; color: var(--soft); transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover); }
+.rail-toggle:hover { background: hsla(232, 60%, 62%, .1); color: var(--ink); }
+.rail-toggle:active { background: hsla(232, 60%, 62%, .16); }
+.rail-toggle:focus-visible { outline: 2px solid hsla(var(--pearl-stop-blue), .55); outline-offset: 1px; }
+.rail-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
+.brand .rail-toggle { margin-left: auto; }
+.rail-show { align-self: center; margin: 0 2px 0 10px; }
+.rail-show[hidden] { display: none; }
+/* The phone has its own layout (web.css): no handle, no toggles. */
+body.web .rail-resize, body.web .rail-toggle { display: none !important; }

@@ -1160,6 +1160,9 @@ export class Pane {
         else this.showEmpty();
         // Re-attached after a reconnect (the phone client): busy says whether a turn is still running.
         if (e.attached) this.setBusy(Boolean(e.busy));
+        // Lost the engine mid-turn: re-attached means the background host kept it going; otherwise it stopped.
+        if (this.lostBusy && !e.attached) this.turnStoppedNote = true;
+        this.lostBusy = false;
         // Notes about how this session opened go below its history, which
         // arrives next and redraws the transcript (they were wiped before).
         this.openNotes = [];
@@ -1168,6 +1171,7 @@ export class Pane {
         // Re-attached (the background host kept this Claude Code process running): nothing was cut off.
         if (this.crashNote && e.attached) this.crashNote = false;
         if (this.crashNote) { this.openNotes.push(['Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
+        if (this.turnStoppedNote) { this.openNotes.push(['The engine restarted while Claude was working here, and that turn stopped. Everything until then is above; send a message to carry on.', 'warn']); this.turnStoppedNote = false; }
         if (e.sessionId !== this.sessionId || e.reset) this.liveTasks.clear();
         this.renderTasksButton();
         if (!e.sessionId) this.flushOpenNotes();
@@ -1220,9 +1224,15 @@ export class Pane {
     }
   }
 
-  /** Called when the engine restarted: every Claude Code process is gone. */
+  /**
+   * Called when the window lost the engine. Since 2026-10-10 the engine is a
+   * background host that may still be running this pane's turn: say nothing
+   * yet, and let the re-attach decide (see 'opened': attached means it kept
+   * going; otherwise the turn stopped and the pane says so then).
+   */
   engineLost() {
-    if (this.busy) { this.setBusy(false); this.note('The engine stopped and is restarting; send your message again.', 'warn'); }
+    this.lostBusy = this.busy || this.lostBusy;
+    if (this.busy) this.setBusy(false);
     this.setStatus('');
   }
 
