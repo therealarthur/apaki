@@ -19,3 +19,11 @@ li { margin: 8px 0; color: var(--soft); }
 .versions span { margin: 0 8px; font-size: 13px; color: var(--faint); }
 a { color: var(--brand); }
 .small { margin-top: 32px; font-size: 13px; color: var(--faint); }
+/* "Open Apaki" (2026-10-10): the way in, to sign in or pair; the app's brand gradient. */
+.cta { margin: 28px 0 10px; }
+.btn { display: inline-block; padding: 14px 26px; border-radius: 14px; color: #fff; text-decoration: none; font-weight: 800; font-size: 17px; letter-spacing: .01em;
+  background: linear-gradient(135deg, #2C3578, #5A3FB0); box-shadow: 0 10px 24px -14px rgba(70, 52, 160, .7); }
+.btn:hover { filter: brightness(1.08); }
+.btn:focus-visible { outline: 3px solid rgba(101, 114, 212, .5); outline-offset: 3px; }
+@media (prefers-color-scheme: dark) { .btn { background: linear-gradient(135deg, #3E48A0, #5B40AA); } }
+.cta-note { margin: 0; font-size: 14px; color: var(--faint); }

@@ -236,6 +236,9 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 
 /** The site's front page: what this is, how it stays private, and every published version with its manifest. */
 export function writeLanding(site = DEFAULT_SITE) {
+  // The newest published page is where "Open Apaki" goes (Arthur, 2026-10-10: "make sure users can login on
+  // apaki to see their connected machines"): signing in or pairing both start there.
+  const newest = versionsOf(site)[0] || null;
   const list = versionsOf(site).map((v) => `<li><code>${esc(v.version)}</code> <span>${esc(String(v.publishedAt || '').slice(0, 10))} · ${v.files} files · relay ${esc(new URL(v.relay).host)}</span> <a href="v/${esc(v.version)}/manifest.json">file hashes</a></li>`).join('\n      ');
   const html = `<!doctype html>
 <html lang="en">
@@ -250,7 +253,9 @@ export function writeLanding(site = DEFAULT_SITE) {
 <body>
   <main>
     <h1>Myrlin Apaki</h1>
-    <p class="lead">This address connects a phone to Myrlin Apaki on a computer. Open the pairing code in Apaki on your PC and scan it; the code opens the exact phone page that matches your Apaki.</p>
+    <p class="lead">Your PC's Claude Code sessions, on your phone or any browser, end to end encrypted.</p>
+    ${newest ? `<p class="cta"><a class="btn" href="v/${esc(newest.version)}/">Open Apaki</a></p>
+    <p class="cta-note">Sign in with your Apaki account (a passkey) to see your PCs and connect, or pair a new phone with the code Apaki shows on your PC (Phone, at the bottom of its sidebar).</p>` : ''}
     <h2>What this site can and cannot see</h2>
     <ul>
       <li>It serves the phone page and relays frames between your PC and your phones. Everything in those frames is end-to-end encrypted between the two; this site cannot read them and keeps nothing about your conversations. If you make an Apaki account, it stores the account's name, its passkeys' public keys and a vault it cannot open.</li>
