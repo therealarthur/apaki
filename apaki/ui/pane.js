@@ -27,6 +27,7 @@ const LOCAL = [
   { name: 'mode', description: 'Permission mode: bypassPermissions, acceptEdits, plan, default' },
   { name: 'key', description: 'Billing: follow Glass, subscription, or a vault key' },
   { name: 'folder', description: 'Move this conversation to a folder (name)' },
+  { name: 'warm', description: 'Keep the prompt cache warm between messages (on, off, status)' },
 ];
 const MODELS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-1' };
 const MODEL_NAMES = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5', 'claude-fable-5-1': 'Fable 5.1' };
@@ -85,8 +86,16 @@ export class Pane {
       send: q('.send'), status: q('.status'), slash: q('.slash'), attachments: q('.attachments'), composer: q('.composer'),
       file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
       folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'),
-      statusLine: q('.status-line'), egridSlot: q('.egrid-slot'),
+      statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'),
     };
+    // The composer floats over the conversation (frosted); keep the last
+    // message clear of it as it grows and shrinks.
+    new ResizeObserver(() => {
+      const g = this.$.ground;
+      const atEnd = g.scrollHeight - g.scrollTop - g.clientHeight < 8;
+      this.el.style.setProperty('--composer-h', `${this.$.wrap.offsetHeight}px`);
+      if (atEnd) g.scrollTop = g.scrollHeight;
+    }).observe(this.$.wrap);
     this.renderChips();
     this.setTitle(this.title);
     this.wire();
@@ -99,6 +108,7 @@ export class Pane {
   /* ---------- wiring ---------- */
 
   wire() {
+    this.$.cwd.onclick = () => { if (!this.sessionId && !this.busy) this.host.chooseFolder(this); };
     const { input } = this.$;
     this.el.addEventListener('pointerdown', () => this.host.focus(this), true);
     this.el.addEventListener('focusin', () => this.host.focus(this));
@@ -160,6 +170,21 @@ export class Pane {
 
   setCwdLine() {
     this.$.cwd.textContent = `${short(this.cwd)}${this.sessionId ? `  ·  ${this.sessionId}` : ''}`;
+    // Until the first message the folder can still change: say so, and let a click do it.
+    const open = !this.sessionId;
+    this.$.cwd.classList.toggle('pickable', open);
+    this.$.cwd.title = open ? 'Folder this conversation starts in · click to change' : this.cwd;
+    const start = this.$.T.querySelector('.start-path');
+    if (start) start.textContent = short(this.cwd) || '~';
+  }
+
+  /** Starts this new conversation in another folder (only before its first message). */
+  setStartFolder(dir) {
+    if (this.sessionId || this.busy) return;
+    this.cwd = dir;
+    this.setCwdLine();
+    this.open(null, { warm: true });
+    this.host.changed(this);
   }
 
   renderBilling() {
@@ -245,7 +270,8 @@ export class Pane {
 
   showEmpty() {
     this.$.T.innerHTML = '';
-    this.$.T.append(el('div', 'empty', `<div class="empty-grid" aria-hidden="true">${'<i></i>'.repeat(40)}</div><h3>New conversation</h3><p>It becomes a Claude Code session with your first message.</p><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
+    queueMicrotask(() => { const b = this.$.T.querySelector('.start-in'); if (b) b.onclick = () => this.host.chooseFolder(this); });
+    this.$.T.append(el('div', 'empty', `<div class="empty-grid" aria-hidden="true">${'<i></i>'.repeat(40)}</div><h3>New conversation</h3><p>It becomes a Claude Code session with your first message.</p><button class="start-in" title="Choose the folder this conversation starts in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.6 0-1.2-.5-1.2-1.2z"/></svg><span class="start-label">Starts in</span><span class="start-path">${esc(short(this.cwd) || '~')}</span><span class="start-change">Change</span></button><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
   }
 
   /* ---------- transcript ---------- */
@@ -431,6 +457,7 @@ export class Pane {
       case 'effort': if (arg) this.setEffort(arg); else this.note(`Effort: ${this.effort}`); return true;
       case 'mode': if (arg) this.setMode(arg); else this.note(`Mode: ${this.mode}`); return true;
       case 'key': this.send('billingOptions'); return true;
+      case 'warm': this.send('warm', { arg }); return true;
       case 'folder': if (arg && this.sessionId) this.send('folder', { action: 'create', name: arg, sessionId: this.sessionId }); return true;
       default: return false;
     }

@@ -858,3 +858,112 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .brand .brand-mark { width: 40px; height: 19px; flex: none; }
 .stage-empty .empty-mark { width: 64px; height: 30px; margin: 0 auto 6px; opacity: .9; }
 :root[data-theme="dark"] .m-mark .m-fold { fill: var(--brand-strong); }
+
+/* ---------- frosted composer (2026-10-09) ----------
+   Arthur: the prompt box should be "a tinted frosted glassy object/card so
+   you can see a slight hint of a blur of color behind". The composer now
+   floats over the bottom of the conversation (same grid cell as .ground),
+   so messages scroll under it and show through as a soft blur, over the
+   pearl. --composer-h (set by pane.js) keeps the last message clear of it. */
+.pane { grid-template-rows: auto 1fr; }
+.pane > .ground, .pane > .composer-wrap { grid-row: 2; grid-column: 1; }
+.composer-wrap { align-self: end; z-index: 3; pointer-events: none; padding-bottom: 16px; }
+.composer-wrap > .composer, .composer-wrap > .slash { pointer-events: auto; }
+.transcript { padding-bottom: calc(var(--composer-h, 150px) + 18px); }
+/* Messages fade out in the strip under the card instead of showing sharp below it. */
+.pane > .ground { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 30px), transparent); }
+.composer {
+  --frost: hsla(var(--w), .5);
+  --frost-edge: hsla(var(--w), .78);
+  background:
+    linear-gradient(120deg, hsla(var(--pearl-stop-blue), .13), hsla(var(--pearl-stop-purple), .09) 48%, hsla(var(--pearl-stop-cyan), .11)),
+    var(--frost);
+  -webkit-backdrop-filter: blur(14px) saturate(1.8); backdrop-filter: blur(14px) saturate(1.8);
+  border: 1px solid var(--frost-edge);
+  border-radius: 16px;
+  box-shadow:
+    inset 0 1px 0 hsla(0, 0%, 100%, .55),
+    0 0 0 1px hsla(232, 40%, 78%, .32),
+    0 14px 36px -18px rgba(var(--shadow-rgb), .5);
+  transition: border-color var(--dur-fast) var(--ease-hover), box-shadow var(--dur-fast) var(--ease-hover);
+}
+.composer:focus-within {
+  border-color: hsla(var(--pearl-stop-blue), .55);
+  box-shadow:
+    inset 0 1px 0 hsla(0, 0%, 100%, .6),
+    0 0 0 3px hsla(var(--pearl-stop-blue), .14),
+    0 16px 40px -18px rgba(var(--shadow-rgb), .55);
+}
+.composer.drop { background: var(--brand-wash); }
+.status-line { pointer-events: none; }
+:root[data-theme="dark"] .composer {
+  --frost: hsla(var(--w), .5);
+  --frost-edge: hsla(0, 0%, 100%, .09);
+  box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .06), 0 0 0 1px hsla(0, 0%, 0%, .3), 0 16px 40px -18px rgba(0, 0, 0, .7);
+}
+/* Without backdrop-filter the frost would be too thin to read through. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .composer { --frost: hsla(var(--w), .94); } }
+
+/* ---------- where a new conversation starts (2026-10-09) ---------- */
+.start-in {
+  display: inline-flex; align-items: center; gap: 8px; margin: 14px auto 2px; padding: 8px 12px 8px 10px;
+  border: 1px solid var(--hairline-strong); border-radius: 12px; cursor: pointer; color: var(--ink);
+  background: hsla(var(--w), .62); -webkit-backdrop-filter: blur(14px) saturate(1.5); backdrop-filter: blur(14px) saturate(1.5);
+  transition: border-color var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-hover);
+}
+.start-in:hover { border-color: var(--brand); }
+.start-in:active { transform: scale(.98); }
+.start-in svg { width: 15px; height: 15px; fill: none; stroke: var(--brand-strong); stroke-width: 1.4; stroke-linejoin: round; }
+.start-in .start-label { font-size: 12px; color: var(--faint); }
+.start-in .start-path { font-family: var(--font-mono); font-size: 12.5px; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.start-in .start-change { font-size: 12px; font-weight: 650; color: var(--brand-strong); }
+.cwd.pickable { cursor: pointer; text-decoration: underline dotted hsla(var(--pearl-stop-blue), .55); text-underline-offset: 3px; }
+.cwd.pickable:hover { color: var(--brand-strong); }
+
+.sheet:has(.places) { width: min(780px, calc(100vw - 48px)); }
+.sheet .path-go { display: flex; gap: 6px; margin-top: 12px; }
+.sheet .path-go input { margin-top: 0; font-family: var(--font-mono); font-size: 12.5px; }
+.sheet .path-go button, .sheet .br-new button {
+  flex: none; padding: 7px 14px; border-radius: var(--radius-sm); border: 1px solid var(--hairline-strong); background: var(--ground); cursor: pointer; font-weight: 600;
+}
+.places { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+@container (max-width: 560px) { .places { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .places { grid-template-columns: 1fr; } }
+.pl-h { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
+.pl-wait { font-size: 12.5px; color: var(--faint); padding: 6px 2px; }
+.sheet .opt.pl { display: grid; grid-template-columns: 1fr auto; column-gap: 10px; padding: 7px 10px; margin: 0 0 4px; text-align: left; width: 100%; }
+.sheet .opt.pl b { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sheet .opt.pl small { grid-column: 1; font-family: var(--font-mono); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-meta { grid-column: 2; grid-row: 1 / span 2; align-self: center; display: flex; gap: 6px; font: 10.5px var(--font-mono); color: var(--faint); white-space: nowrap; }
+.browse { margin-top: 16px; border: 1px solid var(--hairline); border-radius: 12px; padding: 10px; background: hsla(var(--w), .5); }
+.br-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; min-width: 0; font-family: var(--font-mono); font-size: 12px; }
+.crumbs button, .drives button { border: 0; background: none; padding: 3px 5px; border-radius: 6px; cursor: pointer; color: var(--brand-deep); font: inherit; }
+.crumbs button:hover, .drives button:hover { background: var(--tint); }
+.crumbs .sep { color: var(--faint); }
+.drives { display: flex; gap: 2px; flex: none; font-family: var(--font-mono); font-size: 12px; }
+.br-list { margin-top: 8px; max-height: 220px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 2px; }
+.br-d { text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.br-d:hover { background: var(--brand-wash); }
+.br-d.hid { color: var(--faint); }
+.br-up { font-family: var(--font-mono); color: var(--brand-strong); }
+.br-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.br-hidden { font-size: 12px; color: var(--faint); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.br-new { display: flex; gap: 6px; flex: 1; max-width: 360px; }
+.sheet .br-new input { margin-top: 0; padding: 6px 10px; }
+.br-err { margin-top: 8px; font-size: 12.5px; color: var(--action-strong); }
+.sheet .row button:disabled { opacity: .5; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .start-in, .start-in:active { transition: none; transform: none; } }
+/* The folder sheet is tall: keep its buttons in reach while the lists scroll. */
+.sheet:has(.places) { padding-bottom: 0; }
+.sheet:has(.places) .row { position: sticky; bottom: 0; margin: 14px -22px 0; padding: 12px 22px 16px; background: linear-gradient(hsla(var(--w), 0), var(--card) 14px); }
+/* Places as single compact lines, so the browser below stays in view. */
+.sheet .opt.pl { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; margin: 0 0 3px; }
+.sheet .opt.pl b { flex: none; max-width: 46%; }
+.sheet .opt.pl small { flex: 1; min-width: 0; }
+.sheet .opt.pl .pl-meta { flex: none; align-self: baseline; }
+/* Long paths must not widen a column past half the sheet. */
+.places { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.pl-col { min-width: 0; }
+.br-list .pl-wait { grid-column: 1 / -1; }
+@media (max-width: 640px) { .places { grid-template-columns: minmax(0, 1fr); } }

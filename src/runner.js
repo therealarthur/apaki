@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { findSessionFiles, lastCostTotal, readTail } from './sessions.js';
+import { noteRunnerUse } from './warm.js';
 
 // How long after a result to wait before recording the transcript size, so
 // the process's own trailing writes are not mistaken for an outside change.
@@ -198,6 +199,13 @@ export class SessionRunner {
     this.settleTimer = setTimeout(() => { this.settleTimer = null; this.knownSize = fileSize(this.transcript); }, SETTLE_MS);
     const turn = this.pending.shift();
     if (turn) turn.resolve(msg);
+    // Keep-warm: record how this turn ran so its cache can be kept alive (does
+    // nothing unless keep-warm is on and the turn was billed to an API key).
+    if (!msg.is_error && !this.noWarm) {
+      this.lastResult = msg;
+      this.lastTurnAt = Date.now();
+      try { noteRunnerUse(this, msg); } catch { /* never break a turn over this */ }
+    }
   }
 
   /** True when something other than this process added a message since the last turn. */

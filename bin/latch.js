@@ -19,6 +19,9 @@
  *   latch -c              continue the latest session started in this folder
  *   latch -n              start a new session in this folder (or --cwd)
  *   latch -l              list recent sessions and exit
+ *   latch warm [on|off|status]  keep prompt caches of sessions used on an API
+ *                         key warm between messages (--hours N, --cap USD;
+ *                         `latch warm off <id>` stops one session)
  * Options:
  *   --key <words>   bill a credentials.md key whose heading has these words
  *   --sub           use the live Claude Code login (subscription) instead of a key
@@ -53,6 +56,7 @@ import {
   ago, findSessionFiles, getSessionInfo, idleMs, listSessions, releaseLock, sessionIdOf, takeLock,
 } from '../src/sessions.js';
 import { Tui } from '../src/tui.js';
+import { warmCli } from '../src/warm.js';
 import { runApp } from '../src/ui/app.js';
 import { pickSession as pickInteractive } from '../src/picker.js';
 
@@ -130,6 +134,8 @@ async function pickSession() {
 }
 
 async function main() {
+  // `latch warm [status|on|off|ping|run]`: keep prompt caches warm (src/warm.js).
+  if (process.argv[2] === 'warm') { await warmCli(process.argv.slice(3)); return; }
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {

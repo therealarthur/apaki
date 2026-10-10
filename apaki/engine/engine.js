@@ -44,6 +44,8 @@ import { filterItems, terminalSessions } from '../../src/picker.js';
 import { SessionRunner } from '../../src/runner.js';
 import { lockInfo, lockStolen, releaseLock, rememberCreated, setLockApp, takeLock } from '../../src/sessions.js';
 import { makeLoader } from '../../src/ui/picker.js';
+import { noteRunnerUse, setOn as setWarm, statusText as warmStatus } from '../../src/warm.js';
+import { folderStats, listDir, makeDir } from '../../src/places.js';
 
 // Locks this engine takes name it, so a blocked terminal window can say who has the session.
 setLockApp('apaki');
@@ -412,6 +414,35 @@ const handlers = {
       else p.runner.env = childEnv(next.key);
     }
     emit({ ev: 'billing', paneId: p.id, ...billingInfo(p) });
+  },
+  // Where a new conversation starts (ui/startfolder.js, src/places.js).
+  // The Codex scan takes ~2 s the first time, so the Claude Code lists go out first.
+  places: async (c) => {
+    if (!state.items) await loadSessions();
+    const claude = state.items.filter((it) => !it.codex);
+    if (!state.codexPlaces) {
+      emit({ ev: 'places', reqId: c.reqId, ...folderStats(claude, { codex: false, limit: 6 }) });
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    emit({ ev: 'places', reqId: c.reqId, ...folderStats(claude, { limit: 6 }) });
+    state.codexPlaces = true;
+  },
+  listDir: (c) => emit({ ev: 'dir', reqId: c.reqId, ...listDir(c.path || os.homedir()) }),
+  mkdir: (c) => {
+    const r = makeDir(c.path, c.name);
+    emit(r.error ? { ev: 'dir', reqId: c.reqId, ...listDir(c.path), error: r.error, kind: 'mkdir' } : { ev: 'dir', reqId: c.reqId, ...listDir(r.path), created: r.path });
+  },
+  // /warm on|off|status: keep prompt caches warm between messages (src/warm.js).
+  warm: async (c) => {
+    const v = String(c.arg || '').trim().toLowerCase();
+    const p = c.paneId ? panes.get(String(c.paneId)) : null;
+    if (v === 'on' || v === 'off') {
+      setWarm(v === 'on');
+      // Register this pane's session at once if it already ran a turn on a key.
+      if (v === 'on' && p?.runner?.lastResult) noteRunnerUse(p.runner, p.runner.lastResult);
+    }
+    const text = v && v !== 'on' && v !== 'off' && v !== 'status' ? 'Use /warm on, /warm off or /warm' : await warmStatus();
+    emit({ ev: 'note', paneId: c.paneId || null, text });
   },
   billingOptions: (c) => emit({
     ev: 'billingOptions', reqId: c.reqId, paneId: c.paneId || null,

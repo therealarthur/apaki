@@ -29,6 +29,7 @@ import { Pane, short } from './pane.js';
 import { closeMenu, menu } from './menu.js';
 import { arm, ding, setSoundOn, soundOn } from './sound.js';
 import { MARK_SVG } from './mark.js';
+import { folderSheet } from './startfolder.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -112,6 +113,7 @@ const host = {
   folder: (p, value) => paneFolder(p, value),
   folderMenu: (p, anchor) => folderMenu(p.sessionId, anchor),
   newConversation: (p) => newConversation(p),
+  chooseFolder: (p) => { if (p && !p.sessionId && !p.busy) startUI = folderSheet(p, { sheet, send, esc, ago }); },
   changed: () => { renderTabs(); renderRailMarks(); save(); },
   dragPane: (p, e) => {
     e.dataTransfer.setData(DRAG_PANE, p.id);
@@ -144,7 +146,8 @@ function createTab(root = null) {
 /** A new tab with one pane, holding `session` or a new conversation. */
 function addTab({ session = null, cwd = null, activate = true } = {}) {
   const base = focusedPane();
-  const p = createPane({ cwd: cwd || session?.cwd || base?.cwd || '', model: base?.model, effort: base?.effort, mode: base?.mode });
+  // New conversations start in the home folder unless a folder is given (Arthur, 2026-10-09).
+  const p = createPane({ cwd: cwd || session?.cwd || '', model: base?.model, effort: base?.effort, mode: base?.mode });
   const t = createTab(L.leaf(p.id));
   layout(t);
   p.open(session, { warm: true });
@@ -212,8 +215,12 @@ function closeTab(t, { confirmBusy = true } = {}) {
 
 function newConversation(p) {
   if (!p || p.busy) { addTab(); return; }
+  p.cwd = ''; // home, like a new terminal; "Starts in" changes it
   p.open(null, { warm: true });
 }
+
+// The open "Start this conversation in" sheet (startfolder.js), if any.
+let startUI = null;
 
 /* ---------- layout rendering ---------- */
 
@@ -1268,6 +1275,8 @@ await listen('engine', ({ payload: e }) => {
       break;
     }
     case 'billingOptions': billingSheet(e.options, e.paneId); break;
+    case 'places': startUI?.places(e); break;
+    case 'dir': startUI?.dir(e); break;
     case 'glass': {
       // What Myrlin Glass has Claude Code on right now; updates the moment Glass swaps.
       const g = $('glassState');

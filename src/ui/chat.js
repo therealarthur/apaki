@@ -19,6 +19,7 @@ import { Box, Static, Text, useInput, useStdout } from 'ink';
 import { useEffect, useReducer, useRef } from 'react';
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { readTail, lastCostTotal } from '../sessions.js';
+import { noteRunnerUse, setOn as setWarm, statusText as warmStatus } from '../warm.js';
 import {
   ChoiceDialog, ItemView, PermissionDialog, PlanDialog, PromptInput, QuestionDialog, Spinner, h, theme,
 } from './components.js';
@@ -43,6 +44,7 @@ export const LOCAL_COMMANDS = [
   { name: 'agents', description: 'List available subagents' },
   { name: 'key', description: 'Switch billing: an API key from credentials.md, or your subscription' },
   { name: 'reload', description: 'Reload this session from disk' },
+  { name: 'warm', description: 'Keep the prompt cache warm between messages (on, off, status)' },
   { name: 'exit', description: 'Exit latch' },
 ];
 const LOCAL = new Set([...LOCAL_COMMANDS.map((c) => c.name), 'quit']);
@@ -422,6 +424,16 @@ export class ChatStore {
         return;
       }
       case 'reload': await r.restart(); this.note('  ⎿  Reloaded from disk', 'dim', { tight: true }); return;
+      case 'warm': {
+        const v = arg.toLowerCase();
+        if (v === 'on' || v === 'off') {
+          setWarm(v === 'on');
+          // Register this session at once if it already ran a turn on a key.
+          if (v === 'on' && r.lastResult) noteRunnerUse(r, r.lastResult);
+        } else if (v) { this.note('  ⎿  Use /warm on, /warm off or /warm', 'error', { tight: true }); return; }
+        this.note(await warmStatus());
+        return;
+      }
       case 'cost': {
         const total = r.transcript ? lastCostTotal(readTail(r.transcript)) : 0;
         this.note(`  ⎿  This latch run: $${this.state.runCost.toFixed(3)} · whole session (all runs): $${total.toFixed(2)} · billed to ${this.info.credentialName}`, 'dim', { tight: true });
