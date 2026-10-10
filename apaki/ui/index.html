@@ -38,6 +38,8 @@
     <section class="rail-sec rail-sessions">
       <div class="sec-head">
         <span class="sec-t" id="sessionsTitle">Sessions</span><span class="sec-n" id="sessionsCount"></span>
+        <!-- The list updates on its own (engine live.js); this reads it again now. -->
+        <button class="sec-refresh" id="refreshSessions" title="Read every session again (the list also updates on its own)" aria-label="Refresh the session list"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.7M13.2 2.6v2.9h-2.9"/></svg></button>
         <button class="sec-clear" id="clearView" hidden title="Show all sessions">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>
         </button>

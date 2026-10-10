@@ -1532,3 +1532,75 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .pane:has(.status-line.on) .transcript { padding-bottom: calc(var(--composer-h, 150px) + 58px); }
 @container pane (max-width: 760px) { .composer-wrap > .status-line { left: 10px; right: 10px; } }
 @media (prefers-reduced-motion: reduce) { .composer-wrap > .status-line { transform: none; transition: opacity var(--dur-fast) linear; } }
+
+/* ==========================================================================
+   2026-10-09 night: keep-warm border, the tab sweep, renaming, the live list,
+   the empty grid, the working line's dots, and message times on hover.
+   ========================================================================== */
+
+/* A working tab's sweep runs left to right and back, instead of jumping back to the start. */
+.tab.busy::after { animation: sweep 1.6s var(--ease-hover) infinite alternate; }
+
+/* Keep-warm is holding this session's prompt cache: a slow ring of light runs
+   round its row and its tab, periwinkle with a peach tail. Painted only
+   (a custom angle on a conic gradient, masked to the edge). */
+@property --warm-a { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+.sessions li.warm { position: relative; }
+.warm-ring {
+  position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none;
+  background: conic-gradient(from var(--warm-a), transparent 0deg, hsla(var(--pearl-stop-blue), .55) 60deg, var(--brand) 120deg, var(--peach-glow) 165deg, transparent 220deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: warm-spin 7s linear infinite;
+}
+.tab .warm-ring { inset: 0; padding: 1.25px; }
+@keyframes warm-spin { to { --warm-a: 360deg; } }
+
+/* The live list. */
+.sessions .headless { color: var(--soft); font-weight: 600; letter-spacing: .02em; }
+.sec-refresh { display: grid; place-items: center; width: 22px; height: 22px; margin-left: -2px; border: 0; border-radius: 6px; background: none; cursor: pointer; flex: none; }
+.sec-refresh:hover { background: var(--tint-deep); }
+.sec-refresh svg { width: 12px; height: 12px; fill: none; stroke: var(--soft); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.sec-refresh.spin svg { animation: refresh-spin 600ms var(--ease-out); }
+@keyframes refresh-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* Renaming in place: a tab's name, a pane's title or a rail row. */
+input.rename {
+  width: 100%; min-width: 120px; margin: 0; padding: 1px 6px; border: 1px solid var(--brand); border-radius: 6px; outline: none;
+  font: inherit; font-stretch: inherit; letter-spacing: inherit; color: var(--ink-deep); background: hsl(var(--w));
+  box-shadow: 0 0 0 3px hsla(var(--pearl-stop-blue), .14);
+}
+.pane-bar .title { cursor: text; }
+.tab-t { cursor: default; }
+
+/* The empty conversation's grid: periwinkle, slow and out of step, with two cells (about 5%) in peach. */
+.empty-grid.rand i { background: var(--brand-soft); filter: none; animation: grid-breathe 9s ease-in-out infinite; animation-delay: var(--d, 0s); }
+.empty-grid.rand i.pk { background: var(--peach-glow); }
+@keyframes grid-breathe { 0%, 100% { opacity: .16; } 50% { opacity: .62; } }
+
+/* The working line: the phase, then three dots that rise and fade in turn. */
+.status .ph { color: var(--brand-deep); font-weight: 650; }
+.status .dots { display: inline-flex; align-items: flex-end; gap: 2.5px; height: 1em; margin: 0 4px 0 4px; vertical-align: -1px; }
+.status .dots i { width: 3px; height: 3px; border-radius: 50%; background: var(--brand-strong); opacity: .25; animation: dot-wave 1.2s ease-in-out infinite; }
+.status .dots i:nth-child(2) { animation-delay: .16s; }
+.status .dots i:nth-child(3) { animation-delay: .32s; }
+@keyframes dot-wave { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2.5px); } }
+
+/* When a message was written, faint, on hover: above-right of your message,
+   below-right of Claude's, in the space between messages. */
+.turn-user { position: relative; }
+.turn-user[data-ts]::after, .turn-assistant[data-ts]::after {
+  content: attr(data-ts); position: absolute; right: 4px; pointer-events: none; white-space: nowrap;
+  font: 500 10.5px/1 var(--font-mono); letter-spacing: .01em; color: var(--faint);
+  opacity: 0; transform: translateY(2px); transition: opacity var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-hover);
+}
+.turn-user[data-ts]::after { bottom: calc(100% + 6px); }
+.turn-assistant[data-ts]::after { top: calc(100% + 4px); }
+.turn-user:hover::after, .turn-assistant:hover::after { opacity: .85; transform: none; }
+.turn-assistant.streaming::after { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .warm-ring { animation: none; --warm-a: 200deg; }
+  .tab.busy::after, .empty-grid.rand i, .status .dots i, .sec-refresh.spin svg { animation: none; }
+  .status .dots i { opacity: .6; }
+}

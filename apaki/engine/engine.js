@@ -60,7 +60,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { getSessionInfo, getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
+import { getSessionInfo, getSessionMessages, renameSession } from '@anthropic-ai/claude-agent-sdk';
 import { ArtifactStore, kindOfExt } from './artifacts.js';
 import { createApakiTools } from './apaki-tools.js';
 import { startOpenServer } from './open-server.js';
@@ -69,11 +69,12 @@ import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
 import { searchHybrid, startIndexServer, updateIndex, updateViaServer } from '../../src/deepindex.js';
 import { askSearch, digPrompt } from './asksearch.js';
 import * as folders from '../../src/folders.js';
-import { filterItems, terminalSessions } from '../../src/picker.js';
+import { filterItems, terminalSessions, transcriptMap } from '../../src/picker.js';
+import { bareItem, startLive } from './live.js';
 import { SessionRunner } from '../../src/runner.js';
-import { lockInfo, lockStolen, releaseLock, rememberCreated, setLockApp, takeLock } from '../../src/sessions.js';
+import { listSessions, lockInfo, lockStolen, readTail, releaseLock, rememberCreated, setLockApp, takeLock } from '../../src/sessions.js';
 import { makeLoader } from '../../src/ui/picker.js';
-import { noteRunnerUse, setOn as setWarm, statusText as warmStatus, summary as warmSummary } from '../../src/warm.js';
+import { noteRunnerUse, setOn as setWarm, statusText as warmStatus, summary as warmSummary, warmSessions } from '../../src/warm.js';
 import { folderStats, listDir, makeDir } from '../../src/places.js';
 import { createRemote } from './remote.js';
 import { parsePhoneId, windowOf } from './remote-policy.js';
@@ -104,6 +105,8 @@ const state = {
   items: null,
   byId: new Map(),
   commandsByCwd: new Map(),
+  warm: new Set(), // sessions keep-warm is looking after (src/warm.js warmSessions)
+  renames: new Map(), // sessionId -> title, written once that session's turn in a pane ends
 };
 
 // New panes start from these; the window can pass its own per pane.
@@ -192,20 +195,39 @@ function compact(it, term, folderOf) {
     lastModified: it.lastModified || 0, size: it.size || 0, codex: Boolean(it.codex),
     terminal: term ? { name: term.name, status: term.status, pid: term.pid } : null,
     folder: folderOf.get(it.id)?.id || null,
+    // Started headless and never typed in (claude -p, workers, relayed-only windows); shown, and marked.
+    headless: Boolean(it.headless), bare: Boolean(it.bare), warm: state.warm.has(it.id),
   };
 }
 
+/**
+ * Every Claude Code session on this PC (Arthur, 2026-10-09: "we CANNOT miss
+ * anything"). The SDK's default list leaves out sessions that started
+ * headless; latch's picker adds back the ones with typed turns, but a window
+ * that had relay on from its first message sends every turn through
+ * claude -p, so its session looked like automation and was hidden. Now the
+ * headless ones are listed too, marked headless, and so is any transcript the
+ * SDK's list skips (no prompt yet).
+ */
 async function loadSessions() {
-  const loader = makeLoader();
+  const memo = new Map();
+  const loadInfos = (programmatic) => {
+    if (!memo.has(programmatic)) memo.set(programmatic, listSessions({ limit: 5000, includeProgrammatic: programmatic }));
+    return memo.get(programmatic);
+  };
+  const loader = makeLoader({ loadInfos });
   const items = await loader(false);
+  const shown = new Set(items.map((it) => it.id));
   const term = terminalSessions();
   const byId = new Map(items.map((it) => [it.id, it]));
-  const wanted = [...term.keys(), ...folders.listFolders().flatMap((f) => f.sessions)].filter((id) => !byId.has(id));
-  if (wanted.length) {
-    for (const it of await loader(true)) if (wanted.includes(it.id)) byId.set(it.id, it);
+  for (const it of await loader(true)) if (!byId.has(it.id)) byId.set(it.id, shown.has(it.id) ? it : { ...it, headless: true });
+  for (const [id, file] of transcriptMap()) {
+    if (byId.has(id)) continue;
+    const it = bareItem(id, file);
+    if (it) byId.set(id, it);
   }
   state.byId = byId;
-  state.items = [...byId.values()];
+  state.items = [...byId.values()].sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
   return term;
 }
 
@@ -283,8 +305,34 @@ function cut(s, n) {
 }
 
 /** The saved conversation, trimmed for display: tool output cut, images kept as markers. */
-function compactMessages(msgs) {
-  return msgs.slice(-HISTORY_MESSAGES).map((m) => {
+/**
+ * When each message was written, by uuid, from the transcript itself (the
+ * SDK's messages carry no time). Reads the end of the file, more of it until
+ * every wanted uuid is found or the whole file is read.
+ */
+function timestampsOf(sessionId, uuids) {
+  const want = new Set(uuids.filter(Boolean));
+  const out = new Map();
+  const file = sessionId ? transcriptMap().get(sessionId) : null;
+  if (!file || !want.size) return out;
+  let size = 0;
+  try { size = fs.statSync(file).size; } catch { return out; }
+  for (let bytes = 4 * 1024 * 1024; ; bytes *= 4) {
+    const text = readTail(file, bytes);
+    for (const m of text.matchAll(/"uuid":"([0-9a-f-]{36})","timestamp":"([^"]+)"|"timestamp":"([^"]+)"[^\n]*?"uuid":"([0-9a-f-]{36})"/g)) {
+      const id = m[1] || m[4];
+      const at = m[2] || m[3];
+      if (want.has(id) && !out.has(id)) out.set(id, at);
+    }
+    if (out.size >= want.size || bytes >= size) break;
+  }
+  return out;
+}
+
+function compactMessages(msgs, sessionId = null) {
+  const last = msgs.slice(-HISTORY_MESSAGES);
+  const at = timestampsOf(sessionId, last.map((m) => m.uuid));
+  return last.map((m) => {
     const content = m.message?.content;
     let c = content;
     if (Array.isArray(content)) {
@@ -298,7 +346,7 @@ function compactMessages(msgs) {
         return b;
       });
     }
-    return { type: m.type, uuid: m.uuid, parent_tool_use_id: m.parent_tool_use_id || null, message: { role: m.message?.role, content: c, model: m.message?.model } };
+    return { type: m.type, uuid: m.uuid, at: at.get(m.uuid) || null, parent_tool_use_id: m.parent_tool_use_id || null, message: { role: m.message?.role, content: c, model: m.message?.model } };
   });
 }
 
@@ -437,7 +485,7 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   if (opts.warm !== false) runner.start();
   if (sessionId) {
     const msgs = await getSessionMessages(sessionId).catch(() => []);
-    emit({ ev: 'history', paneId: p.id, sessionId, messages: compactMessages(msgs), total: msgs.length });
+    emit({ ev: 'history', paneId: p.id, sessionId, messages: compactMessages(msgs, sessionId), total: msgs.length });
   }
 }
 
@@ -459,6 +507,7 @@ async function send(reqId, paneId, text, images = []) {
     const r = await p.runner.send(content);
     p.busy = false;
     emit({ ev: 'result', reqId, paneId: p.id, sessionId: p.sessionId, subtype: r.subtype, isError: Boolean(r.is_error), durationMs: r.duration_ms, usage: r.usage, cost: r.latchTurnCost ?? null, errors: r.errors || null, result: typeof r.result === 'string' ? r.result.slice(0, 2000) : null });
+    if (p.sessionId && state.renames.has(p.sessionId)) applyRename(p.sessionId, state.renames.get(p.sessionId), { paneId: p.id }).catch(() => {});
   } catch (e) {
     p.busy = false;
     if (e.code === 'TAKEN_OVER') {
@@ -487,7 +536,7 @@ async function attach(reqId, paneId, sessionId, cwd) {
   emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), reqId, paneId: p.id, sessionId: p.sessionId, cwd: p.runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [] });
   if (p.sessionId) {
     const msgs = await getSessionMessages(p.sessionId).catch(() => []);
-    emit({ ev: 'history', paneId: p.id, sessionId: p.sessionId, messages: compactMessages(msgs), total: msgs.length });
+    emit({ ev: 'history', paneId: p.id, sessionId: p.sessionId, messages: compactMessages(msgs, p.sessionId), total: msgs.length });
   }
   for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: p.id, toolName: a.toolName, input: a.input });
 }
@@ -629,6 +678,16 @@ const handlers = {
   warmState: (c) => {
     if (c.on === true || c.on === false) setWarm(c.on);
     emit({ ev: 'warmState', reqId: c.reqId, ...warmSummary() });
+    refreshWarm();
+  },
+  // A name for a session, saved the way Claude Code's /rename saves it (a
+  // custom-title entry in its transcript), so Claude Code, latch and Apaki
+  // all show the same one.
+  rename: async (c) => {
+    const id = String(c.sessionId || '');
+    const title = String(c.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (!id || !title) { emit({ ev: 'renamed', reqId: c.reqId, paneId: c.paneId || null, sessionId: id, ok: false, message: 'A name needs some text.' }); return; }
+    await applyRename(id, title, { reqId: c.reqId, paneId: c.paneId || null });
   },
   // The footer's Glass card: read again now, or switch an account (Arthur picked it, so --user-asked).
   glass: (c) => (c.refresh
@@ -770,6 +829,77 @@ rl.on('line', async (line) => {
 rl.on('close', async () => {
   remote?.stop();
   fs.unwatchFile(LIVE_LOGIN); await Promise.all([...panes.values()].map((p) => closeRunner(p))); process.exit(0); });
+
+/* ---------- renames ---------- */
+
+/**
+ * Writes a session's name. A running Claude Code process writes its own
+ * in-memory name back into the transcript after its turns (one renamed
+ * session on this PC had the same custom-title entry 155 times), so a pane of
+ * ours holding the session is stopped first (it resumes with the new name at
+ * its next message, no API call). If one of them is mid-turn the name is
+ * written when that turn ends. A terminal window cannot be reached: when it
+ * holds a session that already had a name, the note says to /rename there too.
+ */
+async function applyRename(id, title, { reqId = null, paneId = null } = {}) {
+  const holders = [...panes.values()].filter((x) => x.sessionId === id && x.runner?.running);
+  if (holders.some((x) => x.runner.turnRunning)) {
+    state.renames.set(id, title);
+    emit({ ev: 'renamed', reqId, paneId, sessionId: id, title, ok: true, pending: true });
+    return;
+  }
+  state.renames.delete(id);
+  const before = await getSessionInfo(id).catch(() => null);
+  for (const x of holders) await x.runner.stop().catch(() => {});
+  try {
+    await renameSession(id, title);
+  } catch (e) {
+    emit({ ev: 'renamed', reqId, paneId, sessionId: id, ok: false, message: e.message || String(e) });
+    return;
+  }
+  const it = state.byId.get(id);
+  if (it) it.title = title;
+  const terminal = terminalSessions().get(id);
+  const note = terminal?.length && before?.customTitle && before.customTitle !== title
+    ? `Renamed. It is also open in a terminal window (${terminal.map((t) => t.name || t.pid).join(', ')}) that still has it as "${before.customTitle}": run /rename ${title} there too, or that window puts its old name back after its next turn.`
+    : '';
+  emit({ ev: 'renamed', reqId, paneId, sessionId: id, title, ok: true, note });
+}
+
+/* ---------- live session list and keep-warm marks ---------- */
+
+// The list follows Claude Code as it happens (live.js): terminal windows
+// opening and closing at once, new or changed transcripts within seconds.
+let listBusy = false;
+async function refreshList() {
+  if (listBusy) return;
+  listBusy = true;
+  try { await sessions(null); } catch { /* the next change tries again */ } finally { listBusy = false; }
+}
+startLive({
+  liveDir: path.join(CLAUDE_DIR, 'sessions'),
+  projectsDir: path.join(CLAUDE_DIR, 'projects'),
+  terminals: () => terminalSessions(),
+  onTerminals: (map) => {
+    const out = {};
+    for (const [id, recs] of map) out[id] = { name: recs[0].name, status: recs[0].status, pid: recs[0].pid, cwd: recs[0].cwd, updatedAt: recs[0].updatedAt };
+    emit({ ev: 'terminals', terminals: out });
+    refreshList();
+  },
+  onChange: () => refreshList(),
+});
+
+/** Which sessions keep-warm is looking after; the window draws a moving border on them. */
+function refreshWarm() {
+  let next = [];
+  try { next = warmSessions(); } catch { next = []; }
+  const same = next.length === state.warm.size && next.every((id) => state.warm.has(id));
+  if (same) return;
+  state.warm = new Set(next);
+  emit({ ev: 'warm', sessions: next });
+}
+setInterval(refreshWarm, 30 * 1000).unref();
+setTimeout(refreshWarm, 2000).unref();
 
 /* ---------- Myrlin Glass, live ---------- */
 

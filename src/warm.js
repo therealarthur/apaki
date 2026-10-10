@@ -439,6 +439,19 @@ export async function statusText() {
   return lines.join('\n');
 }
 
+/**
+ * The sessions keep-warm is looking after right now (on, and each one's
+ * cache still warm, being pinged or in use), for Apaki's animated border.
+ */
+export function warmSessions(now = Date.now()) {
+  const s = readSettings();
+  if (!s.on) return [];
+  const spent = spentToday();
+  return uses()
+    .filter((use) => ['warm', 'ping', 'busy'].includes(decide({ use, state: readJson(stateFile(use.sessionId), {}), settings: s, now, spent })))
+    .map((use) => use.sessionId);
+}
+
 /** Keep-warm in a few fields, for Apaki's Settings sheet. */
 export function summary() {
   const s = readSettings();

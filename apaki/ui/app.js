@@ -55,6 +55,7 @@ const DRAG_SESSION = 'application/x-apaki-session';
 const DRAG_PANE = 'application/x-apaki-pane';
 
 const S = {
+  warm: new Set(), // sessions keep-warm is looking after (engine 'warm' events)
   sessions: [], folders: [], view: 'all', query: '', results: null, searchInfo: '', ai: null, asking: null, lastSearch: null,
   voice: false, seq: 0, engineLost: false,
   defaults: { model: 'claude-opus-5-5', effort: 'xhigh', mode: 'bypassPermissions', billing: null },
@@ -113,6 +114,8 @@ const paneBySession = (id) => (id ? [...S.panes.values()].find((p) => p.sessionI
 const host = {
   defaults: S.defaults,
   send,
+  // Double-click a pane's title: name its session (beginRename, below).
+  renameSession: (p, anchor) => beginRename(p.sessionId, anchor, { pane: p }),
   focus: (p) => focusPane(p, { scroll: false }),
   close: (p) => closePane(p),
   voice: (p) => toggleVoice(p),
@@ -589,9 +592,12 @@ function renderTabs() {
     const f = S.panes.get(t.focused) || panes[0];
     const busy = panes.some((p) => p.busy);
     const unread = panes.some((p) => p.unread);
-    const tab = el('div', `tab${t.id === S.active ? ' on' : ''}${busy ? ' busy' : ''}${unread ? ' unread' : ''}`);
+    const warm = panes.some((p) => p.sessionId && S.warm.has(p.sessionId));
+    const tab = el('div', `tab${t.id === S.active ? ' on' : ''}${busy ? ' busy' : ''}${unread ? ' unread' : ''}${warm ? ' warm' : ''}`);
     tab.title = panes.map((p) => `${p.busy ? 'working: ' : p.unread ? 'finished: ' : ''}${p.title}`).join('\n') || 'Empty tab';
-    tab.innerHTML = `<span class="tab-t">${esc(f?.title || 'Empty tab')}</span>${panes.length > 1 ? `<span class="tab-n">${panes.length}</span>` : ''}`;
+    tab.innerHTML = `<span class="tab-t">${esc(f?.title || 'Empty tab')}</span>${panes.length > 1 ? `<span class="tab-n">${panes.length}</span>` : ''}${warm ? '<span class="warm-ring" aria-hidden="true"></span>' : ''}`;
+    // Double-click the name to rename its session (saved in the session, not only here).
+    tab.querySelector('.tab-t').ondblclick = (e) => { e.stopPropagation(); if (f && !f.isViewer) beginRename(f.sessionId, tab.querySelector('.tab-t'), { pane: f }); };
     const x = el('button', 'tab-x', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>');
     x.title = 'Close tab';
     x.onclick = (e) => { e.stopPropagation(); closeTab(t); };
@@ -800,11 +806,78 @@ function folderMenu(sessionId, anchor) {
 }
 
 /** Right-click on a session row. */
+/* ---------- renaming a session (2026-10-09) ---------- */
+
+// Arthur: tabs must be renamable, and the name must stick to the session:
+// "one name, not a bunch of different labels saved only for this app". The
+// engine saves it the way Claude Code's /rename does (renameSession).
+
+/** Shows a session's new name everywhere it appears here. */
+function setSessionTitle(sessionId, title) {
+  if (!sessionId || !title) return;
+  for (const p of S.panes.values()) if (p.sessionId === sessionId) p.setTitle(title);
+  for (const s of S.sessions) if (s.id === sessionId) s.title = title;
+  for (const r of S.results || []) if (r.item?.id === sessionId) r.item.title = title;
+  renderTabs();
+  if (!S.drag) renderRail();
+  save();
+}
+
+/**
+ * An inline editor over `anchor` (a tab's name, a pane's title, a rail row).
+ * Enter or leaving it saves; Escape cancels. A conversation with no session
+ * yet keeps the name and saves it once its first message makes the session.
+ */
+function beginRename(sessionId, anchor, { pane = null } = {}) {
+  if (!anchor || anchor.querySelector?.('input.rename')) return;
+  const current = (pane?.title || S.sessions.find((s) => s.id === sessionId)?.title || '').replace(/^New conversation$/, '');
+  const input = document.createElement('input');
+  input.className = 'rename';
+  input.value = current;
+  input.placeholder = 'Name this session';
+  input.spellcheck = false;
+  const before = anchor.textContent;
+  anchor.textContent = '';
+  anchor.append(input);
+  if (pane) pane.renaming = true;
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    if (pane) pane.renaming = false;
+    const title = input.value.replace(/\s+/g, ' ').trim();
+    input.remove();
+    anchor.textContent = before;
+    if (!save || !title || title === current) return;
+    if (!sessionId) {
+      if (!pane) return;
+      pane.pendingName = title;
+      pane.setTitle(title);
+      renderTabs();
+      pane.note(`"${title}" becomes this session's name when your first message starts it.`);
+      return;
+    }
+    setSessionTitle(sessionId, title);
+    send('rename', { sessionId, title, paneId: pane?.id || null });
+  };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  for (const ev of ['click', 'dblclick', 'pointerdown']) input.addEventListener(ev, (e) => e.stopPropagation());
+}
+
 function sessionMenu(s, e) {
   e.preventDefault();
   if (s.codex) return;
   const cur = s.folder || null;
   const items = [
+    { value: 'rename', label: 'Rename…', hint: 'saved in the session' },
+    { divider: true },
     { value: 'here', label: 'Open here' },
     { value: 'tab', label: 'Open in new tab', hint: 'Ctrl+click' },
     { value: 'split', label: 'Split right', hint: 'Shift+click' },
@@ -818,6 +891,7 @@ function sessionMenu(s, e) {
     above: false,
     width: 210,
     onPick: (v) => {
+      if (v === 'rename') { const row = [...$('sessions').children].find((li) => li.dataset.id === s.id); beginRename(s.id, row?.querySelector('.t') || null); return; }
       if (v === 'here') openFromRail(s, {});
       else if (v === 'tab') openFromRail(s, { ctrlKey: true });
       else if (v === 'split') openFromRail(s, { shiftKey: true });
@@ -867,18 +941,22 @@ function renderRail() {
     const meta = [
       s.codex ? '<span class="codex">codex · read-only</span>' : '',
       s.terminal ? `<span class="live">terminal${s.terminal.status ? ` · ${esc(s.terminal.status)}` : ''}</span>` : '',
+      s.headless ? '<span class="headless" title="Started headless and never typed into: claude -p, a worker, or a window with relay on from its first message">claude -p</span>' : '',
+      s.bare ? '<span class="headless" title="Its transcript has no messages yet">empty</span>' : '',
       ago(s.lastModified), esc(short(s.cwd)),
       S.view === 'all' && s.folder ? `▸ ${esc(folderName(s.folder) || '')}` : '',
     ].filter(Boolean).join(' · ');
     const byMeaning = s.sources && !s.sources.includes('words');
     const snip = s.snippet ? `<div class="snip">${byMeaning ? '<span class="by-meaning" title="Found by what it is about, not by your words">by meaning</span> ' : ''}${esc(kindLabel(s.kind, s.codex))}: ${highlight(s.snippet, S.query)}${s.hits > 1 ? ` <span class="mono">(${s.hits})</span>` : ''}</div>` : '';
     li.innerHTML = `<div class="t">${esc(s.title || '(untitled)')}</div><div class="m">${meta}</div>${s.why ? `<div class="why">${esc(s.why)}</div>` : snip}`;
+    // Keep-warm is holding this session's prompt cache: a slow moving border (2026-10-09).
+    if (S.warm.has(s.id)) { li.classList.add('warm'); li.append(el('span', 'warm-ring')); }
     li.onclick = (e) => openFromRail(s, e);
     li.oncontextmenu = (e) => sessionMenu(s, e);
     li.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); openFromRail(s, { ctrlKey: true }); } };
     if (!s.codex) {
       li.draggable = true;
-      li.title = 'Click: open here · Ctrl+click: new tab · Shift+click: split right · drag onto a pane edge to split, or onto a folder · right-click for more';
+      li.title = `Click: open here · Ctrl+click: new tab · Shift+click: split right · drag onto a pane edge to split, or onto a folder · right-click to rename and more${S.warm.has(s.id) ? '\nKeep-warm is keeping its prompt cache warm' : ''}`;
       li.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData(DRAG_SESSION, JSON.stringify({ id: s.id, cwd: s.cwd, title: s.title }));
         e.dataTransfer.effectAllowed = 'copyMove';
@@ -1370,10 +1448,37 @@ await listen('engine', ({ payload: e }) => {
       for (const p of S.panes.values()) {
         p.renderFolderSelect(S.folders, S.sessions);
         const s = p.sessionId && S.sessions.find((x) => x.id === p.sessionId);
-        if (s?.title && p.title === 'New conversation') { p.setTitle(s.title); renderTabs(); }
+        // One name per session: a rename anywhere (here, /rename in a terminal, latch) reaches the tab.
+        if (s?.title && s.title !== p.title && !s.bare && !p.renaming && !/^New session \(/.test(s.title)) { p.setTitle(s.title); renderTabs(); }
       }
+      S.warm = new Set(S.sessions.filter((x) => x.warm).map((x) => x.id));
       renderRail();
+      renderTabs();
       break;
+    case 'terminals': {
+      // A terminal window opened, closed or changed status (engine live.js): marks and In terminals at once.
+      const t = e.terminals || {};
+      for (const s of S.sessions) s.terminal = t[s.id] ? { name: t[s.id].name, status: t[s.id].status, pid: t[s.id].pid } : null;
+      for (const [id, r] of Object.entries(t)) {
+        if (!S.sessions.some((s) => s.id === id)) S.sessions.unshift({ id, title: `New session (${r.name || 'terminal'})`, firstPrompt: '', cwd: r.cwd || '', lastModified: r.updatedAt || Date.now(), terminal: { name: r.name, status: r.status, pid: r.pid }, folder: null });
+      }
+      if (!S.drag) renderRail();
+      break;
+    }
+    case 'warm':
+      S.warm = new Set(e.sessions || []);
+      if (!S.drag) renderRail();
+      renderTabs();
+      break;
+    case 'renamed': {
+      const p = e.paneId ? S.panes.get(e.paneId) : null;
+      const where = p || focusedPane();
+      if (!e.ok) { where?.note(`Not renamed: ${e.message}`, 'error'); send('sessions'); break; }
+      setSessionTitle(e.sessionId, e.title);
+      if (e.pending) where?.note(`"${e.title}" is saved when this turn ends.`);
+      if (e.note) where?.note(e.note, 'warn');
+      break;
+    }
     case 'folders':
       S.folders = e.folders;
       if (S.view !== 'all' && S.view !== 'terminal' && !S.folders.some((f) => f.id === S.view)) S.view = 'all';
@@ -1479,7 +1584,13 @@ renderTabs();
 // Ask the engine for its state in case it was ready before this page loaded.
 send('sessions');
 // Sessions open in terminals change on their own: refresh the list now and then.
-setInterval(() => { if (![...S.panes.values()].some((p) => p.busy) && !S.query && !S.drag) send('sessions'); }, 15000);
+// The engine keeps the list live (live.js); this is only a slow safety net, and it no longer waits for idle panes.
+setInterval(() => { if (!S.query && !S.drag) send('sessions'); }, 60000);
+$('refreshSessions').onclick = () => {
+  const b = $('refreshSessions');
+  b.classList.remove('spin'); void b.offsetWidth; b.classList.add('spin');
+  send('sessions');
+};
 
 // For apaki/scripts/cdp-check.mjs: the live state, read only.
 window.__apaki = { S, L, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };

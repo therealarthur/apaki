@@ -44,6 +44,22 @@ const EFFORT_HINTS = { low: 'Fastest, least thinking', medium: 'Balanced', high:
 
 export const short = (p) => String(p || '').replace(/^C:\\Users\\[^\\]+/i, '~');
 
+/**
+ * The time a message shows on hover: "11:42 PM" today, "Yesterday 11:42 PM",
+ * "Oct 8, 11:42 PM" before that (the year too when it is not this one).
+ */
+export function stamp(at, now = new Date()) {
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return '';
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const back = Math.round((day(now) - day(d)) / 86400000);
+  if (back === 0) return time;
+  if (back === 1) return `Yesterday ${time}`;
+  const date = d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
+  return `${date}, ${time}`;
+}
+
 /** The artifact kind a file's extension gives (for cards rebuilt from history). */
 const kindFromPath = (p) => {
   const e = (String(p).match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
@@ -141,6 +157,8 @@ export class Pane {
     this.$.billing.onclick = () => this.send('billingOptions');
     this.$.close.onclick = () => this.host.close(this);
     if (this.$.artReopen) this.$.artReopen.onclick = () => this.artifactsMenu();
+    this.$.title.ondblclick = () => this.host.renameSession?.(this, this.$.title);
+    this.$.title.title = 'Double-click to rename';
     this.$.grip.addEventListener('dragstart', (e) => this.host.dragPane(this, e));
     this.$.grip.addEventListener('dragend', () => this.host.dragEnd());
   }
@@ -185,7 +203,7 @@ export class Pane {
   setTitle(title) {
     this.title = title || 'New conversation';
     this.$.title.textContent = this.title;
-    this.$.title.title = this.title;
+    this.$.title.title = `${this.title}\nDouble-click to rename`;
   }
 
   setCwdLine() {
@@ -293,7 +311,11 @@ export class Pane {
   showEmpty() {
     this.$.T.innerHTML = '';
     queueMicrotask(() => { const b = this.$.T.querySelector('.start-in'); if (b) b.onclick = () => this.host.chooseFolder(this); });
-    this.$.T.append(el('div', 'empty', `<div class="empty-grid" aria-hidden="true">${'<i></i>'.repeat(40)}</div><h3>New conversation</h3><p>It becomes a Claude Code session with your first message.</p><button class="start-in" title="Choose the folder this conversation starts in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.6 0-1.2-.5-1.2-1.2z"/></svg><span class="start-label">Starts in</span><span class="start-path">${esc(short(this.cwd) || '~')}</span><span class="start-change">Change</span></button><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
+    // 40 cells, slow and out of step; about 5% (two, placed at random) in peach, the rest periwinkle.
+    const peach = new Set();
+    while (peach.size < 2) peach.add(Math.floor(Math.random() * 40));
+    const cells = Array.from({ length: 40 }, (_, i) => `<i${peach.has(i) ? ' class="pk"' : ''} style="--d:${(-Math.random() * 9).toFixed(2)}s"></i>`).join('');
+    this.$.T.append(el('div', 'empty', `<div class="empty-grid rand" aria-hidden="true">${cells}</div><h3>New conversation</h3><p>It becomes a Claude Code session with your first message.</p><button class="start-in" title="Choose the folder this conversation starts in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.6 0-1.2-.5-1.2-1.2z"/></svg><span class="start-label">Starts in</span><span class="start-path">${esc(short(this.cwd) || '~')}</span><span class="start-change">Change</span></button><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
   }
 
   /* ---------- transcript ---------- */
@@ -378,6 +400,7 @@ export class Pane {
       u.append(box);
     }
     u.append(document.createTextNode(text));
+    u.dataset.ts = stamp(this._at || Date.now());
     this.$.T.append(u);
     this.scrollDown(true);
   }
@@ -395,6 +418,7 @@ export class Pane {
   addAssistant(text) {
     if (!text || !text.trim()) return null;
     const a = el('div', 'turn-assistant', md(text));
+    a.dataset.ts = stamp(this._at || Date.now());
     this.host.linkSessions?.(a);
     this.$.T.append(a);
     this.scrollDown();
@@ -598,8 +622,10 @@ export class Pane {
       if (m.type !== 'user' && m.type !== 'assistant') continue;
       const c = m.message?.content;
       if (m.type === 'user' && typeof c === 'string' && (/^\s*<(command-|local-command-|system-reminder)/.test(c))) continue;
+      this._at = m.at ? Date.parse(m.at) : null;
       this.renderBlocks(m.type, c);
     }
+    this._at = null;
     this.flushOpenNotes();
     this.scrollDown(true);
     this.renderArtifactsButton();
@@ -615,16 +641,31 @@ export class Pane {
   onSdk(msg) {
     if (msg.parent_tool_use_id) return;
     const T = this.$.T;
+    if (msg.type === 'result' && this.autoTurn) {
+      this.setBusy(false);
+      this.setStatus('');
+      queueMicrotask(() => this.flushQueue());
+    }
     if (msg.type === 'stream_event') {
       const ev = msg.event || {};
-      if (ev.type === 'message_start') this.curMsg = ev.message?.id;
+      if (ev.type === 'message_start') {
+        this.curMsg = ev.message?.id;
+        // A turn Claude started by itself (a background task finished, a
+        // notification): it works like one you sent, with its timer and Stop.
+        if (!this.busy) { this.autoTurn = true; this.setBusy(true); }
+      }
       if (ev.type === 'content_block_start' && ev.content_block?.type === 'text') {
         this.clearEmpty();
         const a = el('div', 'turn-assistant streaming');
+        a.dataset.ts = stamp(Date.now());
         T.append(a);
         this.streams.set(`${this.curMsg}:${ev.index}`, a);
       }
-      if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') this.setStatus('Thinking…');
+      if (ev.type === 'content_block_start') {
+        const b = ev.content_block || {};
+        const next = b.type === 'thinking' || b.type === 'redacted_thinking' ? 'Thinking' : b.type === 'text' ? 'Writing' : b.type === 'tool_use' ? `Running ${String(b.name || 'a tool').replace(/^mcp__\w+__/, '')}` : this.phase;
+        if (next !== this.phase) { this.phase = next; if (this.busy) this.showWorking(); }
+      }
       if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
         const a = this.streams.get(`${this.curMsg}:${ev.index}`);
         // Formatted while it streams (Arthur saw raw ** before), redrawn at most once a frame.
@@ -661,17 +702,39 @@ export class Pane {
   /* ---------- status, busy state ---------- */
 
   setStatus(text) {
+    this._working = false;
+    this.$.status.textContent = text;
+    this.statusOn(Boolean(text));
+  }
+
+  statusOn(on) {
     const g = this.$.ground;
     const atEnd = g.scrollHeight - g.scrollTop - g.clientHeight < 8;
     const was = this.$.statusLine.classList.contains('on');
-    this.$.status.textContent = text;
-    this.$.statusLine.classList.toggle('on', Boolean(text));
+    this.$.statusLine.classList.toggle('on', on);
     // The transcript makes room for the working line in one step (app.css): stay at the end if you were there.
-    if (atEnd && was !== Boolean(text)) g.scrollTop = g.scrollHeight;
+    if (atEnd && was !== on) g.scrollTop = g.scrollHeight;
+  }
+
+  /**
+   * The working line: what Claude is doing (Thinking, Writing, Running Bash),
+   * three moving dots, and the time. Built once per turn and updated in place,
+   * so the dots keep their rhythm.
+   */
+  showWorking() {
+    const st = this.$.status;
+    if (!this._working) {
+      st.innerHTML = '<span class="ph"></span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="st-rest"></span>';
+      this._working = true;
+      this.statusOn(true);
+    }
+    st.querySelector('.ph').textContent = this.phase || 'Working';
+    st.querySelector('.st-rest').textContent = ` · ${Math.round((Date.now() - this.turnStart) / 1000)}s · esc to stop`;
   }
 
   setBusy(on) {
     this.busy = on;
+    if (!on) this.autoTurn = false;
     this.renderSendButton();
     this.renderQueue();
     this.el.classList.toggle('busy', on);
@@ -680,8 +743,9 @@ export class Pane {
     this.$.egridSlot.innerHTML = on ? effortGrid('max', { live: true }) : '';
     if (on) {
       this.turnStart = Date.now();
-      this.tick = setInterval(() => this.setStatus(`Working · ${Math.round((Date.now() - this.turnStart) / 1000)}s · esc to stop`), 500);
-      this.setStatus('Working…');
+      this.phase = 'Working';
+      this.tick = setInterval(() => this.showWorking(), 500);
+      this.showWorking();
     }
     this.host.changed(this);
   }
@@ -920,7 +984,10 @@ export class Pane {
         this.host.changed(this);
         break;
       case 'history': if (e.sessionId === this.sessionId) this.renderHistory(e.messages, e.total); break;
-      case 'session_id': this.sessionId = e.sessionId; this.setCwdLine(); this.host.changed(this); break;
+      case 'session_id':
+        this.sessionId = e.sessionId; this.setCwdLine(); this.host.changed(this);
+        if (this.pendingName) { this.send('rename', { sessionId: e.sessionId, title: this.pendingName }); this.pendingName = null; }
+        break;
       case 'sdk': this.onSdk(e.msg); break;
       case 'result': {
         this.setBusy(false);
