@@ -72,8 +72,14 @@ foreach ($dir in @($apps, $startMenu)) {
   $s.TargetPath = $exe
   $s.WorkingDirectory = $dest
   $s.Description = 'Myrlin Apaki: every Claude Code session, linked to Myrlin Glass'
+  $s.IconLocation = "$exe,0"
   $s.Save()
 }
+# Windows caches icons by path, so a new app icon (the Myrlin M, 2026-10-09)
+# would keep showing the old one on the same exe path until the cache is
+# refreshed. ie4uinit -show rebuilds the user's icon cache; harmless if absent.
+$refresh = Join-Path $env:WINDIR 'System32\ie4uinit.exe'
+if (Test-Path $refresh) { & $refresh -show }
 'installed'
 # Waited for the old version to close: open the new one in its place.
 if ($waited) { Start-Process -FilePath $exe -WorkingDirectory $dest }

@@ -28,6 +28,7 @@ import * as L from './layout-tree.js';
 import { Pane, short } from './pane.js';
 import { closeMenu, menu } from './menu.js';
 import { arm, ding, setSoundOn, soundOn } from './sound.js';
+import { MARK_SVG } from './mark.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -224,7 +225,7 @@ function layout(t) {
   t.stage.replaceChildren(hint);
   t.stage.classList.toggle('multi', L.count(t.root) > 1);
   if (!t.root) {
-    const empty = el('div', 'stage-empty', `<img src="hat.svg" alt="" class="empty-mark"><p>Drag a session here from the left, or</p>`);
+    const empty = el('div', 'stage-empty', `${MARK_SVG.replace('class="m-mark"', 'class="m-mark empty-mark"')}<p>Drag a session here from the left, or</p>`);
     const b = el('button', 'new', 'New conversation');
     b.onclick = () => { const p = createPane({}); t.root = L.leaf(p.id); t.focused = p.id; layout(t); p.open(null, { warm: true }); focusPane(p); };
     empty.append(b);

@@ -848,3 +848,13 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 :root[data-theme="dark"] .dig { border-color: hsla(232, 40%, 55%, .7); }
 :root[data-theme="dark"] .sessions:hover, :root[data-theme="dark"] .folder-list:hover, :root[data-theme="dark"] .ground:hover,
 :root[data-theme="dark"] .slash:hover, :root[data-theme="dark"] .sheet:hover, :root[data-theme="dark"] .tool pre:hover { scrollbar-color: hsla(240, 20%, 70%, .3) transparent; }
+
+/* The Myrlin M (2026-10-09, Arthur: the Jobs M with its flare in Apaki's
+   accent). Strokes in ink, folds periwinkle, flare teal-to-blue (pearl cyan
+   189 94% 43% to blue 217 91% 60%), coloured here so it follows the theme. */
+.m-mark { display: block; overflow: visible; }
+.m-mark .m-stroke { fill: var(--ink); }
+.m-mark .m-fold { fill: var(--brand); }
+.brand .brand-mark { width: 40px; height: 19px; flex: none; }
+.stage-empty .empty-mark { width: 64px; height: 30px; margin: 0 auto 6px; opacity: .9; }
+:root[data-theme="dark"] .m-mark .m-fold { fill: var(--brand-strong); }
