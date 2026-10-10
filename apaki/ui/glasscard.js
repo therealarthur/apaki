@@ -13,7 +13,8 @@
  * The data is the engine's `glass` event (engine.js glassView); a switch is
  * the `glassSwap` op and comes back as `glass_swap`.
  *
- * initGlassCard({ root, send, menu, note }) returns { handle(e) }.
+ * initGlassCard({ root, send, menu, note, readOnly }) returns { handle(e) }.
+ * readOnly (the phone client) shows the card without the switch menus.
  */
 
 import { esc } from './markdown.js';
@@ -89,7 +90,7 @@ export function accountItems(provider, list = []) {
   return items;
 }
 
-export function initGlassCard({ root, send, menu, note }) {
+export function initGlassCard({ root, send, menu, note, readOnly = false }) {
   let last = null;
   const busy = new Set();
   const seen = { claude: null, codex: null };
@@ -106,6 +107,7 @@ export function initGlassCard({ root, send, menu, note }) {
     for (const b of root.querySelectorAll('.gc-row')) {
       const provider = b.dataset.p;
       if (flash.includes(provider)) b.classList.add('flash');
+      if (readOnly) { b.disabled = true; b.title = b.title.replace('Click to switch account', 'Switch accounts on the PC'); continue; }
       b.onclick = () => {
         menu(b, accountItems(provider, last.lists?.[provider] || []), {
           width: 300,

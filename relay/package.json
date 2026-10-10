@@ -1,0 +1,18 @@
+{
+  "name": "apaki-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Myrlin Apaki relay: a Cloudflare Worker + Durable Object that forwards opaque end-to-end encrypted frames between a PC and its paired phones.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "node --test --test-concurrency=1 \"tests/*.spec.mjs\"",
+    "check": "wrangler deploy --dry-run --outdir .wrangler/dry-run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "wrangler": "4.149.0"
+  }
+}

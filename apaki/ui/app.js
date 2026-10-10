@@ -35,6 +35,9 @@ import { initSettings } from './settings.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
+// The phone web client (apaki/web) runs this same file over the relay; it
+// sets apakiShell to 'web' and has no Phone sheet of its own.
+const WEB = window.apakiShell === 'web';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
@@ -965,12 +968,13 @@ if ($('theme')) $('theme').onclick = () => window.apakiTheme.set(THEME_UI[window
 
 /* ---------- the rail's bottom-left corner: Glass, Settings, Phone (2026-10-09) ---------- */
 
-const glassCard = initGlassCard({ root: $('glassState'), send, menu, note: (text, tone) => focusedPane()?.note(text, tone) });
+// On the phone (WEB) the card only shows: switching accounts and keep-warm are billing, which a phone never runs (remote-policy.js).
+const glassCard = initGlassCard({ root: $('glassState'), send, menu, readOnly: WEB, note: (text, tone) => focusedPane()?.note(text, tone) });
 const settings = initSettings({
-  button: $('settings'), sheet, send, theme: window.apakiTheme, themeUi: THEME_UI, indexText,
+  button: $('settings'), sheet, send, theme: window.apakiTheme, themeUi: THEME_UI, indexText, warm: !WEB,
   sound: { on: soundOn, set: (on) => { setSoundOn(on); if (on) ding('done'); } },
 });
-// The Phone button is phone.js's (the remote track); until that is in this build it shows its glyph only.
+// The Phone button is phone.js's (initPhone below fills it in); the glyph shows until that module loads.
 if ($('phone') && !$('phone').innerHTML.trim()) {
   $('phone').innerHTML = '<svg viewBox="0 0 16 16" class="ph-glyph" aria-hidden="true"><rect class="ph-body" x="3.8" y="1.2" width="8.4" height="13.6" rx="2.1"/><rect class="ph-screen" x="5.3" y="3" width="5.4" height="8.6" rx=".9"/><path class="ph-home" d="M7 13.2h2"/></svg>';
 }
@@ -1198,6 +1202,9 @@ function restore() {
 
 const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings']);
 
+/** Phone access (phone.js), set up at start; null in the phone web client. */
+let phone = null;
+
 // Registered before anything is sent: `listen` is async, and events that
 // arrive before it resolves are lost (a reload lost restored panes' opens).
 await listen('engine', ({ payload: e }) => {
@@ -1222,6 +1229,7 @@ await listen('engine', ({ payload: e }) => {
         for (const p of S.panes.values()) p.open(p.sessionId ? { id: p.sessionId, cwd: p.cwd, title: p.title } : null, { warm: false });
       }
       send('sessions');
+      phone?.refresh();
       break;
     case 'index':
       S.indexLine = e.ok ? `Words index up to date · ${e.stats?.blocks_added ?? 0} new · ${(e.ms / 1000).toFixed(1)}s` : 'Conversation index unavailable; search uses titles only.';
@@ -1305,6 +1313,7 @@ await listen('engine', ({ payload: e }) => {
       break;
     case 'warmState': settings.handle(e); break;
     case 'closed': break;
+    case 'remote': phone?.handle(e); break;
     case 'note': focusedPane()?.note(e.text, e.tone || ''); break;
     case 'error': focusedPane()?.note(e.message, 'error'); break;
     case 'engine_exit':
@@ -1341,6 +1350,9 @@ await listen('engine', ({ payload: e }) => {
 
 renderSound();
 renderTheme();
+// Phone access (phone.js, with the QR encoder) loads on the desktop only.
+if (WEB) $('phone')?.remove();
+else phone = (await import('./phone.js')).initPhone({ send, sheet, ding, button: $('phone') });
 restore();
 renderTabs();
 // Ask the engine for its state in case it was ready before this page loaded.

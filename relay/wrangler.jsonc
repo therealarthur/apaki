@@ -1,0 +1,25 @@
+// Myrlin Apaki relay (Cloudflare Worker + Durable Object). Not deployed yet.
+// Forwards opaque end-to-end encrypted frames between a PC running Myrlin
+// Apaki and its paired phones. See README.md for the threat model.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "apaki-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  // When deploying on myrlin.io, a custom domain keeps the URL stable, for example:
+  // "routes": [{ "pattern": "relay.apaki.myrlin.io", "custom_domain": true }],
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  // SQLite-backed Durable Objects work on the Workers free plan.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  // The relay logs nothing about frames; keep platform logs off too.
+  "observability": { "enabled": false },
+  "vars": {
+    "ABOUT": "Myrlin Apaki relay: forwards opaque end-to-end encrypted frames between a PC running Myrlin Apaki and its paired phones; stores nothing, holds no keys. Made 2026-10-09 by Claude Code (Opus 5.5) for Arthur. Source: github.com/therealarthur/claude-latch relay/. Safe to delete: paired phones stop reaching their PCs until Apaki points at another relay.",
+    // Comma-separated Origins allowed for phone sockets (empty = any; the crypto does not depend on it).
+    "ALLOWED_ORIGINS": ""
+    // Limits (see src/lib.js DEFAULT_LIMITS) can be overridden here, for example "MAX_PHONES": "8".
+  }
+}

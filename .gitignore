@@ -3,3 +3,4 @@ node_modules/
 index/target/
 apaki/dist/
 apaki/target-dev/
+apaki/web/dist/

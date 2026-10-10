@@ -9,8 +9,9 @@
  * dot. The search index line moved here too, with the footer keeping its
  * short form.
  *
- * initSettings({ button, sheet, send, theme, themeUi, sound, indexText })
+ * initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm })
  * returns { handle(e), refresh() }; handle takes the engine's warmState event.
+ * warm: false (the phone client) leaves keep-warm out: it is billing.
  */
 
 import { esc } from './markdown.js';
@@ -21,7 +22,7 @@ function seg(name, options, value) {
   return `<div class="seg" role="radiogroup" data-seg="${name}">${options.map((o) => `<button role="radio" aria-checked="${o.value === value}" class="${o.value === value ? 'on' : ''}" data-v="${o.value}">${o.icon ? `<svg viewBox="0 0 16 16" aria-hidden="true">${o.icon}</svg>` : ''}${esc(o.label)}</button>`).join('')}</div>`;
 }
 
-export function initSettings({ button, sheet, send, theme, themeUi, sound, indexText }) {
+export function initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm: showWarm = true }) {
   let warm = null;
   let root = null;
 
@@ -47,10 +48,10 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
         <div class="set-t"><b>Ding</b><small>A soft chime when a conversation finishes or asks you something.</small></div>
         ${seg('ding', [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }], sound.on() ? 'on' : 'off')}
       </section>
-      <section class="set-row">
+      ${showWarm ? `<section class="set-row">
         <div class="set-t"><b>Keep cache warm</b><small>On API keys: a one-word request every 52 minutes keeps a conversation's prompt cache, so coming back reads it from cache instead of paying to write it again. ${esc(warmLine())}.</small>${ttl}${verdict}</div>
         ${seg('warm', [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }], warm?.on ? 'on' : 'off')}
-      </section>
+      </section>` : ''}
       <section class="set-row set-info">
         <div class="set-t"><b>Search index</b><small class="set-index">${esc(indexText())}</small></div>
       </section>
@@ -80,7 +81,7 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
 
   let close = null;
   function open() {
-    send('warmState');
+    if (showWarm) send('warmState');
     sheet('<div class="settings-host"></div>', (r, done) => {
       root = r.querySelector('.settings-host');
       close = () => { root = null; close = null; window.removeEventListener('keydown', onKey, true); done(); };

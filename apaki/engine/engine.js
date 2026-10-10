@@ -27,6 +27,17 @@
  * a conversation carries it back. Each pane has its own runner (its own Claude
  * Code process), model, effort, mode and billing, so panes work at the same
  * time. One session can be open in one pane only.
+ *
+ * Phones (Track B, 2026-10-09; remote.js): with phone access on, paired
+ * phones send the same commands through the relay, checked against an
+ * allowlist (remote-policy.js). Their panes are phone:<deviceId>:<name>, and
+ * events about them (and answers to their requests) go to that phone instead
+ * of the window. A session open on the desktop and on a phone gets the same
+ * "Session in use" card and takeover as one held by another app. Desktop ops:
+ * remoteStatus, remoteEnable, remoteDisable, remotePairStart,
+ * remotePairCancel, remotePairDecision, remoteDevices, remoteRevoke (ev
+ * remote). attach re-sends a pane's state without restarting it (a phone that
+ * reconnected).
  */
 
 import { execFile, spawn } from 'node:child_process';
@@ -46,6 +57,8 @@ import { lockInfo, lockStolen, releaseLock, rememberCreated, setLockApp, takeLoc
 import { makeLoader } from '../../src/ui/picker.js';
 import { noteRunnerUse, setOn as setWarm, statusText as warmStatus, summary as warmSummary } from '../../src/warm.js';
 import { folderStats, listDir, makeDir } from '../../src/places.js';
+import { createRemote } from './remote.js';
+import { parsePhoneId, windowOf } from './remote-policy.js';
 
 // Locks this engine takes name it, so a blocked terminal window can say who has the session.
 setLockApp('apaki');
@@ -58,7 +71,12 @@ const DEFAULT_EFFORT = process.env.APAKI_EFFORT || 'xhigh';
 const HISTORY_MESSAGES = 400;
 const RESULT_CHARS = 4000;
 
+/** Phone access (remote.js), created once the command handlers exist. */
+let remote = null;
+
 function emit(ev) {
+  // Events for a phone's panes and requests go to that phone only.
+  if (remote && remote.route(ev)) return;
   process.stdout.write(`${JSON.stringify(ev)}\n`);
 }
 
@@ -219,10 +237,40 @@ async function closeRunner(p) {
   if (p.sessionId) releaseLock(p.sessionId);
 }
 
-/** The other pane that already has this session open, if any. */
+/**
+ * The other pane that already has this session open, if any. A pane whose
+ * session was taken from it (no runner, a "Taken over" card) no longer counts.
+ */
 function paneWith(sessionId, exceptId) {
-  for (const p of panes.values()) if (p.id !== exceptId && p.sessionId && p.sessionId === sessionId) return p;
+  for (const p of panes.values()) if (p.id !== exceptId && p.runner && p.sessionId && p.sessionId === sessionId) return p;
   return null;
+}
+
+/**
+ * Who holds a session in another window of this engine (the desktop window or
+ * a phone), in the shape lockInfo gives for other apps, for the pane's
+ * "Session in use" and "Taken over" cards.
+ */
+function holderOf(p) {
+  const phone = remote?.windowName(p.id) || null;
+  return { name: phone ? `${phone} (phone)` : 'Apaki on this PC', app: phone ? 'apaki-phone' : 'apaki', at: p.openedAt || new Date().toISOString(), alive: true };
+}
+
+/**
+ * A pane in another window of this engine had the session: stop it there
+ * (its running turn is interrupted) and tell that window, so the
+ * conversation continues only in the pane that took it.
+ */
+async function takeFrom(other, taker) {
+  for (const [id, a] of state.asks) if (a.paneId === other.id) { state.asks.delete(id); a.resolve({ behavior: 'deny', message: 'The session was taken over in another window.' }); }
+  const r = other.runner;
+  other.runner = null;
+  other.busy = false;
+  if (r) {
+    if (r.running) await r.interrupt();
+    await r.stop();
+  }
+  emit({ ev: 'taken_over', paneId: other.id, sessionId: other.sessionId, holder: holderOf(taker) });
 }
 
 /**
@@ -234,7 +282,15 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   const p = getPane(paneId);
   if (isCodexId(sessionId)) { emit({ ev: 'note', reqId, paneId: p.id, tone: 'warn', text: codexResumeHint(sessionId) }); return; }
   const other = sessionId ? paneWith(sessionId, p.id) : null;
-  if (other) { emit({ ev: 'open_elsewhere', reqId, paneId: p.id, sessionId, otherPane: other.id }); return; }
+  if (other && windowOf(other.id) === windowOf(p.id)) { emit({ ev: 'open_elsewhere', reqId, paneId: p.id, sessionId, otherPane: other.id }); return; }
+  if (other && !opts.force) {
+    // Open in the other window of this engine (the desktop and a phone): the
+    // same card as a session held by another app, with Take over here.
+    const held = await getSessionInfo(sessionId).catch(() => null);
+    emit({ ev: 'locked', reqId, paneId: p.id, sessionId, holder: holderOf(other), title: held?.customTitle || held?.summary || null, cwd: cwd || held?.cwd || '' });
+    return;
+  }
+  if (other) await takeFrom(other, p);
   await closeRunner(p);
   if (opts.model) p.model = opts.model;
   if (opts.effort) p.effort = opts.effort;
@@ -253,6 +309,7 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     info = await getSessionInfo(sessionId).catch(() => null);
   }
   p.sessionId = sessionId || null;
+  p.openedAt = new Date().toISOString();
   p.credential = p.credential.follow ? glassCredential() : p.credential;
   const runner = new SessionRunner({
     sessionId: sessionId || null,
@@ -268,7 +325,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   // Questions and plan approval go to the window and wait for its answer.
   runner.onInteractiveTool = (toolName, input) => new Promise((resolve) => {
     const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    state.asks.set(id, { resolve, paneId: p.id });
+    // toolName and input are kept so attach can ask a reconnected window again.
+    state.asks.set(id, { resolve, paneId: p.id, toolName, input });
     emit({ ev: 'ask', askId: id, paneId: p.id, toolName, input });
   });
   runner.onNewSession = (id) => {
@@ -311,9 +369,12 @@ async function send(reqId, paneId, text, images = []) {
     ? [...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })), ...(text ? [{ type: 'text', text }] : [])]
     : text;
   try {
+    p.busy = true;
     const r = await p.runner.send(content);
+    p.busy = false;
     emit({ ev: 'result', reqId, paneId: p.id, sessionId: p.sessionId, subtype: r.subtype, isError: Boolean(r.is_error), durationMs: r.duration_ms, usage: r.usage, cost: r.latchTurnCost ?? null, errors: r.errors || null, result: typeof r.result === 'string' ? r.result.slice(0, 2000) : null });
   } catch (e) {
+    p.busy = false;
     if (e.code === 'TAKEN_OVER') {
       // Stop this pane's process; the lock is the other window's now.
       const r = p.runner;
@@ -324,6 +385,25 @@ async function send(reqId, paneId, text, images = []) {
     }
     emit({ ev: 'error', reqId, paneId: p.id, message: e.message || String(e) });
   }
+}
+
+/**
+ * A window reconnected (the phone client after a network change or a page
+ * reload): sends the pane's state again, and any question still waiting for
+ * it, without restarting its Claude Code process, so a running turn keeps
+ * running. A pane the engine no longer has (or holds another session) is
+ * opened as usual, without starting Claude Code until its next message.
+ */
+async function attach(reqId, paneId, sessionId, cwd) {
+  const p = panes.get(String(paneId));
+  if (!p || !p.runner || (p.sessionId || null) !== (sessionId || null)) { await open(reqId, paneId, sessionId, cwd, { warm: false }); return; }
+  const info = p.sessionId ? await getSessionInfo(p.sessionId).catch(() => null) : null;
+  emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), reqId, paneId: p.id, sessionId: p.sessionId, cwd: p.runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [] });
+  if (p.sessionId) {
+    const msgs = await getSessionMessages(p.sessionId).catch(() => []);
+    emit({ ev: 'history', paneId: p.id, sessionId: p.sessionId, messages: compactMessages(msgs), total: msgs.length });
+  }
+  for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: p.id, toolName: a.toolName, input: a.input });
 }
 
 /** Closes a pane: its Claude Code process stops and its session lock is freed. */
@@ -377,6 +457,7 @@ const handlers = {
   askSearch: (c) => askSearchOp(c.reqId, String(c.query || ''), c.paneId || null),
   digPrompt: (c) => digPromptOp(c.reqId, String(c.query || ''), Array.isArray(c.candidates) ? c.candidates : []),
   open: (c) => open(c.reqId, c.paneId, c.sessionId || null, c.cwd || null, { warm: c.warm, model: c.model, effort: c.effort, mode: c.mode, force: c.force }),
+  attach: (c) => attach(c.reqId, c.paneId, c.sessionId || null, c.cwd || null),
   send: (c) => send(c.reqId, c.paneId, String(c.text || ''), Array.isArray(c.images) ? c.images : []),
   close: (c) => closePane(c.reqId, c.paneId),
   interrupt: (c) => getPane(c.paneId).runner?.interrupt(),
@@ -396,19 +477,19 @@ const handlers = {
   answer: (c) => { const a = state.asks.get(c.askId); state.asks.delete(c.askId); a?.resolve(c.result || null); },
   model: async (c) => {
     const p = getPane(c.paneId);
-    p.model = c.model; defaults.model = c.model;
+    p.model = c.model; if (!parsePhoneId(p.id)) defaults.model = c.model;
     await p.runner?.setModel(c.model);
     emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
   },
   mode: async (c) => {
     const p = getPane(c.paneId);
-    p.mode = c.mode; defaults.mode = c.mode;
+    p.mode = c.mode; if (!parsePhoneId(p.id)) defaults.mode = c.mode;
     await p.runner?.setPermissionMode(c.mode);
     emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
   },
   effort: async (c) => {
     const p = getPane(c.paneId);
-    p.effort = c.effort; defaults.effort = c.effort;
+    p.effort = c.effort; if (!parsePhoneId(p.id)) defaults.effort = c.effort;
     if (p.runner?.running) await p.runner.restart({ effort: c.effort });
     else if (p.runner) p.runner.effort = c.effort;
     emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
@@ -498,8 +579,10 @@ const handlers = {
       emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: cached, cached: true });
       return;
     }
-    const list = shape(await p.runner.supportedCommands().catch(() => []));
-    if (list.length) state.commandsByCwd.set(p.runner.cwd, list);
+    // The runner is kept here: a takeover can stop the pane while this waits.
+    const runner = p.runner;
+    const list = shape(await runner.supportedCommands().catch(() => []));
+    if (list.length) state.commandsByCwd.set(runner.cwd, list);
     emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: list });
   },
   folder: async (c) => {
@@ -509,14 +592,22 @@ const handlers = {
     if (c.action === 'delete') folders.deleteFolder(c.folderId);
     emit({ ev: 'folders', folders: folders.listFolders() });
   },
+  // Phone access (remote.js): from the desktop window only. A phone's
+  // commands never reach these: remote-policy.js does not allow them.
+  remoteStatus: (c) => remote.op(c),
+  remoteDevices: (c) => remote.op(c),
+  remoteEnable: (c) => remote.op(c),
+  remoteDisable: (c) => remote.op(c),
+  remotePairStart: (c) => remote.op(c),
+  remotePairCancel: (c) => remote.op(c),
+  remotePairDecision: (c) => remote.op(c),
+  remoteRevoke: (c) => remote.op(c),
 };
 
-const SERIAL_OPS = new Set(['open', 'send', 'close', 'model', 'mode', 'effort', 'billing']);
+const SERIAL_OPS = new Set(['open', 'attach', 'send', 'close', 'model', 'mode', 'effort', 'billing']);
 
-const rl = readline.createInterface({ input: process.stdin });
-rl.on('line', async (line) => {
-  let c;
-  try { c = JSON.parse(line); } catch { return; }
+/** Runs one command, from the window (stdin) or from a phone (remote.js, already checked). */
+async function dispatch(c) {
   const h = handlers[c.op];
   if (!h) { emit({ ev: 'error', reqId: c.reqId, message: `unknown op ${c.op}` }); return; }
   const run = async () => { try { await h(c); } catch (e) { emit({ ev: 'error', reqId: c.reqId, paneId: c.paneId, message: e.message || String(e) }); } };
@@ -531,8 +622,35 @@ rl.on('line', async (line) => {
     return;
   }
   await run();
+}
+
+/** The panes of one phone (phone:<deviceId>:...). */
+const phonePanes = (deviceId) => [...panes.keys()].filter((id) => parsePhoneId(id)?.deviceId === deviceId);
+
+remote = createRemote({
+  emit,
+  dispatch: (c) => dispatch(c),
+  readyEvent: () => ({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: false }),
+  engine: {
+    hasOp: (op) => typeof handlers[op] === 'function',
+    paneExists: (id) => panes.has(id),
+    paneCount: (deviceId) => phonePanes(deviceId).length,
+    phonePanes,
+    paneInfo: (id) => { const p = panes.get(id); return p ? { sessionId: p.sessionId, running: Boolean(p.runner), busy: Boolean(p.busy) } : null; },
+    askPane: (askId) => state.asks.get(askId)?.paneId || null,
+    knownCwd: (cwd) => Boolean(state.items?.some((it) => it.cwd === cwd)),
+    phoneSessions: (deviceId) => phonePanes(deviceId).map((id) => panes.get(id)?.sessionId).filter(Boolean),
+  },
+});
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', async (line) => {
+  let c;
+  try { c = JSON.parse(line); } catch { return; }
+  await dispatch(c);
 });
 rl.on('close', async () => {
+  remote?.stop();
   fs.unwatchFile(LIVE_LOGIN); await Promise.all([...panes.values()].map((p) => closeRunner(p))); process.exit(0); });
 
 /* ---------- Myrlin Glass, live ---------- */
