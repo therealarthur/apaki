@@ -2159,3 +2159,18 @@ button:disabled { cursor: default; }
 :root[data-theme="dark"] .phone-sheet .seg button.on { background: var(--tint-deep); box-shadow: 0 1px 3px rgba(0, 0, 0, .45), 0 0 0 1px var(--hairline-strong); }
 .phone-sheet button.ph-life-btn { padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; font: inherit; color: inherit; white-space: normal; text-decoration: underline dotted; text-underline-offset: 2px; filter: none; }
 .phone-sheet button.ph-life-btn:hover { border: 0; background: none; color: var(--brand-deep); }
+
+/* ---------- narrow panes and reduced motion (2026-10-10) ----------
+   In a narrow pane (a split) the context chip shows its bar only, its number
+   stays in the title, so the settings line does not wrap to a third row. */
+.composer { container: composer / inline-size; }
+@container composer (max-width: 560px) {
+  .chip-btn.ctx .ctx-n { display: none; }
+  .chip-btn.ctx { gap: 0; padding-left: 8px; padding-right: 8px; }
+}
+/* With reduced motion the tab's working sweep would freeze as a line along one
+   edge (no one-sided highlights): the tab's title carries "working" instead. */
+@media (prefers-reduced-motion: reduce) {
+  .tab.busy::after { display: none; }
+  .tab.busy .tab-t { color: var(--brand-strong); }
+}

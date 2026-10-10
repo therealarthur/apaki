@@ -1120,7 +1120,7 @@ export class Pane {
     box.innerHTML = '';
     this.attachments.forEach((a, i) => {
       const c = el('div', 'chip', `<img src="${a.url}" alt=""><span class="dim">${a.w}×${a.h}</span>`);
-      const x = el('button', '', '×');
+      const x = el('button', 'chip-x', '×');
       x.title = 'Remove';
       x.onclick = () => { this.attachments.splice(i, 1); this.renderAttachments(); };
       c.append(x);
@@ -1159,6 +1159,8 @@ export class Pane {
         this.openNotes = [];
         if (e.tookOver) this.openNotes.push(['Taken over: the other window is stopped before its next message, so this conversation continues only here.', '']);
         if (e.terminal?.length) this.openNotes.push([`This session is also open in a Claude Code terminal window (${e.terminal.map((t) => t.name).join(', ')}). Stop typing there while you work here; that window must /resume to see these turns.`, 'warn']);
+        // Re-attached (the background host kept this Claude Code process running): nothing was cut off.
+        if (this.crashNote && e.attached) this.crashNote = false;
         if (this.crashNote) { this.openNotes.push(['Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
         if (e.sessionId !== this.sessionId || e.reset) this.liveTasks.clear();
         this.renderTasksButton();
