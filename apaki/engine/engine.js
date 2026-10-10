@@ -36,12 +36,27 @@
  * apaki/bin/apaki-open.cmd with a per-pane token for this engine's localhost
  * server (open-server.js), which also serves artifacts to the viewer.
  *   ev artifact  { paneId, sessionId, id, title, kind, rev, path, src, ext, mime, size, source, revs, via, toolUseId }
- *   ev openUrl   { paneId, sessionId, url, reason, title, toolUseId }  (a web page to open; the
- *                built-in browser takes these over later, for now the window shows a link card)
+ *   ev openUrl   { paneId, sessionId, url, reason, title, toolUseId, browserId? }  (a web page
+ *                to open: the conversation draws a link card, the built-in browser shows it)
  *   op artifactGet { id, sessionId?, rev?, content? } -> ev artifactContent (meta, src, and the
  *                content: utf8 for html/markdown/svg/text, base64 for image/pdf)
  *   op artifactList { sessionId } -> ev artifacts { sessionId, items }
  *   op openExternal { url } or { id, sessionId?, rev? } -> the system browser / default app
+ *
+ * The built-in browser (2026-10-09, Arthur: "a built-in browser like
+ * Codex's, driven by Claude, light and fast"): the shell owns the browser
+ * (apaki/src/browser.rs, a WebView2 with no bridge to Tauri or this engine);
+ * the engine asks it for things over the same pipes (shell-channel.js):
+ *   ev shell       { id, cmd, args }   a request for the shell, never shown to the window
+ *   op shellReply  { id, ok, result | error }   its answer
+ *   op shellHello  { version, features }        the shell's first line
+ * With a browser, every pane's Claude Code also gets browser_open, _read,
+ * _click, _type, _back and _screenshot (browser-tools.js), and web pages
+ * from show, caught commands and BROWSER open in that browser.
+ *   ev openUrl     gains browserId when the page went to the built-in browser
+ *   ev browserActivity { paneId, browserId, action, text }   what Claude just did there
+ *   op browserTool { paneId, tool, input } -> ev browserToolResult { ok, text, image? }
+ *                  (runs one of Claude's browser tools for a pane: checks, later the phone)
  */
 
 import { execFile, spawn } from 'node:child_process';
@@ -53,6 +68,8 @@ import { fileURLToPath } from 'node:url';
 import { getSessionInfo, getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { ArtifactStore, kindOfExt } from './artifacts.js';
 import { createApakiTools } from './apaki-tools.js';
+import { createBrowserTools } from './browser-tools.js';
+import { createShell } from './shell-channel.js';
 import { startOpenServer } from './open-server.js';
 import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
 import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
@@ -78,6 +95,9 @@ const RESULT_CHARS = 4000;
 function emit(ev) {
   process.stdout.write(`${JSON.stringify(ev)}\n`);
 }
+
+// Requests to the Apaki shell (the built-in browser), answered on stdin.
+const shell = createShell({ emit });
 
 // Session list shared by every pane.
 const state = {
@@ -113,15 +133,39 @@ function artifactEvent(p, rec, meta = {}) {
 /** The tools one pane's Claude Code gets (made once per pane, shared by its restarts). */
 function toolsFor(p) {
   if (!p.tools) {
+    // The browser tools only where the shell has a browser (not in tests or latch).
+    const browser = shell.has('browser')
+      ? createBrowserTools({ shell, owner: () => p.id, onActivity: (a) => emit({ ev: 'browserActivity', paneId: p.id, ...a }) })
+      : null;
     p.tools = createApakiTools({
       store,
       sessionId: () => p.runner?.sessionId || p.sessionId || null,
       cwd: () => p.runner?.cwd || os.homedir(),
       onArtifact: (rec, meta) => emit(artifactEvent(p, rec, meta)),
-      onOpenUrl: (o) => emit({ ev: 'openUrl', paneId: p.id, sessionId: p.runner?.sessionId || p.sessionId || null, url: o.url, title: o.title || null, reason: o.reason || 'show', toolUseId: o.toolUseId || null }),
+      onOpenUrl: (o) => { openPage(p, o); },
+      browser,
     });
   }
   return p.tools;
+}
+
+/**
+ * A web page for a pane's user (show with kind url, a caught "start
+ * https://...", BROWSER): into the pane's built-in browser when the shell has
+ * one, and in any case an openUrl event so the conversation gets its card.
+ */
+async function openPage(p, o) {
+  const base = { ev: 'openUrl', paneId: p.id, sessionId: p.runner?.sessionId || p.sessionId || null, url: o.url, title: o.title || null, reason: o.reason || 'show', toolUseId: o.toolUseId || null };
+  if (shell.has('browser') && /^https?:\/\//i.test(o.url)) {
+    try {
+      const st = await shell.request('browser.open', { owner: p.id, url: o.url, hint: 'reuse', reason: o.reason || 'show' }, { timeout: 8000 });
+      emit({ ...base, browserId: st.id });
+      return;
+    } catch (e) {
+      process.stderr.write(`apaki: the built-in browser did not open ${o.url}: ${e.message}\n`);
+    }
+  }
+  emit(base);
 }
 
 /** BROWSER and friends for a pane's Claude Code, so tools that open a browser open in Apaki. */
@@ -135,7 +179,7 @@ function openedByBrowser(paneId, url) {
   const p = panes.get(paneId);
   if (!p) return;
   if (/^file:\/\//i.test(url)) { toolsFor(p).show({ kind: 'file', path: url }, { via: 'BROWSER' }).catch(() => {}); return; }
-  emit({ ev: 'openUrl', paneId: p.id, sessionId: p.runner?.sessionId || p.sessionId || null, url, title: null, reason: 'BROWSER', toolUseId: null });
+  openPage(p, { url, title: null, reason: 'BROWSER', toolUseId: null });
 }
 
 /** An artifact the stdio tool server (apaki-mcp-stdio.mjs) stored for a pane: show it like an in-process one. */
@@ -457,6 +501,16 @@ function transcribe(reqId, wavBase64, paneId = null) {
 /* ---------- command loop ---------- */
 
 const handlers = {
+  // From the Apaki shell, not the window: its hello, and answers to our requests (shell-channel.js).
+  shellHello: (c) => shell.hello(c),
+  shellReply: (c) => { shell.reply(c); },
+  // One of Claude's browser tools, run for a pane without a model turn (checks; later the phone).
+  browserTool: async (c) => {
+    const p = getPane(c.paneId);
+    const b = toolsFor(p).browser;
+    const r = b ? await b.call(String(c.tool || ''), c.input || {}) : { ok: false, text: 'This window has no built-in browser.' };
+    emit({ ev: 'browserToolResult', reqId: c.reqId, paneId: p.id, tool: c.tool, ok: r.ok, text: r.text, image: r.image || null, width: r.width || null, height: r.height || null });
+  },
   transcribe: (c) => transcribe(c.reqId, c.wav, c.paneId || null),
   sessions: (c) => sessions(c.reqId),
   search: (c) => search(c.reqId, String(c.query || '')),

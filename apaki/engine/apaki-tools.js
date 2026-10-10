@@ -10,7 +10,8 @@
  *   mcpServers   an in-process MCP server "apaki" (createSdkMcpServer) with
  *                one tool, `show` (mcp__apaki__show): HTML, Markdown, SVG,
  *                images and local files go to Apaki's viewer, web pages to
- *                its browser (for now a link card, see the openUrl event).
+ *                its built-in browser (the openUrl event; a link card where
+ *                the shell has no browser).
  *   systemPrompt one short paragraph appended to Claude Code's own prompt
  *                saying the tool exists and to use it instead of start /
  *                Start-Process / open.
@@ -20,6 +21,12 @@
  *                Apaki; in a longer command only the open step is cut out,
  *                and a file it opens is shown after the command ran
  *                (PostToolUse), since the command usually builds it.
+ *   browser      (2026-10-09, when the Apaki shell has its built-in browser)
+ *                six more tools on the same server, browser_open, _read,
+ *                _click, _type, _back and _screenshot (browser-tools.js),
+ *                and a sentence in the system prompt saying they exist. Web
+ *                pages from show and from caught commands then open in that
+ *                browser instead of a link card only.
  *
  * createApakiTools() returns those three plus show(), preToolUse() and
  * postToolUse() for tests (test/apaki-tools.test.js).
@@ -32,6 +39,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { SHOW_KINDS } from './artifacts.js';
 import { analyzeCommand } from './open-catch.js';
+import { BROWSER_PROMPT } from './browser-tools.js';
 
 export const SHOW_TOOL = 'mcp__apaki__show';
 const PENDING_TTL_MS = 30 * 60 * 1000;
@@ -81,8 +89,9 @@ export function showShape() {
  * @param {() => string} o.cwd              the pane's working directory
  * @param {(rec, meta) => void} o.onArtifact  a stored artifact to show (meta: { via, toolUseId })
  * @param {(o: { url, title, reason, toolUseId }) => void} o.onOpenUrl  a web page to open
+ * @param {ReturnType<import('./browser-tools.js').createBrowserTools>|null} [o.browser]  Claude's browser tools, when the shell has a browser
  */
-export function createApakiTools({ store, sessionId = () => null, cwd = () => process.cwd(), onArtifact = () => {}, onOpenUrl = () => {}, home = os.homedir(), env = process.env } = {}) {
+export function createApakiTools({ store, sessionId = () => null, cwd = () => process.cwd(), onArtifact = () => {}, onOpenUrl = () => {}, home = os.homedir(), env = process.env, browser = null } = {}) {
   const pending = new Map(); // toolUseId -> { files, at, cwd }
 
   /** Shows one thing. Returns { ok, text, record?, url? }; never throws. */
@@ -94,6 +103,7 @@ export function createApakiTools({ store, sessionId = () => null, cwd = () => pr
         if (/^file:\/\//i.test(raw)) return show({ ...input, kind: 'file', path: raw, url: undefined }, meta);
         if (!/^https?:\/\/[^\s"'<>]+$/i.test(raw)) return { ok: false, text: `"${raw}" is not an http(s) URL. For a local file use kind "file" with its path.` };
         onOpenUrl({ url: raw, title: String(input.title || '').trim() || null, reason: meta.via || 'show', toolUseId: meta.toolUseId || null });
+        if (browser) return { ok: true, url: raw, text: `Opened ${raw} for the user in Apaki's browser beside this conversation. To read or use the page yourself, call browser_read (browser_open reloads it). Do not open it again with a shell command.` };
         return { ok: true, url: raw, text: `Opened ${raw} for the user in Apaki (a link card in this conversation; it opens in their browser). Do not open it again with a shell command.` };
       }
       const before = input.id ? store.record(input.id, sessionId() || 'unsaved') : null;
@@ -165,8 +175,8 @@ export function createApakiTools({ store, sessionId = () => null, cwd = () => pr
   const mcpServer = () => createSdkMcpServer({
     name: 'apaki',
     version: '0.1.0',
-    // One small tool, always in the prompt: deferred behind tool search, the
-    // system prompt's pointer to it would be a dead end.
+    // Small tools, always in the prompt: deferred behind tool search, the
+    // system prompt's pointer to them would be a dead end.
     alwaysLoad: true,
     tools: [
       tool('show', SHOW_DESCRIPTION, shape, async (args, extra) => {
@@ -176,6 +186,8 @@ export function createApakiTools({ store, sessionId = () => null, cwd = () => pr
       // Read-only for the user's files (it writes only Apaki's own store), so
       // plan mode can still show a diagram or a mockup.
       }, { annotations: { title: 'Show in Apaki', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false } }),
+      // The built-in browser's tools, when the shell has one (browser-tools.js).
+      ...(browser ? browser.sdkTools() : []),
     ],
   });
 
@@ -183,7 +195,7 @@ export function createApakiTools({ store, sessionId = () => null, cwd = () => pr
     // A fresh server instance on every Claude Code start (an MCP server object
     // serves one connection), hence a function SessionRunner calls.
     mcpServers: () => ({ apaki: mcpServer() }),
-    appendSystemPrompt: APAKI_SYSTEM_PROMPT,
+    appendSystemPrompt: browser ? `${APAKI_SYSTEM_PROMPT} ${BROWSER_PROMPT}` : APAKI_SYSTEM_PROMPT,
     hooks: {
       PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [preToolUse] }],
       PostToolUse: [{ matcher: 'Bash|PowerShell', hooks: [postToolUse] }],
@@ -192,5 +204,6 @@ export function createApakiTools({ store, sessionId = () => null, cwd = () => pr
     preToolUse,
     postToolUse,
     mcpServer,
+    browser,
   };
 }

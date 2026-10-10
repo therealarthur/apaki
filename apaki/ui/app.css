@@ -992,3 +992,77 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 :root[data-theme="dark"] .art-card { box-shadow: 0 10px 28px -22px rgba(0, 0, 0, .8); }
 :root[data-theme="dark"] .art-card.err .art-glyph { box-shadow: inset 0 0 0 1px rgba(238, 138, 99, .3); }
 :root[data-theme="dark"] .art-frame { box-shadow: 0 0 0 1px var(--hairline-strong), 0 14px 34px -22px rgba(0, 0, 0, .8); }
+
+/* ==========================================================================
+   Browser (2026-10-09, Arthur: "a built-in browser like Codex's, driven by
+   Claude, light and fast"). The page is a native WebView2 the shell lays
+   over .web-body, edge to edge (a native window cannot take rounded
+   corners, so the body has none). This is its frame: the address strip in
+   the pane bar (back, forward, reload, the page title in the heavy wide
+   face with the address under it), peach light running along the strip's
+   bottom edge while a page loads, and a periwinkle line saying what Claude
+   just did there. Frosted surfaces through the shared tokens, both themes.
+   ========================================================================== */
+.pane.web { grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr); }
+.pane.web .pane-bar { position: relative; flex-wrap: nowrap; gap: 4px; }
+.web-nav { display: flex; align-items: center; gap: 1px; flex: none; }
+.pane.web .icon-btn { width: 30px; height: 30px; flex: none; }
+.pane.web .icon-btn svg { width: 15px; height: 15px; }
+.web-nav .icon-btn:disabled { opacity: .3; }
+.reload .i-stop, .pane.web.loading .reload .i-reload { display: none; }
+.pane.web.loading .reload .i-stop { display: block; }
+.web-title { min-width: 0; margin-left: 6px; }
+.web-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.web-head .title { flex: 0 1 auto; min-width: 0; }
+.web-act {
+  flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font: 780 11px/1.2 var(--font-display); font-stretch: 112%; letter-spacing: .02em; color: var(--brand-strong);
+  opacity: 0; transform: translateY(2px);
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.web-act.on { opacity: 1; transform: none; }
+.web-addr { margin: 2px 0 0 -8px; }
+.web-addr .addr {
+  display: block; width: 100%; height: 24px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; outline: 0; font: 500 11.5px/1 var(--font-mono); color: var(--faint); text-overflow: ellipsis;
+  transition: background var(--dur-fast) var(--ease-hover), border-color var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.web-addr .addr:hover { background: hsla(var(--w), .55); }
+.web-addr .addr:focus { background: hsla(var(--w), .94); border-color: var(--brand); color: var(--ink); box-shadow: 0 6px 18px -14px rgba(var(--shadow-rgb), .55); }
+.web-addr .addr::placeholder { color: var(--faint); opacity: .8; }
+.pane.web.failed .web-addr .addr:not(:focus) { color: var(--action-strong); }
+
+/* Loading: peach light running along the bottom edge of the strip. */
+.web-sweep { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; overflow: hidden; pointer-events: none; opacity: 0; transition: opacity var(--dur-fast) var(--ease-hover); }
+.web-sweep::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, var(--brand-soft) 35%, var(--peach-glow) 70%, transparent);
+  transform: translateX(-100%);
+}
+.pane.web.loading .web-sweep { opacity: 1; }
+.pane.web.loading .web-sweep::after { animation: web-sweep 1.15s var(--ease-hover) infinite; }
+@keyframes web-sweep { to { transform: translateX(250%); } }
+
+/* Where the page sits. Under it: what shows before there is one, and the
+   picture that stands in while a menu or a sheet needs the space. */
+.web-ground { position: relative; display: flex; overflow: hidden; }
+.web-body { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: hsla(var(--w), .5); }
+.web-snap { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: left top; user-select: none; pointer-events: none; }
+.web-snap[hidden] { display: none; }
+.web-empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 8px; padding: 24px; text-align: center; color: var(--soft); }
+.web-empty[hidden] { display: none; }
+.web-empty .tk-kicker { color: var(--brand-strong); }
+.web-empty p { margin: 0; max-width: 360px; font-size: 13.5px; overflow-wrap: anywhere; }
+
+/* A screenshot Claude took, small inside its tool line. */
+.tool .tool-shot { display: block; max-width: min(100%, 440px); margin: 8px 0 4px; border-radius: 8px; box-shadow: 0 0 0 1px var(--hairline-strong), 0 10px 26px -20px rgba(var(--shadow-rgb), .6); }
+
+@container pane (max-width: 460px) {
+  .pane.web .fwd, .pane.web .outside { display: none; }
+  .web-act { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane.web.loading .web-sweep::after { animation: none; transform: none; width: 100%; opacity: .7; }
+  .web-act { transition: none; transform: none; }
+}
+:root[data-theme="dark"] .web-addr .addr:focus { box-shadow: 0 6px 18px -12px rgba(0, 0, 0, .8); }

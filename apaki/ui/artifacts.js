@@ -21,8 +21,9 @@
  *   pdf      the browser's own PDF viewer in a frame
  *   markdown the app's own safe renderer (markdown.js)
  *   text     a code block
- * Web pages (kind url, BROWSER, Start-Process http://...) get a link card;
- * the built-in browser takes those over later. For now: Open in browser.
+ * Web pages (kind url, BROWSER, Start-Process http://...) get a link card
+ * whose Open shows the page in Apaki's built-in browser (browser.js, since
+ * 2026-10-09), beside the conversation.
  *
  * The viewer talks to the app through `host`: send(op, args), focus(pane),
  * close(pane), dragPane(pane, e), dragEnd(), changed(pane), openUrl(url),
@@ -109,13 +110,13 @@ export function updateCard(c, info = {}) {
   c.classList.toggle('err', state === 'error');
 }
 
-/** A web page card: the built-in browser takes these over later; for now Open in browser. */
+/** A web page card: Open shows it in Apaki's built-in browser beside the conversation. */
 export function linkCard({ url, title, reason }, { onOpen }) {
   const c = el('div', 'art-card link');
   c.dataset.kind = 'url';
   c.dataset.url = url;
   const why = reason && !['show', 'url'].includes(reason) ? ` · from ${reason}` : '';
-  c.innerHTML = `<span class="art-glyph">${glyph('url')}</span><div class="art-main"><div class="art-kicker">Web page${esc(why)}</div><div class="art-title">${esc(title || hostOf(url))}</div><div class="art-sub mono">${esc(url)}</div></div><button class="art-open">Open in browser</button>`;
+  c.innerHTML = `<span class="art-glyph">${glyph('url')}</span><div class="art-main"><div class="art-kicker">Web page${esc(why)}</div><div class="art-title">${esc(title || hostOf(url))}</div><div class="art-sub mono">${esc(url)}</div></div><button class="art-open">Open</button>`;
   c.querySelector('.art-open').onclick = (e) => { e.stopPropagation(); onOpen(url); };
   c.title = url;
   return c;
@@ -260,7 +261,7 @@ export class ArtifactPane {
     } else if (kind === 'markdown') {
       if (a.content == null) { this.load(a.rev); return; }
       const doc = el('article', 'art-doc turn-assistant', md(a.content));
-      for (const link of doc.querySelectorAll('a[href]')) link.onclick = (e) => { e.preventDefault(); this.host.openUrl(link.href); };
+      for (const link of doc.querySelectorAll('a[href]')) link.onclick = (e) => { e.preventDefault(); this.host.openUrl(link.href, this); };
       body.replaceChildren(doc);
     } else {
       if (a.content == null) { this.load(a.rev); return; }

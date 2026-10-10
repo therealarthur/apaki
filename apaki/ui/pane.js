@@ -56,7 +56,17 @@ function el(tag, cls, html) {
   return e;
 }
 
+/** Apaki's browser tools (mcp__apaki__browser_open...) read as "Browser" plus what they did. */
+const BROWSER_TOOL = 'mcp__apaki__browser_';
+function browserArgs(name, input = {}) {
+  const action = name.slice(BROWSER_TOOL.length);
+  const ref = input.ref != null ? ` [${input.ref}]` : '';
+  const text = input.text != null ? ` "${String(input.text).slice(0, 60)}"${input.submit ? ' + Enter' : ''}` : '';
+  return `${action}${input.url ? ` ${input.url}` : ''}${ref}${text}${input.from ? ` from line ${input.from}` : ''}`;
+}
+
 function toolArgs(name, input = {}) {
+  if (name.startsWith(BROWSER_TOOL)) return browserArgs(name, input).slice(0, 160);
   const pick = input.command ?? input.file_path ?? input.notebook_path ?? input.pattern ?? input.url ?? input.query ?? input.description ?? input.prompt ?? input.skill ?? '';
   if (name === 'TodoWrite' && Array.isArray(input.todos)) return `${input.todos.length} todos`;
   return String(pick).replace(/\s+/g, ' ').slice(0, 160);
@@ -298,7 +308,7 @@ export class Pane {
     // Apaki's show tool is drawn as a card the user can open again later.
     if (block.name === SHOW_TOOL) { this.addShowCard(block); return; }
     const d = el('details', 'tool');
-    const label = block.name === 'Task' ? 'Agent' : block.name;
+    const label = block.name === 'Task' ? 'Agent' : block.name.startsWith(BROWSER_TOOL) ? 'Browser' : block.name;
     d.innerHTML = `<summary><span class="dot">⏺</span><span class="name">${esc(label)}</span><span class="args">(${esc(toolArgs(block.name, block.input))})</span></summary><div class="sum">running…</div>`;
     if ((block.name === 'Edit' || block.name === 'MultiEdit') && block.input) {
       const edits = block.input.edits || [{ old_string: block.input.old_string, new_string: block.input.new_string }];
@@ -337,7 +347,7 @@ export class Pane {
     const key = `u:${url}:${toolUseId || Math.random()}`;
     if (this.cardKeys.has(key)) return;
     this.cardKeys.add(key);
-    const card = linkCard({ url, title, reason }, { onOpen: (u) => this.host.openUrl?.(u) });
+    const card = linkCard({ url, title, reason }, { onOpen: (u) => this.host.openUrl?.(u, this) });
     if (replace) { replace.replaceWith(card); if (toolUseId) this.tools.set(toolUseId, card); } else if (after?.isConnected) after.after(card); else this.$.T.append(card);
     this.scrollDown();
   }
@@ -407,6 +417,14 @@ export class Pane {
     const pre = el('pre');
     pre.textContent = text.slice(0, 20000);
     d.append(pre);
+    // What Claude saw (browser_screenshot): the picture, small, inside the tool line.
+    const shot = Array.isArray(content) ? content.find((c) => c.type === 'image' && (c.source?.data || c.data)) : null;
+    if (shot) {
+      const img = el('img', 'tool-shot');
+      img.alt = 'Screenshot Claude took';
+      img.src = `data:${shot.source?.media_type || shot.mimeType || 'image/png'};base64,${shot.source?.data || shot.data}`;
+      d.append(img);
+    }
   }
 
   renderBlocks(role, content, { images } = {}) {
