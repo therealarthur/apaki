@@ -21,11 +21,12 @@ driving the Mac Mini over SSH (the Mac's own Claude login was at its weekly limi
 
 - Real device: Secure Enclave, camera, haptics, keyboard behaviour (needs a signed build).
 - Passkeys and Universal Links: need the Team ID in the AASA file and a relay deploy (Arthur).
-- Android: platform added, official plugins, icons and splash; Apaki plugins for Android and a build still to do (see README).
+- Android: built neither with Gradle nor run (no room for the SDK on the Mac). The Apaki plugins exist in Java (Keystore keys, sealed store, OkHttp socket, Google code scanner) and compile against Android API 36; Android passkeys need a relay change first (README).
 - Push notifications: designed in README, not built.
 
 ### Log
 
+- Android: Apaki plugins in Java, registered in MainActivity; backups off; App Links and `apaki://` intent filters; OkHttp and the code scanner in Gradle. javac check against android.jar and the real libraries; DER to raw signatures checked against the JDK on 500 keys.
 - Scaffolding (package.json, capacitor.config.json); `cap add ios` and `cap add android` on the Mac.
 - protocol.js `deviceSign`; boot.js and account.js small hooks; app page build with swaps and a strict CSP.
 - Swift plugins, view controller, Info.plist (camera text, `apaki` scheme, arm64), entitlements, project file entries.

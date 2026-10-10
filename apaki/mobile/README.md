@@ -170,32 +170,37 @@ the screenshots; see "Not tested yet" below.
 
 ### Android (Play Store)
 
-The Android project is in `android/` with the official plugins wired, the
-icons and the splash. **It is not built yet** (the Mac keeps too little disk
-for the Android SDK, about 10 GB) and **it does not have the Apaki plugins
-yet**: the app's page calls `ApakiKeys`, `ApakiNet`, `ApakiScanner`,
-`ApakiPasskeys` and `ApakiApp`, so until those exist in Java or Kotlin the
-Android app stops at start. What each needs:
+The Android project is in `android/`: the official plugins, the icons (an
+adaptive icon with the M over the tile gradient) and the splash, and the
+Apaki plugins in Java next to `MainActivity` (which registers them):
 
 | Plugin | Android version |
 |---|---|
-| `ApakiKeys` | an EC P-256 key per pairing in the Android Keystore (`KeyGenParameterSpec`, `PURPOSE_SIGN`, `DIGEST_SHA256`, StrongBox when present); `SHA256withECDSA` gives DER, convert to 64-byte r and s; the store as SharedPreferences values sealed with a Keystore AES-GCM key; `android:allowBackup="false"` (a backup restored elsewhere could not open them) |
-| `ApakiNet` | OkHttp WebSocket with the same allowlist and `Origin: https://apaki.myrlin.io`; `HttpURLConnection` for `/v1/` |
-| `ApakiScanner` | Google code scanner (`play-services-code-scanner`): no camera permission, a few lines |
-| `ApakiPasskeys` | Credential Manager with the PRF extension. The server must also accept the app's origin (`android:apk-key-hash:<hash of the signing certificate>`) next to `https://apaki.myrlin.io`, which is a relay change, plus `relay/site/.well-known/assetlinks.json` with the signing key's SHA-256 |
-| `ApakiApp` | `BuildConfig.DEBUG`, the WebView background |
+| `ApakiKeys` | an EC P-256 key per pairing in the Android Keystore (StrongBox when the phone has one); `SHA256withECDSA` gives DER, turned into the 64-byte r and s the protocol uses; the store is app-private SharedPreferences, each value sealed with AES-256-GCM under a Keystore key (the record's name as AAD). Backups and device transfers are off (`allowBackup="false"`, `data_extraction_rules.xml`): a copy could not be opened on another phone anyway. |
+| `ApakiNet` | OkHttp 4.12: the same allowlist as iOS, `Origin: https://apaki.myrlin.io`, no redirects, a ping every 15 s so a socket killed by sleep is noticed |
+| `ApakiScanner` | Google's code scanner (`play-services-code-scanner`): the system's own scanner screen, no camera permission |
+| `ApakiApp` | debug from the app's debuggable flag; demo and test link from intent extras in debug builds |
+| `ApakiPasskeys` | **not yet**: says passkeys are unavailable, so the page explains that accounts are not in the Android app yet. Android passkeys carry the origin `android:apk-key-hash:<signing certificate hash>`, which the account server does not accept today; it needs that origin added next to `https://apaki.myrlin.io` (a relay change) and `relay/site/.well-known/assetlinks.json` with the signing key's SHA-256, then Credential Manager with the PRF extension here. |
 
-Register each in `MainActivity` (`registerPlugin(...)` before `super.onCreate`).
-Also check the CSP on Android: Capacitor injects its bridge as a document-start
-script on current WebViews; on an old WebView it falls back to an inline
-script, which `script-src 'self'` would block.
+Status: the Java was compile-checked (javac against Android API 36, the real
+OkHttp and Google scanner libraries, and Capacitor's plugin API), and the
+signature and key encoding were checked against the JDK on 500 keys. **It has
+not been built with Gradle or run**: the Mac keeps too little disk for the
+Android SDK (about 10 GB). App Links (`https://apaki.myrlin.io/v/...`) and
+`apaki://pair` open the app (the manifest's intent filters).
 
-To build: install Android Studio (SDK 35+, JDK 21), `npm run sync`, `npx cap
-open android`, Run. To publish: a Play Console developer account (USD 25 once),
-create the app, use Play App Signing, put the app signing key's SHA-256 into
-`assetlinks.json` (and deploy the relay), upload the AAB (`./gradlew bundleRelease`
-with your upload key), fill in Data safety the same way as App Privacy above,
-then internal testing.
+Also check the CSP on Android once it runs: Capacitor injects its bridge as a
+document-start script on current WebViews; only an old WebView falls back to
+an inline script, which `script-src 'self'` would block.
+
+To build: Android Studio (SDK 36, its own JDK), `npm run sync`, `npx cap open
+android`, Run on a phone or an emulator. Debug launches for tests:
+`adb shell am start -n io.myrlin.apaki/.MainActivity --es apakiDemo chat`.
+To publish: a Play Console developer account (USD 25 once), create the app,
+use Play App Signing, put the app signing key's SHA-256 into
+`relay/site/.well-known/assetlinks.json` (then deploy the relay), build the
+bundle with your upload key (`./gradlew bundleRelease`), upload it, fill in
+Data safety the same way as App Privacy above, then internal testing.
 
 ## Push notifications when a turn finishes (design, not built)
 
@@ -239,7 +244,7 @@ tiny forwarder elsewhere sends the request).
 
 - **On a real iPhone**: the Secure Enclave path (the Simulator has none; the same code path with a Keychain key was tested end to end), the camera scanner (the Simulator has no camera), haptics, the keyboard pushing the composer.
 - **Passkeys and Universal Links**: need the Team ID in the AASA file, the relay deployed and a signed build. The PRF salt is passed as WebAuthn's `eval.first`; Apple documents the native type as the WebAuthn values' counterpart, so a passkey made in Safari should open the same vault in the app. Check once on a device: sign in in Safari, then in the app, with the same passkey.
-- **Android**: not built; the Apaki plugins are not written for it (above).
+- **Android**: the Apaki plugins are written and compile-checked but the app is not built or run; accounts are not in the Android app yet (above).
 
 ## Tech choice
 
