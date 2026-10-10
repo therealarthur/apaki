@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Apaki tile behind the adaptive icon's M: the same top-to-bottom gradient as
+     apaki/icons/source/apaki-icon.svg (#26223F to #14121F). apaki/mobile, 2026-10-10. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:startColor="#26223F"
+        android:endColor="#14121F"
+        android:type="linear" />
+</shape>
