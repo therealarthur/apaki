@@ -263,6 +263,30 @@ export class SessionRunner {
     return result;
   }
 
+  /**
+   * Adds a message to the turn that is running, without stopping it: Claude
+   * Code folds it in at its next step and the turn ends with ONE result for
+   * both (measured 2026-10-09: the model finished its current work and its
+   * reply followed the steered message). It needs no pending entry for that
+   * reason. Never set priority 'now' here: that interrupts the turn.
+   * Returns false when no turn is running (send it as a normal message then).
+   */
+  steer(content) {
+    if (!this.running || !this.pending.length) return false;
+    this.inbox.push({
+      type: 'user',
+      message: { role: 'user', content },
+      parent_tool_use_id: null,
+      session_id: this.sessionId || '',
+    });
+    return true;
+  }
+
+  /** True while a sent message is still waiting for its result. */
+  get turnRunning() {
+    return this.pending.length > 0;
+  }
+
   /** Runs a query control call, starting the process first if needed. */
   async ask(method) {
     if (!this.running) this.start();

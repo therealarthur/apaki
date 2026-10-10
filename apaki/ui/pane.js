@@ -70,6 +70,11 @@ export class Pane {
     this.busy = false;
     this.unread = false;
     this.attachments = [];
+    // Messages typed while Claude works: sent when the turn ends, or steered
+    // into it now (see submit / steerItem).
+    this.queue = [];
+    this.steering = new Map();
+    this.stoppedByUser = false;
     this.commands = [];
     this.streams = new Map();
     this.tools = new Map();
@@ -86,7 +91,7 @@ export class Pane {
       send: q('.send'), status: q('.status'), slash: q('.slash'), attachments: q('.attachments'), composer: q('.composer'),
       file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
       folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'),
-      statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'),
+      statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
     };
     // The composer floats over the conversation (frosted); keep the last
     // message clear of it as it grows and shrinks.
@@ -112,9 +117,10 @@ export class Pane {
     const { input } = this.$;
     this.el.addEventListener('pointerdown', () => this.host.focus(this), true);
     this.el.addEventListener('focusin', () => this.host.focus(this));
-    input.addEventListener('input', () => { this.autosize(); this.updateSlash(); });
+    input.addEventListener('input', () => { this.autosize(); this.updateSlash(); this.renderSendButton(); });
     input.addEventListener('keydown', (e) => this.onKey(e));
-    this.$.send.onclick = () => this.submit();
+    // Stop only when the box is empty; with text it queues (see submit).
+    this.$.send.onclick = () => { if (this.busy && !this.hasDraft()) this.stop(); else this.submit(); };
     this.$.file.addEventListener('change', async (e) => { for (const f of e.target.files) await this.addImageFile(f); e.target.value = ''; });
     this.$.mic.onclick = () => this.host.voice(this);
     this.$.model.onclick = () => menu(this.$.model, Object.entries(MODEL_NAMES).map(([value, label]) => ({ value, label, checked: value === this.model })), { onPick: (v) => this.setModel(v) });
@@ -139,9 +145,11 @@ export class Pane {
       if (e.key === 'Escape') { this.hideSlash(); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.submit(); return; }
+    // Up in an empty box pulls the last queued message back to edit, as in Codex.
+    if (e.key === 'ArrowUp' && !input.value && this.queue.length) { e.preventDefault(); this.editItem(this.queue[this.queue.length - 1].id); return; }
     // Shift+Tab cycles the permission mode, as in Claude Code.
     if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); this.cycleMode(); return; }
-    if (e.key === 'Escape' && this.busy) { this.send('interrupt'); this.setStatus('Stopping…'); }
+    if (e.key === 'Escape' && this.busy) this.stop();
   }
 
   cycleMode() {
@@ -290,9 +298,10 @@ export class Pane {
 
   clearEmpty() { if (this.$.T.querySelector('.empty')) this.$.T.innerHTML = ''; }
 
-  addUser(text, images = []) {
+  addUser(text, images = [], { steered = false } = {}) {
     this.clearEmpty();
-    const u = el('div', 'turn-user');
+    const u = el('div', steered ? 'turn-user steered' : 'turn-user');
+    if (steered) u.append(el('span', 'steer-tag', 'Steered in'));
     if (images.length) {
       const box = el('div', 'imgs');
       for (const im of images) { if (im.url) { const i = el('img'); i.src = im.url; box.append(i); } else box.append(el('span', 'img-marker', '[image]')); }
@@ -432,8 +441,8 @@ export class Pane {
 
   setBusy(on) {
     this.busy = on;
-    this.$.send.textContent = on ? 'Stop' : 'Send';
-    this.$.send.classList.toggle('stop', on);
+    this.renderSendButton();
+    this.renderQueue();
     this.el.classList.toggle('busy', on);
     clearInterval(this.tick);
     // While working, the status line above the message box carries a live grid.
@@ -463,8 +472,110 @@ export class Pane {
     }
   }
 
+  /** True when the box holds something to send (text or images). */
+  hasDraft() {
+    return Boolean(this.$.input.value.trim()) || this.attachments.length > 0;
+  }
+
+  /** The button: Send when idle; while working, Queue with a draft and Stop without. */
+  renderSendButton() {
+    const b = this.$.send;
+    const mode = !this.busy ? 'send' : this.hasDraft() ? 'queue' : 'stop';
+    b.textContent = { send: 'Send', queue: 'Queue', stop: 'Stop' }[mode];
+    b.classList.toggle('stop', mode === 'stop');
+    b.classList.toggle('queue', mode === 'queue');
+    b.title = { send: 'Send (Enter)', queue: 'Queue this for when Claude finishes (Enter)', stop: 'Stop Claude (Esc)' }[mode];
+  }
+
+  /** Stops the running turn. Queued messages stay; they do not go out on their own after a stop. */
+  stop() {
+    if (!this.busy) return;
+    this.stoppedByUser = true;
+    this.send('interrupt');
+    this.setStatus('Stopping…');
+  }
+
+  /* ---------- queued messages ---------- */
+
+  enqueue(text, attachments) {
+    this.queue.push({ id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, text, attachments });
+    this.renderQueue();
+  }
+
+  renderQueue() {
+    const box = this.$.queue;
+    if (!box) return;
+    box.hidden = !this.queue.length;
+    if (!this.queue.length) { box.innerHTML = ''; return; }
+    // While Claude works: Steer adds the message to the current work now.
+    // After a stop (nothing to steer): Send starts a new turn with it.
+    const act = this.busy ? 'Steer' : 'Send';
+    const actTip = this.busy ? 'Add this to what Claude is doing now, without stopping it' : 'Send this now';
+    box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? 'Sends when Claude finishes · Steer to add it now' : 'Not sent: Claude was stopped'}</span></div>`
+      + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Click to edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} image${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" title="${actTip}">${act}</button><button class="q-x" title="Remove">×</button></div>`).join('');
+    box.querySelectorAll('.q-item').forEach((row) => {
+      const id = row.dataset.id;
+      row.querySelector('.q-text').onclick = () => this.editItem(id);
+      row.querySelector('.q-act').onclick = () => (this.busy ? this.steerItem(id) : this.sendItem(id));
+      row.querySelector('.q-x').onclick = () => this.removeItem(id);
+    });
+  }
+
+  takeItem(id) {
+    const i = this.queue.findIndex((x) => x.id === id);
+    if (i < 0) return null;
+    const [it] = this.queue.splice(i, 1);
+    this.renderQueue();
+    return it;
+  }
+
+  removeItem(id) { this.takeItem(id); this.$.input.focus(); }
+
+  /** Pulls a queued message back into the box to change it (Enter queues it again). */
+  editItem(id) {
+    const it = this.takeItem(id);
+    if (!it) return;
+    const { input } = this.$;
+    input.value = input.value.trim() ? `${it.text}\n${input.value}` : it.text;
+    this.attachments = [...it.attachments, ...this.attachments];
+    this.renderAttachments();
+    this.autosize();
+    this.renderSendButton();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+
+  /** Steer: hand a queued message to the running turn; it is shown once Claude Code took it. */
+  steerItem(id) {
+    const it = this.takeItem(id);
+    if (!it) return;
+    this.steering.set(id, it);
+    this.send('steer', { qid: id, text: it.text, images: it.attachments.map(({ media_type, data }) => ({ media_type, data })) });
+  }
+
+  sendItem(id) {
+    const it = this.takeItem(id);
+    if (it) this.sendNow(it.text, it.attachments);
+  }
+
+  /** Starts a turn with this message. */
+  sendNow(text, attachments = []) {
+    const images = attachments.map(({ media_type, data }) => ({ media_type, data }));
+    this.stoppedByUser = false;
+    this.addUser(text, attachments);
+    this.setBusy(true);
+    this.send('send', { text, images });
+  }
+
+  /** After a turn ends on its own, everything queued goes out together as the next message. */
+  flushQueue() {
+    if (this.busy || this.stoppedByUser || !this.queue.length) return;
+    const items = this.queue.splice(0);
+    this.renderQueue();
+    this.sendNow(items.map((it) => it.text).filter(Boolean).join('\n\n'), items.flatMap((it) => it.attachments));
+  }
+
   submit() {
-    if (this.busy) { this.send('interrupt'); this.setStatus('Stopping…'); return; }
     // Held elsewhere: the card's button is the way forward, not a message.
     if (this.lockedBy) { this.$.T.querySelector('.takeover')?.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }], { duration: 220, easing: 'ease-out' }); return; }
     const { input } = this.$;
@@ -472,14 +583,14 @@ export class Pane {
     if (!text && !this.attachments.length) return;
     this.hideSlash();
     if (text.startsWith('/') && !this.attachments.length && this.localCommand(text)) { input.value = ''; this.autosize(); return; }
-    const images = this.attachments.map(({ media_type, data }) => ({ media_type, data }));
-    this.addUser(text, this.attachments);
+    const attachments = this.attachments;
     this.attachments = [];
     this.renderAttachments();
     input.value = '';
     this.autosize();
-    this.setBusy(true);
-    this.send('send', { text, images });
+    // Working: queue it (Steer adds it to the current work). Never stops the turn.
+    if (this.busy) { this.enqueue(text, attachments); this.renderSendButton(); return; }
+    this.sendNow(text, attachments);
   }
 
   /* ---------- composer ---------- */
@@ -532,6 +643,7 @@ export class Pane {
   }
 
   renderAttachments() {
+    this.renderSendButton();
     const box = this.$.attachments;
     box.innerHTML = '';
     this.attachments.forEach((a, i) => {
@@ -557,6 +669,7 @@ export class Pane {
       case 'taken_over': this.showLocked(e, { lost: true }); break;
       case 'opened':
         this.lockedBy = null;
+        if (e.sessionId !== this.sessionId) { this.queue = []; this.steering.clear(); this.stoppedByUser = false; this.renderQueue(); }
         this.sessionId = e.sessionId; this.cwd = e.cwd; this.billing = e.billing;
         this.streams.clear(); this.tools.clear();
         this.setTitle(e.title || 'New conversation');
@@ -578,6 +691,7 @@ export class Pane {
       case 'sdk': this.onSdk(e.msg); break;
       case 'result': {
         this.setBusy(false);
+        queueMicrotask(() => this.flushQueue());
         const u = e.usage || {};
         const k = (n) => `${((n || 0) / 1000).toFixed(1)}k`;
         const foot = [`${((e.durationMs || 0) / 1000).toFixed(1)}s`, `${k(u.cache_read_input_tokens)} cached`, `${k(u.cache_creation_input_tokens)} new`, e.cost != null ? `$${e.cost.toFixed(3)}` : null, this.billing?.name].filter(Boolean).join(' · ');
@@ -592,6 +706,15 @@ export class Pane {
       case 'commands': this.commands = e.commands || []; break;
       case 'settings': this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode; this.renderChips(); break;
       case 'note': this.note(e.text, e.tone || ''); break;
+      case 'steered': { const it = this.steering.get(e.qid); this.steering.delete(e.qid); if (it) this.addUser(it.text, it.attachments, { steered: true }); break; }
+      case 'steer_missed': {
+        // The turn ended before the steer arrived: send it as the next message.
+        const it = this.steering.get(e.qid);
+        this.steering.delete(e.qid);
+        if (!it) break;
+        if (this.busy) { this.queue.unshift(it); this.renderQueue(); } else this.sendNow(it.text, it.attachments);
+        break;
+      }
       case 'error': this.setBusy(false); this.setStatus(''); this.note(e.message, 'error'); break;
       case 'transcript': {
         if (!this.busy) this.setStatus(e.text ? `Transcribed in ${(e.ms / 1000).toFixed(1)}s` : 'Heard nothing');

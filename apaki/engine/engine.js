@@ -380,6 +380,19 @@ const handlers = {
   send: (c) => send(c.reqId, c.paneId, String(c.text || ''), Array.isArray(c.images) ? c.images : []),
   close: (c) => closePane(c.reqId, c.paneId),
   interrupt: (c) => getPane(c.paneId).runner?.interrupt(),
+  // Steer: add a message to the running turn without stopping it (Claude
+  // Code takes it in at its next step). If the turn already ended, it goes
+  // out as a normal message instead.
+  steer: async (c) => {
+    const p = getPane(c.paneId);
+    const images = Array.isArray(c.images) ? c.images : [];
+    const text = String(c.text || '');
+    const content = images.length
+      ? [...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })), ...(text ? [{ type: 'text', text }] : [])]
+      : text;
+    if (p.runner?.steer(content)) { emit({ ev: 'steered', reqId: c.reqId, paneId: p.id, qid: c.qid }); return; }
+    emit({ ev: 'steer_missed', reqId: c.reqId, paneId: p.id, qid: c.qid });
+  },
   answer: (c) => { const a = state.asks.get(c.askId); state.asks.delete(c.askId); a?.resolve(c.result || null); },
   model: async (c) => {
     const p = getPane(c.paneId);
