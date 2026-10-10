@@ -187,8 +187,8 @@ export function setPc(name, state) {
   if (!b) return;
   b.querySelector('.ios-pc-n').textContent = name || 'PC';
   const s = b.querySelector('.ios-pc-s');
-  s.textContent = state === 'open' ? 'Connected' : state === 'failed' ? 'Not connected' : 'Connecting';
-  s.className = `ios-pc-s${state === 'open' ? ' ok' : state === 'failed' ? ' bad' : ''}`;
+  s.textContent = state === 'open' ? 'Connected' : state === 'failed' ? 'Not connected' : state === 'unknown' ? 'Not recognized' : 'Connecting';
+  s.className = `ios-pc-s${state === 'open' ? ' ok' : state === 'failed' || state === 'unknown' ? ' bad' : ''}`;
 }
 
 /** The conversation's bar: a Back button that names the list. */
@@ -298,10 +298,21 @@ function sheetSwipe() {
 const HINT_KEY = 'apaki.installHint.v1';
 const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
+/** Running as an installed app (from the Home Screen), not in a browser tab. */
+export const isStandalone = () => { try { return standalone(); } catch { return false; } };
+
+/** An iPhone or iPad (where a Home Screen app keeps its own storage, apart from the browser's: WebKit does that on purpose). */
+export const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent || '');
+
+/** iOS Safari itself (not Chrome, Firefox or Edge on iOS), in a tab. */
+export const isIosSafari = () => {
+  const ua = navigator.userAgent || '';
+  return isIos() && /Safari\//.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
+};
+
 function installHint() {
   if (standalone() || localStorage.getItem(HINT_KEY)) return;
-  const ua = navigator.userAgent || '';
-  const ios = /iPhone|iPad|iPod/.test(ua) && /Safari\//.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
+  const ios = isIosSafari();
   let deferred = null;
   const show = (html, onGo) => {
     const rail = document.querySelector('.rail');
@@ -314,7 +325,8 @@ function installHint() {
     (rail.querySelector('.ios-scroll') || rail).append(card);
   };
   if (ios) {
-    show('<div class="ih-t"><b>Add Apaki to your Home Screen</b><span>Tap Share, then Add to Home Screen. It opens full screen, like an app.</span></div>');
+    // The Home Screen app keeps its own storage (2026-10-10: a pairing made here in Safari is not in it), so say so up front.
+    show('<div class="ih-t"><b>Add Apaki to your Home Screen</b><span>Tap Share, then Add to Home Screen. It opens full screen, like an app. It keeps its own storage, so pair it once more there, or sign in to your Apaki account in it.</span></div>');
     return;
   }
   window.addEventListener('beforeinstallprompt', (e) => {

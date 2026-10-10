@@ -10,8 +10,17 @@
  * offline, with backoff, and at once when the page becomes visible again.
  *
  * States (on.state): connecting, waiting (the relay is up, the PC is not),
- * pairing, sas, handshake, open, offline (retrying), failed (needs the
- * person: a new QR, or this phone was removed).
+ * pairing, sas, handshake, open, offline (retrying), unknown (the PC said it
+ * does not know this phone; retrying slowly), failed (needs the person: a
+ * new QR, or this phone was removed or its pairing expired).
+ *
+ * Staying paired (2026-10-10): only the PC's encrypted close ends a pairing
+ * for sure (removed, or expired: the lifetime chosen at Allow ran out). Its
+ * "unknown device" alert is plaintext, so anyone on the path could fake it,
+ * and a PC can say it for a while for other reasons; the saved pairing is
+ * kept, the page says what happened, and the link tries again every few
+ * minutes and whenever the page comes back to the front. It is final only
+ * when this phone's own expiry (hello's expiresAt) has passed.
  */
 
 import { PhoneSession, ProtocolError, RELAY_CLOSE, parseRelayControl, relaySubprotocols, roomUrl } from './protocol.js';
@@ -20,6 +29,8 @@ import { Inbox, Outbox } from './wire.js';
 const PING_MS = 25_000;
 const HANDSHAKE_MS = 20_000;
 const BACKOFF_MS = [800, 2_000, 5_000, 10_000, 20_000, 30_000];
+/** After "unknown device": the next tries (slow; the page coming back to the front tries at once). */
+const UNKNOWN_RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000];
 
 /** Alerts that end a pairing for good: the QR has to be shown again. */
 const PAIR_FATAL = new Set(['expired', 'used', 'no-offer', 'bad-mac', 'rejected', 'timeout', 'bad-signature', 'bad-commit', 'version']);
@@ -31,14 +42,18 @@ export class Link {
    * @param {object} [o.offer]  a scanned QR (to pair)
    * @param {object} [o.pairing]  a saved pairing (to reconnect)
    * @param {string} [o.name]  this phone's name, shown on the PC while pairing
+   * @param {string|null} [o.expiresAt]  when the PC said this pairing runs out (saved from an earlier hello)
    * @param {object} o.on  callbacks: state(state, info), sas(code), paired(pairing) (may be async),
-   *                       open(first), hello(msg), fatal(code, message)
+   *                       open(first), hello(msg), fatal(code, message), unknown({ retryInMs }),
+   *                       lifetime(expiresAt) (the PC told this phone its expiry, or a new one)
    */
-  constructor({ device, offer = null, pairing = null, name = '', on = {} }) {
+  constructor({ device, offer = null, pairing = null, name = '', expiresAt = null, on = {} }) {
     this.device = device;
     this.offer = offer;
     this.pairing = pairing;
     this.name = name;
+    this.expiresAt = expiresAt || null;
+    this.unknownAttempt = 0;
     this.on = on;
     const ref = pairing || offer;
     this.relay = ref.relay;
@@ -200,6 +215,7 @@ export class Link {
     this.inbox = new Inbox();
     this.outbox = new Outbox({ session, write: (f) => this.sendBinary(f), onError: (e) => console.warn('apaki link:', e) });
     this.attempt = 0;
+    this.unknownAttempt = 0;
     const first = !this.everOpen;
     this.everOpen = true;
     this.setState('open');
@@ -218,11 +234,15 @@ export class Link {
     if (!m) return;
     if (m.t === 'hello') {
       this.hello = m;
+      // When this pairing runs out (null: never); an older PC does not say, and then nothing changes.
+      if (Object.hasOwn(m, 'expiresAt')) this.setExpiry(m.expiresAt);
       // Connected as an Apaki account's device: tell the PC which phone this is (ACCOUNTS.md).
       if (m.asAccount && this.name) this.outbox?.send({ t: 'via', name: this.name }).catch(() => {});
       this.on.hello?.(m);
       return;
     }
+    // The PC user changed how long this phone stays paired.
+    if (m.t === 'lifetime') { this.setExpiry(m.expiresAt); return; }
     if (m.t === 'evs' && Array.isArray(m.list)) for (const ev of m.list) this.onEvent?.(ev);
     if (typeof m.reqId === 'string' && this.replies?.has(m.reqId)) {
       const r = this.replies.get(m.reqId);
@@ -252,15 +272,57 @@ export class Link {
     });
   }
 
-  /** The PC closed the channel (authenticated): removed, or phone access turned off. */
+  /** Keeps the expiry the PC sent (an ISO time, or null for never) and passes it on. */
+  setExpiry(value) {
+    const v = typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
+    if (v === this.expiresAt) return;
+    this.expiresAt = v;
+    this.on.lifetime?.(v);
+  }
+
+  /** True once the expiry the PC gave this phone has passed. */
+  get lapsed() {
+    const t = Date.parse(this.expiresAt || '');
+    return Number.isFinite(t) && t <= Date.now();
+  }
+
+  /** The PC closed the channel (authenticated): removed, its pairing expired, or phone access turned off. */
   closedByPc(reason) {
     this.dropSession();
-    if (/removed/i.test(reason || '')) this.fatal('removed', reason);
+    if (/expired/i.test(reason || '')) this.fatal('lapsed', reason);
+    else if (/removed/i.test(reason || '')) this.fatal('removed', reason);
     else this.setState('waiting', { reason });
+  }
+
+  /**
+   * "Unknown device" from the PC, which is a plaintext hint: it may have
+   * been removed there, or the PC may not know this phone just now. The
+   * pairing stays; try again slowly (and at once when the page is back in
+   * front, see wake). The page shows why and offers Forget.
+   */
+  unknown() {
+    clearInterval(this.timers.ping);
+    clearTimeout(this.timers.hs);
+    clearTimeout(this.timers.retry);
+    const ws = this.ws;
+    this.ws = null;
+    try { ws?.close(); } catch { /* gone */ }
+    this.dropSession();
+    const ms = UNKNOWN_RETRY_MS[Math.min(this.unknownAttempt, UNKNOWN_RETRY_MS.length - 1)];
+    this.unknownAttempt += 1;
+    this.timers.retry = setTimeout(() => this.dial(), ms);
+    this.setState('unknown', { retryInMs: ms });
+    this.on.unknown?.({ retryInMs: ms });
   }
 
   alert(code) {
     this.dropSession();
+    if (code === 'unknown-device' && this.pairing) {
+      // Final only when this phone's own expiry (from the PC, authenticated, earlier) has passed.
+      if (this.lapsed) this.fatal('lapsed');
+      else this.unknown();
+      return;
+    }
     if (code === 'unknown-device') { this.fatal('removed'); return; }
     if (!this.pairing && PAIR_FATAL.has(code)) { this.fatal(code); return; }
     this.restart();

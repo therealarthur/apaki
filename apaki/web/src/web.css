@@ -399,3 +399,35 @@ body.web.native .pair-screen.sheet-mode .pair-card::before { content: ''; positi
   body.web.native .rail, body.web.native .main, .stack-dim, .ios-nav-t { transition: none !important; }
   body.web.native .menu, body.web.native .glass-panel, body.web.native .task-panel, body.web.native .sheet, .pair-screen.sheet-mode .pair-card, .toast { animation: none !important; }
 }
+
+/* =====================================================================
+   Phone buttons in the app's button system (2026-10-10; app.css "Button
+   system"). The rules above gave the PC screen's buttons a flat ground
+   fill and its Forget and Remove a faint grey that read as disabled; here
+   they take the shared looks: secondary = quiet gradient with an even
+   hairline, ghost = no fill until pressed, primary = the brand gradient
+   (already set in app.css). Bigger targets for the queue's buttons.
+   ===================================================================== */
+.pair-btn.quiet, .pp-row button:not([data-k="create-go"]), .pair-pcs button:not(.quiet), .pc-line button {
+  background: linear-gradient(180deg, var(--btn2-a), var(--btn2-b)); border: 1px solid var(--btn2-line); color: var(--ink-deep);
+  box-shadow: 0 1px 2px rgba(var(--shadow-rgb), .06);
+  transition: border-color var(--dur-fast) var(--ease-hover), background var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-hover);
+}
+.pp-row button:not([data-k="create-go"]):hover, .pair-pcs button:not(.quiet):hover, .pc-line button:hover, .acct-acts button:hover {
+  background: linear-gradient(180deg, var(--btn2-hover-a), var(--btn2-hover-b)); border-color: var(--brand);
+}
+.pp-row button:active, .pair-pcs button:active, .pc-line button:active, .acct-acts button:active, .pair-btn.quiet:active { transform: scale(.97); }
+.acct-acts button.danger:hover { background: var(--action-tint); border-color: var(--action); }
+.pair-pcs button.quiet, .install-hint .ih-x {
+  border: 1px solid transparent; background: none; box-shadow: none; color: var(--soft);
+  transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.pair-pcs button.quiet:hover, .install-hint .ih-x:hover { background: var(--ghost-hover); color: var(--ink-deep); }
+.pair-pcs button.quiet:active, .install-hint .ih-x:active { background: var(--ghost-press); }
+.pp-row button, .pair-pcs button { border-radius: 12px; }
+.install-hint button { border-radius: 10px; }
+body.web .q-act, body.web .q-edit { height: 34px; padding: 0 14px; border-radius: 10px; }
+body.web .q-x { width: 34px; height: 34px; border-radius: 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .pp-row button:active, .pair-pcs button:active, .pc-line button:active, .acct-acts button:active, .pair-btn.quiet:active { transform: none; }
+}

@@ -10,6 +10,10 @@
  *   - the approval step when a phone scanned it: "<name> wants to connect",
  *     the 6-digit code both screens show, Allow / Deny;
  *   - the paired phones, which one is connected now, and Remove.
+ *   - (2026-10-10) how long a phone stays paired: Forever by default, or
+ *     30, 7 or 1 days, chosen beside Allow; each paired phone says when it
+ *     expires (or that it never does) and the time can be changed there.
+ *     Start over shows only when the PC's saved keys cannot be opened.
  *
  * The engine does the work (apaki/engine/remote.js): this file sends the
  * remote* ops and draws ev 'remote'. The phone's name comes from the phone,
@@ -57,6 +61,26 @@ function ago(iso) {
 
 const day = (iso) => { const t = Date.parse(iso || ''); return t ? new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short' }) : ''; };
 
+/** The lifetimes besides forever, in days (the engine's list when it sends one). */
+const LIFETIMES = [30, 7, 1];
+
+/** When a pairing runs out, in words: "never expires", "expires in 6 days", "expires in 5 h". */
+function lifeText(iso) {
+  const t = Date.parse(iso || '');
+  if (!t) return 'never expires';
+  const s = (t - Date.now()) / 1000;
+  if (s <= 0) return 'expired';
+  if (s < 3600) return 'expires within the hour';
+  if (s < 86400 * 1.5) return `expires in ${Math.round(s / 3600)} h`;
+  return `expires in ${Math.round(s / 86400)} days`;
+}
+
+/** The lifetime switch (Apaki's .seg): Forever, then each limit. on: the chosen value ('' is forever, null none). */
+function lifeSeg(on, k, id = '', days = LIFETIMES) {
+  const opt = (v, label) => `<button type="button" role="radio" aria-checked="${on === v}" class="${on === v ? 'on' : ''}" data-k="${k}" data-life="${v}"${id ? ` data-id="${esc(id)}"` : ''}>${label}</button>`;
+  return `<div class="seg ph-life" role="radiogroup" aria-label="How long it stays paired">${opt('', 'Forever')}${days.map((d) => opt(String(d), `${d} day${d === 1 ? '' : 's'}`)).join('')}</div>`;
+}
+
 const STATE_TEXT = {
   off: ['Off', 'Phones you paired cannot reach this PC until you turn this on.'],
   unconfigured: ['Not set up', 'The Apaki relay is not deployed yet, so a phone has no way to reach this PC. Phone access starts working once it is (to try a local relay, start Apaki with APAKI_RELAY_URL set).'],
@@ -83,6 +107,11 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
   let tick = null;
   let paired = null;
   let confirmRemove = null;
+  // The lifetime chosen for the phone waiting at Allow ('' is forever), the phone whose lifetime row is open, and Start over's second step.
+  let life = '';
+  let editLife = null;
+  let confirmReset = false;
+  const days = () => (Array.isArray(st?.lifetimes) && st.lifetimes.length ? st.lifetimes : LIFETIMES);
 
   function renderButton() {
     if (!button) return;
@@ -119,6 +148,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
         <div class="ph-step"><b>${esc(st.request.name || 'A phone')}</b> wants to connect</div>
         <div class="ph-code" aria-label="Code ${esc(code.split('').join(' '))}"><span>${esc(code.slice(0, 3))}</span><span>${esc(code.slice(3))}</span></div>
         <p>Allow it only if your phone shows the same code. It can then use the Claude Code sessions on this PC, billed to this PC's accounts.</p>
+        <div class="ph-life-row"><span>Stays paired</span>${lifeSeg(life, 'life-pick', '', days())}</div>
         <div class="ph-actions"><button data-k="deny">Deny</button><button class="primary" data-k="allow">Allow</button></div>
       </div>`;
     }
@@ -148,9 +178,13 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
       const meta = d.connected
         ? `<span class="ph-live">Connected now${via}</span>${d.panes ? ` · ${d.panes} conversation${d.panes === 1 ? '' : 's'} open` : ''}`
         : `Last seen ${esc(ago(d.lastSeen) || 'never')}${acct && d.by ? ` · linked from ${esc(d.by)}` : d.pairedAt ? ` · paired ${esc(day(d.pairedAt))}` : ''}`;
+      // How long it stays paired: a quiet link that opens the same switch as at Allow (counted from now).
+      const editing = editLife === d.id;
+      const lifeLink = ` · <button type="button" class="ph-life-btn" data-k="life-edit" data-id="${esc(d.id)}" aria-expanded="${editing}" title="Change how long it stays paired">${esc(lifeText(d.expiresAt))}</button>`;
+      const lifeRow = editing ? lifeSeg(d.expiresAt ? null : '', 'life-set', d.id, days()) : '';
       const sure = confirmRemove === d.id;
       const title = acct ? `Removes the account from this PC: every phone signed in to ${d.account || 'it'} stops reaching it` : 'Removes this phone: it can never reconnect';
-      return `<li class="ph-dev${d.connected ? ' live' : ''}${acct ? ' acct' : ''}">${phoneGlyph(d.connected)}<div class="ph-dev-t"><div class="ph-dev-n">${esc(d.name || 'Phone')}</div><div class="ph-dev-m">${meta}</div></div><button class="ph-remove${sure ? ' sure' : ''}" data-k="revoke" data-id="${esc(d.id)}" title="${esc(title)}">${sure ? 'Remove for good' : 'Remove'}</button></li>`;
+      return `<li class="ph-dev${d.connected ? ' live' : ''}${acct ? ' acct' : ''}">${phoneGlyph(d.connected)}<div class="ph-dev-t"><div class="ph-dev-n">${esc(d.name || 'Phone')}</div><div class="ph-dev-m">${meta}${lifeLink}</div>${lifeRow}</div><button class="ph-remove${sure ? ' sure' : ''}" data-k="revoke" data-id="${esc(d.id)}" title="${esc(title)}">${sure ? 'Remove for good' : 'Remove'}</button></li>`;
     }).join('');
     const heading = list.some((d) => d.kind === 'account') ? 'Paired phones and accounts' : 'Paired phones';
     return `<div class="ph-devices"><div class="ph-sec"><span>${heading}</span><span class="ph-sec-n">${list.length || ''}</span></div>${list.length ? `<ul>${rows}</ul>` : '<p class="ph-empty">No phones yet.</p>'}</div>`;
@@ -171,6 +205,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
         <p>Pair a phone once with a code. After that it reaches this PC from anywhere, end to end encrypted: the relay only forwards sealed frames, and your Claude logins never leave this PC.</p></div>
       <div class="ph-status" data-state="${esc(s.state)}"><div class="ph-status-t"><span class="ph-state">${esc(label)}</span><span class="ph-line">${esc(detail)}</span></div>${toggle}</div>
       ${s.opError ? `<div class="ph-err">${esc(s.opError)}</div>` : ''}
+      ${s.keysProblem ? `<div class="ph-actions"><button data-k="reset" class="${confirmReset ? 'ph-remove sure' : ''}" title="Sets the saved keys aside (renamed, kept) and makes new ones: every phone pairs again">${confirmReset ? 'Start over: every phone pairs again' : 'Start over'}</button></div>` : ''}
       ${s.page?.text ? `<div class="ph-page" data-state="${esc(s.page.state)}" title="${esc(s.page.url || '')}">${esc(s.page.text)}</div>` : ''}
       ${pairBlock()}
       ${devicesBlock()}
@@ -186,8 +221,25 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     on('pair', () => send('remotePairStart'));
     on('newcode', () => send('remotePairStart'));
     on('cancelpair', () => send('remotePairCancel'));
-    on('allow', () => send('remotePairDecision', { approve: true }));
+    // lifetime: whole days, or null for forever (what an older engine assumes when it gets none).
+    on('allow', () => send('remotePairDecision', { approve: true, lifetime: life ? Number(life) : null }));
     on('deny', () => send('remotePairDecision', { approve: false }));
+    on('life-pick', (b) => { life = b.dataset.life || ''; render(); });
+    on('life-edit', (b) => { editLife = editLife === b.dataset.id ? null : b.dataset.id; render(); });
+    on('life-set', (b) => {
+      editLife = null;
+      send('remoteDeviceLifetime', { deviceId: b.dataset.id, lifetime: b.dataset.life ? Number(b.dataset.life) : null });
+    });
+    on('reset', () => {
+      if (!confirmReset) {
+        confirmReset = true;
+        render();
+        setTimeout(() => { if (confirmReset) { confirmReset = false; render(); } }, 4000);
+        return;
+      }
+      confirmReset = false;
+      send('remoteReset');
+    });
     on('revoke', (b) => {
       const id = b.dataset.id;
       if (confirmRemove !== id) {
@@ -228,6 +280,8 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     if (e.paired) paired = { name: e.paired.name, at: Date.now() };
     if (e.request && !wasRequest) {
       // A phone scanned the code: the approval cannot wait for someone to open the sheet.
+      // Every new request starts at Forever (Arthur, 2026-10-10: a paired phone is good to go for good).
+      life = '';
       ding('ask');
       open();
     }

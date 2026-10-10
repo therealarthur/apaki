@@ -16,7 +16,9 @@
  *
  * Desktop ops (engine.js forwards them here): remoteStatus, remoteEnable,
  * remoteDisable, remotePairStart, remotePairCancel, remotePairDecision
- * { approve }, remoteDevices, remoteRevoke { deviceId }. Each answers with
+ * { approve, lifetime? }, remoteDevices, remoteRevoke { deviceId },
+ * remoteDeviceLifetime { deviceId, lifetime } and remoteReset (2026-10-10,
+ * see below). Each answers with
  * ev 'remote' (see statusInfo), which is also sent whenever something
  * changes: the relay connection, a phone connecting or leaving, a pairing
  * request with its code and the phone's name.
@@ -35,6 +37,24 @@
  * which phone that is. The server never holds a key that opens any of it.
  *
  * Idle cost: one "ping" text every 25 s while on; nothing while off.
+ *
+ * A paired phone stays paired (2026-10-10, Arthur: "the paired phone should
+ * be good to go foreeever"). Nothing but Remove, or a lifetime the user
+ * chose, ends a pairing:
+ *   - loadKeys never makes new keys while a secret.json exists. One that
+ *     cannot be opened is an error (Start over in the Phone sheet sets the
+ *     files aside, renamed, when the user wants new keys); a state.json that
+ *     does not match the keys (missing, damaged, another room) is rebuilt
+ *     from secret.json, which keeps the room and the list of paired phones,
+ *     after a dated copy of the old files is made (remote-store.js).
+ *   - Two engines sharing the folder (a second window, a dev build) merge
+ *     what the other wrote before each write (syncFromDisk), so neither drops
+ *     a phone the other paired nor brings back one the other removed.
+ *   - A lifetime (remotePairDecision { approve, lifetime }, remoteDeviceLifetime
+ *     { deviceId, lifetime }): forever by default, or 1, 7 or 30 days. When it
+ *     runs out the phone is removed like Remove, with an encrypted close that
+ *     says the pairing expired; the phone learns its expiry from hello
+ *     ({ expiresAt }) and from { t: 'lifetime', expiresAt } when it changes.
  */
 
 import os from 'node:os';
@@ -76,6 +96,58 @@ const BUDGET_RETRY_MS = 30 * 60_000;
 const STABLE_MS = 30_000;
 /** A phone that went away keeps its conversations this long, so a network change or a locked screen does not stop them. */
 const PANE_GRACE_MS = 15 * 60_000;
+/** The pairing lifetimes the Phone sheet offers besides forever (days). */
+export const LIFETIME_DAYS = Object.freeze([30, 7, 1]);
+const DAY_MS = 24 * 60 * 60_000;
+/** Expiry is checked at least this often (a timer to the next expiry, capped: sleep and clock changes). */
+const EXPIRY_CHECK_MAX_MS = 60 * 60_000;
+/** When the saved keys could not be unsealed at start (DPAPI busy, PowerShell slow): try again after these waits. */
+const INIT_RETRY_MS = [30_000, 2 * 60_000, 10 * 60_000, 30 * 60_000];
+/** The encrypted close a removed phone gets; the expired one still says "removed" for phone pages from before expiry existed. */
+const REMOVED_REASON = 'This phone was removed on the PC.';
+const EXPIRED_REASON = 'This phone\'s pairing expired, so it was removed on the PC.';
+
+/**
+ * The expiry for a lifetime choice: null (forever) for nothing, 'forever' or
+ * 0; otherwise a whole number of days from LIFETIME_DAYS, counted from `now`.
+ * Anything else throws, so a phone is never allowed longer than asked.
+ */
+export function expiryFor(lifetime, now = Date.now()) {
+  if (lifetime == null || lifetime === '' || lifetime === 'forever' || lifetime === 0 || lifetime === '0') return null;
+  const days = Number(lifetime);
+  if (!LIFETIME_DAYS.includes(days)) throw new Error(`A phone can stay paired forever or for ${[...LIFETIME_DAYS].reverse().join(', ')} days, not "${String(lifetime).slice(0, 20)}".`);
+  return new Date(now + days * DAY_MS).toISOString();
+}
+
+const later = (a, b) => (String(a || '') > String(b || '') ? a : b) || null;
+
+/**
+ * Merges this engine's state with the state.json another engine wrote (same
+ * room). Every mutation here reads the file first and writes right after, so
+ * the file is the newest view of every field except the phones: a phone
+ * either side knows stays unless either side removed it (removed: { id, at },
+ * which wins over a pairing older than the removal), and lastSeen is the
+ * later of the two. Exported for the tests.
+ */
+export function mergeState(mine, disk) {
+  const removed = new Map();
+  for (const r of [...(disk.removed || []), ...(mine.removed || [])]) {
+    if (!r?.id) continue;
+    const prev = removed.get(r.id);
+    if (!prev || String(r.at || '') > String(prev.at || '')) removed.set(r.id, r);
+  }
+  const byId = new Map();
+  for (const d of mine.devices || []) byId.set(d.id, { ...d });
+  for (const d of disk.devices || []) {
+    const prev = byId.get(d.id);
+    byId.set(d.id, prev ? { ...prev, ...d, lastSeen: later(prev.lastSeen, d.lastSeen) } : { ...d });
+  }
+  const devices = [...byId.values()].filter((d) => {
+    const r = removed.get(d.id);
+    return !r || String(d.pairedAt || '') > String(r.at || '');
+  });
+  return { ...mine, ...disk, devices, removed: [...removed.values()] };
+}
 const MEANING_EVERY_MS = 2_000;
 const MAX_PHONE_MESSAGE = 16 * 1024 * 1024;
 
@@ -127,8 +199,25 @@ export class RemoteBridge {
     // Timings (tests shorten them).
     this.handshakeMs = o.handshakeMs ?? HANDSHAKE_MS;
     this.graceMs = o.graceMs ?? PANE_GRACE_MS;
+    // The clock for pairing lifetimes (tests move it forward).
+    this.now = o.now || (() => Date.now());
+    this.initRetryMs = o.initRetryMs || INIT_RETRY_MS;
 
-    this.state = store.loadState(this.dir);
+    // Where the state came from ('ok', 'backup', 'missing', 'corrupt'; remote-store.js readState) and
+    // the files' stamps as this engine last read or wrote them (syncFromDisk notices another engine's write).
+    this.stateStamp = store.stateStamp(this.dir);
+    const read = store.readState(this.dir);
+    this.state = read.state;
+    this.stateStatus = read.status;
+    this.secretStamp = null;
+    /** Set while the saved keys cannot be opened: 'locked' (DPAPI would not unseal them) or 'unreadable'. */
+    this.keysProblem = null;
+    /** The last rebuild of state.json from secret.json, for the Phone sheet: { at, devices, lost }. */
+    this.recovered = null;
+    this.expiryTimer = null;
+    this.expiring = null;
+    this.initTimer = null;
+    this.initAttempt = 0;
     this.secret = null;
     this.identity = null;
     this.scheme = null;
@@ -150,61 +239,299 @@ export class RemoteBridge {
   }
 
   async init() {
-    if (!this.state.enabled) return;
+    // state.json missing or unreadable while the keys are still there: phone access was set up on this
+    // PC, so it is rebuilt from the keys and stays on, instead of looking "off" with every phone shut out.
+    const recover = (this.stateStatus === 'missing' || this.stateStatus === 'corrupt') && store.hasSecretFile(this.dir);
+    if (!this.state.enabled && !recover) return;
     try {
       await this.loadKeys({ create: false });
+      if (this.stateStatus === 'backup') { this.log('state.json could not be read; restored it from state.json.bak'); this.saveStateNow(); }
+      if (!this.state.enabled) { this.state.enabled = true; this.saveStateNow(); }
+      this.stateStatus = 'ok';
+      this.initAttempt = 0;
+      await this.expireDue();
       this.connect();
     } catch (e) {
       this.fail(e);
+      // DPAPI can be slow or busy right after sign-in: try again by itself.
+      if (this.keysProblem === 'locked') this.retryInit();
     }
+  }
+
+  retryInit() {
+    if (this.initTimer) return;
+    const ms = this.initRetryMs[Math.min(this.initAttempt, this.initRetryMs.length - 1)];
+    this.initAttempt += 1;
+    this.initTimer = unref(setTimeout(() => {
+      this.initTimer = null;
+      if (!this.identity) this.init();
+    }, ms));
   }
 
   /* ---------- keys and saved state ---------- */
 
-  /** Loads this PC's identity and room (creating them when asked). */
+  /**
+   * Loads this PC's identity and room (creating them when asked, and only
+   * when there is no secret.json at all). A secret.json that cannot be
+   * opened throws (keysProblem says why): new keys over it would unpair
+   * every phone. A state.json that does not match the keys is rebuilt from
+   * them (recoverState).
+   */
   async loadKeys({ create }) {
     if (this.identity) return true;
-    let secret = await store.loadSecret(this.dir);
-    if (secret && (!this.state.roomId || (await roomIdForToken(secret.token).catch(() => null)) !== this.state.roomId)) secret = null;
-    if (!secret) {
-      if (!create) throw new Error('Phone access has no keys yet; turn it on again to make them.');
-      const identity = await createPcIdentity();
-      const room = await createRoom();
-      secret = { identity: await exportIdentity(identity), token: room.token, psks: {} };
-      this.state = { ...this.state, roomId: room.roomId, pcPub: secret.identity.pub, createdAt: new Date().toISOString(), devices: [] };
-      this.scheme = await store.saveSecret(secret, this.dir);
-      store.saveState(this.state, this.dir);
-    } else {
-      this.scheme = secret.scheme;
+    this.syncFromDisk();
+    const stampBefore = store.secretStamp(this.dir);
+    let secret;
+    try {
+      secret = await store.loadSecret(this.dir);
+    } catch (e) {
+      this.keysProblem = e.code === 'locked' ? 'locked' : 'unreadable';
+      throw new Error(this.keysProblem === 'locked'
+        ? `Phone access could not unseal its saved keys (${e.message}). Your paired phones are kept; Apaki tries again by itself.`
+        : `Phone access could not read its saved keys (${e.message}), nor their backup. Your paired phones are kept; nothing was replaced. To pair everything again with new keys, choose Start over.`);
     }
+    if (secret) {
+      const roomId = await roomIdForToken(secret.token).catch(() => null);
+      if (!roomId || !secret.identity?.pub) {
+        this.keysProblem = 'unreadable';
+        throw new Error('Phone access found its saved keys incomplete. Your paired phones are kept; nothing was replaced. To pair everything again with new keys, choose Start over.');
+      }
+      if (secret.fromBackup) this.log('secret.json could not be opened; using secret.json.bak');
+      this.keysProblem = null;
+      this.secret = secret;
+      this.secretStamp = stampBefore;
+      this.scheme = secret.scheme;
+      if (this.state.roomId !== roomId || this.state.pcPub !== secret.identity.pub) this.recoverState(secret, roomId);
+      else this.restoreDevices(secret);
+      this.identity = await importIdentity(secret.identity);
+      // Repair secret.json from its backup, and give an older secret.json the list of phones (so state.json can be rebuilt from it).
+      if (secret.fromBackup || (!secret.devices?.length && this.state.devices.length)) {
+        await this.saveSecretNow({ backup: !secret.fromBackup }).catch((e) => this.log(`updating secret.json: ${e.message}`));
+      }
+      return true;
+    }
+    if (!create) throw new Error('Phone access has no keys yet; turn it on again to make them.');
+    // No secret.json at all (first use, or the files were deleted on purpose): new keys, a dated copy of any old state first.
+    if (this.state.roomId || this.state.devices.length) {
+      const copies = store.backupNow(this.dir, 'before-new-keys');
+      this.log(`no saved keys; making new ones (copies kept: ${copies.join(', ') || 'none'})`);
+    }
+    const identity = await createPcIdentity();
+    const room = await createRoom();
+    secret = { identity: await exportIdentity(identity), token: room.token, psks: {} };
+    this.state = { ...this.state, roomId: room.roomId, pcPub: secret.identity.pub, createdAt: new Date().toISOString(), devices: [], removed: [] };
     this.secret = secret;
+    this.keysProblem = null;
+    await this.saveSecretNow();
+    this.saveStateNow();
     this.identity = await importIdentity(secret.identity);
     return true;
   }
 
-  /** A paired device as PcSession wants it, or null (unknown or removed). */
+  /**
+   * state.json does not match the keys in secret.json (it is missing,
+   * damaged, or from another room): rebuild it from secret.json, which holds
+   * the room and the paired phones, keeping what the old file knew (last
+   * seen, on or off). A dated copy of both files is made first.
+   */
+  recoverState(secret, roomId) {
+    const old = this.state;
+    const copies = old.roomId || old.devices.length ? store.backupNow(this.dir, 'before-recovery') : [];
+    const known = new Map(old.devices.map((d) => [d.id, d]));
+    const psks = secret.psks || {};
+    const devices = [];
+    for (const m of secret.devices || []) if (psks[m.id]) devices.push({ ...m, lastSeen: known.get(m.id)?.lastSeen ?? m.lastSeen ?? null });
+    // An older secret.json has no list: the old state's records whose secrets are here still work.
+    for (const d of old.devices) if (psks[d.id] && !devices.some((x) => x.id === d.id)) devices.push({ ...d });
+    // A phone with a secret here but no public key anywhere cannot be rebuilt (an older secret.json and no state.json).
+    const lost = Object.keys(psks).filter((id) => !devices.some((d) => d.id === id)).length;
+    this.state = {
+      v: 1,
+      enabled: this.stateStatus === 'ok' ? old.enabled : true,
+      roomId,
+      pcPub: secret.identity.pub,
+      createdAt: (old.roomId === roomId && old.createdAt) || secret.createdAt || old.createdAt || null,
+      devices,
+      removed: old.removed || [],
+    };
+    this.saveStateNow();
+    this.recovered = { at: new Date().toISOString(), devices: devices.length, lost };
+    this.log(`state.json did not match the saved keys; rebuilt it from secret.json with ${devices.length} phone(s)${lost ? `, ${lost} could not be rebuilt` : ''} (copies kept: ${copies.join(', ') || 'none'})`);
+  }
+
+  /** Phones secret.json lists (with their secrets) that state.json lost, for example to an older copy: put back. */
+  restoreDevices(secret) {
+    const removed = new Set((this.state.removed || []).map((r) => r.id));
+    const back = (secret.devices || []).filter((m) => secret.psks?.[m.id] && !removed.has(m.id) && !this.state.devices.some((d) => d.id === m.id));
+    if (!back.length) return;
+    this.state.devices = [...this.state.devices, ...back.map((m) => ({ ...m, lastSeen: m.lastSeen ?? null }))];
+    this.saveStateNow();
+    this.log(`put back ${back.length} paired phone(s) state.json had lost`);
+  }
+
+  /** Writes state.json and remembers its stamp (so this engine's own write is not taken for another's). */
+  saveStateNow() {
+    store.saveState(this.state, this.dir);
+    this.stateStamp = store.stateStamp(this.dir);
+  }
+
+  /** Writes secret.json with the paired phones' public records beside the secrets. */
+  async saveSecretNow({ backup = true } = {}) {
+    this.scheme = await store.saveSecret({ ...this.secret, devices: this.state.devices, createdAt: this.state.createdAt }, this.dir, { backup });
+    this.secretStamp = store.secretStamp(this.dir);
+  }
+
+  /**
+   * Takes in state.json when another engine wrote it since this one last
+   * read or wrote it (same room only), merging the two views (mergeState).
+   * Returns true when it changed anything.
+   */
+  syncFromDisk() {
+    const now = store.stateStamp(this.dir);
+    if (!now || now === this.stateStamp) return false;
+    const { state: disk, status } = store.readState(this.dir);
+    this.stateStamp = now;
+    if ((status !== 'ok' && status !== 'backup') || !disk.roomId || disk.roomId !== this.state.roomId) return false;
+    this.state = mergeState(this.state, disk);
+    return true;
+  }
+
+  /** The same for secret.json: secrets of phones another engine paired come in; removed ones go. */
+  async reloadSecretIfChanged() {
+    if (!this.secret) return;
+    const now = store.secretStamp(this.dir);
+    if (!now || now === this.secretStamp) return;
+    let disk = null;
+    try { disk = await store.loadSecret(this.dir); } catch (e) { this.log(`reading secret.json again: ${e.message}`); return; }
+    this.secretStamp = now;
+    if (!disk || disk.token !== this.secret.token) return; // another room's keys: this engine's stand
+    const keep = new Set(this.state.devices.map((d) => d.id));
+    const psks = {};
+    for (const [id, psk] of Object.entries({ ...disk.psks, ...this.secret.psks })) if (keep.has(id)) psks[id] = psk;
+    this.secret.psks = psks;
+  }
+
+  /** Before this engine writes: what another engine wrote meanwhile comes in first. */
+  async syncBeforeWrite() {
+    this.syncFromDisk();
+    await this.reloadSecretIfChanged();
+  }
+
+  /** A paired device as PcSession wants it, or null (unknown, removed, or its lifetime ran out). */
   getDevice(id) {
     const d = this.state.devices.find((x) => x.id === id);
     const psk = this.secret?.psks?.[id];
-    return d && psk ? { id: d.id, pub: d.pub, psk, name: d.name, pairedAt: d.pairedAt } : null;
+    if (!d || !psk) return null;
+    if (this.isExpired(d)) { this.expireSoon(); return null; }
+    return { id: d.id, pub: d.pub, psk, name: d.name, pairedAt: d.pairedAt };
+  }
+
+  /** getDevice, after taking in another engine's writes when the files changed (a phone paired in another Apaki window). */
+  async findDevice(id) {
+    const d = this.getDevice(id);
+    if (d) return d;
+    if (store.stateStamp(this.dir) === this.stateStamp && store.secretStamp(this.dir) === this.secretStamp) return null;
+    await this.syncBeforeWrite();
+    return this.getDevice(id);
   }
 
   async addDevice(device) {
+    await this.syncBeforeWrite();
     const rec = { id: device.id, pub: device.pub, name: String(device.name || 'Phone').slice(0, 64), pairedAt: device.pairedAt, lastSeen: new Date().toISOString() };
     // An Apaki account's device (ACCOUNTS.md): which phone linked it, and the account's name.
     if (device.kind === 'account') Object.assign(rec, { kind: 'account', account: String(device.account || '').slice(0, 48), by: String(device.by || '').slice(0, 64) });
+    // A lifetime the user chose at Allow (null: forever).
+    if (device.expiresAt) rec.expiresAt = device.expiresAt;
     this.state.devices = [...this.state.devices.filter((d) => d.id !== rec.id), rec];
+    // The same key paired again (an account linked again after it was removed): no longer removed.
+    this.state.removed = (this.state.removed || []).filter((r) => r.id !== rec.id);
     this.secret.psks = { ...this.secret.psks, [rec.id]: device.psk };
-    this.scheme = await store.saveSecret(this.secret, this.dir);
-    store.saveState(this.state, this.dir);
+    await this.saveSecretNow();
+    this.saveStateNow();
+    this.scheduleExpiry();
     return rec;
   }
 
   touchDevice(id) {
+    try { this.syncFromDisk(); } catch (e) { this.log(`reading state: ${e.message}`); }
     const d = this.state.devices.find((x) => x.id === id);
     if (!d) return;
     d.lastSeen = new Date().toISOString();
-    try { store.saveState(this.state, this.dir); } catch (e) { this.log(`saving state: ${e.message}`); }
+    try { this.saveStateNow(); } catch (e) { this.log(`saving state: ${e.message}`); }
+  }
+
+  /* ---------- pairing lifetimes ---------- */
+
+  isExpired(d) {
+    const t = Date.parse(d?.expiresAt || '');
+    return Number.isFinite(t) && t <= this.now();
+  }
+
+  /** Runs expireDue soon, once (getDevice found an expired phone, or the timer fired). */
+  expireSoon() {
+    if (this.expiring) return this.expiring;
+    this.expiring = Promise.resolve().then(() => this.expireDue()).catch((e) => this.log(`expiring pairings: ${e.message}`)).finally(() => { this.expiring = null; });
+    return this.expiring;
+  }
+
+  /** Removes every phone whose lifetime ran out (like Remove, with the expired close), then waits for the next one. */
+  async expireDue() {
+    clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+    const due = this.state.devices.filter((d) => this.isExpired(d));
+    for (const d of due) {
+      this.log(`the pairing of ${d.name || 'a phone'} expired; removing it`);
+      await this.revoke(d.id, { expired: true });
+    }
+    if (due.length) this.pushStatus({ expired: due.map((d) => ({ id: d.id, name: d.name })) });
+    this.scheduleExpiry();
+  }
+
+  scheduleExpiry() {
+    clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+    const times = this.state.devices.map((d) => Date.parse(d.expiresAt || '')).filter(Number.isFinite);
+    if (!times.length) return;
+    const wait = Math.min(Math.max(1000, Math.min(...times) - this.now() + 100), EXPIRY_CHECK_MAX_MS);
+    this.expiryTimer = unref(setTimeout(() => { this.expiryTimer = null; this.expireSoon(); }, wait));
+  }
+
+  /** A new lifetime for a paired phone, counted from now (null or 'forever': no limit). Its open connections hear it. */
+  async setLifetime(deviceId, lifetime) {
+    const expiresAt = expiryFor(lifetime, this.now());
+    await this.syncBeforeWrite();
+    const d = this.state.devices.find((x) => x.id === deviceId);
+    if (!d) throw new Error('That phone is not paired with this PC any more.');
+    if (expiresAt) d.expiresAt = expiresAt; else delete d.expiresAt;
+    if (this.secret) await this.saveSecretNow();
+    this.saveStateNow();
+    for (const c of this.conns.values()) if (c.open && c.device?.id === deviceId) c.outbox?.send({ t: 'lifetime', expiresAt: expiresAt || null }).catch(() => {});
+    this.scheduleExpiry();
+  }
+
+  /**
+   * Start over when the saved keys cannot be opened at all: the files are
+   * set aside (renamed with the time, never deleted) and phone access is
+   * off; turning it on makes new keys, and every phone pairs again.
+   */
+  async reset() {
+    if (!this.keysProblem) throw new Error('Phone access can open its keys, so there is nothing to start over; remove phones one by one below.');
+    clearTimeout(this.initTimer);
+    this.initTimer = null;
+    this.closeSocket();
+    const moved = store.setAside(this.dir);
+    this.log(`phone access started over; set aside: ${moved.join(', ') || 'nothing'}`);
+    const read = store.readState(this.dir);
+    this.state = read.state;
+    this.stateStatus = read.status;
+    this.stateStamp = null;
+    this.secretStamp = null;
+    this.secret = null;
+    this.identity = null;
+    this.scheme = null;
+    this.keysProblem = null;
+    this.recovered = null;
+    this.setStatus('off');
   }
 
   /* ---------- the relay connection ---------- */
@@ -353,7 +680,7 @@ export class RemoteBridge {
   }
 
   newSession() {
-    return new PcSession({ identity: this.identity, roomId: this.state.roomId, getOffer: () => this.offer, getDevice: (id) => this.getDevice(id) });
+    return new PcSession({ identity: this.identity, roomId: this.state.roomId, getOffer: () => this.offer, getDevice: (id) => this.findDevice(id) });
   }
 
   /** A phone that connects but never completes a handshake is dropped. */
@@ -421,7 +748,8 @@ export class RemoteBridge {
     this.touchDevice(device.id);
     // features: what this PC understands beyond commands (an older Apaki sends none).
     const self = this.state.devices.find((d) => d.id === device.id);
-    c.outbox.send({ t: 'hello', v: WIRE_VERSION, pcName: this.pcName, ops: this.phoneOps(), features: ['account'], ...(self?.kind === 'account' ? { asAccount: true } : {}) });
+    // expiresAt: when this phone's pairing runs out (null: never), so the phone can show it and explain an expiry.
+    c.outbox.send({ t: 'hello', v: WIRE_VERSION, pcName: this.pcName, ops: this.phoneOps(), features: ['account'], expiresAt: self?.expiresAt || null, ...(self?.kind === 'account' ? { asAccount: true } : {}) });
     c.outbox.push(phoneView(this.readyEvent()));
     for (const ev of this.cache.values()) c.outbox.push(phoneView(ev));
     this.pushStatus();
@@ -641,8 +969,11 @@ export class RemoteBridge {
         case 'remoteDisable': await this.disable(); break;
         case 'remotePairStart': await this.pairStart(); break;
         case 'remotePairCancel': this.clearOffer({ quiet: true }); break;
-        case 'remotePairDecision': await this.decide(c.approve === true); break;
+        // lifetime: days from LIFETIME_DAYS, or none for forever (older windows send none).
+        case 'remotePairDecision': await this.decide(c.approve === true, c.lifetime); break;
         case 'remoteRevoke': await this.revoke(String(c.deviceId || '')); break;
+        case 'remoteDeviceLifetime': await this.setLifetime(String(c.deviceId || ''), c.lifetime); break;
+        case 'remoteReset': await this.reset(); break;
         default: break; // remoteStatus, remoteDevices: the status below
       }
     } catch (e) {
@@ -653,19 +984,30 @@ export class RemoteBridge {
   }
 
   async enable() {
-    await this.loadKeys({ create: true });
+    clearTimeout(this.initTimer);
+    this.initTimer = null;
+    try {
+      await this.loadKeys({ create: true });
+    } catch (e) {
+      // DPAPI busy: keep trying by itself (only while phone access is meant to be on).
+      if (this.keysProblem === 'locked' && this.state.enabled) this.retryInit();
+      throw e;
+    }
     if (!this.state.enabled) {
       this.state.enabled = true;
-      store.saveState(this.state, this.dir);
+      this.saveStateNow();
     }
+    this.stateStatus = 'ok';
     this.error = null;
+    await this.expireDue();
     this.connect();
     if (isPlaceholder(this.relay)) this.setStatus('unconfigured');
   }
 
   async disable() {
+    this.syncFromDisk();
     this.state.enabled = false;
-    store.saveState(this.state, this.dir);
+    this.saveStateNow();
     this.clearOffer({ quiet: true });
     this.request = null;
     for (const c of [...this.conns.values()]) {
@@ -721,16 +1063,18 @@ export class RemoteBridge {
     if (had && !quiet) this.pushStatus();
   }
 
-  async decide(approve) {
+  async decide(approve, lifetime = null) {
     const r = this.request;
     if (!r) return;
+    // Checked before anything changes: a lifetime Apaki does not offer leaves the request waiting.
+    const expiresAt = approve ? expiryFor(lifetime, this.now()) : null;
     this.request = null;
     const c = this.conns.get(r.conn);
     if (!c || c.session.state !== 'pair-approval') return;
     const step = approve ? await c.session.approve() : await c.session.reject();
     for (const f of step.send) this.toRelay(c.id, f);
     if (approve && step.device) {
-      const rec = await this.addDevice(step.device);
+      const rec = await this.addDevice({ ...step.device, expiresAt });
       this.opened(c, rec);
       this.pushStatus({ paired: { id: rec.id, name: rec.name } });
       return;
@@ -740,21 +1084,28 @@ export class RemoteBridge {
     if (approve) throw new Error('That phone waited too long; show a new code and pair again.');
   }
 
-  /** Removes a phone: its record and secret go, it is disconnected now and can never reconnect. */
-  async revoke(deviceId) {
+  /**
+   * Removes a phone: its record and secret go, it is disconnected now and can
+   * never reconnect. expired: its lifetime ran out (the phone is told so).
+   * The id is remembered as removed, so another engine's older view of the
+   * folder cannot bring it back (mergeState).
+   */
+  async revoke(deviceId, { expired = false } = {}) {
+    await this.syncBeforeWrite();
     const had = this.state.devices.some((d) => d.id === deviceId);
     if (!had) return;
     this.state.devices = this.state.devices.filter((d) => d.id !== deviceId);
+    this.state.removed = [...(this.state.removed || []).filter((r) => r.id !== deviceId), { id: deviceId, at: new Date().toISOString() }];
     if (this.secret) {
       const { [deviceId]: _gone, ...psks } = this.secret.psks || {};
       this.secret.psks = psks;
-      this.scheme = await store.saveSecret(this.secret, this.dir);
+      await this.saveSecretNow();
     }
-    store.saveState(this.state, this.dir);
+    this.saveStateNow();
     for (const c of [...this.conns.values()]) {
       if (c.device?.id !== deviceId) continue;
       if (c.open) {
-        const f = await c.session.close('This phone was removed on the PC.').catch(() => null);
+        const f = await c.session.close(expired ? EXPIRED_REASON : REMOVED_REASON).catch(() => null);
         if (f) this.toRelay(c.id, f);
       }
       this.kick(c.id);
@@ -773,7 +1124,8 @@ export class RemoteBridge {
   }
 
   fail(e) {
-    this.setStatus('error', `Phone access could not start: ${e.message || e}`);
+    const m = e.message || String(e);
+    this.setStatus('error', /^Phone access/.test(m) ? m : `Phone access could not start: ${m}`);
   }
 
   statusInfo() {
@@ -797,8 +1149,13 @@ export class RemoteBridge {
       page: this.page ? { state: this.page.state, version: this.page.version || null, url: this.page.url || null, at: this.page.at, text: this.page.state === 'checking' ? 'Checking the phone page…' : pageText(this.page) } : null,
       pcName: this.pcName,
       protection: this.scheme === 'dpapi-user' ? 'dpapi' : this.scheme ? 'file' : null,
+      // The saved keys cannot be opened ('locked' or 'unreadable'): the sheet offers Start over (remoteReset).
+      keysProblem: this.keysProblem || null,
+      recovered: this.recovered,
+      // What the sheet may offer at Allow and on each phone, besides forever.
+      lifetimes: [...LIFETIME_DAYS],
       devices: this.state.devices.map((d) => ({
-        id: d.id, name: d.name, pairedAt: d.pairedAt, lastSeen: d.lastSeen, connected: connected.has(d.id), panes: (this.engine.phonePanes?.(d.id) || []).length,
+        id: d.id, name: d.name, pairedAt: d.pairedAt, lastSeen: d.lastSeen, expiresAt: d.expiresAt || null, connected: connected.has(d.id), panes: (this.engine.phonePanes?.(d.id) || []).length,
         ...(d.kind === 'account' ? { kind: 'account', account: d.account || '', by: d.by || '', via: via.get(d.id) || [] } : {}),
       })),
       // The QR address holds the one-time secret: it goes to the desktop window only.
@@ -816,6 +1173,8 @@ export class RemoteBridge {
     this.closeSocket();
     clearTimeout(this.offerTimer);
     clearTimeout(this.panesTimer);
+    clearTimeout(this.expiryTimer);
+    clearTimeout(this.initTimer);
     for (const t of this.graceTimers.values()) clearTimeout(t);
     for (const c of this.conns.values()) clearTimeout(c.timer);
   }

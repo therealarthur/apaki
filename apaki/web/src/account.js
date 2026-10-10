@@ -314,10 +314,17 @@ export async function signIn() {
   return { account: r.account, acct, pcs: json.pcs || [] };
 }
 
-/** The account as the server has it now, and the PCs other phones added. Signed out (or deleted) elsewhere: forgets it here. */
+/**
+ * The account as the server has it now, and the PCs other phones added.
+ * Signed out everywhere or deleted (the person did that, on some phone):
+ * forgets it here. A session that merely ran out (30 days), or any other
+ * answer, keeps everything (2026-10-10: nothing transient forgets a PC);
+ * the PCs connect without the server, and the PC screen offers Sign in again.
+ */
 export async function refresh() {
   const acct = await store.getAccount();
   if (!acct) return null;
+  if (acct.sessionEnded) return { account: null, acct, sessionEnded: true };
   try {
     const { account, vault } = await api('GET', API, null, acct.session);
     let next = { ...acct, name: account?.name || acct.name };
@@ -329,7 +336,14 @@ export async function refresh() {
     await store.saveAccount(next);
     return { account, acct: next };
   } catch (e) {
-    if (e.status === 401 || e.status === 404) { await store.forgetAccount(); return { signedOut: true }; }
+    // relay/src/account.js: 'signed-out' (Sign out everywhere) and 'no-account' (deleted) are the person's own doing.
+    if (e.status === 401 && (e.code === 'signed-out' || e.code === 'no-account')) { await store.forgetAccount(); return { signedOut: true }; }
+    // 'bad-session' (ran out, or not valid any more): keep the account and its PCs; only a new sign-in is needed.
+    if (e.status === 401) {
+      const next = { ...acct, sessionEnded: true };
+      await store.saveAccount(next).catch(() => {});
+      return { account: null, acct: next, sessionEnded: true, error: e };
+    }
     return { account: null, acct, error: e };
   }
 }

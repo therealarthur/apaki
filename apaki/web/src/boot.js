@@ -23,6 +23,16 @@
  * The PC screen (tap the PC at the top of the list) lists this phone's PCs
  * and the account's, with whether each is online. While signed in, a PC this
  * phone pairs or connects to is saved to the account by itself.
+ *
+ * Staying paired (2026-10-10, Arthur: "the paired phone should be good to go
+ * foreeever"): storage that cannot be read shows a retry screen, never the
+ * pairing screen; storage held by an older Apaki tab says "Close the other
+ * Apaki tab" and carries on once it can; the page asks the browser to keep
+ * its storage (persist) once paired; a PC that says it does not know this
+ * phone gets an explanation and slow retries, not a forgotten pairing; only
+ * Forget (the person) deletes a PC. On an iPhone, Safari first suggests the
+ * Home Screen app (it keeps its own storage, so pair from there), and the
+ * Home Screen app with nothing paired says why and offers the account.
  */
 
 import { createDeviceIdentity, parsePairingUrl } from './protocol.js';
@@ -33,7 +43,7 @@ import * as account from './account.js';
 import { canScan, scanCode } from './scan.js';
 import { MARK_SVG } from './mark.js';
 import { effortGrid } from './menu.js';
-import { haptic, initNative, setPc, showChat, showList } from './native.js';
+import { haptic, initNative, isIos, isIosSafari, isStandalone, setPc, showChat, showList } from './native.js';
 
 window.apakiShell = 'web';
 
@@ -44,6 +54,16 @@ const WORKSPACE = 'apaki.workspace.v1';
 const workspaceKey = (roomId) => `${WORKSPACE}@${roomId}`;
 
 const S = { link: null, pc: null, appStarted: false, scanAbort: null, sas: null, overlay: false, acct: null, creating: false, busy: '', note: null, presence: new Map() };
+
+/** When a pairing runs out, in words for the PC list: "expires in 6 days", "expired"; '' for never. */
+function expiryText(iso) {
+  const t = Date.parse(iso || '');
+  if (!t) return '';
+  const s = (t - Date.now()) / 1000;
+  if (s <= 0) return 'pairing expired';
+  if (s < 86400 * 1.5) return `expires in ${Math.max(1, Math.round(s / 3600))} h`;
+  return `expires in ${Math.round(s / 86400)} days`;
+}
 
 /* ---------- the pairing and connection screen ---------- */
 
@@ -70,7 +90,7 @@ function pcRow(pc) {
   const from = pc.via === 'account' ? 'from your account' : `paired ${esc(day(pc.pairedAt))}`;
   const state = here ? '<span class="pp-on">Connected</span>' : online === true ? '<span class="pp-on">Online</span>' : online === false ? '<span class="pp-off">Offline</span>' : '';
   const saved = S.acct?.rooms?.includes(pc.roomId) && pc.via !== 'account' ? ' · in your account' : '';
-  return `<li data-room="${esc(pc.roomId)}"><div class="pp-t"><b>${esc(pc.pcName || 'PC')}</b><small>${state}${state ? ' · ' : ''}${from}${saved}</small></div>${here ? '<button data-k="back">Open</button>' : `<button data-k="use" data-id="${esc(pc.roomId)}">Connect</button>`}<button class="quiet" data-k="forget" data-id="${esc(pc.roomId)}" aria-label="Forget ${esc(pc.pcName || 'this PC')}">${pc.via === 'account' ? 'Remove' : 'Forget'}</button></li>`;
+  return `<li data-room="${esc(pc.roomId)}"><div class="pp-t"><b>${esc(pc.pcName || 'PC')}</b><small>${state}${state ? ' · ' : ''}${from}${saved}${expiryText(pc.expiresAt) ? ` · ${esc(expiryText(pc.expiresAt))}` : ''}</small></div>${here ? '<button data-k="back">Open</button>' : `<button data-k="use" data-id="${esc(pc.roomId)}">Connect</button>`}<button class="quiet" data-k="forget" data-id="${esc(pc.roomId)}" aria-label="Forget ${esc(pc.pcName || 'this PC')}">${pc.via === 'account' ? 'Remove' : 'Forget'}</button></li>`;
 }
 
 /** The Apaki account part of the PC screen: sign in or create, or who is signed in and what to do. */
@@ -93,6 +113,7 @@ function accountBlock() {
   const canSave = here && !S.acct.rooms?.includes(S.pc.roomId) && S.pc.via !== 'account';
   return `<div class="pair-sec">Apaki account</div>
     <div class="acct-row"><div class="pp-t"><b>${esc(S.acct.name)}</b><small>Signed in with a passkey · ${S.acct.rooms?.length || 0} PC${S.acct.rooms?.length === 1 ? '' : 's'} saved</small></div></div>
+    ${S.acct.sessionEnded ? `<p class="pair-note">Your sign-in ended (they last 30 days). The PCs on this phone still connect; sign in again to keep them in step with your account.</p><button class="pair-btn" data-k="signin"${busy}>${S.busy === 'signin' ? 'Signing in…' : 'Sign in again'}</button>` : ''}
     ${canSave ? `<button class="pair-btn" data-k="link"${busy}>${S.busy === 'link' ? 'Saving…' : `Save ${esc(S.link.pcName)} to your account`}</button>` : ''}
     ${note}
     <details class="pair-paste acct-more"><summary>Account settings</summary>
@@ -114,6 +135,7 @@ function welcome(pcs, error = '') {
   show(`<div class="pair-kicker">${S.acct ? `Signed in as ${esc(S.acct.name)}` : 'Phone'}</div>
     <h1>${pcs.length ? 'Your PCs' : 'Connect to your PC'}</h1>
     ${error ? `<p class="pair-err">${esc(error)}</p>` : ''}
+    ${homeScreenBlock(pcs)}
     ${list}
     ${accountBlock()}
     ${pcs.length ? '<div class="pair-sec">Pair another PC</div>' : ''}
@@ -127,6 +149,19 @@ function welcome(pcs, error = '') {
     ${S.appStarted && S.pc ? '<button class="pair-btn quiet" data-k="back">Back to Apaki</button>' : ''}`);
   $('pairScreen').classList.toggle('sheet-mode', Boolean(S.appStarted));
   checkPresence(pcs);
+}
+
+/**
+ * iPhone, nothing paired yet. A Home Screen app keeps its own storage, apart
+ * from Safari's (WebKit does this on purpose), so a pairing made in Safari is
+ * not in the app: in Safari, add the app first and pair from it; in the app,
+ * say why it is empty and point at the account, which brings PCs over.
+ */
+function homeScreenBlock(pcs) {
+  if (pcs.length || !isIos()) return '';
+  if (isStandalone()) return '<p class="pair-note">This Home Screen app keeps its own storage, apart from Safari, so PCs paired in Safari are not here. Pair it with a new code below, or sign in to your Apaki account to bring your PCs over.</p>';
+  if (isIosSafari()) return '<div class="pair-sec">First, add Apaki to your Home Screen</div><p>Tap Share, then <b>Add to Home Screen</b>, open Apaki from there and pair in it. The Home Screen app keeps its own storage, so a pairing made here in Safari would not be in it.</p>';
+  return '';
 }
 
 /** Asks the relay which PCs are online and fills the rows in (only for the relay on this page's own address). */
@@ -210,6 +245,8 @@ async function accountAct(k) {
  */
 async function linkCurrent({ quiet }) {
   const acct = await store.getAccount().catch(() => null);
+  // A sign-in that ran out cannot update the vault: link nothing until the person signs in again.
+  if (acct?.sessionEnded) { if (!quiet) toast('Your sign-in ended. Sign in again first.', false); return; }
   if (!acct || !S.link || S.link.state !== 'open' || !S.pc) { if (!quiet && acct) toast('Connect to a PC, then save it to your account.', false); return; }
   if (S.pc.via === 'account' || S.link.hello?.asAccount || acct.rooms?.includes(S.pc.roomId)) return;
   if (!S.link.supports('account')) { if (!quiet) toast(`${S.link.pcName} runs an older Apaki. Update it there first.`, false); return; }
@@ -261,6 +298,8 @@ const FAILED = {
   'bad-pc': ['That is not the PC from the code', 'The other end could not prove it is the PC that showed the code, so nothing was shared. Show a new code on your PC.'],
   interrupted: ['The connection dropped while pairing', 'Show a new code on the PC and scan it again.'],
   blocked: ['This page cannot reach that relay', ''],
+  // The lifetime chosen on the PC at Allow ran out (the PC said so, encrypted; or this phone's own expiry passed).
+  lapsed: ['This pairing expired', 'This phone was allowed for a limited time on the PC, and that time is up. To use it again, pair with a new code.'],
 };
 
 function failedScreen(code, message) {
@@ -270,7 +309,40 @@ function failedScreen(code, message) {
   if (removed && S.pc?.via === 'account') [title, text] = ['This PC left your account', 'The PC removed your Apaki account, so no phone signed in to it reaches that PC now. Pair with its code to use it again.'];
   show(`<div class="pair-kicker">Not connected</div><h1>${esc(title)}</h1>
     <p>${esc(text || message || code)}</p>
-    ${removed && S.pc ? `<button class="pair-btn" data-k="forget" data-id="${esc(S.pc.roomId)}">Forget this PC</button>` : '<button class="pair-btn" data-k="home">Start over</button>'}`);
+    ${(removed || code === 'lapsed') && S.pc ? `<button class="pair-btn" data-k="forget" data-id="${esc(S.pc.roomId)}">Forget this PC</button>` : '<button class="pair-btn" data-k="home">Start over</button>'}`);
+}
+
+/**
+ * The PC said it does not know this phone. That alert is not encrypted, and
+ * a PC can say it for a while for other reasons, so the pairing stays and
+ * the link tries again by itself (link.js unknown); forgetting is the
+ * person's call.
+ */
+function unknownScreen(info = {}) {
+  const name = S.link?.pcName || S.pc?.pcName || 'your PC';
+  const mins = Math.max(1, Math.round((info.retryInMs || 0) / 60_000));
+  show(`<div class="pair-kicker">Not recognized</div><h1>${esc(name)} does not know this phone right now</h1>
+    <p>It may have been removed in the PC's Phone sheet; then pair it again with a new code. If it was not, this page reconnects by itself. It tries again in ${mins} min, and whenever you come back to it.</p>
+    <p class="pair-note">This phone keeps its pairing until you forget it.</p>
+    <button class="pair-btn" data-k="retry-link">Try again now</button>
+    ${S.pc ? `<button class="pair-btn quiet" data-k="forget" data-id="${esc(S.pc.roomId)}">Forget this PC</button>` : ''}
+    <button class="pair-btn quiet" data-k="pcs">Other PCs</button>`);
+}
+
+/** This phone's storage could not be read: say so and offer a retry. Never the pairing screen, since nothing is known to be lost. */
+function storageScreen(e) {
+  show(`<div class="pair-kicker">Phone storage</div><h1>Could not read this phone's saved PCs</h1>
+    <p>${esc(e?.message || String(e))}</p>
+    <p class="pair-note">Apaki only forgets a PC when you tap Forget. Try again; if it keeps happening, close other Apaki tabs and reload.</p>
+    <button class="pair-btn" data-k="reload">Try again</button>
+    ${S.appStarted && S.pc ? '<button class="pair-btn quiet" data-k="back">Back to Apaki</button>' : ''}`);
+}
+
+/** Storage is held by an older Apaki page in another tab (store.js onWait): what to do. The page carries on once it can. */
+function waitScreen() {
+  show(`<div class="pair-kicker">One moment</div><h1>Close the other Apaki tab</h1>${grid()}
+    <p>An older Apaki page is open in another tab of this browser and is holding this phone's storage. Close that tab, or reload it, and this page carries on by itself.</p>
+    <p class="pair-note">Your paired PCs are safe while it waits.</p>`);
 }
 
 /* ---------- actions ---------- */
@@ -302,12 +374,22 @@ async function act(k, id, el) {
   }
   if (k === 'pcs') { S.overlay = true; return goHome(); }
   if (k === 'back') return hideScreen();
+  if (k === 'reload') { location.reload(); return; }
+  if (k === 'retry-link') { haptic(); S.link?.wake(); return; }
   if (k === 'home') { if (S.appStarted) { location.replace(location.pathname); return; } return goHome(); }
 }
 
 async function goHome(error = '') {
   S.acct = await store.getAccount().catch(() => null);
-  welcome(await store.listPcs().catch(() => []), error);
+  let pcs;
+  try {
+    pcs = await store.listPcs();
+  } catch (e) {
+    // Could not read is not "nothing saved": never show the pairing screen for it.
+    storageScreen(e);
+    return;
+  }
+  welcome(pcs, error);
 }
 
 /** A different PC: its own workspace, its own connection; a fresh page keeps the two apart. */
@@ -353,15 +435,54 @@ function linkHandlers() {
     sas: (code) => { S.sas = code; pairingScreen(S.link.pcName); },
     paired: async (pairing) => {
       const rec = { roomId: pairing.roomId, pcName: pairing.pcName, relay: pairing.relay, pairing, device: S.link.device, pairedAt: pairing.pairedAt, lastUsed: new Date().toISOString() };
-      await store.savePc(rec);
       S.pc = rec;
       S.sas = null;
+      // Saved before the channel opens; a storage hiccup is retried, and never stops the pairing itself.
+      S.unsaved = !(await savePairing(rec));
+      // Paired: ask the browser to keep this site's storage (no eviction when space runs low).
+      askPersist();
     },
-    open: () => { if (S.pc) store.touchPc(S.pc.roomId).catch(() => {}); startApp(); },
+    open: () => {
+      if (S.pc) {
+        if (S.unsaved) savePairing(S.pc, { quiet: true }).then((ok) => { S.unsaved = !ok; });
+        else store.touchPc(S.pc.roomId).catch(() => {});
+      }
+      askPersist();
+      startApp();
+    },
     // Signed in: a PC this phone reaches with its own pairing joins the account by itself.
     hello: () => { renderPcLine(); linkCurrent({ quiet: true }).catch(() => {}); },
+    // The PC said when this pairing runs out (or that it never does): kept with the PC, shown in the PC list.
+    lifetime: (expiresAt) => {
+      if (!S.pc) return;
+      S.pc = { ...S.pc, expiresAt };
+      store.updatePc(S.pc.roomId, { expiresAt }).catch(() => {});
+    },
+    // "Unknown device" (link.js keeps the pairing and retries): explain, unless the app or the PC list is up.
+    unknown: (info) => { if (!S.appStarted && !S.overlay) unknownScreen(info); },
     fatal: (code, message) => failedScreen(code, message),
   };
+}
+
+/**
+ * Saves a new pairing, trying again a few times. False when storage would
+ * not take it: the channel works anyway, and open tries again.
+ */
+async function savePairing(rec, { quiet = false } = {}) {
+  let err = null;
+  for (const wait of [0, 400, 1500]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try { await store.savePc(rec); return true; } catch (e) { err = e; }
+  }
+  if (!quiet) toast(`This phone could not save the pairing (${err?.message || 'storage error'}). It works while this page is open, and Apaki tries to save it again when it reconnects.`, false);
+  return false;
+}
+
+/** Asks once per page for persistent storage (store.persist). */
+function askPersist() {
+  if (S.persistAsked) return;
+  S.persistAsked = true;
+  store.persist().then((ok) => { S.persisted = ok; }).catch(() => {});
 }
 
 function onState(state, info) {
@@ -391,7 +512,7 @@ async function pair(offer) {
 async function connect(pc) {
   S.pc = pc;
   // The name goes with an account connection (link.js sends it as { t: 'via' }), so the PC shows which phone it is.
-  S.link = new Link({ device: pc.device, pairing: pc.pairing, name: pc.via === 'account' ? await deviceName() : '', on: linkHandlers() });
+  S.link = new Link({ device: pc.device, pairing: pc.pairing, name: pc.via === 'account' ? await deviceName() : '', expiresAt: pc.expiresAt || null, on: linkHandlers() });
   installShim(S.link);
   S.link.start();
 }
@@ -455,6 +576,7 @@ const BAR_COPY = {
   handshake: (l) => ['Reconnecting', `to ${l.pcName}…`],
   waiting: (l) => ['Offline', `${l.pcName} is not reachable. Apaki has to be open there.`],
   offline: (l, info) => ['No connection', `Trying again in ${Math.max(1, Math.round((info.retryInMs || 0) / 1000))} s. Tap to retry now.`],
+  unknown: (l) => ['Not recognized', `${l.pcName} does not know this phone right now. This phone keeps its pairing; tap to try again.`],
 };
 
 function renderLinkBar(state, info = {}) {
@@ -473,7 +595,7 @@ function renderPcLine() {
   if (S.link) setPc(S.link.pcName, S.link.state);
   const line = $('pcLine');
   if (!line || !S.link) return;
-  const word = S.link.state === 'open' ? 'Connected' : S.link.state === 'failed' ? 'Not connected' : 'Reconnecting';
+  const word = S.link.state === 'open' ? 'Connected' : S.link.state === 'failed' ? 'Not connected' : S.link.state === 'unknown' ? 'Not recognized' : 'Reconnecting';
   line.innerHTML = `<span class="pc-k">PC</span><span class="pc-n">${esc(S.link.pcName)}</span><span class="pc-s${S.link.state === 'open' ? ' ok' : ''}">${esc(word)}</span><button id="pcSwitch">Switch</button>`;
   line.querySelector('#pcSwitch').onclick = () => { setDrawer(false); S.overlay = true; goHome(); };
 }
@@ -518,11 +640,24 @@ async function main() {
     try { offer = parsePairingUrl(location.href); } catch { error = 'That pairing link is damaged. Show a new code on your PC and scan it again.'; }
     history.replaceState(null, '', location.pathname + location.search);
   }
+  // Storage held by an older Apaki page in another tab: store.js waits for it; say what to do meanwhile.
+  store.onWait((state) => {
+    if (state !== 'blocked') return;
+    if (S.link || S.appStarted) toast('Close the other Apaki tab: it is holding this phone\'s storage.', false);
+    else waitScreen();
+  });
   // Signed in: take in PCs other phones saved to the account (quietly; offline is fine).
   const synced = account.refresh().catch(() => null);
   if (offer) { await pair(offer); return; }
-  let pcs = await store.listPcs().catch(() => []);
-  if (!pcs.length && (await store.getAccount().catch(() => null))) { await synced; pcs = await store.listPcs().catch(() => []); }
+  let pcs;
+  try {
+    pcs = await store.listPcs();
+  } catch (e) {
+    // Could not read is not "nothing saved" (2026-10-10): a retry screen, never the pairing screen.
+    storageScreen(e);
+    return;
+  }
+  if (!pcs.length && (await store.getAccount().catch(() => null))) { await synced; pcs = await store.listPcs().catch(() => pcs); }
   const want = new URLSearchParams(location.search).get('pc');
   const pc = pcs.find((p) => p.roomId === want) || pcs[0];
   if (pc && !error) { connect(pc); return; }
@@ -533,7 +668,11 @@ async function main() {
 // For apaki/scripts/cdp-remote.mjs: the connection's state, and a way to drop it (it reconnects by itself).
 window.__apakiLink = { state: () => S.link?.state || null, pcName: () => S.link?.pcName || null, drop: () => S.link?.restart() };
 
-main().catch((e) => {
+main().catch(async (e) => {
   console.error(e);
-  welcome([], `Apaki could not start here: ${e.message}`);
+  if (store.isStorageError(e)) { storageScreen(e); return; }
+  // Whatever went wrong, list the saved PCs when they can be read: never an empty "Connect to your PC" by mistake.
+  let pcs = [];
+  try { pcs = await store.listPcs(); } catch (e2) { storageScreen(e2); return; }
+  welcome(pcs, `Apaki could not start here: ${e.message}`);
 });
