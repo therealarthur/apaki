@@ -1149,12 +1149,13 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .gc-plan { flex: none; margin-left: 6px; font: 500 10.5px var(--font-mono); color: var(--faint); }
 .gc-left { font: 600 11px var(--font-mono); color: var(--brand-deep); white-space: nowrap; }
 .gc-meter { grid-column: 2 / 4; height: 3px; border-radius: 2px; background: hsla(232, 40%, 60%, .14); overflow: hidden; }
-.gc-meter i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--send-a), var(--send-b)); transition: width 400ms var(--ease-out); }
+/* The fill is a scaleX of the full bar (--v, 0 to 1), so a usage change moves on the compositor, not through layout. */
+.gc-meter i { display: block; width: 100%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--send-a), var(--send-b)); transform: scaleX(var(--v, 0)); transform-origin: left center; transition: transform 400ms var(--ease-out); }
 .gc-row.low .gc-meter i { background: linear-gradient(90deg, var(--action), var(--action-strong)); }
 .gc-row.low .gc-left, .gc-row.warn .gc-left { color: var(--action-strong); }
 .gc-row.busy .gc-left { color: var(--faint); font-weight: 500; }
-.gc-row.busy .gc-meter i { width: 35% !important; animation: gc-busy 1s var(--ease-hover) infinite alternate; }
-@keyframes gc-busy { from { transform: translateX(-30%); } to { transform: translateX(220%); } }
+.gc-row.busy .gc-meter i { animation: gc-busy 1s var(--ease-hover) infinite alternate; }
+@keyframes gc-busy { from { transform: translateX(-35%) scaleX(.35); } to { transform: translateX(100%) scaleX(.35); } }
 .gc-row.flash { animation: glass-flash 1.2s var(--ease-out); }
 
 /* The foot row: the index line, then the Phone and Settings icons. */
@@ -1516,3 +1517,18 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .pane-bar .art-reopen:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 .menu-item .ar-g { display: inline-grid; place-items: center; width: 18px; margin-right: 6px; flex: none; }
 .menu-item .ar-g svg { width: 14px; height: 14px; fill: none; stroke: var(--brand-strong); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+/* The working line takes no room in the composer's layout (2026-10-09 night;
+   Impeccable flagged its height and margin transitions). Showing it used to
+   grow the floating composer frame by frame, and through --composer-h every
+   frame re-laid out the whole transcript. Now it floats 10px above the box
+   (or the queue tray) and comes in with opacity and a small lift only; the
+   transcript makes room for it in one step while it shows. */
+.composer-wrap > .status-line {
+  position: absolute; left: 22px; right: 22px; bottom: calc(100% + 10px); margin: 0 auto; height: 30px;
+  transform: translateY(4px); transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.composer-wrap > .status-line.on { margin: 0 auto; transform: none; }
+.pane:has(.status-line.on) .transcript { padding-bottom: calc(var(--composer-h, 150px) + 58px); }
+@container pane (max-width: 760px) { .composer-wrap > .status-line { left: 10px; right: 10px; } }
+@media (prefers-reduced-motion: reduce) { .composer-wrap > .status-line { transform: none; transition: opacity var(--dur-fast) linear; } }

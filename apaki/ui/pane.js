@@ -661,8 +661,13 @@ export class Pane {
   /* ---------- status, busy state ---------- */
 
   setStatus(text) {
+    const g = this.$.ground;
+    const atEnd = g.scrollHeight - g.scrollTop - g.clientHeight < 8;
+    const was = this.$.statusLine.classList.contains('on');
     this.$.status.textContent = text;
     this.$.statusLine.classList.toggle('on', Boolean(text));
+    // The transcript makes room for the working line in one step (app.css): stay at the end if you were there.
+    if (atEnd && was !== Boolean(text)) g.scrollTop = g.scrollHeight;
   }
 
   setBusy(on) {

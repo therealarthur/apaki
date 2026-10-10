@@ -65,7 +65,7 @@ function rowHtml(provider, a, busy) {
   const left = busy ? 'Switching…' : a ? leftText(a) : '';
   return `<button class="gc-row${busy ? ' busy' : ''}${low ? ' low' : ''}${a && !usable(a) ? ' warn' : ''}" data-p="${provider}" title="${esc(rowTitle(provider, a))}">
     <span class="gc-prov">${PROVIDERS[provider]}</span><span class="gc-name">${name}</span><span class="gc-left">${esc(left)}</span>
-    <span class="gc-meter" aria-hidden="true"><i style="width:${share == null ? 0 : share.toFixed(1)}%"></i></span></button>`;
+    <span class="gc-meter" aria-hidden="true"><i style="--v:${share == null ? 0 : (share / 100).toFixed(3)}"></i></span></button>`;
 }
 
 /** The menu of one provider's accounts: subscriptions, then API keys; ones Glass cannot use are dimmed. */
