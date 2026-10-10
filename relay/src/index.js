@@ -4,11 +4,28 @@
  * A room is one PC running Myrlin Apaki and the phones paired with it. The
  * relay only moves opaque, end-to-end encrypted frames between the PC socket
  * and the phone sockets of a room (apaki/remote/protocol.js does the crypto
- * on both ends). It never parses a payload, stores nothing, and has no keys.
+ * on both ends). It never parses a payload, stores nothing about rooms, and
+ * holds no key that opens anything (ACCOUNT_KEY only signs account tokens).
  *
- *   GET /v1/rooms/<roomId>/pc     WebSocket, the PC (needs the room token)
- *   GET /v1/rooms/<roomId>/phone  WebSocket, a phone
- *   GET /health                   a one-line description
+ *   GET /v1/rooms/<roomId>/pc        WebSocket, the PC (needs the room token)
+ *   GET /v1/rooms/<roomId>/phone     WebSocket, a phone
+ *   GET /v1/rooms/<roomId>/presence  { pc: boolean }: is that room's PC connected now
+ *   GET /health                      a one-line description
+ *
+ * Apaki accounts (2026-10-10, account.js; contract apaki/remote/ACCOUNTS.md),
+ * passkey only, JSON, one Account Durable Object per account:
+ *
+ *   POST   /v1/account/challenge          { purpose: register | signin | add }  (add needs a session)
+ *   POST   /v1/account/register           { token, name, credential }  -> { session, account }
+ *   POST   /v1/account/signin             { token, credential }        -> { session, account, vault }
+ *   GET    /v1/account                    (session)                    -> { account, vault }
+ *   PUT    /v1/account/vault              { ver, vault } (session)     -> { ver } or 409 stale
+ *   POST   /v1/account/passkeys           { token, credential } (session) -> { account }
+ *   DELETE /v1/account/passkeys/<credId>  (session)                    -> { account }
+ *   POST   /v1/account/rename             { name } (session)           -> { account }
+ *   POST   /v1/account/signout-all        (session)                    -> { ok: true }
+ *   DELETE /v1/account                    (session)                    -> { ok: true }
+ *
  *   everything else               the static site (../site: the front page and
  *                                 /v/<version>/, the phone pages), served by
  *                                 Workers static assets before this runs;
@@ -26,7 +43,9 @@
  * at Cloudflare's overage rates (lib.js PRICES) per UTC day. Past
  * DAILY_BUDGET_USD ($3 by default) rooms close their sockets with BUDGET and
  * new connections get HTTP 503 until 00:00 UTC. New connections are also
- * limited per IP address (the CONNECTS rate limit binding).
+ * limited per IP address (the CONNECTS rate limit binding). Account requests
+ * and presence questions count toward the same budget and the same per-IP
+ * limit, under their own keys ("acct:<ip>", "pres:<ip>").
  *
  * Threat model and wire format: ../README.md.
  */
@@ -38,6 +57,11 @@ import {
   Bucket, prefixConn, splitConn, newConnId,
   costOf, busyAdd, utcDay,
 } from './lib.js';
+import { ACCOUNT_PATH, PRESENCE_PATH } from './account-lib.js';
+import { handleAccount, handlePresence } from './account.js';
+
+// The Account Durable Object class (wrangler.jsonc binding ACCOUNTS) must be exported by the main module.
+export { Account } from './account.js';
 
 const ABOUT_TEXT = 'Myrlin Apaki relay. It forwards end-to-end encrypted frames between a PC and its paired phones and cannot read them.\n';
 
@@ -52,6 +76,10 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/' || url.pathname === '/health') return text(200, ABOUT_TEXT);
+    // Accounts and presence answer JSON (account.js); everything below is the WebSocket relay.
+    if (ACCOUNT_PATH.test(url.pathname)) return handleAccount(request, env, url, { spend });
+    const pm = PRESENCE_PATH.exec(url.pathname);
+    if (pm) return handlePresence(request, env, pm[1], { spend });
     const m = ROOM_PATH.exec(url.pathname);
     if (!m) return text(404, 'not found');
     if (request.method !== 'GET') return text(405, 'method not allowed', { allow: 'GET' });
@@ -182,6 +210,8 @@ export class Room extends DurableObject {
 
   async fetch(request) {
     const role = request.headers.get(ROLE_HEADER);
+    // Presence (GET /v1/rooms/<id>/presence) only reads; it is not a connection.
+    if (role === 'presence') return this.presence();
     if (role !== 'pc' && role !== 'phone') return text(400, 'bad role');
     const now = Date.now();
     this.sweep(now);
@@ -214,6 +244,22 @@ export class Room extends DurableObject {
 
     await this.ensureAlarm(now);
     return new Response(null, { status: 101, webSocket: client, headers: { 'Sec-WebSocket-Protocol': SUBPROTOCOL } });
+  }
+
+  /**
+   * Whether a PC socket is connected now: { pc: boolean }. It only reads the
+   * sockets (no sweep, no alarm, no connection count, no message to anyone),
+   * so asking never wakes or changes a socket. A PC socket that has been
+   * silent for IDLE_MS (about to be closed by the idle check) counts as gone.
+   */
+  presence() {
+    const now = Date.now();
+    const pc = this.live('pc').some((ws) => {
+      const a = attachment(ws);
+      const pinged = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0;
+      return now - Math.max(a.seen || 0, pinged) < this.limits.IDLE_MS;
+    });
+    return new Response(JSON.stringify({ pc }), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
   }
 
   /** Frames per second and bytes per second for one socket. */

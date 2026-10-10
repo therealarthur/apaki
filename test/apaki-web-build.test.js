@@ -19,7 +19,8 @@ test('the web build reuses the window, pins the relay in its CSP, and versions i
     const r = build({ relay: 'wss://relay.example:8443/', out });
     const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
     const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)[1];
-    assert.match(csp, /connect-src wss:\/\/relay\.example:8443(;|$)/);
+    // Its own origin (the account API, 2026-10-10) and the one relay; nothing else.
+    assert.match(csp, /connect-src 'self' wss:\/\/relay\.example:8443(;|$)/);
     assert.match(csp, /script-src 'self'(;|$)/);
     assert.ok(!/unsafe-eval/.test(csp) && !/script-src[^;]*unsafe-inline/.test(csp));
     assert.ok(html.includes(`src="boot.js?v=${r.version}"`) && !html.includes('src="app.js"'));

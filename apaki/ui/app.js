@@ -410,7 +410,8 @@ function focusPane(p, { scroll = true } = {}) {
     save();
   }
   if (p.unread) { p.unread = false; p.el.classList.remove('unread'); }
-  if (scroll && document.activeElement?.closest?.('.pane') !== p.el) p.$.input?.focus({ preventScroll: true });
+  // On a phone the keyboard would cover the conversation it just opened: it comes up when the person taps the box (2026-10-10).
+  if (scroll && !WEB && document.activeElement?.closest?.('.pane') !== p.el) p.$.input?.focus({ preventScroll: true });
   if (scroll && p.isBrowser && document.activeElement?.closest?.('.pane') !== p.el) p.focusInto();
   document.title = `Myrlin Apaki · ${p.title}`;
   renderTabs();

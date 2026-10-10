@@ -15,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  PhoneSession, createDeviceIdentity, decodePcFrame, encodePcFrame, parsePairingUrl, MAX_JSON_BYTES,
+  PhoneSession, createDeviceIdentity, decodePcFrame, encodePcFrame, parsePairingUrl, MAX_JSON_BYTES, b64urlDecode, b64urlEncode, deviceIdFor,
 } from '../apaki/remote/protocol.js';
 import { Inbox, Outbox, WireError, utf8Length } from '../apaki/remote/wire.js';
 import {
@@ -562,6 +562,82 @@ test('bridge: no pairing code unless the phone page checks out, and the code ope
     const n = checks;
     await b.op({ op: 'remotePairStart', reqId: 'p4' });
     assert.equal(checks, n);
+  } finally {
+    b.stop();
+    delete process.env.APAKI_REMOTE_PROTECT;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('bridge: a paired phone links an Apaki account; any phone with the account key connects as it; unlink removes it', async () => {
+  const dir = tmp();
+  process.env.APAKI_REMOTE_PROTECT = 'file';
+  const relay = fakeRelay();
+  const { b, last } = bridgeFor(relay, dir);
+  try {
+    await b.op({ op: 'remoteEnable' });
+    await until(() => b.status === 'online');
+    await b.op({ op: 'remotePairStart' });
+    const ph = relay.phone();
+    await until(() => b.conns.has(ph.conn));
+    const device = await createDeviceIdentity();
+    const phone = await phoneClient(ph, new PhoneSession({ device, offer: parsePairingUrl(last().pairing.url), name: 'iPhone (Safari)' }));
+    await phone.pump(() => phone.sas);
+    await until(() => last().request);
+    await b.op({ op: 'remotePairDecision', approve: true });
+    await phone.pump(() => phone.pairing && phone.events.some((e) => e.ev === 'ready'));
+    const hello = phone.events.find((e) => e.wire?.t === 'hello').wire;
+    assert.ok(hello.features.includes('account'), 'the PC says it understands accounts');
+    assert.equal(hello.asAccount, undefined);
+
+    // Bad keys and the phone's own key are refused.
+    await phone.out.send({ t: 'account-link', reqId: 'q0', pub: 'not-a-key', name: 'Arthur' });
+    await phone.out.send({ t: 'account-link', reqId: 'q1', pub: b64urlEncode(device.pub), name: 'Arthur' });
+    await phone.pump(() => phone.events.filter((e) => e.wire?.t === 'account-linked').length === 2);
+    const refused = phone.events.filter((e) => e.wire?.t === 'account-linked').map((e) => e.wire);
+    assert.ok(refused.every((m) => m.error && !m.psk), JSON.stringify(refused));
+
+    // The account's device key becomes one more paired device, with its own psk.
+    const acct = await createDeviceIdentity({ extractable: true });
+    await phone.out.send({ t: 'account-link', reqId: 'q2', pub: b64urlEncode(acct.pub), name: '  Arthur\u0007  ' });
+    await phone.pump(() => phone.events.some((e) => e.wire?.t === 'account-linked' && e.wire.reqId === 'q2'));
+    const linked = phone.events.find((e) => e.wire?.reqId === 'q2').wire;
+    assert.equal(linked.error, undefined);
+    assert.equal(linked.deviceId, await deviceIdFor(acct.pub));
+    assert.equal(linked.pcName, 'Test PC');
+    assert.equal(b64urlDecode(linked.psk).length, 32);
+    await until(() => last().devices.length === 2);
+    const rec = last().devices.find((d) => d.kind === 'account');
+    assert.equal(rec.name, 'Apaki account (Arthur)');
+    assert.equal(rec.by, 'iPhone (Safari)');
+    const saved = fs.readFileSync(path.join(dir, 'state.json'), 'utf8');
+    assert.ok(!saved.includes(linked.psk), 'the account psk stays out of the public state');
+
+    // Another phone, never paired, with the account's key and the vault's record: it reconnects as the account.
+    const ph2 = relay.phone();
+    await until(() => b.conns.has(ph2.conn));
+    const pairing = { v: 1, roomId: phone.pairing.roomId, relay: phone.pairing.relay, pcPub: phone.pairing.pcPub, pcName: linked.pcName, deviceId: linked.deviceId, psk: linked.psk, pairedAt: new Date().toISOString() };
+    const other = await phoneClient(ph2, new PhoneSession({ device: acct, pairing }));
+    await other.pump(() => other.events.some((e) => e.ev === 'ready'));
+    assert.equal(other.events.find((e) => e.wire?.t === 'hello').wire.asAccount, true);
+    await other.out.send({ t: 'via', name: 'Pixel (Chrome)' });
+    await until(() => last().devices.find((d) => d.kind === 'account')?.via?.includes('Pixel (Chrome)'));
+    assert.equal(last().devices.find((d) => d.kind === 'account').connected, true);
+
+    // Unlink: only an account device can be removed this way, and then it cannot connect again.
+    await other.out.send({ t: 'account-unlink', reqId: 'q3', deviceId: phone.pairing.deviceId });
+    await other.pump(() => other.events.some((e) => e.wire?.t === 'account-unlinked'));
+    assert.ok(other.events.find((e) => e.wire?.t === 'account-unlinked').wire.error, 'a phone is not an account');
+    assert.equal(last().devices.length, 2);
+    await other.out.send({ t: 'account-unlink', reqId: 'q4', deviceId: linked.deviceId });
+    await until(() => last().devices.length === 1);
+    assert.ok(ph2.gone, 'the account connection was dropped');
+    assert.equal(last().devices[0].kind, undefined, 'the paired phone stays');
+    const ph3 = relay.phone();
+    await until(() => b.conns.has(ph3.conn));
+    const banned = await phoneClient(ph3, new PhoneSession({ device: acct, pairing }));
+    await banned.pump(() => banned.alerts.length);
+    assert.equal(banned.alerts[0].code, 'unknown-device');
   } finally {
     b.stop();
     delete process.env.APAKI_REMOTE_PROTECT;

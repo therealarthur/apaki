@@ -216,8 +216,40 @@ export class Link {
       return;
     }
     if (!m) return;
-    if (m.t === 'hello') { this.hello = m; this.on.hello?.(m); return; }
+    if (m.t === 'hello') {
+      this.hello = m;
+      // Connected as an Apaki account's device: tell the PC which phone this is (ACCOUNTS.md).
+      if (m.asAccount && this.name) this.outbox?.send({ t: 'via', name: this.name }).catch(() => {});
+      this.on.hello?.(m);
+      return;
+    }
     if (m.t === 'evs' && Array.isArray(m.list)) for (const ev of m.list) this.onEvent?.(ev);
+    if (typeof m.reqId === 'string' && this.replies?.has(m.reqId)) {
+      const r = this.replies.get(m.reqId);
+      if (r.type === m.t) { this.replies.delete(m.reqId); clearTimeout(r.timer); r.resolve(m); }
+    }
+  }
+
+  /** True when the PC said it understands `feature` (an older Apaki lists none). */
+  supports(feature) {
+    return Array.isArray(this.hello?.features) && this.hello.features.includes(feature);
+  }
+
+  /**
+   * Sends one message to the PC (not an engine command) and waits for its
+   * answer of type `answer` with the same reqId, e.g. account-link ->
+   * account-linked. Rejects when not connected or after `timeoutMs`.
+   */
+  request(msg, answer, timeoutMs = 10_000) {
+    if (this.state !== 'open' || !this.outbox) return Promise.reject(new Error(`Not connected to ${this.pcName} right now.`));
+    this.replies ||= new Map();
+    this.reqSeq = (this.reqSeq || 0) + 1;
+    const reqId = `q${this.reqSeq}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.replies.delete(reqId); reject(new Error(`${this.pcName} did not answer. Its Apaki may need an update.`)); }, timeoutMs);
+      this.replies.set(reqId, { type: answer, resolve, timer });
+      this.outbox.send({ ...msg, reqId }).catch((e) => { clearTimeout(timer); this.replies.delete(reqId); reject(e); });
+    });
   }
 
   /** The PC closed the channel (authenticated): removed, or phone access turned off. */

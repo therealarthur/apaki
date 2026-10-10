@@ -142,13 +142,18 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
   function devicesBlock() {
     const list = st?.devices || [];
     const rows = list.map((d) => {
+      // An Apaki account (ACCOUNTS.md): any phone signed in to it connects as this one device.
+      const acct = d.kind === 'account';
+      const via = acct && d.via?.length ? ` from ${esc(d.via.join(', '))}` : '';
       const meta = d.connected
-        ? `<span class="ph-live">Connected now</span>${d.panes ? ` · ${d.panes} conversation${d.panes === 1 ? '' : 's'} open` : ''}`
-        : `Last seen ${esc(ago(d.lastSeen) || 'never')}${d.pairedAt ? ` · paired ${esc(day(d.pairedAt))}` : ''}`;
+        ? `<span class="ph-live">Connected now${via}</span>${d.panes ? ` · ${d.panes} conversation${d.panes === 1 ? '' : 's'} open` : ''}`
+        : `Last seen ${esc(ago(d.lastSeen) || 'never')}${acct && d.by ? ` · linked from ${esc(d.by)}` : d.pairedAt ? ` · paired ${esc(day(d.pairedAt))}` : ''}`;
       const sure = confirmRemove === d.id;
-      return `<li class="ph-dev${d.connected ? ' live' : ''}">${phoneGlyph(d.connected)}<div class="ph-dev-t"><div class="ph-dev-n">${esc(d.name || 'Phone')}</div><div class="ph-dev-m">${meta}</div></div><button class="ph-remove${sure ? ' sure' : ''}" data-k="revoke" data-id="${esc(d.id)}">${sure ? 'Remove for good' : 'Remove'}</button></li>`;
+      const title = acct ? `Removes the account from this PC: every phone signed in to ${d.account || 'it'} stops reaching it` : 'Removes this phone: it can never reconnect';
+      return `<li class="ph-dev${d.connected ? ' live' : ''}${acct ? ' acct' : ''}">${phoneGlyph(d.connected)}<div class="ph-dev-t"><div class="ph-dev-n">${esc(d.name || 'Phone')}</div><div class="ph-dev-m">${meta}</div></div><button class="ph-remove${sure ? ' sure' : ''}" data-k="revoke" data-id="${esc(d.id)}" title="${esc(title)}">${sure ? 'Remove for good' : 'Remove'}</button></li>`;
     }).join('');
-    return `<div class="ph-devices"><div class="ph-sec"><span>Paired phones</span><span class="ph-sec-n">${list.length || ''}</span></div>${list.length ? `<ul>${rows}</ul>` : '<p class="ph-empty">No phones yet.</p>'}</div>`;
+    const heading = list.some((d) => d.kind === 'account') ? 'Paired phones and accounts' : 'Paired phones';
+    return `<div class="ph-devices"><div class="ph-sec"><span>${heading}</span><span class="ph-sec-n">${list.length || ''}</span></div>${list.length ? `<ul>${rows}</ul>` : '<p class="ph-empty">No phones yet.</p>'}</div>`;
   }
 
   function render() {

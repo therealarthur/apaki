@@ -4,6 +4,9 @@ The relay that lets a phone reach Myrlin Apaki on a PC from anywhere. It is a
 Cloudflare Worker plus one Durable Object per room, and it only forwards
 opaque, end-to-end encrypted frames between the PC socket and the phone
 sockets of a room. It holds no keys, parses no payloads and stores nothing.
+(Since 2026-10-10 it also keeps optional Apaki accounts: a name, passkey
+public keys and one vault it cannot open per account; see Accounts below.
+None of that is a key to any room.)
 
 The crypto lives on the two ends: `apaki/remote/protocol.js`, documented in
 `apaki/remote/PROTOCOL.md`.
@@ -23,6 +26,8 @@ GET /v/<version>/              a published phone page; each version is its own f
 GET /health                    one line saying what this is
 GET /v1/rooms/<roomId>/pc      WebSocket for the PC; subprotocols "apaki.v1" and "apaki-token.<token>"
 GET /v1/rooms/<roomId>/phone   WebSocket for a phone; subprotocol "apaki.v1"
+GET /v1/rooms/<roomId>/presence  { pc: true/false }: is that room's PC connected now (JSON, see Accounts)
+/v1/account/...                Apaki accounts (JSON; see Accounts)
 ```
 
 - `roomId` is 22 base64url characters: the first 16 bytes of
@@ -210,12 +215,100 @@ twenty such people would be about $3 a month over it. The worst case is
 about $3 a day. The account's budget alert (Cloudflare Notifications)
 emails at $10 of monthly spend.
 
+## Accounts
+
+Since 2026-10-10 a person can make an Apaki account with a passkey (no email,
+no password) and sign in on any browser to reach their PCs, with the same end
+to end encryption as a paired phone. The contract between this server and the
+phone page is `apaki/remote/ACCOUNTS.md`; the code is `src/account.js` (routes
+and the `Account` Durable Object, one per account), `src/account-lib.js`
+(tokens, input checks) and `src/webauthn.js` (WebAuthn, CBOR and COSE with
+WebCrypto only, no dependencies). Tests: `tests/accounts.spec.mjs`, with a
+software authenticator that makes real ES256, RS256 and EdDSA passkeys.
+
+```
+POST   /v1/account/challenge          { purpose: register | signin | add }   (add needs a session)
+POST   /v1/account/register           { token, name, credential }            -> { session, account }
+POST   /v1/account/signin             { token, credential }                  -> { session, account, vault }
+GET    /v1/account                    (session)                              -> { account, vault }
+PUT    /v1/account/vault              { ver, vault } (session)               -> { ver }, or 409 stale with the current vault
+POST   /v1/account/passkeys           { token, credential } (session)        -> { account }
+DELETE /v1/account/passkeys/<credId>  (session)                              -> { account }  (never the last one)
+POST   /v1/account/rename             { name } (session)                     -> { account }
+POST   /v1/account/signout-all        (session)                              -> { ok: true }
+DELETE /v1/account                    (session)                              -> { ok: true }
+GET    /v1/rooms/<roomId>/presence                                           -> { pc: true/false }
+```
+
+**What the server stores, per account:** the display name (1 to 48
+characters), each passkey's public key, algorithm, signature counter, label,
+transports and dates (at most 10 passkeys), a session generation number, the
+vault blob `{ ver, iv, ct, wraps }` (at most 64 KiB), and the challenges it
+accepted until their 5 minutes run out (so none can be used twice).
+
+**What it does not store or see:** anything that opens the vault. The vault
+is encrypted on the phone under a key that only the user's passkey can
+produce (the WebAuthn PRF extension: the secret never leaves the
+authenticator), so the server cannot read the list of PCs, the account's
+device key or any PC's secret, and neither can anyone who copies its storage.
+It keeps no email, phone number, password or IP address, and logs nothing
+(no bodies, no tokens, platform logs off).
+
+**Threat model, in plain words:**
+
+- Whoever holds the user's passkey (their iCloud Keychain or Google Password
+  Manager, unlocked) can open the account and reach its PCs. That is the
+  feature. A PC removes the "Apaki account" device in its Phone sheet to cut
+  every account phone off at once; `signout-all` ends every session.
+- The relay operator (us, Cloudflare, or someone who takes over the Worker)
+  sees that an account exists, its name, how many passkeys it has, when it is
+  used and from which IP, and the size of the vault. It cannot sign in as the
+  user (it would need a passkey assertion) and cannot open the vault. It could
+  refuse service, delete an account, or hand back an older vault (the phone
+  then sees an older version than it knows).
+- Like the QR flow, a phone that signs in runs the page this site serves, so
+  the weak spot is the same as for pairing (see above): a page swapped for one
+  phone could read the vault once the passkey opens it.
+- Sessions are bearer tokens (30 days) signed with `ACCOUNT_KEY`; stealing the
+  key lets someone mint sessions, which reach the account's metadata and the
+  encrypted vault but still not the vault's contents or any PC. Rotating the
+  key signs everyone out.
+
+**How it checks a passkey** (`src/webauthn.js`): the client data type, the
+challenge the relay issued, the origin (`ACCOUNT_ORIGIN`, not cross-origin),
+SHA-256 of the RP id (the origin's host name), user presence and user
+verification flags, the credential id in the attested data, the signature
+over `authenticatorData || SHA-256(clientDataJSON)`, and a counter that never
+goes back once it is nonzero. Attestation is "none" and not checked. Each
+account object runs one request at a time, so a challenge is spent once, a
+counter only grows and the vault version is a real compare-and-swap.
+
+**Limits and hardening:** JSON only (415 otherwise), 16 KiB bodies (64 KiB for
+the vault, 413 above), an `Origin` header other than `ACCOUNT_ORIGIN` is
+refused (403), every answer is `cache-control: no-store`, errors are
+`{ error, code }`. Account requests count toward the daily budget (503
+`budget`) and the per-IP limit under their own key, `acct:<ip>`, and presence
+under `pres:<ip>`, so neither eats the socket budget (429 `rate`).
+
+**Set up:** the token key is a Worker secret, 32 random bytes in base64url:
+
+```
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+cd relay && npx wrangler secret put ACCOUNT_KEY      # paste the line
+```
+
+Without it the account routes answer 503 `no-key` (rooms and presence keep
+working). `ACCOUNT_ORIGIN` (a var in `wrangler.jsonc`, default
+`https://apaki.myrlin.io`) must be the phone page's origin; changing it
+orphans every passkey made for the old one. Someone running their own copy
+sets it to `https://<your hostname>`.
+
 ## Develop and test
 
 ```
 cd relay
 npm install
-npm test          # starts the Worker locally (workerd via wrangler) twice and runs tests/relay.spec.mjs
+npm test          # starts the Worker locally (workerd via wrangler) and runs tests/relay.spec.mjs and tests/accounts.spec.mjs
 npm run dev       # wrangler dev on http://127.0.0.1:8787
 npm run check     # bundle only (wrangler deploy --dry-run), no upload
 ```

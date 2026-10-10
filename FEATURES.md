@@ -44,7 +44,20 @@ Written 2026-10-10 from what is built and tested.
   (P-256 key exchange, AES-256-GCM, fresh keys per connection); the hosted
   relay at apaki.myrlin.io forwards opaque frames, holds no keys and stores
   nothing, and your Claude and Codex logins never leave the PC. Anyone's
-  Apaki can use it: each install gets its own room, with no accounts.
+  Apaki can use it: each install gets its own room, and an account is
+  optional.
+- Sign in on any phone with a passkey and your PCs are there. An Apaki
+  account is a passkey (Face ID or a fingerprint, no password, no email) and
+  a vault of your PCs that only that passkey can open: the key comes from
+  the passkey itself (WebAuthn PRF), so apaki.myrlin.io stores ciphertext and
+  public keys and can never connect to anything. Pair a PC once from any
+  phone and every phone signed in to the account can reach it; remove the
+  account on the PC and they all stop at once.
+- It feels like an app on the phone. The sessions list is home with a large
+  title, a conversation slides in from the right and a swipe from the left
+  edge goes back, menus and sheets rise from the bottom and close with a
+  swipe down, pull down to refresh, and it installs to the Home Screen and
+  opens full screen.
 - Your PC checks the phone page before trusting it. The page your phone runs
   is a reproducible build of Apaki's own code, published at an address that
   never changes. Before showing a pairing code, Apaki builds that page itself
@@ -125,5 +138,9 @@ Written 2026-10-10 from what is built and tested.
   Billing, account switching, settings, the shell and the file system are
   out of its reach.
 - Remove a phone on the PC and it can never reconnect without a new QR.
+- An account connects with the same handshake as a paired phone, as one
+  device the PC lists by name ("Apaki account (Arthur)", with which phone is
+  using it right now). Signing in needs the passkey; the server only checks
+  it and hands back the sealed vault.
 - The relay is one Cloudflare Worker anyone can run on their own account
   with two commands; Apaki points at it with two settings.

@@ -25,7 +25,8 @@
  * site serves at /v/<version>/ before it shows a pairing code (engine
  * remote-page.js). Each version lives at its own path and never changes.
  *
- * The page's Content-Security-Policy (a meta tag) allows its own files and a
+ * The page's Content-Security-Policy (a meta tag) allows its own files, its
+ * own origin's account API (2026-10-10, apaki/remote/ACCOUNTS.md) and a
  * WebSocket to that ONE relay origin, nothing else: no other connections,
  * no inline scripts, no framing by forms.
  */
@@ -50,7 +51,7 @@ const REMOTE = path.join(APAKI, 'remote');
 // app.js loads it only on the desktop.
 const UI_SKIP = new Set(['phone.js']);
 const uiFiles = () => fs.readdirSync(UI).filter((f) => /\.(js|css)$/.test(f) && !UI_SKIP.has(f) && fs.statSync(path.join(UI, f)).isFile());
-const WEB_FILES = ['boot.js', 'link.js', 'shim.js', 'store.js', 'scan.js', 'web.css'];
+const WEB_FILES = ['boot.js', 'link.js', 'shim.js', 'store.js', 'scan.js', 'account.js', 'native.js', 'web.css'];
 const REMOTE_FILES = ['protocol.js', 'wire.js'];
 const RELAY_PLACEHOLDER = 'wss://relay.apaki.invalid';
 
@@ -109,7 +110,8 @@ export function build({ relay = process.env.APAKI_RELAY_URL || RELAY_PLACEHOLDER
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self'",
-    `connect-src ${origin}`,
+    // 'self': the Apaki account API (ACCOUNTS.md) is on the page's own origin; the relay is the only other place.
+    `connect-src 'self' ${origin}`,
     "manifest-src 'self'",
     "worker-src 'self'",
     "media-src 'self' blob: mediastream:",

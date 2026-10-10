@@ -28,6 +28,12 @@
  * the phone page this Apaki builds from its own code; the code then opens
  * that version's own address (<web>/v/<version>/).
  *
+ * Apaki accounts (2026-10-10, ../remote/ACCOUNTS.md): a paired phone can link
+ * its passkey account to this PC ({ t: 'account-link' } inside the channel).
+ * The account's device key becomes one more paired device (kind 'account'),
+ * so any phone signed in to that account reconnects as it; { t: 'via' } says
+ * which phone that is. The server never holds a key that opens any of it.
+ *
  * Idle cost: one "ping" text every 25 s while on; nothing while off.
  */
 
@@ -35,6 +41,7 @@ import os from 'node:os';
 import {
   LIMITS, PcSession, RELAY_CLOSE, checkRelayUrl, createPairingOffer, createPcIdentity, createRoom, decodePcFrame,
   encodePcFrame, exportIdentity, frameType, importIdentity, parseRelayControl, relaySubprotocols, roomIdForToken, roomUrl,
+  b64urlDecode, b64urlEncode, deviceIdFor, randomBytes,
 } from '../remote/protocol.js';
 import { Inbox, Outbox, WIRE_VERSION } from '../remote/wire.js';
 import { BROADCAST_EVENTS, PHONE_OPS, checkPhoneCommand, hashText, parsePhoneId, phoneView, routeEvent } from './remote-policy.js';
@@ -51,6 +58,8 @@ export const relayUrl = (env = process.env) => env.APAKI_RELAY_URL || RELAY_DEFA
 export const webUrl = (env = process.env) => env.APAKI_WEB_URL || WEB_DEFAULT;
 /** A page check this recent is reused for the next pairing code. */
 const PAGE_CHECK_MS = 10 * 60_000;
+/** At most this many Apaki accounts linked to one PC (ACCOUNTS.md). */
+const MAX_ACCOUNT_DEVICES = 8;
 
 /** True for an address that is a placeholder (or not an address at all). */
 export function isPlaceholder(url) {
@@ -182,6 +191,8 @@ export class RemoteBridge {
 
   async addDevice(device) {
     const rec = { id: device.id, pub: device.pub, name: String(device.name || 'Phone').slice(0, 64), pairedAt: device.pairedAt, lastSeen: new Date().toISOString() };
+    // An Apaki account's device (ACCOUNTS.md): which phone linked it, and the account's name.
+    if (device.kind === 'account') Object.assign(rec, { kind: 'account', account: String(device.account || '').slice(0, 48), by: String(device.by || '').slice(0, 64) });
     this.state.devices = [...this.state.devices.filter((d) => d.id !== rec.id), rec];
     this.secret.psks = { ...this.secret.psks, [rec.id]: device.psk };
     this.scheme = await store.saveSecret(this.secret, this.dir);
@@ -408,7 +419,9 @@ export class RemoteBridge {
     c.outbox = new Outbox({ session: c.session, write: (f) => this.toRelay(c.id, f), onError: (e) => this.log(`to ${c.id}: ${e.message}`) });
     this.cancelGrace(device.id);
     this.touchDevice(device.id);
-    c.outbox.send({ t: 'hello', v: WIRE_VERSION, pcName: this.pcName, ops: this.phoneOps() });
+    // features: what this PC understands beyond commands (an older Apaki sends none).
+    const self = this.state.devices.find((d) => d.id === device.id);
+    c.outbox.send({ t: 'hello', v: WIRE_VERSION, pcName: this.pcName, ops: this.phoneOps(), features: ['account'], ...(self?.kind === 'account' ? { asAccount: true } : {}) });
     c.outbox.push(phoneView(this.readyEvent()));
     for (const ev of this.cache.values()) c.outbox.push(phoneView(ev));
     this.pushStatus();
@@ -436,6 +449,58 @@ export class RemoteBridge {
       return;
     }
     if (msg && msg.t === 'cmd') this.command(c, msg.cmd);
+    else if (msg && msg.t === 'account-link') this.accountLink(c, msg).catch((e) => this.log(`account link: ${e.message}`));
+    else if (msg && msg.t === 'account-unlink') this.accountUnlink(c, msg).catch((e) => this.log(`account unlink: ${e.message}`));
+    else if (msg && msg.t === 'via') {
+      // Which phone is behind an account device's connection, for the Phone sheet.
+      c.via = String(msg.name || '').replace(/[\u0000-\u001f]/g, '').slice(0, 64);
+      this.pushStatus();
+    }
+  }
+
+  /* ---------- Apaki accounts (apaki/remote/ACCOUNTS.md) ---------- */
+
+  /**
+   * A paired phone links its Apaki account to this PC: the account's device
+   * key becomes one more paired device (kind 'account') with a fresh psk,
+   * which the phone puts in the account's encrypted vault. Any phone signed
+   * in to that account can then reconnect as it. The phone is already
+   * trusted (it holds a paired device key), so this needs no new approval;
+   * the Phone sheet shows the account and who linked it, and Remove cuts
+   * every account phone off at once.
+   */
+  async accountLink(c, msg) {
+    const reqId = String(msg.reqId || '').slice(0, 40);
+    const answer = (v) => c.outbox?.send({ t: 'account-linked', reqId, ...v });
+    try {
+      const raw = b64urlDecode(String(msg.pub || ''));
+      if (raw.length !== 65 || raw[0] !== 4) throw new Error('that is not an account key');
+      await globalThis.crypto.subtle.importKey('raw', raw, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+      const id = await deviceIdFor(raw);
+      if (id === c.device.id) throw new Error('a device cannot link itself');
+      const others = this.state.devices.filter((d) => d.kind === 'account' && d.id !== id);
+      if (others.length >= MAX_ACCOUNT_DEVICES) throw new Error(`this PC already has ${MAX_ACCOUNT_DEVICES} Apaki accounts linked; remove one in its Phone sheet first`);
+      const account = String(msg.name || '').replace(/[\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 48) || 'Apaki account';
+      const psk = b64urlEncode(randomBytes(32));
+      const by = this.state.devices.find((d) => d.id === c.device.id)?.name || c.device.name || 'a phone';
+      await this.addDevice({ id, pub: b64urlEncode(raw), name: `Apaki account (${account})`, kind: 'account', account, by, psk, pairedAt: new Date().toISOString() });
+      answer({ deviceId: id, psk, pcName: this.pcName });
+      this.log(`${by} linked the Apaki account "${account}"`);
+      this.pushStatus();
+    } catch (e) {
+      answer({ error: e.message || String(e) });
+    }
+  }
+
+  /** A phone takes this PC out of its account: only an account device can be removed this way. */
+  async accountUnlink(c, msg) {
+    const reqId = String(msg.reqId || '').slice(0, 40);
+    const id = String(msg.deviceId || '');
+    const d = this.state.devices.find((x) => x.id === id);
+    if (!d || d.kind !== 'account') { c.outbox?.send({ t: 'account-unlinked', reqId, error: 'that is not an account linked to this PC' }); return; }
+    c.outbox?.send({ t: 'account-unlinked', reqId, ok: true });
+    await this.revoke(id);
+    this.pushStatus();
   }
 
   async closeConn(c, reason) {
@@ -713,7 +778,12 @@ export class RemoteBridge {
 
   statusInfo() {
     const connected = new Set();
-    for (const c of this.conns.values()) if (c.open && c.device) connected.add(c.device.id);
+    const via = new Map(); // account device id -> the phones connected through it now
+    for (const c of this.conns.values()) {
+      if (!c.open || !c.device) continue;
+      connected.add(c.device.id);
+      if (c.via) via.set(c.device.id, [...(via.get(c.device.id) || []), c.via]);
+    }
     return {
       ev: 'remote',
       enabled: this.state.enabled,
@@ -727,7 +797,10 @@ export class RemoteBridge {
       page: this.page ? { state: this.page.state, version: this.page.version || null, url: this.page.url || null, at: this.page.at, text: this.page.state === 'checking' ? 'Checking the phone page…' : pageText(this.page) } : null,
       pcName: this.pcName,
       protection: this.scheme === 'dpapi-user' ? 'dpapi' : this.scheme ? 'file' : null,
-      devices: this.state.devices.map((d) => ({ id: d.id, name: d.name, pairedAt: d.pairedAt, lastSeen: d.lastSeen, connected: connected.has(d.id), panes: (this.engine.phonePanes?.(d.id) || []).length })),
+      devices: this.state.devices.map((d) => ({
+        id: d.id, name: d.name, pairedAt: d.pairedAt, lastSeen: d.lastSeen, connected: connected.has(d.id), panes: (this.engine.phonePanes?.(d.id) || []).length,
+        ...(d.kind === 'account' ? { kind: 'account', account: d.account || '', by: d.by || '', via: via.get(d.id) || [] } : {}),
+      })),
       // The QR address holds the one-time secret: it goes to the desktop window only.
       pairing: this.offer && !this.offer.used ? { url: this.offer.url, exp: this.offer.exp } : null,
       request: this.request ? { sas: this.request.sas, name: this.request.device.name, id: this.request.device.id } : null,

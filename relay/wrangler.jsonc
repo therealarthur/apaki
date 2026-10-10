@@ -3,6 +3,8 @@
 // folder per published version, written by apaki/scripts/build-web.mjs --release).
 // Forwards opaque end-to-end encrypted frames between a PC running Myrlin
 // Apaki and its paired phones. See README.md for the threat model.
+// Since 2026-10-10 it also keeps passkey-only Apaki accounts (src/account.js,
+// contract apaki/remote/ACCOUNTS.md); needs the ACCOUNT_KEY secret.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "apaki-relay",
@@ -15,20 +17,35 @@
   // everything else (/v1/rooms/..., /health) reaches the Worker.
   "assets": { "directory": "./site", "html_handling": "auto-trailing-slash", "not_found_handling": "none" },
   "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "Room" }, { "name": "BUDGET", "class_name": "Budget" }]
+    "bindings": [
+      { "name": "ROOMS", "class_name": "Room" },
+      { "name": "BUDGET", "class_name": "Budget" },
+      // One object per Apaki account (src/account.js): name, passkey public keys, one encrypted vault.
+      { "name": "ACCOUNTS", "class_name": "Account" }
+    ]
   },
   // SQLite-backed Durable Objects work on the Workers free plan.
   // v2 (2026-10-10): the daily budget guard (src/index.js Budget).
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }, { "tag": "v2", "new_sqlite_classes": ["Budget"] }],
+  // v3 (2026-10-10): Apaki accounts (src/account.js Account).
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Room"] },
+    { "tag": "v2", "new_sqlite_classes": ["Budget"] },
+    { "tag": "v3", "new_sqlite_classes": ["Account"] }
+  ],
   // New relay connections per IP address: 20 a minute (a PC and a few phones reconnecting fit easily).
   "ratelimits": [{ "name": "CONNECTS", "namespace_id": "4503", "simple": { "limit": 20, "period": 60 } }],
   // The relay logs nothing about frames; keep platform logs off too.
   "observability": { "enabled": false },
   "vars": {
-    "ABOUT": "Myrlin Apaki relay and phone page (apaki.myrlin.io): forwards opaque end-to-end encrypted frames between a PC running Myrlin Apaki and its paired phones, and serves the phone page (one immutable folder per version); stores nothing but a daily cost counter, holds no keys. Made 2026-10-09 by Claude Code (Opus 5.5) for Arthur. Source: github.com/therealarthur/claude-latch relay/. Safe to delete: paired phones stop reaching their PCs until Apaki points at another relay.",
+    "ABOUT": "Myrlin Apaki relay and phone page (apaki.myrlin.io): forwards opaque end-to-end encrypted frames between a PC running Myrlin Apaki and its paired phones, and serves the phone page (one immutable folder per version); stores a daily cost counter and, for Apaki accounts (since 2026-10-10), each account's display name, passkey public keys and one vault blob it cannot open; holds no key that opens anything (the ACCOUNT_KEY secret only signs account tokens). Made 2026-10-09 by Claude Code (Opus 5.5) for Arthur. Source: github.com/therealarthur/claude-latch relay/. Safe to delete: paired phones stop reaching their PCs until Apaki points at another relay, and accounts are gone (their PCs keep working with paired phones).",
     // Origins allowed for phone sockets: the phone page's own. The crypto does not depend on it;
     // it stops other websites from using their visitors' browsers against rooms.
-    "ALLOWED_ORIGINS": "https://apaki.myrlin.io"
+    "ALLOWED_ORIGINS": "https://apaki.myrlin.io",
+    // Accounts (src/account.js): the only origin accepted in WebAuthn client data and in Origin
+    // headers on account requests; the passkeys' RP id is its host name. Changing it orphans every
+    // existing passkey. The token key is a secret, not a var: wrangler secret put ACCOUNT_KEY
+    // (32 random bytes, base64url); without it the account routes answer 503 no-key.
+    "ACCOUNT_ORIGIN": "https://apaki.myrlin.io"
     // Limits (see src/lib.js DEFAULT_LIMITS) can be overridden here, for example "MAX_PHONES": "8".
   }
 }

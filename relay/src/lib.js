@@ -67,14 +67,19 @@ export const DEFAULT_LIMITS = Object.freeze({
  * 128 MB while the object is awake), and a Worker request ($0.30 per million)
  * for each new connection. It ignores the plan's included amounts, so it
  * overcounts on purpose.
+ *
+ * Accounts (2026-10-10): one account request is a Worker request, a request
+ * to its Account object plus one to the Budget object, and up to two SQLite
+ * rows written ($1.00 per million rows, ROW_WRITE).
  */
-export const PRICES = Object.freeze({ DO_REQUEST: 0.15e-6, WS_PER_REQUEST: 20, GB_S: 12.5e-6, DO_GB: 0.128, WORKER_REQUEST: 0.3e-6 });
+export const PRICES = Object.freeze({ DO_REQUEST: 0.15e-6, WS_PER_REQUEST: 20, GB_S: 12.5e-6, DO_GB: 0.128, WORKER_REQUEST: 0.3e-6, ROW_WRITE: 1e-6 });
 
-/** USD for some relay activity: frames received, milliseconds awake, new connections. */
-export function costOf({ frames = 0, busyMs = 0, connects = 0 } = {}) {
+/** USD for some relay activity: frames received, milliseconds awake, new connections, account requests. */
+export function costOf({ frames = 0, busyMs = 0, connects = 0, accountOps = 0 } = {}) {
   return (frames / PRICES.WS_PER_REQUEST) * PRICES.DO_REQUEST
     + (busyMs / 1000) * PRICES.DO_GB * PRICES.GB_S
-    + connects * (PRICES.WORKER_REQUEST + PRICES.DO_REQUEST);
+    + connects * (PRICES.WORKER_REQUEST + PRICES.DO_REQUEST)
+    + accountOps * (PRICES.WORKER_REQUEST + 2 * PRICES.DO_REQUEST + 2 * PRICES.ROW_WRITE);
 }
 
 /** A Durable Object stays in memory about this long after its last event before it can hibernate. */
