@@ -188,6 +188,9 @@ export class Pane {
       }
       if (e.key === 'Escape') { this.hideSlash(); return; }
     }
+    // Ctrl+Enter (Cmd+Enter on a Mac) steers: while Claude works the message goes into the running
+    // turn now instead of the queue (Arthur, 2026-10-10). Enter alone still queues it.
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); this.submit({ steer: true }); return; }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.submit(); return; }
     // Up in an empty box pulls the last queued message back to edit, as in Codex.
     if (e.key === 'ArrowUp' && !input.value && this.queue.length) { e.preventDefault(); this.editItem(this.queue[this.queue.length - 1].id); return; }
@@ -892,7 +895,7 @@ export class Pane {
     b.textContent = { send: 'Send', queue: 'Queue', stop: 'Stop' }[mode];
     b.classList.toggle('stop', mode === 'stop');
     b.classList.toggle('queue', mode === 'queue');
-    b.title = { send: 'Send (Enter)', queue: 'Queue this for when Claude finishes (Enter)', stop: 'Stop Claude (Esc)' }[mode];
+    b.title = { send: 'Send (Enter)', queue: 'Queue this for when Claude finishes (Enter). Ctrl+Enter steers it in now', stop: 'Stop Claude (Esc)' }[mode];
   }
 
   /** Stops the running turn. Queued messages stay; they do not go out on their own after a stop. */
@@ -915,19 +918,31 @@ export class Pane {
     if (!box) return;
     this.host.dirty?.();
     box.hidden = !this.queue.length;
-    if (!this.queue.length) { box.innerHTML = ''; return; }
+    if (!this.queue.length) { box.innerHTML = ''; this.queueSig = ''; return; }
     // While Claude works: Steer adds the message to the current work now.
     // After a stop (nothing to steer): Send starts a new turn with it.
     const act = this.busy ? 'Steer' : 'Send';
-    const actTip = this.busy ? 'Add this to what Claude is doing now, without stopping it' : 'Send this now';
-    box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? 'Sends when Claude finishes · Steer to add it now' : 'Not sent: Claude was stopped'}</span></div>`
-      + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Click to edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} image${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" title="${actTip}">${act}</button><button class="q-x" title="Remove">×</button></div>`).join('');
-    box.querySelectorAll('.q-item').forEach((row) => {
-      const id = row.dataset.id;
-      row.querySelector('.q-text').onclick = () => this.editItem(id);
-      row.querySelector('.q-act').onclick = () => (this.busy ? this.steerItem(id) : this.sendItem(id));
-      row.querySelector('.q-x').onclick = () => this.removeItem(id);
-    });
+    const actTip = this.busy ? 'Add this to what Claude is doing now, without stopping it (Ctrl+Enter in the box does the same)' : 'Send this now';
+    // Rebuilt only when something changed: a row replaced between press and release swallows the click
+    // (2026-10-10, "the steer button doesnt work").
+    const sig = `${this.busy}|${this.queue.map((it) => `${it.id}:${it.text.length}:${it.attachments.length}`).join(',')}`;
+    if (sig === this.queueSig && box.childElementCount) return;
+    this.queueSig = sig;
+    box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? 'Sends when Claude finishes · Steer or Ctrl+Enter adds it now' : 'Not sent: Claude was stopped'}</span></div>`
+      + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} image${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" data-q="act" title="${actTip}">${act}</button><button class="q-edit" data-q="edit" title="Put it back in the message box to change it (Up arrow in an empty box does the same)">Edit</button><button class="q-x" data-q="x" title="Remove" aria-label="Remove">×</button></div>`).join('');
+    // One listener for the whole list (set once), reading the row and the button at click time.
+    if (!box.dataset.wired) {
+      box.dataset.wired = '1';
+      box.addEventListener('click', (e) => {
+        const row = e.target.closest('.q-item');
+        if (!row) return;
+        const id = row.dataset.id;
+        const k = e.target.closest('[data-q]')?.dataset.q || (e.target.closest('.q-text') ? 'edit' : null);
+        if (k === 'act') { if (this.busy) this.steerItem(id); else this.sendItem(id); }
+        else if (k === 'edit') this.editItem(id);
+        else if (k === 'x') this.removeItem(id);
+      });
+    }
   }
 
   takeItem(id) {
@@ -984,7 +999,8 @@ export class Pane {
     this.sendNow(items.map((it) => it.text).filter(Boolean).join('\n\n'), items.flatMap((it) => it.attachments));
   }
 
-  submit() {
+  /** Sends the box. While Claude works it queues, or with { steer: true } (Ctrl+Enter) goes into the running turn now. */
+  submit({ steer = false } = {}) {
     // Held elsewhere: the card's button is the way forward, not a message.
     if (this.lockedBy) { this.$.T.querySelector('.takeover')?.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }], { duration: 220, easing: 'ease-out' }); return; }
     const { input } = this.$;
@@ -998,6 +1014,7 @@ export class Pane {
     input.value = '';
     this.autosize();
     // Working: queue it (Steer adds it to the current work). Never stops the turn.
+    if (this.busy && steer) { this.enqueue(text, attachments); this.steerItem(this.queue[this.queue.length - 1].id); this.renderSendButton(); return; }
     if (this.busy) { this.enqueue(text, attachments); this.renderSendButton(); return; }
     this.sendNow(text, attachments);
   }
