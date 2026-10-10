@@ -1,0 +1,5 @@
+Contact: mailto:security@myrlin.io
+Expires: 2027-10-10T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://apaki.myrlin.io/.well-known/security.txt
+Policy: https://github.com/therealarthur/claude-latch/blob/master/apaki/SECURITY.md

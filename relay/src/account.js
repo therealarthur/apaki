@@ -22,7 +22,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
-import { costOf, ROLE_HEADER } from './lib.js';
+import { costOf, ROLE_HEADER, clientKey, nextUtcMidnight, utcDay } from './lib.js';
 import { verifyRegistration, verifyAssertion, counterOk, WebAuthnError, MAX_CREDENTIAL_ID } from './webauthn.js';
 import {
   LIMITS, PURPOSES, accountConfig, loadKey, signToken, readChallengeToken, readSessionToken, challengeClaims, sessionClaims,
@@ -56,12 +56,32 @@ function originRefused(request, cfg) {
   return origin !== null && origin !== cfg.origin;
 }
 
-/** The per-IP limit with its own key prefix; skipped when the binding is absent or IP_LIMIT is off. */
+/**
+ * The per-IP limit with its own key prefix; skipped when the binding is absent or IP_LIMIT is off.
+ * Since 2026-10-10 an IPv6 client is counted per /64 (lib.js clientKey), like the sockets.
+ */
 async function ipLimited(request, env, prefix) {
   if (!env.CONNECTS || env.IP_LIMIT === 'off') return false;
-  const ip = request.headers.get('CF-Connecting-IP') || 'local';
+  const ip = clientKey(request.headers.get('CF-Connecting-IP'));
   const { success } = await env.CONNECTS.limit({ key: `${prefix}${ip}` });
   return !success;
+}
+
+/**
+ * Today's budget and this address's share of it (budget fairness, 2026-10-10):
+ * `usd` is added to both in parallel. Returns null when the request may go on,
+ * else the answer: 503 budget (the whole relay's day is spent) or 429 share
+ * (only this address's). Without a gate (an older caller) only the budget counts.
+ */
+async function budgetRefusal(request, env, usd, { spend, gate }, what) {
+  const addr = clientKey(request.headers.get('CF-Connecting-IP'));
+  const [budget, mine] = await Promise.all([spend(env, usd), gate ? gate(env, addr, { add: usd }) : null]);
+  if (budget.over) return respond(fail(503, 'budget', `The Apaki relay has used today's budget; ${what} again after 00:00 UTC (in about ${hoursToMidnight(budget.day)} h).`), { 'retry-after': '1800' });
+  if (mine?.over) {
+    const retry = String(Math.max(60, Math.ceil((nextUtcMidnight() - Date.now()) / 1000)));
+    return respond(fail(429, 'share', `This address has used its share of today's Apaki relay budget; ${what} again after 00:00 UTC (in about ${hoursToMidnight(mine.day || utcDay())} h).`), { 'retry-after': retry });
+  }
+  return null;
 }
 
 /**
@@ -118,7 +138,8 @@ const ROUTES = [
 /**
  * Every /v1/account request. Order: route, Origin, configuration and key,
  * per-IP limit, daily budget, then the handler (which reads and checks the body).
- * @param {{ spend: (env: object, usd: number) => Promise<{ day: string, over: boolean }> }} deps  the Worker's budget guard
+ * @param {{ spend: (env: object, usd: number) => Promise<{ day: string, over: boolean }>, gate?: (env: object, addr: string, op: object) => Promise<{ over: boolean }> }} deps
+ *   the Worker's budget guard, and (since 2026-10-10) its per-address share
  */
 export async function handleAccount(request, env, url, deps) {
   const answer = await accountAnswer(request, env, url, deps);
@@ -154,7 +175,7 @@ async function releaseBody(request) {
   await drain(request.body.getReader());
 }
 
-async function accountAnswer(request, env, url, { spend }) {
+async function accountAnswer(request, env, url, { spend, gate }) {
   try {
     const route = ROUTES.find((r) => r.re.test(url.pathname));
     if (!route) return respond(fail(404, 'not-found', 'no such account route'));
@@ -169,10 +190,9 @@ async function accountAnswer(request, env, url, { spend }) {
     if (!key) return respond(fail(503, 'no-key', 'accounts are not set up on this relay (ACCOUNT_KEY)'));
 
     if (await ipLimited(request, env, 'acct:')) return respond(fail(429, 'rate', 'too many account requests from this address; try again in a minute'), { 'retry-after': '60' });
-    const budget = await spend(env, costOf({ accountOps: 1 }));
-    if (budget.over) {
-      return respond(fail(503, 'budget', `The Apaki relay has used today's budget; accounts work again after 00:00 UTC (in about ${hoursToMidnight(budget.day)} h).`), { 'retry-after': '1800' });
-    }
+    // Today's budget (503 budget) and, since 2026-10-10, this address's share of it (429 share).
+    const refusal = await budgetRefusal(request, env, costOf({ accountOps: 1 }), { spend, gate }, 'accounts work');
+    if (refusal) return refusal;
 
     const params = route.re.exec(url.pathname).slice(1);
     return respond(await handler({ request, env, key, cfg, params }));
@@ -315,16 +335,19 @@ async function deleteAccount(ctx) {
  * connected now. Same Origin rule as the account routes; counts toward the
  * budget and its own per-IP key ("pres:<ip>"). Anyone who knows a room id can
  * already learn this from a phone socket's ready message.
+ *
+ * Since 2026-10-10 it is priced as what it is (lib.js costOf presence: the
+ * question wakes the room) and counts toward the address's share too.
  */
-export async function handlePresence(request, env, roomId, { spend }) {
+export async function handlePresence(request, env, roomId, { spend, gate }) {
   try {
     if (request.method !== 'GET') return respond(fail(405, 'method', 'method not allowed'), { allow: 'GET' });
     const cfg = accountConfig(env);
     if (!cfg) return respond(fail(503, 'config', 'accounts are misconfigured on this relay (ACCOUNT_ORIGIN)'));
     if (originRefused(request, cfg)) return respond(fail(403, 'origin', 'this origin may not ask'));
     if (await ipLimited(request, env, 'pres:')) return respond(fail(429, 'rate', 'too many presence requests from this address; try again in a minute'), { 'retry-after': '60' });
-    const budget = await spend(env, costOf({ connects: 1 }));
-    if (budget.over) return respond(fail(503, 'budget', 'The Apaki relay has used today\'s budget; try again after 00:00 UTC.'), { 'retry-after': '1800' });
+    const refusal = await budgetRefusal(request, env, costOf({ presence: 1 }), { spend, gate }, 'presence works');
+    if (refusal) return refusal;
     const stub = env.ROOMS.get(env.ROOMS.idFromName(roomId));
     const res = await stub.fetch(new Request(`https://room/v1/rooms/${roomId}/presence`, { method: 'GET', headers: { [ROLE_HEADER]: 'presence' } }));
     const answer = await res.json();
