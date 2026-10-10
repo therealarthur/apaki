@@ -42,6 +42,11 @@ node apaki/scripts/build-web.mjs --relay wss://relay.example     # into apaki/we
 node apaki/scripts/build-web.mjs --relay ws://127.0.0.1:8787 --serve 8790
 ```
 
+The build copies every top-level module and stylesheet of `apaki/ui` (except
+`phone.js`, the desktop's Phone sheet), so modules added to the window later
+come along, and it stops with an error if any relative import does not
+resolve inside the build.
+
 The relay address is baked into the page's Content-Security-Policy
 (`connect-src` allows that one origin and nothing else); without `--relay` or
 `APAKI_RELAY_URL` the build uses the placeholder `wss://relay.apaki.invalid`.

@@ -33,7 +33,12 @@ const WEB = path.join(APAKI, 'web');
 const SRC = path.join(WEB, 'src');
 const REMOTE = path.join(APAKI, 'remote');
 
-const UI_FILES = ['app.js', 'pane.js', 'menu.js', 'markdown.js', 'mark.js', 'sound.js', 'layout-tree.js', 'theme.js', 'app.css', 'fonts.css'];
+// Every top-level module and stylesheet of Apaki's window comes along, so a
+// module added there later (the artifacts viewer, say) reaches the phone
+// too. phone.js (the desktop's Phone sheet and its QR encoder) stays behind:
+// app.js loads it only on the desktop.
+const UI_SKIP = new Set(['phone.js']);
+const uiFiles = () => fs.readdirSync(UI).filter((f) => /\.(js|css)$/.test(f) && !UI_SKIP.has(f) && fs.statSync(path.join(UI, f)).isFile());
 const WEB_FILES = ['boot.js', 'link.js', 'shim.js', 'store.js', 'scan.js', 'web.css'];
 const REMOTE_FILES = ['protocol.js', 'wire.js'];
 const RELAY_PLACEHOLDER = 'wss://relay.apaki.invalid';
@@ -61,7 +66,7 @@ export function build({ relay = process.env.APAKI_RELAY_URL || RELAY_PLACEHOLDER
   fs.mkdirSync(path.join(out, 'icons'), { recursive: true });
   const files = [];
   const copy = (from, rel) => { fs.copyFileSync(from, path.join(out, rel)); files.push(rel); };
-  for (const f of UI_FILES) copy(path.join(UI, f), f);
+  for (const f of uiFiles()) copy(path.join(UI, f), f);
   for (const f of WEB_FILES) copy(path.join(SRC, f), f);
   for (const f of REMOTE_FILES) copy(path.join(REMOTE, f), f);
   for (const f of fs.readdirSync(path.join(UI, 'fonts'))) if (f.endsWith('.woff2')) copy(path.join(UI, 'fonts', f), `fonts/${f}`);
@@ -125,6 +130,19 @@ export function build({ relay = process.env.APAKI_RELAY_URL || RELAY_PLACEHOLDER
   const sw = fs.readFileSync(path.join(SRC, 'sw.js'), 'utf8').replace('__VERSION__', v).replace('__ASSETS__', () => JSON.stringify(assets));
   fs.writeFileSync(path.join(out, 'sw.js'), sw);
   files.push('sw.js');
+
+  // Every relative static import must resolve inside the build, or the phone
+  // would get a page that fails to start. (Dynamic imports are allowed to be
+  // missing: app.js imports phone.js on the desktop only.)
+  const missing = [];
+  for (const f of files.filter((x) => x.endsWith('.js') && x !== 'sw.js')) {
+    const src = fs.readFileSync(path.join(out, f), 'utf8');
+    for (const m of src.matchAll(/^\s*(?:import|export)\s[^'"]*?from\s+['"](\.{1,2}\/[^'"]+)['"]/gm)) {
+      const target = path.join(path.dirname(path.join(out, f)), m[1]);
+      if (!fs.existsSync(target)) missing.push(`${f} imports ${m[1]}`);
+    }
+  }
+  if (missing.length) throw new Error(`build-web: these imports are not in the build:\n  ${missing.join('\n  ')}`);
 
   const bytes = files.reduce((n, f) => n + fs.statSync(path.join(out, f)).size, 0);
   return { out, version: v, relay, origin, csp, files: files.length, bytes };
