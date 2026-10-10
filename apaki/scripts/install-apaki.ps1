@@ -37,6 +37,16 @@ if ($DryRun) { return }
 if (-not $NoPackage) { & (Join-Path $PSScriptRoot 'package-apaki.ps1') -SkipBuild:$false }
 if (-not (Test-Path (Join-Path $dist 'myrlin-apaki.exe'))) { throw "not packaged yet: $dist" }
 
+# One installer at a time. A second one (for example a newer build staged
+# while an earlier one waits for Apaki to close) has just refreshed the
+# package above; the waiting installer copies the package as it is when Apaki
+# closes, so this one hands over instead of racing it into the install folder.
+$installLock = New-Object System.Threading.Mutex($false, 'Local\MyrlinApakiInstall')
+if (-not $installLock.WaitOne(0)) {
+  'another install is already waiting for Apaki to close; it will install this package'
+  return
+}
+
 $isRunning = { Get-Process -Name myrlin-apaki -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$dest*" } }
 $waited = $false
 if ($WaitForClose) {
