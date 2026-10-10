@@ -14,7 +14,7 @@ driving the Mac Mini over SSH (the Mac's own Claude login was at its weekly limi
 - **Native parts**: QR scanner (AVFoundation), passkeys with PRF (ASAuthorization, iOS 18), haptics through `navigator.vibrate`, status bar and WebView ground following the theme, keyboard (native resize, no accessory bar), splash hidden when the first screen draws, no rubber band, no selectable chrome, reconnect on foreground and network change, pairing links (Universal Links and `apaki://`).
 - **Icons and splash** from `apaki/icons/source` (`scripts/make-assets.py`; the drawn M matches the 1024 master to 0.32/255).
 - **Associated Domains**: entitlements in the app; `relay/site/.well-known/apple-app-site-association` and `assetlinks.json` with placeholders (not deployed).
-- **Tests**: 21 in `apaki/mobile/test`, picked up by `npm test` at the root.
+- **Tests**: 21 in `apaki/mobile/test`, picked up by `npm test` at the root (181 of 181 pass there, with the root dependencies installed). The Release configuration compiles too (Simulator, unsigned).
 - **Docs**: README.md (build, run, test, release steps for TestFlight and Play, Associated Domains, security, push design).
 
 ### Not done or not tested
@@ -26,6 +26,7 @@ driving the Mac Mini over SSH (the Mac's own Claude login was at its weekly limi
 
 ### Log
 
+- Release configuration built for the Simulator (unsigned) to check the non-Debug paths; Simulator shut down. Mac disk at the end: 11 GB free (ios/DerivedData 0.9 GB, the Simulator device, SwiftPM caches).
 - Android: Apaki plugins in Java, registered in MainActivity; backups off; App Links and `apaki://` intent filters; OkHttp and the code scanner in Gradle. javac check against android.jar and the real libraries; DER to raw signatures checked against the JDK on 500 keys.
 - Scaffolding (package.json, capacitor.config.json); `cap add ios` and `cap add android` on the Mac.
 - protocol.js `deviceSign`; boot.js and account.js small hooks; app page build with swaps and a strict CSP.

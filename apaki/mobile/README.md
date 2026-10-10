@@ -84,6 +84,7 @@ All small and additive; the web client behaves exactly as before in a browser.
 | `apaki/remote/protocol.js` | `deviceSign`: a device may sign through its own `sign(bytes)` instead of a WebCrypto key; `PhoneSession` accepts such a device | the Secure Enclave key is not a WebCrypto key |
 | `apaki/web/src/boot.js` | a new pairing asks `store.newDevice()` for its key when the store has it; `__apakiLink.wake`; the device name says "Apaki app" | Secure Enclave keys; reconnect on foreground; the PC's Phone sheet names the app |
 | `apaki/web/src/account.js` | in the app (`globalThis.apakiApp.keysInKeychain`) the vault key and account device are exportable; presence checks the site's host | the Keychain stores bytes, not CryptoKeys; the app's page is not on apaki.myrlin.io |
+| `apaki/remote/PROTOCOL.md` | a paragraph on the app's saved state (Keychain, Secure Enclave, `sign(bytes)`) | the protocol doc says where a phone keeps its secrets |
 | `relay/site/.well-known/apple-app-site-association`, `assetlinks.json`, `relay/site/_headers` | association files with placeholders, served as JSON | passkeys and pairing links in the apps (not deployed) |
 
 Tests: `test/device-signer.test.js` pairs and reconnects a device that signs by itself.
