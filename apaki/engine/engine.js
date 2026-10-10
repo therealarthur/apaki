@@ -812,6 +812,16 @@ const handlers = {
       glassChanged().catch(() => {}).finally(resolve);
     });
   }),
+  /* ---------- managing Glass accounts from the Glass panel (2026-10-10) ---------- */
+  // Rename: a subscription in Workbook (its owner), an API key in Glass. Hide/show: Glass only, nothing deleted.
+  glassRename: (c) => glassOp(c, ['rename', glassProvider(c), String(c.account || ''), String(c.name || '').slice(0, 60)]),
+  glassHide: (c) => glassOp(c, [c.hidden === false ? 'unhide' : 'hide', glassProvider(c), String(c.account || '')]),
+  // Reconnect an account (its email) or add a new one: a browser sign-in a person finishes.
+  glassLogin: (c) => glassOp(c, ['login', glassProvider(c), ...(c.email ? [String(c.email)] : [])]),
+  // A Console org's API credits: the keys go to Glass on stdin only, never on a command line.
+  glassApiAdd: (c) => glassOp(c, ['api', 'add', '--label', String(c.label || '').trim(), '--credit', String(Number(c.credit) || 200), '--reset-day', String(Number(c.resetDay) || 1)],
+    `${String(c.adminKey || '').trim()}\n${String(c.usageKey || '').trim()}\n`),
+  glassApiRemove: (c) => glassOp(c, ['api', 'remove', String(c.label || '')]),
   billingOptions: (c) => emit({
     ev: 'billingOptions', reqId: c.reqId, paneId: c.paneId || null,
     options: [
@@ -1138,6 +1148,27 @@ const LIVE_LOGIN = process.env.LATCH_LIVE_LOGIN_FILE || path.join(CLAUDE_DIR, '.
 const GLASS_CLI = process.env.LATCH_GLASS_CLI || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Myrlin Glass', 'glass.exe');
 let glassSeen = null;
 
+const glassProvider = (c) => (c.provider === 'codex' ? 'codex' : 'claude');
+
+/**
+ * Runs one Glass command for the Glass panel and reports it as glass_op
+ * { reqId, op, ok, message }, then reads Glass again so the panel shows the
+ * result. `input` goes to its stdin (API keys; never logged, never echoed).
+ */
+function glassOp(c, args, input = null) {
+  return new Promise((resolve) => {
+    const child = execFile(GLASS_CLI, [...args, '--json'], { timeout: 60000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      let out = null;
+      try { out = JSON.parse(stdout); } catch { out = null; }
+      const ok = !err && out?.ok !== false && !out?.error;
+      const said = out?.message || out?.error || String(stderr || '').replace(/^glass:\s*/m, '') || err?.message || '';
+      emit({ ev: 'glass_op', reqId: c.reqId, op: c.op, provider: glassProvider(c), ok, message: String(said).trim().split('\n')[0].slice(0, 300) });
+      glassChanged().catch(() => {}).finally(resolve);
+    });
+    if (input != null) child.stdin.end(input); else child.stdin.end();
+  });
+}
+
 /** Glass's full status (both providers, their accounts, API credit orgs), or null. */
 function glassStatus() {
   return new Promise((resolve) => {
@@ -1166,6 +1197,8 @@ function glassAccount(a) {
     id: a.id, name: accountName(a), plan: isKey ? 'API key' : (a.plan || ''), isKey, state: a.state || 'ok',
     headroom: a.headroom == null ? null : Math.round(a.headroom), detail: a.stateDetail || '', windows, active: Boolean(a.active),
     leftUsd: a.apiCredit?.leftUsd ?? null,
+    // 2026-10-10, for the Glass panel: hidden by the user (glass hide), and what rename and reconnect start from.
+    hidden: Boolean(a.hidden), label: a.label || '', email: a.email || '',
   };
 }
 
@@ -1184,6 +1217,7 @@ function glassView(st) {
     id: c.id, name: c.label, plan: 'API key', isKey: true, state: c.keyStatus === 'active' ? 'ok' : (c.keyStatus || 'unknown'),
     headroom: c.creditUsd ? Math.round((100 * (c.leftUsd ?? 0)) / c.creditUsd) : null, leftUsd: c.leftUsd ?? null, creditUsd: c.creditUsd ?? null, windows: [],
     active: Boolean(c.active) || Boolean(claude?.isKey && claude.id === c.id), detail: c.orgName || '',
+    label: c.label, hidden: false, keyHint: c.usageKeyHint || c.adminKeyHint || '', spentUsd: c.spentUsd ?? null, error: c.error || '',
   }));
   return { claude, codex: live('codex'), lists: { claude: [...keys, ...subs], codex: acc.filter((a) => a.provider === 'codex').map(glassAccount) } };
 }

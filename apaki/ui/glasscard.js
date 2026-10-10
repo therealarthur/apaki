@@ -18,6 +18,7 @@
  */
 
 import { esc } from './markdown.js';
+import { glassPanelProvider, openGlassPanel } from './glasspanel.js';
 
 const PROVIDERS = { claude: 'Claude', codex: 'Codex' };
 // At or under this share left the meter turns peach.
@@ -92,6 +93,16 @@ export function accountItems(provider, list = []) {
 
 export function initGlassCard({ root, send, menu, note, readOnly = false }) {
   let last = null;
+  let panel = null;
+  const panelActions = {
+    send,
+    onSwitch: (provider, id) => {
+      if (last?.[provider]?.id === id) return;
+      busy.add(provider);
+      render();
+      send('glassSwap', { provider, account: id });
+    },
+  };
   const busy = new Set();
   const seen = { claude: null, codex: null };
 
@@ -108,18 +119,8 @@ export function initGlassCard({ root, send, menu, note, readOnly = false }) {
       const provider = b.dataset.p;
       if (flash.includes(provider)) b.classList.add('flash');
       if (readOnly) { b.disabled = true; b.title = b.title.replace('Click to switch account', 'Switch accounts on the PC'); continue; }
-      b.onclick = () => {
-        menu(b, accountItems(provider, last.lists?.[provider] || []), {
-          width: 300,
-          onPick: (v) => {
-            if (v === '__refresh') { send('glass', { refresh: true }); return; }
-            if (v === '__none' || last[provider]?.id === v) return;
-            busy.add(provider);
-            render();
-            send('glassSwap', { provider, account: v });
-          },
-        });
-      };
+      // The Glass panel (glasspanel.js, 2026-10-10): sections, usage, switch, rename, sign in, hide, add.
+      b.onclick = () => { panel = openGlassPanel(root, provider, last, panelActions); };
     }
   }
 
@@ -135,11 +136,16 @@ export function initGlassCard({ root, send, menu, note, readOnly = false }) {
       if (e.changed && !flash.includes('claude')) flash.push('claude');
       last = e;
       render(flash);
+      // An open panel follows Glass: a rename, a hide, a new account, a swap.
+      const open = glassPanelProvider();
+      if (open) panel = openGlassPanel(root, open, last, panelActions);
       return;
     }
+    if (e.ev === 'glass_op') { panel?.result(e); return; }
     if (e.ev === 'glass_swap') {
       busy.delete(e.provider);
       if (!e.ok) note?.(`Glass did not switch ${PROVIDERS[e.provider] || e.provider}: ${e.message}`, 'error');
+      if (glassPanelProvider()) panel?.result({ ok: e.ok, message: e.ok ? `${PROVIDERS[e.provider]} switched.` : e.message });
       render();
     }
   }

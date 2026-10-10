@@ -112,7 +112,7 @@ code, pre, .mono { font-family: var(--font-mono); font-size: .86em; }
 .tab-x:hover { background: var(--tint-deep); }
 .tab-x svg, .tab-plus svg, .tab-tool svg { width: 13px; height: 13px; fill: none; stroke: var(--soft); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 /* A tab whose pane finished while you were elsewhere: a green bar along its top and green type. */
-.tab.unread::before { content: ""; position: absolute; top: 0; left: 10px; right: 10px; height: 2px; border-radius: 2px; background: var(--good); }
+.tab.unread::before { content: none; }
 .tab.unread .tab-t { color: var(--good); font-weight: 650; }
 /* Working: a slow periwinkle sweep along the tab's bottom edge. */
 .tab.busy::after {
@@ -151,8 +151,8 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 }
 /* With more than one pane, the focused one carries a periwinkle line along its top;
    one that finished unseen carries green until you look at it. */
-.stage.multi .pane.focused .pane-bar { box-shadow: inset 0 2px 0 var(--brand); }
-.pane.unread .pane-bar { box-shadow: inset 0 2px 0 var(--good); }
+
+
 .pane.unread .title { color: var(--good); }
 .grip { display: grid; place-items: center; width: 18px; height: 30px; border-radius: 5px; cursor: grab; flex: none; }
 .grip:hover { background: var(--tint); }
@@ -674,7 +674,7 @@ body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-event
   box-shadow: 0 1px 3px rgba(var(--shadow-rgb), .12); font-weight: 800;
 }
 .tab.on .tab-t { font-weight: 820; }
-.tab.unread::before { top: auto; bottom: -1px; left: 12px; right: 12px; }
+
 .tab.busy::after { bottom: 2px; }
 .tab-plus { margin: 0 2px; }
 .tabs-tools { padding: 0 2px 0 10px; }
@@ -785,8 +785,6 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 ::selection { background: var(--peach-wash); }
 .stage.multi .pane.focused .pane-bar {
   box-shadow: none;
-  background-image: linear-gradient(90deg, var(--brand), var(--peach-glow));
-  background-size: 100% 2px; background-repeat: no-repeat;
 }
 .tab.busy::after { background: linear-gradient(90deg, transparent, var(--brand), var(--peach-glow), transparent) 0 0 / 50% 100% no-repeat; }
 @keyframes ripple {
@@ -882,7 +880,6 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
   border: 1px solid var(--frost-edge);
   border-radius: 16px;
   box-shadow:
-    inset 0 1px 0 hsla(0, 0%, 100%, .55),
     0 0 0 1px hsla(232, 40%, 78%, .32),
     0 14px 36px -18px rgba(var(--shadow-rgb), .5);
   transition: border-color var(--dur-fast) var(--ease-hover), box-shadow var(--dur-fast) var(--ease-hover);
@@ -890,7 +887,6 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .composer:focus-within {
   border-color: hsla(var(--pearl-stop-blue), .55);
   box-shadow:
-    inset 0 1px 0 hsla(0, 0%, 100%, .6),
     0 0 0 3px hsla(var(--pearl-stop-blue), .14),
     0 16px 40px -18px rgba(var(--shadow-rgb), .55);
 }
@@ -899,7 +895,7 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 :root[data-theme="dark"] .composer {
   --frost: hsla(var(--w), .5);
   --frost-edge: hsla(0, 0%, 100%, .09);
-  box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .06), 0 0 0 1px hsla(0, 0%, 0%, .3), 0 16px 40px -18px rgba(0, 0, 0, .7);
+  box-shadow: 0 0 0 1px hsla(0, 0%, 0%, .3), 0 16px 40px -18px rgba(0, 0, 0, .7);
 }
 /* Without backdrop-filter the frost would be too thin to read through. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .composer { --frost: hsla(var(--w), .94); } }
@@ -1025,7 +1021,7 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
   font-family: var(--font-display); font-weight: 820; font-stretch: 125%; letter-spacing: .015em; font-size: 13px;
   padding: 7px 18px; border-radius: 10px; color: var(--send-ink);
   background: linear-gradient(135deg, var(--send-a), var(--send-b));
-  box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .22), 0 6px 16px -8px rgba(90, 63, 176, .6);
+  box-shadow: 0 6px 16px -8px rgba(90, 63, 176, .6);
   transition: filter var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-hover), box-shadow var(--dur-fast) var(--ease-hover);
 }
 .send:hover { background: linear-gradient(135deg, var(--send-a), var(--send-b)); filter: brightness(1.12) saturate(1.05); }
@@ -1034,7 +1030,7 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
   background: hsla(var(--w), .6); color: var(--brand-deep); box-shadow: inset 0 0 0 1px hsla(var(--pearl-stop-blue), .5);
 }
 .send.queue:hover { background: hsla(var(--pearl-stop-blue), .12); filter: none; }
-.send.stop { background: var(--ink); box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .12); }
+.send.stop { background: var(--ink); box-shadow: none; }
 .send.stop:hover { background: var(--ink); filter: brightness(1.25); }
 :root[data-theme="dark"] .send.queue { color: var(--brand-strong); }
 :root[data-theme="dark"] .send.stop { background: #3A3956; }
@@ -1092,7 +1088,7 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .turn-assistant pre.code, .turn-assistant pre {
   position: relative; background: #1B1934; color: #E4E6FA; border: 1px solid hsla(240, 30%, 30%, .6);
   padding: 13px 15px; border-radius: 10px; overflow-x: auto; font-size: 12.5px; line-height: 1.55;
-  box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .05);
+  box-shadow: none;
 }
 .turn-assistant pre .code-lang { position: absolute; top: 6px; right: 10px; font: 600 10px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: #8C8FB8; user-select: none; }
 .turn-assistant pre code { font-family: var(--font-mono); }
@@ -1129,7 +1125,7 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
   background: linear-gradient(120deg, hsla(var(--pearl-stop-blue), .08), hsla(var(--pearl-stop-purple), .06) 50%, hsla(var(--pearl-stop-cyan), .07)), hsla(var(--w), .58);
   -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6);
   border: 1px solid hsla(var(--w), .8);
-  box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .5), 0 0 0 1px hsla(232, 40%, 78%, .28), 0 10px 26px -18px rgba(var(--shadow-rgb), .5);
+  box-shadow: 0 0 0 1px hsla(232, 40%, 78%, .28), 0 10px 26px -18px rgba(var(--shadow-rgb), .5);
 }
 .glass-card[hidden] { display: none; }
 .gc-head { display: flex; align-items: baseline; gap: 8px; padding: 0 10px 3px; }
@@ -1198,11 +1194,11 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
   border-radius: 12px; border: 1px solid hsla(var(--w), .8);
   background: linear-gradient(120deg, hsla(var(--pearl-stop-blue), .1), hsla(var(--pearl-stop-purple), .07) 50%, hsla(var(--pearl-stop-cyan), .08)), hsla(var(--w), .66);
   -webkit-backdrop-filter: blur(16px) saturate(1.7); backdrop-filter: blur(16px) saturate(1.7);
-  box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .5), 0 0 0 1px hsla(232, 40%, 78%, .3), 0 12px 30px -18px rgba(var(--shadow-rgb), .55);
+  box-shadow: 0 0 0 1px hsla(232, 40%, 78%, .3), 0 12px 30px -18px rgba(var(--shadow-rgb), .55);
   animation: pin-in var(--dur-fast) var(--ease-out);
   transition: box-shadow var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-hover);
 }
-.pin-card:hover { box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .55), 0 0 0 1px hsla(var(--pearl-stop-blue), .38), 0 14px 32px -18px rgba(var(--shadow-rgb), .6); }
+.pin-card:hover { box-shadow: 0 0 0 1px hsla(var(--pearl-stop-blue), .38), 0 14px 32px -18px rgba(var(--shadow-rgb), .6); }
 .pin-card:active { transform: scale(.996); }
 .pin-card:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 @keyframes pin-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
@@ -1240,7 +1236,7 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 
 :root[data-theme="dark"] .glass-card, :root[data-theme="dark"] .pin-card {
   border-color: hsla(0, 0%, 100%, .08);
-  box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .05), 0 0 0 1px hsla(0, 0%, 0%, .3), 0 14px 32px -18px rgba(0, 0, 0, .7);
+  box-shadow: 0 0 0 1px hsla(0, 0%, 0%, .3), 0 14px 32px -18px rgba(0, 0, 0, .7);
 }
 :root[data-theme="dark"] .key-tag { border-color: hsla(16, 70%, 60%, .3); }
 :root[data-theme="dark"] .seg button.on { background: var(--tint-deep); box-shadow: 0 1px 3px rgba(0, 0, 0, .45); }
@@ -1331,7 +1327,7 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .ph-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 
 /* The approval: the phone's name, and the code both screens show, big. */
-.ph-sas { margin-top: 18px; padding: 18px 18px 16px; border-radius: 14px; background: hsla(var(--w), .7); border: 1px solid var(--hairline-strong); box-shadow: inset 0 2px 0 var(--brand), 0 16px 44px -30px rgba(var(--shadow-rgb), .6); animation: rise var(--dur-sheet) var(--ease-out); }
+.ph-sas { margin-top: 18px; padding: 18px 18px 16px; border-radius: 14px; background: hsla(var(--w), .7); border: 1px solid var(--hairline-strong); box-shadow: 0 16px 44px -30px rgba(var(--shadow-rgb), .6); animation: rise var(--dur-sheet) var(--ease-out); }
 .ph-code { display: flex; gap: 14px; margin: 12px 0 2px; font: 900 46px/1 var(--font-display); font-stretch: 125%; letter-spacing: .06em; color: var(--ink); font-variant-numeric: tabular-nums; }
 .ph-code span:last-child { color: var(--brand-deep); }
 
@@ -1638,7 +1634,7 @@ input.rename {
   position: fixed; z-index: 22; display: flex; flex-direction: column; overflow: hidden; border-radius: 14px;
   background: linear-gradient(120deg, hsla(var(--pearl-stop-blue), .07), hsla(var(--pearl-stop-purple), .05) 50%, hsla(var(--pearl-stop-cyan), .06)), hsla(var(--w), .92);
   -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
-  border: 1px solid hsla(var(--w), .85); box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .5), 0 0 0 1px hsla(232, 40%, 78%, .3), 0 18px 44px -20px rgba(var(--shadow-rgb), .55);
+  border: 1px solid hsla(var(--w), .85); box-shadow: 0 0 0 1px hsla(232, 40%, 78%, .3), 0 18px 44px -20px rgba(var(--shadow-rgb), .55);
   animation: menu-in var(--dur-fast) var(--ease-out); transform-origin: top right;
 }
 .task-panel.out { animation: menu-out var(--dur-exit) var(--ease-hover) forwards; }
@@ -1711,7 +1707,7 @@ input.rename {
   border-radius: 12px; border: 1px solid hsla(var(--w), .85);
   background: linear-gradient(120deg, hsla(var(--pearl-stop-blue), .09), hsla(var(--pearl-stop-purple), .06) 50%, hsla(var(--pearl-stop-cyan), .07)), hsla(var(--w), .86);
   -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6);
-  box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .5), 0 0 0 1px hsla(232, 40%, 78%, .32), 0 12px 30px -16px rgba(var(--shadow-rgb), .55);
+  box-shadow: 0 0 0 1px hsla(232, 40%, 78%, .32), 0 12px 30px -16px rgba(var(--shadow-rgb), .55);
   animation: pin-in var(--dur-fast) var(--ease-out);
 }
 .find-bar .fb-i svg, .find-bar button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
@@ -1808,3 +1804,151 @@ mark.find-hit.cur { background: var(--peach-glow); color: #1E1B33; box-shadow: 0
 .phone-sheet .ph-page { margin: 10px 0 0; padding: 9px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.45; color: var(--soft); background: hsla(232, 60%, 62%, .07); border: 1px solid var(--hairline); }
 .phone-sheet .ph-page[data-state="ok"] { color: var(--good); background: var(--good-tint); border-color: hsla(145, 40%, 45%, .25); }
 .phone-sheet .ph-page[data-state="differs"], .phone-sheet .ph-page[data-state="missing"] { color: var(--action-strong); background: var(--action-tint); border-color: hsla(16, 62%, 54%, .3); }
+
+/* ==========================================================================
+   2026-10-10: one look for every button, and nothing lit on one side.
+   Arthur: "make sure we make the buttons gradients everywhere - also the
+   dark mode buttons should be slightly darker gradient", and no highlight
+   along one side of a card (left, top, anywhere). Shapes keep an even ring
+   all the way round; the focused pane shows by a ring round the whole pane.
+   ========================================================================== */
+:root {
+  --btn-a: #2C3578; --btn-b: #5A3FB0;
+  --btn2-a: hsl(var(--w)); --btn2-b: hsl(232, 45%, 95%); --btn2-line: var(--hairline-strong);
+  --btn-danger-a: #F6B49A; --btn-danger-b: #E8875F;
+}
+:root[data-theme="dark"] {
+  --btn-a: #4651AE; --btn-b: #6548B8;
+  --send-a: #4651AE; --send-b: #6548B8;
+  --btn2-a: hsl(246, 20%, 21%); --btn2-b: hsl(246, 22%, 16%); --btn2-line: hsla(244, 30%, 70%, .16);
+  --btn-danger-a: #8A4A33; --btn-danger-b: #6E3524;
+}
+
+/* Primary: the Send gradient. */
+.new, .send:not(.queue):not(.stop), .sheet .row button.primary, .tk-row .tk-go, .phone-sheet button.primary, .art-open, .pair-btn:not(.quiet) {
+  background: linear-gradient(135deg, var(--btn-a), var(--btn-b));
+  border-color: transparent; color: #fff;
+  box-shadow: 0 6px 16px -9px rgba(70, 52, 160, .55);
+  transition: filter var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-hover);
+}
+.new:hover, .send:not(.queue):not(.stop):hover, .sheet .row button.primary:hover, .tk-row .tk-go:hover, .phone-sheet button.primary:hover, .art-open:hover, .pair-btn:not(.quiet):hover {
+  background: linear-gradient(135deg, var(--btn-a), var(--btn-b)); filter: brightness(1.1) saturate(1.05);
+}
+.new:active, .sheet .row button.primary:active, .tk-row .tk-go:active, .phone-sheet button.primary:active, .art-open:active { transform: scale(.98); }
+
+/* Secondary: a quiet pearl gradient with an even edge. */
+.sheet .row button:not(.primary), .tk-row button:not(.tk-go), .phone-sheet button:not(.primary), .sheet .path-go button, .sheet .br-new button,
+.tab-tool, .tp-act button:not(.danger), .tool summary .tool-open, .pair-btn.quiet, .send.queue, .subs-n, .start-in {
+  background: linear-gradient(180deg, var(--btn2-a), var(--btn2-b));
+  border: 1px solid var(--btn2-line); box-shadow: 0 1px 2px rgba(var(--shadow-rgb), .06);
+}
+.sheet .row button:not(.primary):hover, .tk-row button:not(.tk-go):hover, .phone-sheet button:not(.primary):hover, .sheet .path-go button:hover, .sheet .br-new button:hover,
+.tab-tool:hover:not(:disabled), .tp-act button:not(.danger):hover, .tool summary .tool-open:hover, .pair-btn.quiet:hover, .send.queue:hover, .subs-n:hover, .start-in:hover {
+  background: linear-gradient(180deg, var(--btn2-a), var(--btn2-b)); border-color: var(--brand); filter: brightness(1.03);
+}
+
+/* Stop and other "careful" actions: a warm gradient. */
+.send.stop { background: linear-gradient(135deg, #2A2840, #171717); box-shadow: 0 6px 16px -9px rgba(0, 0, 0, .5); }
+:root[data-theme="dark"] .send.stop { background: linear-gradient(135deg, #3E3C5C, #2C2A45); }
+.task-viewer .tk-stop, .tp-act button.danger, .phone-sheet .ph-remove.sure {
+  background: linear-gradient(135deg, var(--btn-danger-a), var(--btn-danger-b)); border-color: transparent; color: #fff;
+}
+
+/* The focused pane in a split: a ring round the whole pane, not a line along one side. */
+.stage.multi .pane.focused { box-shadow: inset 0 0 0 1.5px hsla(var(--pearl-stop-blue), .38); border-radius: 10px; }
+.stage.multi .pane.unread { box-shadow: inset 0 0 0 1.5px hsla(145, 45%, 42%, .4); border-radius: 10px; }
+.pane.unread .pane-bar .title { color: var(--good); }
+
+/* ---------- the Glass panel (glasspanel.js, 2026-10-10) ----------
+   Fixed columns (name, usage, actions) so a long name is cut, never the
+   usage; section heads in wide caps; names in Archivo, numbers in mono. */
+.glass-panel {
+  position: fixed; z-index: 23; display: flex; flex-direction: column; overflow: hidden; border-radius: 14px;
+  background: linear-gradient(160deg, hsla(var(--pearl-stop-blue), .06), hsla(var(--pearl-stop-purple), .04) 55%, hsla(var(--pearl-stop-cyan), .05)), hsla(var(--w), .96);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+  border: 1px solid var(--hairline-strong); box-shadow: 0 22px 50px -22px rgba(var(--shadow-rgb), .55);
+  animation: menu-in var(--dur-fast) var(--ease-out); transform-origin: bottom left; font-family: var(--font-body);
+}
+.glass-panel.out { animation: menu-out var(--dur-exit) var(--ease-hover) forwards; }
+.gp-head { display: flex; align-items: center; gap: 10px; padding: 14px 12px 10px 16px; border-bottom: 1px solid var(--hairline); }
+.gp-h { font: var(--heavy) 15px/1 var(--font-display); font-stretch: var(--wide); letter-spacing: -.01em; color: var(--ink-deep); }
+.gp-brand { font: 800 9.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .12em; text-transform: uppercase; color: var(--brand-strong); }
+.gp-head .gp-icon { margin-left: auto; }
+.gp-body { overflow-y: auto; padding: 4px 8px 10px; scrollbar-width: thin; }
+.gp-sec { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 14px 8px 6px; border: 0; background: none; text-align: left;
+  font: 820 9.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .11em; text-transform: uppercase; color: var(--soft); }
+.gp-sec-n { font: 600 10.5px var(--font-mono); letter-spacing: 0; text-transform: none; color: var(--faint); }
+.gp-toggle { cursor: pointer; }
+.gp-toggle .gp-chev { margin-left: auto; font: 650 11px var(--font-body); letter-spacing: 0; text-transform: none; color: var(--brand-strong); }
+.gp-row {
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 88px auto; align-items: center; gap: 12px;
+  padding: 9px 8px 9px 10px; border-radius: 10px; cursor: pointer; transition: background var(--dur-fast) var(--ease-hover);
+}
+.gp-row.menu-open { z-index: 2; background: hsla(232, 60%, 62%, .07); }
+.gp-more.on { background: hsla(232, 60%, 62%, .12); color: var(--brand-deep); }
+.gp-more svg { fill: currentColor; stroke: none; }
+/* The row's "more" menu, under its button (or above it near the bottom). */
+.gp-menu {
+  position: absolute; right: 6px; top: calc(100% - 4px); z-index: 3; display: grid; min-width: 230px; padding: 5px; border-radius: 11px;
+  background: hsl(var(--w)); border: 1px solid var(--hairline-strong); box-shadow: 0 16px 34px -14px rgba(var(--shadow-rgb), .5);
+  animation: menu-in var(--dur-fast) var(--ease-out); transform-origin: top right;
+}
+.gp-menu.up { top: auto; bottom: calc(100% - 4px); transform-origin: bottom right; }
+.gp-menu button { display: grid; grid-template-columns: 16px 1fr; align-items: start; gap: 9px; padding: 7px 9px; border: 0; border-radius: 7px; background: none; text-align: left; cursor: pointer; color: var(--ink); font: 650 12.5px/1.3 var(--font-body); }
+.gp-menu button:hover, .gp-menu button:focus-visible { background: hsla(232, 60%, 62%, .09); outline: none; }
+.gp-menu button span { display: grid; gap: 1px; }
+.gp-menu small { font: 500 11px/1.3 var(--font-body); color: var(--faint); }
+.gp-menu svg { width: 15px; height: 15px; margin-top: 1px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; color: var(--soft); }
+.gp-menu .danger { color: var(--action-strong); }
+.gp-menu .danger svg { color: var(--action-strong); }
+.gp-menu .sure { color: #fff; background: linear-gradient(135deg, var(--btn-danger-a), var(--btn-danger-b)); }
+.gp-menu .sure svg, .gp-menu .sure small { color: #fff; }
+:root[data-theme="dark"] .gp-menu { background: hsl(246, 20%, 15%); border-color: hsla(244, 30%, 70%, .16); box-shadow: 0 18px 40px -16px rgba(0, 0, 0, .85); }
+.gp-row:hover { background: hsla(232, 60%, 62%, .07); }
+.gp-row.live { cursor: default; background: hsla(var(--pearl-stop-blue), .08); box-shadow: inset 0 0 0 1px hsla(var(--pearl-stop-blue), .22); }
+.gp-row.needs { cursor: default; }
+.gp-row.needs .gp-n, .gp-row.hidden-acct .gp-n { color: var(--soft); }
+.gp-main { min-width: 0; }
+.gp-name { display: flex; align-items: baseline; min-width: 0; gap: 6px; }
+.gp-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 13px/1.35 var(--font-body); font-stretch: 104%; color: var(--ink-deep); }
+.gp-name .key-tag { flex: none; margin-left: 0; }
+.gp-sub { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 10.5px/1.35 var(--font-mono); color: var(--faint); }
+.gp-rename { width: 100%; min-width: 0; padding: 2px 6px; border: 1px solid var(--brand); border-radius: 6px; outline: none; font: 700 13px var(--font-body); color: var(--ink-deep); background: hsl(var(--w)); box-shadow: 0 0 0 3px hsla(var(--pearl-stop-blue), .14); }
+.gp-use { display: grid; gap: 5px; justify-items: end; }
+.gp-left { font: 650 11px/1 var(--font-mono); color: var(--brand-deep); white-space: nowrap; }
+.gp-use.low .gp-left { color: var(--action-strong); }
+.gp-meter { display: block; width: 100%; height: 4px; border-radius: 2px; background: hsla(232, 40%, 60%, .14); overflow: hidden; }
+.gp-meter i { display: block; width: 100%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--btn-a, #2C3578), var(--btn-b, #5A3FB0)); transform: scaleX(var(--v, 0)); transform-origin: left center; }
+.gp-use.low .gp-meter i { background: linear-gradient(90deg, var(--action), var(--action-strong)); }
+.gp-row.needs { grid-template-columns: minmax(0, 1fr) auto; }
+.gp-act { display: flex; align-items: center; gap: 4px; }
+.gp-row:not(.live) .gp-act .gp-icon { opacity: .55; transition: opacity var(--dur-fast) var(--ease-hover); }
+.gp-row:hover .gp-act .gp-icon, .gp-row:focus-within .gp-act .gp-icon { opacity: 1; }
+.gp-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+  font: 700 11.5px/1 var(--font-body); color: var(--brand-deep);
+  background: linear-gradient(180deg, var(--btn2-a), var(--btn2-b)); border: 1px solid var(--btn2-line);
+}
+.gp-btn:hover { border-color: var(--brand); }
+.gp-btn.primary { color: #fff; border-color: transparent; background: linear-gradient(135deg, var(--btn-a), var(--btn-b)); box-shadow: 0 5px 12px -8px rgba(70, 52, 160, .6); }
+.gp-btn.primary:hover { filter: brightness(1.1); }
+.gp-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.gp-icon { display: inline-grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; border: 0; border-radius: 7px; background: none; cursor: pointer; color: var(--soft); font: 700 11px var(--font-body); }
+.gp-icon:hover { background: hsla(232, 60%, 62%, .1); color: var(--brand-deep); }
+.gp-icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.gp-icon.sure { color: #fff; background: linear-gradient(135deg, var(--btn-danger-a), var(--btn-danger-b)); }
+.gp-foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--hairline); }
+.gp-msg { padding: 8px 14px 10px; font-size: 12px; color: var(--soft); border-top: 1px solid var(--hairline); }
+.gp-msg.err { color: var(--action-strong); }
+.gp-empty { margin: 12px 10px; font-size: 12.5px; color: var(--faint); }
+.gp-form { display: grid; gap: 9px; margin: 10px 4px 2px; padding: 12px; border-radius: 12px; border: 1px solid var(--hairline-strong); background: hsla(var(--w), .7); }
+.gp-form-h { font: 760 12.5px/1.3 var(--font-display); font-stretch: 110%; color: var(--ink-deep); }
+.gp-form label { display: grid; gap: 4px; font: 650 11.5px var(--font-body); color: var(--soft); }
+.gp-form label small { font-weight: 500; color: var(--faint); }
+.gp-form input { height: 30px; padding: 0 9px; border: 1px solid var(--hairline-strong); border-radius: 7px; background: hsl(var(--w)); font: 500 12.5px var(--font-mono); color: var(--ink); outline: none; }
+.gp-form input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px hsla(var(--pearl-stop-blue), .14); }
+.gp-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.gp-note { margin: 0; font-size: 11px; color: var(--faint); }
+.gp-form-act { display: flex; justify-content: flex-end; gap: 6px; }
+:root[data-theme="dark"] .glass-panel { background: linear-gradient(160deg, hsla(var(--pearl-stop-blue), .05), hsla(var(--pearl-stop-purple), .04) 55%, hsla(var(--pearl-stop-cyan), .04)), hsla(var(--w), .97); border-color: hsla(0, 0%, 100%, .08); box-shadow: 0 22px 50px -20px rgba(0, 0, 0, .8); }
+:root[data-theme="dark"] .gp-form, :root[data-theme="dark"] .gp-form input, :root[data-theme="dark"] .gp-rename { background: var(--tint); }

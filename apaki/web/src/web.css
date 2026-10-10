@@ -172,3 +172,4 @@ body.linked .pair-screen { display: none; }
 @media (prefers-reduced-motion: reduce) {
   body.web .rail, .drawer-scrim { transition: none !important; }
 }
+/* 2026-10-10: the pairing button uses the app's button gradient (app.css --btn-a/--btn-b). */

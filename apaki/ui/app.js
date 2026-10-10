@@ -1928,6 +1928,7 @@ await listen('engine', ({ payload: e }) => {
     case 'places': startUI?.places(e); break;
     case 'dir': startUI?.dir(e); break;
     case 'glass':
+    case 'glass_op':
     case 'glass_swap':
       // What Myrlin Glass has Claude Code and Codex on right now; updates the moment Glass swaps (glasscard.js).
       glassCard.handle(e);
