@@ -99,6 +99,16 @@ export class SessionRunner {
    * @param {Function} o.canUseTool    SDK permission callback
    * @param {Function} o.onMessage     receives every SDK message
    * @param {Function} [o.onStderr]    receives the child's stderr
+   *
+   * Optional extras for hosts like Myrlin Apaki (latch's own UI passes none,
+   * so its Claude Code starts exactly as before):
+   * @param {object|Function} [o.mcpServers] SDK mcpServers, or a function returning them,
+   *                                   called on every start (in-process SDK servers serve one
+   *                                   connection, so each process needs fresh ones)
+   * @param {string} [o.appendSystemPrompt]  appended to Claude Code's own system prompt
+   * @param {object} [o.hooks]         SDK hooks ({ PreToolUse: [{ matcher, hooks }] ... }),
+   *                                   merged with the question/plan hook below
+   * @param {object} [o.envExtra]      variables added on top of env (kept when env changes)
    */
   constructor(o) {
     Object.assign(this, { model: undefined, effort: undefined, permissionMode: undefined, onStderr: () => {} }, o);
@@ -119,15 +129,32 @@ export class SessionRunner {
 
   start() {
     this.inbox = new Inbox();
+    const options = this.buildOptions();
+    const file = this.transcript;
+    this.lastTotal = file ? lastCostTotal(readTail(file)) : 0;
+    this.knownSize = file ? fileSize(file) : 0;
+    this.q = query({ prompt: this.inbox, options });
+    this.done = this.pump(this.q);
+  }
+
+  /** The Agent SDK options for the next start (also called by tests, without starting anything). */
+  buildOptions() {
     const options = {
       cwd: this.cwd,
-      env: this.env,
+      env: this.envExtra ? { ...this.env, ...this.envExtra } : this.env,
       includePartialMessages: true,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
       canUseTool: this.canUseTool,
       stderr: this.onStderr,
     };
+    if (this.appendSystemPrompt) options.systemPrompt.append = this.appendSystemPrompt;
+    const mcp = typeof this.mcpServers === 'function' ? this.mcpServers() : this.mcpServers;
+    if (mcp && Object.keys(mcp).length) options.mcpServers = mcp;
+    if (this.hooks) {
+      options.hooks = {};
+      for (const [event, matchers] of Object.entries(this.hooks)) options.hooks[event] = [...matchers];
+    }
     if (this.sessionId) options.resume = this.sessionId;
     if (this.model) options.model = this.model;
     if (this.effort) options.effort = this.effort;
@@ -143,30 +170,24 @@ export class SessionRunner {
     // tools that need a person (questions, plan approval) are answered from a
     // PreToolUse hook instead, which runs in every mode (verified 2026-10-09).
     if (this.onInteractiveTool) {
-      options.hooks = {
-        PreToolUse: [{
-          matcher: 'AskUserQuestion|ExitPlanMode',
-          hooks: [async (input) => {
-            const r = await this.onInteractiveTool(input.tool_name, input.tool_input || {});
-            if (!r) return {};
-            const allow = r.behavior === 'allow';
-            return {
-              hookSpecificOutput: {
-                hookEventName: 'PreToolUse',
-                permissionDecision: allow ? 'allow' : 'deny',
-                ...(allow ? { updatedInput: r.updatedInput } : { permissionDecisionReason: r.message || 'The user declined.' }),
-              },
-            };
-          }],
+      options.hooks = options.hooks || {};
+      options.hooks.PreToolUse = [...(options.hooks.PreToolUse || []), {
+        matcher: 'AskUserQuestion|ExitPlanMode',
+        hooks: [async (input) => {
+          const r = await this.onInteractiveTool(input.tool_name, input.tool_input || {});
+          if (!r) return {};
+          const allow = r.behavior === 'allow';
+          return {
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: allow ? 'allow' : 'deny',
+              ...(allow ? { updatedInput: r.updatedInput } : { permissionDecisionReason: r.message || 'The user declined.' }),
+            },
+          };
         }],
-      };
+      }];
     }
-
-    const file = this.transcript;
-    this.lastTotal = file ? lastCostTotal(readTail(file)) : 0;
-    this.knownSize = file ? fileSize(file) : 0;
-    this.q = query({ prompt: this.inbox, options });
-    this.done = this.pump(this.q);
+    return options;
   }
 
   async pump(q) {

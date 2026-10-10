@@ -69,6 +69,17 @@ A Claude Code window keeps its conversation in memory, so two windows on one ses
 
 Runtime files live in `~/.claude/latch/`: `locks/` (one file per attached session) and `latch.log` (lite mode's Claude Code stderr, keys masked).
 
+## Artifacts in Myrlin Apaki
+
+Claude running inside Apaki (the desktop app in `apaki/`) can show the user things in Apaki itself, with nothing installed or written to any settings file. The Apaki engine passes everything per pane through Agent SDK options (latch's own runner passes none of them):
+
+- An in-process MCP server `apaki` with one tool, `show` (`mcp__apaki__show`): `html`, `markdown`, `svg`, `image`, `file` (any local html, md, image, pdf, text or code file) or `url`. Pass `id` again to update it; every show is a revision. Stored in `~/.claude/latch/artifacts/<session>/` (`apaki/engine/artifacts.js`).
+- A short paragraph appended to Claude Code's system prompt saying the tool exists.
+- PreToolUse / PostToolUse hooks on Bash and PowerShell (`apaki/engine/open-catch.js`, `apaki-tools.js`): `start x.html`, `Start-Process http://...`, `explorer`, `open`, `xdg-open`, `python -m webbrowser`, `rundll32 url.dll` and friends are denied with "Opened in Apaki instead: ..." and shown in Apaki; in a longer command only the open step is cut out. `npm start`, `Start-Sleep`, starting programs and git are left alone.
+- `BROWSER` pointing at `apaki/bin/apaki-open.cmd`, which hands URLs to the engine's 127.0.0.1 server (random port, a token per pane), so `vite --open`, Python's webbrowser and gh open in Apaki too.
+
+The window shows artifacts in a viewer pane beside the conversation (a sandboxed iframe for HTML: scripts, forms and alerts only, never same-origin, served with a CSP that blocks all network) and a card in the transcript, rebuilt from history when a session is reopened. Web pages get a link card for now. `apaki/engine/apaki-mcp-stdio.mjs` is the same tool as a stdio server for a later Codex tab. No-cost check of the viewer: `node apaki/scripts/cdp-artifacts.mjs <out-prefix> <cdp port>`.
+
 ## Test
 
-`npm test` runs the unit tests: rendering, credential choice and env scrub, transcript parsing, lock, outside-change detection, Claude Code arguments, key-approval lookup.
+`npm test` runs the unit tests: rendering, credential choice and env scrub, transcript parsing, lock, outside-change detection, Claude Code arguments, key-approval lookup, and for Apaki the layout tree, the "open this" matcher, the artifact store and server, the show tool through a real MCP client, the hooks, the BROWSER shim and the stdio tool server.
