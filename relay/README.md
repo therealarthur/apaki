@@ -122,7 +122,10 @@ The phone runs whatever JavaScript the web client's site serves. Whoever
 controls that site (or its hosting, or its DNS) could serve a version that
 sends the phone's device secret and decrypted messages somewhere else. That
 is the limit of any web app that does end-to-end encryption. Mitigations
-(the first three are for the web client, which is not built yet):
+(the web client exists since 2026-10-09, in `apaki/web`, and is already an
+installable PWA whose service worker keeps one build's files together;
+published hashes and publishing the source are still to do; the last two
+are in place):
 
 - **Versioned, immutable bundles with published hashes.** Serve each release
   of the web client from a path that never changes (for example
@@ -137,7 +140,14 @@ is the limit of any web app that does end-to-end encryption. Mitigations
   it is published.
 - **Least power on the phone** (in place): the device key is non-extractable
   (WebCrypto keeps it out of reach of page scripts; IndexedDB stores the key
-  object, not the bytes), and the PC decides what a phone may do.
+  object, not the bytes), and the PC decides what a phone may do
+  (`apaki/engine/remote-policy.js`: an allowlist of conversation and
+  session-list commands; never billing, pairing, folders or anything that
+  reaches the shell or the filesystem).
+- **A strict page policy** (in place): the web client's
+  Content-Security-Policy allows only its own files and a WebSocket to the one
+  relay it was built for (`connect-src <relay origin>`), so even an injected
+  script in the page could not send anything anywhere else.
 
 ### Stolen or lost phone
 

@@ -1,0 +1,174 @@
+/* Apaki on a phone (Track B part 2, 2026-10-09). Loaded after Apaki's own
+   app.css, so the tokens, both themes, the pearl ground and every component
+   are the desktop's; this file only re-lays them out for a phone:
+   - one pane at a time (tabs stay to switch conversations; splits show the
+     focused pane only),
+   - the sidebar becomes a drawer from the left, over a scrim,
+   - tap targets of 40 to 48 px, 16 px text in fields (no zoom on focus),
+   - safe-area insets for notches and home indicators,
+   - things the phone cannot do here are hidden: window buttons, panes'
+     drag grips and gutters, the PC's dictation, folders editing, Ask Claude
+     and Dig deeper (they run from the PC), the Phone button itself.
+   Motion: the drawer slides on transform in 200 ms, nothing else is added. */
+
+html, body.web { height: 100%; }
+body.web {
+  grid-template-columns: 1fr; height: var(--vvh, 100dvh); min-height: 0; overflow: hidden;
+  -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+}
+body.web .main {
+  grid-column: 1; min-width: 0;
+  grid-template-rows: calc(var(--top) + env(safe-area-inset-top)) 1fr;
+  padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
+}
+body.web .topbar { height: calc(var(--top) + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); align-items: center; }
+body.web .tabs { height: var(--top); padding: 0 6px 0 0; gap: 4px; }
+body.web .tab { height: 36px; min-width: 84px; max-width: 52vw; padding: 0 4px 0 12px; font-size: 14px; }
+body.web .tab-x { opacity: 1; width: 30px; height: 30px; }
+body.web .tab-plus { width: 40px; height: 40px; }
+
+.drawer-btn {
+  flex: none; display: none; place-items: center; width: 46px; height: 46px; margin: 0 2px 0 6px;
+  border: 0; border-radius: 12px; background: none; cursor: pointer; color: var(--ink);
+}
+body.web .drawer-btn { display: grid; }
+.drawer-btn:active { background: hsla(var(--w), .7); }
+.drawer-btn svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+
+/* The sessions drawer. */
+body.web .rail {
+  position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: min(88vw, 380px);
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left);
+  transform: translate3d(-104%, 0, 0); transition: transform 200ms var(--ease-out); will-change: transform;
+  box-shadow: none; border-right: 1px solid var(--sec-line);
+}
+body.web.drawer-open .rail { transform: none; box-shadow: 16px 0 44px -24px rgba(var(--shadow-rgb), .55); }
+.drawer-scrim { position: fixed; inset: 0; z-index: 35; background: rgba(var(--shadow-rgb), .26); opacity: 0; pointer-events: none; transition: opacity 180ms var(--ease-hover); }
+body.drawer-open .drawer-scrim { opacity: 1; pointer-events: auto; }
+:root[data-theme="dark"] .drawer-scrim { background: rgba(0, 0, 0, .55); }
+body.web .brand { height: 52px; }
+
+body.web .winctl, body.web .tabs-tools, body.web .grip, body.web .gutter, body.web .mic, body.web .ask,
+body.web .dig-row, body.web .folder-add, body.web .folder-x, body.web .folder-chip, body.web #phone { display: none !important; }
+
+/* One pane: with a split, only the focused pane shows. */
+body.web .stage { inset: 0; border-radius: 0; border-width: 1px 0 0; box-shadow: none; }
+body.web .stage.multi .split > :not(.pane):not(.split) { display: none; }
+body.web .stage.multi .pane:not(.focused) { display: none; }
+body.web .pane-bar { min-height: 54px; padding: 6px 4px 6px 14px; }
+body.web .pane-bar .title { font-size: 16.5px; }
+body.web .pane-bar .close { width: 44px; height: 44px; }
+body.web .transcript { padding: 14px 14px 20px; font-size: 15px; }
+body.web .turn-user { margin-top: 16px; }
+body.web .composer-wrap { padding: 0 8px calc(8px + env(safe-area-inset-bottom)); }
+body.web .composer { border-radius: 18px; padding: 8px 8px 6px 12px; }
+body.web textarea { font-size: 16px; }
+body.web .icon-btn { width: 42px; height: 42px; }
+body.web .chip-btn { height: 38px; padding: 0 10px; font-size: 13px; }
+body.web .send { min-height: 42px; min-width: 72px; padding: 9px 16px; font-size: 15px; border-radius: 12px; }
+body.web .status-line.on { height: 28px; }
+/* Settings stay on one line beside the attach and send buttons, and scroll sideways. */
+body.web .composer-row { flex-wrap: nowrap; }
+body.web .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
+body.web .chips::-webkit-scrollbar { display: none; }
+body.web .chip-btn { max-width: none; flex: none; }
+/* Until the PC answers, only the pairing card shows on the pearl ground. */
+body.web:not(.linked) .rail, body.web:not(.linked) .main, body.web:not(.linked) .link-bar { visibility: hidden; }
+/* Folders are made on the PC: an empty folder list is not worth a section here. */
+body.web .rail-folders:has(.folder-empty) { display: none; }
+
+/* Bigger targets in the drawer, sheets and menus. */
+body.web .search { height: 46px; }
+body.web .search input { font-size: 16px; }
+body.web .rail-find .new { padding: 12px 14px; font-size: 15px; }
+body.web .sessions li { padding: 13px 12px; }
+body.web .rail-sessions .views button { padding: 8px 11px; }
+body.web .folder-row { height: 42px; }
+body.web .theme-btn, body.web .sound { padding: 8px 12px; font-size: 13px; }
+body.web .sheet { width: calc(100vw - 20px); max-height: calc(var(--vvh, 100dvh) - 40px); padding: 18px 16px; }
+body.web .sheet .opt { padding: 13px 14px; }
+body.web .sheet .row button { padding: 12px 18px; }
+body.web .sheet input[type=text] { font-size: 16px; padding: 11px 12px; }
+body.web .menu-item { padding: 12px 12px; font-size: 15px; }
+body.web .takeover { margin-top: 6vh; padding: 20px 18px; }
+body.web .tk-row button { padding: 12px 16px; }
+body.web .stage-empty .new { padding: 12px 16px; }
+
+/* The PC this phone talks to, at the top of the drawer's footer. */
+.pc-line { display: none; }
+body.web .pc-line { display: flex; align-items: center; gap: 8px; padding: 12px 14px 0 18px; font-size: 13px; min-width: 0; }
+.pc-line:empty { display: none !important; }
+.pc-k { font: 900 10px/1 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--brand-strong); }
+.pc-n { font-weight: 800; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-s { font-size: 12px; color: var(--action-strong); font-weight: 650; white-space: nowrap; }
+.pc-s.ok { color: var(--good); }
+.pc-line button { margin-left: auto; flex: none; padding: 7px 12px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); background: var(--ground); font-weight: 700; font-size: 13px; color: var(--brand-deep); cursor: pointer; }
+
+/* Lost the PC for a moment: one quiet line under the top bar, words only. */
+.link-bar {
+  position: fixed; z-index: 45; left: 50%; top: calc(env(safe-area-inset-top) + var(--top) + 8px); transform: translateX(-50%);
+  display: flex; align-items: baseline; gap: 9px; max-width: calc(100vw - 24px); padding: 9px 14px; border-radius: 12px;
+  background: hsla(var(--w), .92); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+  border: 1px solid var(--hairline-strong); box-shadow: 0 12px 30px -18px rgba(var(--shadow-rgb), .5);
+  font-size: 13px; font-weight: 600; color: var(--soft); animation: rise var(--dur-fast) var(--ease-out); cursor: pointer;
+}
+.link-bar[hidden] { display: none; }
+.lb-k { flex: none; font: 900 10px/1 var(--font-display); font-stretch: 125%; letter-spacing: .12em; text-transform: uppercase; color: var(--action-strong); }
+.lb-t { min-width: 0; }
+
+/* ---------- pairing and connecting ---------- */
+.pair-screen {
+  position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: calc(20px + env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom)); overflow-y: auto;
+  background: hsla(var(--w), .35);
+}
+.pair-screen[hidden] { display: none; }
+body.linked .pair-screen { display: none; }
+.pair-card {
+  width: min(430px, 100%); padding: 24px 22px 22px; border-radius: 22px;
+  background: hsla(var(--w), .8); -webkit-backdrop-filter: blur(26px) saturate(1.5); backdrop-filter: blur(26px) saturate(1.5);
+  border: 1px solid var(--hairline-strong); box-shadow: 0 30px 80px -42px rgba(var(--shadow-rgb), .65);
+  animation: rise 220ms var(--ease-out);
+}
+.pair-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+.pair-brand .m-mark { width: 42px; height: 20px; flex: none; }
+.pair-brand .wordmark { font-weight: 900; font-stretch: 125%; font-size: 17px; letter-spacing: -.015em; }
+.pair-kicker { font: 900 10.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .14em; text-transform: uppercase; color: var(--brand-strong); }
+.pair-card h1 { margin: 9px 0 6px; font: 900 28px/1.1 var(--font-display); font-stretch: 125%; letter-spacing: -.022em; color: var(--ink); overflow-wrap: anywhere; }
+.pair-card p { margin: 10px 0 0; font-size: 15px; line-height: 1.5; color: var(--soft); }
+.pair-card b { color: var(--ink); font-weight: 800; }
+.pair-note { font-size: 13px !important; color: var(--faint) !important; }
+.pair-err { color: var(--action-strong) !important; font-weight: 650; }
+.pair-steps { list-style: none; counter-reset: step; margin: 18px 0 6px; padding: 0; }
+.pair-steps li { counter-increment: step; display: flex; gap: 12px; padding: 11px 0; border-top: 1px solid var(--hairline); font-size: 15px; line-height: 1.45; color: var(--soft); }
+.pair-steps li::before { content: counter(step); flex: none; width: 18px; font: 900 14px/1.45 var(--font-display); font-stretch: 125%; color: var(--brand-strong); }
+.pair-btn {
+  display: block; width: 100%; min-height: 50px; margin-top: 14px; border: 1px solid var(--fill); border-radius: 14px; cursor: pointer;
+  background: var(--fill); color: #fff; font: 820 16px/1 var(--font-body); font-stretch: 112%;
+  transition: background var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-out);
+}
+.pair-btn:active { transform: scale(.985); }
+.pair-btn.quiet { background: hsla(var(--w), .85); color: var(--ink); border-color: var(--hairline-strong); }
+.pair-paste { margin-top: 14px; font-size: 14px; color: var(--soft); }
+.pair-paste summary { cursor: pointer; padding: 8px 0; font-weight: 650; }
+.pp-row { display: flex; gap: 8px; margin-top: 6px; }
+.pp-row input { flex: 1; min-width: 0; height: 46px; padding: 0 12px; border: 1px solid var(--hairline-strong); border-radius: 12px; background: var(--ground); font-size: 16px; }
+.pp-row button, .pair-pcs button { flex: none; min-height: 44px; padding: 0 14px; border: 1px solid var(--hairline-strong); border-radius: 12px; background: var(--ground); font-weight: 760; cursor: pointer; color: var(--ink); }
+.pair-pcs button.quiet { color: var(--faint); background: none; }
+.pair-sec { margin-top: 20px; padding-bottom: 8px; border-bottom: 1px solid var(--hairline); font: 900 10.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-deep); }
+.pair-pcs { list-style: none; margin: 0; padding: 0; }
+.pair-pcs li { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.pp-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pp-t b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-t small { font-size: 12px; color: var(--faint); }
+.pair-code { display: flex; gap: 16px; margin: 20px 0 4px; font: 900 54px/1 var(--font-display); font-stretch: 125%; letter-spacing: .05em; color: var(--ink); font-variant-numeric: tabular-nums; animation: rise 220ms var(--ease-out); }
+.pair-code span:last-child { color: var(--brand-deep); }
+.pair-wait { margin: 18px 0 4px; }
+.pair-wait .egrid { grid-template-columns: repeat(5, 5px); grid-template-rows: repeat(3, 5px); gap: 4px; }
+.pair-wait .egrid i { width: 5px; height: 5px; border-radius: 1.5px; }
+.pair-video { display: block; width: 100%; aspect-ratio: 1; margin-top: 14px; border-radius: 16px; object-fit: cover; background: #0C0B16; }
+.pair-fine { max-width: 430px; margin: 14px 8px 0; text-align: center; font-size: 12.5px; line-height: 1.5; color: var(--faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  body.web .rail, .drawer-scrim { transition: none !important; }
+}

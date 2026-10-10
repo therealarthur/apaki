@@ -1,0 +1,12 @@
+<!-- Apaki phone client: the parts a phone adds to Apaki's own window
+     (apaki/ui/index.html). build-web.mjs puts this right after <body>.
+     boot.js fills the pairing card and the link bar. -->
+  <section class="pair-screen" id="pairScreen" aria-live="polite">
+    <div class="pair-card">
+      <div class="pair-brand">%MARK%<span class="wordmark">Myrlin Apaki</span></div>
+      <div id="pairBody"><div class="pair-kicker">Phone</div><h1>Starting…</h1></div>
+    </div>
+    <p class="pair-fine">End to end encrypted between this phone and your PC. The relay only forwards sealed frames; your Claude logins never leave the PC.</p>
+  </section>
+  <div class="link-bar" id="linkBar" role="status" hidden></div>
+  <div class="drawer-scrim" id="drawerScrim"></div>

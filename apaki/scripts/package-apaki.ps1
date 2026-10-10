@@ -8,6 +8,7 @@
 #   apaki\dist\Myrlin Apaki\
 #     myrlin-apaki.exe          the window (UI embedded)
 #     engine\                   the engine and latch together: apaki\engine,
+#                               apaki\remote (phone access protocol),
 #                               src\, bin\latch.js, package.json, node_modules\,
 #                               index\target\release\latch-index.exe
 #     node\node.exe             the Node runtime the engine and latch run on
@@ -54,6 +55,8 @@ function Mirror($from, $to, [switch]$Whole) {
 Mirror (Join-Path $repo 'src') (Join-Path $engine 'src')
 Mirror (Join-Path $repo 'bin') (Join-Path $engine 'bin')
 Mirror (Join-Path $repo 'apaki\engine') (Join-Path $engine 'apaki\engine')
+# Phone access (2026-10-09): the engine imports apaki\remote\protocol.js and wire.js.
+Mirror (Join-Path $repo 'apaki\remote') (Join-Path $engine 'apaki\remote')
 Mirror (Join-Path $repo 'node_modules') (Join-Path $engine 'node_modules') -Whole
 New-Item -ItemType Directory -Force (Join-Path $engine 'index\target\release') | Out-Null
 Copy-Item $index (Join-Path $engine 'index\target\release')

@@ -32,6 +32,9 @@ import { MARK_SVG } from './mark.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
+// The phone web client (apaki/web) runs this same file over the relay; it
+// sets apakiShell to 'web' and has no Phone sheet of its own.
+const WEB = window.apakiShell === 'web';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
@@ -1170,6 +1173,9 @@ function restore() {
 
 const PANE_EVENTS = new Set(['locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings']);
 
+/** Phone access (phone.js), set up at start; null in the phone web client. */
+let phone = null;
+
 // Registered before anything is sent: `listen` is async, and events that
 // arrive before it resolves are lost (a reload lost restored panes' opens).
 await listen('engine', ({ payload: e }) => {
@@ -1194,6 +1200,7 @@ await listen('engine', ({ payload: e }) => {
         for (const p of S.panes.values()) p.open(p.sessionId ? { id: p.sessionId, cwd: p.cwd, title: p.title } : null, { warm: false });
       }
       send('sessions');
+      phone?.refresh();
       break;
     case 'index':
       S.indexLine = e.ok ? `Words index up to date · ${e.stats?.blocks_added ?? 0} new · ${(e.ms / 1000).toFixed(1)}s` : 'Conversation index unavailable; search uses titles only.';
@@ -1276,6 +1283,7 @@ await listen('engine', ({ payload: e }) => {
       break;
     }
     case 'closed': break;
+    case 'remote': phone?.handle(e); break;
     case 'note': focusedPane()?.note(e.text, e.tone || ''); break;
     case 'error': focusedPane()?.note(e.message, 'error'); break;
     case 'engine_exit':
@@ -1312,6 +1320,9 @@ await listen('engine', ({ payload: e }) => {
 
 renderSound();
 renderTheme();
+// Phone access (phone.js, with the QR encoder) loads on the desktop only.
+if (WEB) $('phone')?.remove();
+else phone = (await import('./phone.js')).initPhone({ send, sheet, ding, button: $('phone') });
 restore();
 renderTabs();
 // Ask the engine for its state in case it was ready before this page loaded.

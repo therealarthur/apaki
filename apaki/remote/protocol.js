@@ -705,7 +705,16 @@ class BaseSession {
 
   /** Encrypts one JSON message; resolves to the frame to send. Calls resolve in call order. */
   sendJson(value) {
-    const body = te.encode(JSON.stringify(value));
+    return this.sendJsonText(JSON.stringify(value));
+  }
+
+  /**
+   * Like sendJson, for a message that is already JSON text (wire.js builds
+   * event batches as text, so it saves a parse and a stringify). The peer
+   * parses it and closes the session if it is not JSON.
+   */
+  sendJsonText(text) {
+    const body = te.encode(String(text));
     if (body.length > MAX_JSON_BYTES) return Promise.reject(new ProtocolError('bad-record', `JSON message larger than ${MAX_JSON_BYTES} bytes`));
     return this._seal(concat(new Uint8Array([CONTENT.JSON]), body));
   }

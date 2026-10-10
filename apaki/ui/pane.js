@@ -537,6 +537,8 @@ export class Pane {
         this.renderBilling();
         if (e.sessionId) this.$.T.innerHTML = '';
         else this.showEmpty();
+        // Re-attached after a reconnect (the phone client): busy says whether a turn is still running.
+        if (e.attached) this.setBusy(Boolean(e.busy));
         // Notes about how this session opened go below its history, which
         // arrives next and redraws the transcript (they were wiped before).
         this.openNotes = [];

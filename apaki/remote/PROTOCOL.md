@@ -215,6 +215,29 @@ Phone (IndexedDB): the device identity `{ privateKey, publicKey, pub }` as
 CryptoKey objects, and the pairing record
 `{ v, roomId, relay, pcPub, pcName, deviceId, psk, pairedAt }`.
 
+## Inside the channel (wire.js, since part 2)
+
+The records carry JSON messages that make the phone a remote window of the
+engine (`apaki/engine/remote.js` on the PC, `apaki/web/src/link.js` on the
+phone; both use `wire.js`):
+
+```
+phone -> PC   { t: 'cmd', cmd }               one engine command, the same shape the desktop window sends
+PC -> phone   { t: 'hello', v, pcName, ops }  right after the channel opens; ops = what this phone may send
+              { t: 'evs', list }              engine events, batched (25 ms or 64 KiB, whichever comes first)
+either way    { t: 'big', stream, bytes }     a message larger than one record, then CHUNK records of
+                                              that stream (seq 0, 1, ...; the last one flagged)
+```
+
+What a phone may send is an allowlist in `apaki/engine/remote-policy.js`
+(sessions, search, open, attach, send, interrupt, answer, model, effort,
+mode, commands, close, and artifactGet where the engine has it). Pane and
+request ids get the phone's prefix (`phone:<deviceId>:...`), so a phone only
+ever acts on its own panes, and only events about them (plus the folder,
+Glass and index broadcasts) go back to it. A phone that reconnects sends
+`attach` for each pane it had open: same pane, same Claude Code process, its
+history sent again.
+
 ## Known limits
 
 - The relay sees the device id in HELLO1 (it already sees connections, IPs,
