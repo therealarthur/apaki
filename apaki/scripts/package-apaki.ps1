@@ -9,6 +9,7 @@
 #     myrlin-apaki.exe          the window (UI embedded)
 #     engine\                   the engine and latch together: apaki\engine,
 #                               apaki\remote (phone access protocol),
+#                               apaki\bin (the BROWSER shim),
 #                               src\, bin\latch.js, package.json, node_modules\,
 #                               index\target\release\latch-index.exe
 #     node\node.exe             the Node runtime the engine and latch run on
@@ -57,6 +58,8 @@ Mirror (Join-Path $repo 'bin') (Join-Path $engine 'bin')
 Mirror (Join-Path $repo 'apaki\engine') (Join-Path $engine 'apaki\engine')
 # Phone access (2026-10-09): the engine imports apaki\remote\protocol.js and wire.js.
 Mirror (Join-Path $repo 'apaki\remote') (Join-Path $engine 'apaki\remote')
+# The BROWSER shim the engine gives Claude Code (apaki-open.cmd + .mjs), so pages open inside Apaki.
+Mirror (Join-Path $repo 'apaki\bin') (Join-Path $engine 'apaki\bin')
 Mirror (Join-Path $repo 'node_modules') (Join-Path $engine 'node_modules') -Whole
 New-Item -ItemType Directory -Force (Join-Path $engine 'index\target\release') | Out-Null
 Copy-Item $index (Join-Path $engine 'index\target\release')

@@ -32,6 +32,7 @@ import { MARK_SVG } from './mark.js';
 import { folderSheet } from './startfolder.js';
 import { initGlassCard } from './glasscard.js';
 import { initSettings } from './settings.js';
+import { ArtifactPane, newViewerId } from './artifacts.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -128,7 +129,66 @@ const host = {
   },
   dragEnd: () => endDrag(),
   linkSessions: (node) => linkSessions(node),
+  // Artifacts (artifacts.js): a card's Open, and web pages. The built-in
+  // browser (next) takes openUrl over; for now pages open in the system browser.
+  showArtifact: (art, opts) => openViewer(art, opts),
+  openUrl: (url) => send('openExternal', { url }),
+  paneTitle: (id) => S.panes.get(id)?.title || null,
 };
+
+/* ---------- artifact viewers ---------- */
+
+const viewers = () => [...S.panes.values()].filter((p) => p.isViewer);
+
+function createViewer(art, id = newViewerId()) {
+  const v = new ArtifactPane(id, host, art);
+  S.panes.set(v.id, v);
+  return v;
+}
+
+/**
+ * Shows an artifact: in the viewer already showing it, else in the viewer
+ * that belongs to the conversation that made it, else in a new viewer split
+ * to that conversation's right. Claude's own shows (auto) never rearrange a
+ * full tab; the card's Open then puts the viewer in a new tab. Focus stays
+ * where it was unless asked, so typing in the conversation is not interrupted.
+ */
+function openViewer(art, { focus = false, auto = false } = {}) {
+  const src = S.panes.get(art.sourcePane) || null;
+  let v = viewers().find((x) => x.art.id === art.id && x.art.sessionId === art.sessionId) || null;
+  const t = (v && tabOf(v)) || (src && tabOf(src)) || activeTab();
+  if (!v && t?.root) v = L.ids(t.root).map((id) => S.panes.get(id)).find((x) => x?.isViewer && x.sourcePane === art.sourcePane) || null;
+  const keep = document.activeElement;
+  const restoreFocus = () => { if (!focus && keep && document.contains(keep) && document.activeElement !== keep) keep.focus({ preventScroll: true }); };
+  if (v) {
+    v.show(art);
+    if (focus) focusPane(v);
+    renderTabs();
+    save();
+    return v;
+  }
+  if (!t || (t.root && L.count(t.root) >= L.MAX_PANES)) {
+    if (auto && t) return null;
+    const nt = createTab(null);
+    v = createViewer(art);
+    nt.root = L.leaf(v.id);
+    nt.focused = v.id;
+    layout(nt);
+    switchTab(nt);
+    focusPane(v);
+    save();
+    return v;
+  }
+  v = createViewer(art);
+  const anchor = src && L.has(t.root, src.id) ? src.id : t.focused || L.ids(t.root)[0];
+  t.root = t.root ? L.insert(t.root, anchor, v.id, 'right') : L.leaf(v.id);
+  if (!t.focused) t.focused = v.id;
+  layout(t);
+  if (focus) focusPane(v); else restoreFocus();
+  renderTabs();
+  save();
+  return v;
+}
 
 function createPane(settings = {}) {
   const p = new Pane(settings.id || newPaneId(), host, settings);
@@ -183,7 +243,7 @@ function focusPane(p, { scroll = true } = {}) {
     save();
   }
   if (p.unread) { p.unread = false; p.el.classList.remove('unread'); }
-  if (scroll && document.activeElement?.closest?.('.pane') !== p.el) p.$.input.focus({ preventScroll: true });
+  if (scroll && document.activeElement?.closest?.('.pane') !== p.el) p.$.input?.focus({ preventScroll: true });
   document.title = `Myrlin Apaki · ${p.title}`;
   renderTabs();
   renderRailMarks();
@@ -193,7 +253,7 @@ function closePane(p, { confirmBusy = true } = {}) {
   if (confirmBusy && p.busy && !window.confirm(`"${p.title}" is still working. Stop it and close the pane?`)) return;
   const t = tabOf(p);
   if (rec?.pane === p) stopVoice(true);
-  send('close', { paneId: p.id });
+  if (!p.isViewer) send('close', { paneId: p.id });
   S.panes.delete(p.id);
   p.destroy();
   if (!t) return;
@@ -208,7 +268,7 @@ function closePane(p, { confirmBusy = true } = {}) {
 function closeTab(t, { confirmBusy = true } = {}) {
   const panes = L.ids(t.root).map((id) => S.panes.get(id)).filter(Boolean);
   if (confirmBusy && panes.some((p) => p.busy) && !window.confirm('A pane in this tab is still working. Stop it and close the tab?')) return;
-  for (const p of panes) { send('close', { paneId: p.id }); S.panes.delete(p.id); p.destroy(); }
+  for (const p of panes) { if (!p.isViewer) send('close', { paneId: p.id }); S.panes.delete(p.id); p.destroy(); }
   const i = S.tabs.indexOf(t);
   S.tabs.splice(i, 1);
   t.stage.remove();
@@ -219,7 +279,7 @@ function closeTab(t, { confirmBusy = true } = {}) {
 }
 
 function newConversation(p) {
-  if (!p || p.busy) { addTab(); return; }
+  if (!p || p.busy || p.isViewer) { addTab(); return; }
   p.cwd = ''; // home, like a new terminal; "Starts in" changes it
   p.open(null, { warm: true });
 }
@@ -370,7 +430,7 @@ function showHint(t, z, kind) {
   if (z.where === 'edge') text = `Split ${z.edge}`;
   if (z.where === 'center') {
     if (kind === 'pane') text = L.has(t.root, S.drag?.paneId) ? 'Swap these panes' : 'Move here';
-    else text = z.full ? `${L.MAX_PANES} panes is the most per tab. Drop here to replace this one, or on + for a new tab` : 'Replace this conversation';
+    else text = z.full ? `${L.MAX_PANES} panes is the most per tab. Drop here to replace this one, or on + for a new tab` : z.pane.isViewer ? 'Replace this viewer' : 'Replace this conversation';
     if (z.pane.busy && kind === 'session') text = 'This pane is working; drop on an edge instead';
   }
   hint.textContent = text;
@@ -412,8 +472,9 @@ function wireStage(t) {
     e.preventDefault();
     if (kind === 'files') {
       for (const c of t.stage.querySelectorAll('.composer.drop')) c.classList.remove('drop');
-      const pane = S.panes.get(e.target.closest?.('.pane')?.dataset.pane) || focusedPane();
-      for (const f of e.dataTransfer.files || []) await pane?.addImageFile(f);
+      let pane = S.panes.get(e.target.closest?.('.pane')?.dataset.pane) || focusedPane();
+      if (pane?.isViewer) pane = S.panes.get(pane.sourcePane) || null;
+      for (const f of e.dataTransfer.files || []) await pane?.addImageFile?.(f);
       return;
     }
     const z = dropZone(t, e, kind);
@@ -430,6 +491,20 @@ function dropSession(t, z, s) {
   if (!s) return;
   const existing = paneBySession(s.id);
   if (existing) { focusPane(existing); existing.note('This session is already open here.'); return; }
+  if (z.where === 'center' && z.pane.isViewer) {
+    // Dropped on a viewer: the session takes the viewer's place.
+    const v = z.pane;
+    const p = createPane({ cwd: s.cwd, title: s.title });
+    t.root = L.mapLeaves(t.root, (lf) => (lf.pane === v.id ? L.leaf(p.id) : lf));
+    if (t.focused === v.id) t.focused = p.id;
+    S.panes.delete(v.id);
+    v.destroy();
+    layout(t);
+    p.open(s, { warm: true });
+    focusPane(p);
+    save();
+    return;
+  }
   if (z.where === 'center') {
     if (z.pane.busy) { z.pane.note('This pane is working. Drop the session on an edge to split instead.', 'warn'); return; }
     z.pane.open(s, { warm: true });
@@ -818,8 +893,14 @@ function openFromRail(s, e = {}) {
   if (existing) { focusPane(existing); return; }
   if (e.ctrlKey || e.metaKey) { addTab({ session: s }); return; }
   const t = activeTab();
-  const p = focusedPane();
+  let p = focusedPane();
   if (e.shiftKey && t?.root) { addToTab(t, s); return; }
+  // A viewer is focused: open in the conversation it belongs to, if that is here and free.
+  if (p?.isViewer) {
+    const src = S.panes.get(p.sourcePane);
+    if (src && !src.busy && tabOf(src) === t) p = src;
+    else { if (t?.root) addToTab(t, s); else addTab({ session: s }); return; }
+  }
   if (!p || p.busy) { addTab({ session: s }); return; }
   p.open(s, { warm: true });
   focusPane(p);
@@ -1057,8 +1138,9 @@ document.addEventListener('paste', async (e) => {
   const files = [...(e.clipboardData?.items || [])].filter((it) => it.type.startsWith('image/')).map((it) => it.getAsFile());
   if (!files.length) return;
   e.preventDefault();
-  const pane = S.panes.get(document.activeElement?.closest?.('.pane')?.dataset.pane) || focusedPane();
-  for (const f of files) await pane?.addImageFile(f);
+  let pane = S.panes.get(document.activeElement?.closest?.('.pane')?.dataset.pane) || focusedPane();
+  if (pane?.isViewer) pane = S.panes.get(pane.sourcePane) || null;
+  for (const f of files) await pane?.addImageFile?.(f);
 });
 // Files dropped outside a pane must not navigate the window away.
 document.addEventListener('dragover', (e) => { if (dragKind(e) === 'files') e.preventDefault(); });
@@ -1166,6 +1248,7 @@ function save() {
       focused: t.focused,
       root: L.mapLeaves(t.root, (lf) => {
         const p = S.panes.get(lf.pane);
+        if (p?.isViewer) return { type: 'leaf', pane: lf.pane, view: p.saved() };
         return { type: 'leaf', pane: lf.pane, s: p?.sessionId || null, cwd: p?.cwd || '', title: p?.title || '', model: p?.model, effort: p?.effort, mode: p?.mode };
       }),
     }));
@@ -1180,6 +1263,8 @@ function restore() {
   for (const st of tabs) {
     const seen = new Set();
     const root = L.mapLeaves(st.root, (lf) => {
+      // A viewer comes back showing its artifact's latest revision.
+      if (lf.view?.id) return L.leaf(createViewer(lf.view, lf.pane).id);
       // One session per pane, ever: a duplicate in old saved state opens as a new conversation.
       const sid = lf.s && !seen.has(lf.s) ? lf.s : null;
       if (sid) seen.add(sid);
@@ -1200,7 +1285,7 @@ function restore() {
 
 /* ---------- engine events ---------- */
 
-const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings']);
+const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent']);
 
 /** Phone access (phone.js), set up at start; null in the phone web client. */
 let phone = null;
@@ -1208,6 +1293,14 @@ let phone = null;
 // Registered before anything is sent: `listen` is async, and events that
 // arrive before it resolves are lost (a reload lost restored panes' opens).
 await listen('engine', ({ payload: e }) => {
+  // Something Claude showed: a card in its conversation, and the viewer beside it.
+  if (e.ev === 'artifact' || e.ev === 'openUrl') {
+    const p = S.panes.get(e.paneId);
+    p?.handle(e);
+    if (e.ev === 'artifact') openViewer({ ...e, sourcePane: e.paneId }, { auto: true });
+    // openUrl: the built-in browser takes these over; until then the card's button opens the system browser.
+    return;
+  }
   if (e.paneId && PANE_EVENTS.has(e.ev)) {
     const p = S.panes.get(e.paneId);
     if (!p) return; // a pane closed while its event was on the way
@@ -1226,7 +1319,11 @@ await listen('engine', ({ payload: e }) => {
       // each one (without starting Claude Code until its next message).
       if (S.engineLost) {
         S.engineLost = false;
-        for (const p of S.panes.values()) p.open(p.sessionId ? { id: p.sessionId, cwd: p.cwd, title: p.title } : null, { warm: false });
+        for (const p of S.panes.values()) {
+          // Viewers load again from the new engine's server address.
+          if (p.isViewer) { p.engineBack(); continue; }
+          p.open(p.sessionId ? { id: p.sessionId, cwd: p.cwd, title: p.title } : null, { warm: false });
+        }
       }
       send('sessions');
       phone?.refresh();
@@ -1361,4 +1458,4 @@ send('sessions');
 setInterval(() => { if (![...S.panes.values()].some((p) => p.busy) && !S.query && !S.drag) send('sessions'); }, 15000);
 
 // For apaki/scripts/cdp-check.mjs: the live state, read only.
-window.__apaki = { S, L, focusedPane, activeTab, addTab, arrangeGrid, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };
+window.__apaki = { S, L, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };

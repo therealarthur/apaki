@@ -15,6 +15,7 @@
 
 import { esc, md } from './markdown.js';
 import { EFFORTS, effortGrid, menu } from './menu.js';
+import { SHOW_TOOL, artifactCard, linkCard, parseOpened, parseRef, updateCard } from './artifacts.js';
 
 // Images go in at most this many pixels on the long edge (the API's sweet
 // spot, and under the 2000 px limit that breaks a session).
@@ -42,6 +43,12 @@ export const MODES = [
 const EFFORT_HINTS = { low: 'Fastest, least thinking', medium: 'Balanced', high: 'Thinks harder', xhigh: 'Thinks much harder', max: 'Everything it has' };
 
 export const short = (p) => String(p || '').replace(/^C:\\Users\\[^\\]+/i, '~');
+
+/** The artifact kind a file's extension gives (for cards rebuilt from history). */
+const kindFromPath = (p) => {
+  const e = (String(p).match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+  return { html: 'html', htm: 'html', md: 'markdown', markdown: 'markdown', svg: 'svg', pdf: 'pdf' }[e] || (/^(png|jpe?g|gif|webp|bmp|ico|avif)$/.test(e) ? 'image' : 'text');
+};
 
 function el(tag, cls, html) {
   const e = document.createElement(tag);
@@ -78,6 +85,7 @@ export class Pane {
     this.commands = [];
     this.streams = new Map();
     this.tools = new Map();
+    this.cardKeys = new Set(); // artifact and link cards already in the transcript
     this.slashSel = 0;
     this.curMsg = null;
     this.tick = null;
@@ -392,6 +400,8 @@ export class Pane {
   }
 
   addTool(block) {
+    // Apaki's show tool is drawn as a card the user can open again later.
+    if (block.name === SHOW_TOOL) { this.addShowCard(block); return; }
     const d = el('details', 'tool');
     const label = block.name === 'Task' ? 'Agent' : block.name;
     d.innerHTML = `<summary><span class="dot">⏺</span><span class="name">${esc(label)}</span><span class="args">(${esc(toolArgs(block.name, block.input))})</span></summary><div class="sum">running…</div>`;
@@ -407,12 +417,97 @@ export class Pane {
     this.scrollDown();
   }
 
+  /* ---------- artifact and link cards (artifacts.js) ---------- */
+
+  /** A card for a show call; it gets its id from the artifact event or the tool's result. */
+  addShowCard(block) {
+    const input = block.input || {};
+    const kind = String(input.kind || 'file').toLowerCase();
+    const card = artifactCard({ title: input.title || (input.path ? String(input.path).split(/[\\/]/).pop() : 'Artifact'), kind, state: 'pending' }, { onOpen: (c) => this.openCard(c) });
+    card.dataset.tool = block.id;
+    card.dataset.input = kind === 'url' ? JSON.stringify({ url: input.url || input.content || input.path || '', title: input.title || '' }) : '';
+    this.clearEmpty();
+    this.$.T.append(card);
+    this.tools.set(block.id, card);
+    this.scrollDown();
+  }
+
+  /** Opens a card's artifact in a viewer beside this conversation. */
+  openCard(c) {
+    this.host.showArtifact?.({ sessionId: this.sessionId, id: c.dataset.id, rev: Number(c.dataset.rev) || null, title: c.dataset.title, kind: c.dataset.kind, sourcePane: this.id }, { focus: true });
+  }
+
+  /** Swaps a show card for a link card (kind url), or adds one after `after`. */
+  placeLink({ url, title, reason, toolUseId }, replace = null, after = null) {
+    const key = `u:${url}:${toolUseId || Math.random()}`;
+    if (this.cardKeys.has(key)) return;
+    this.cardKeys.add(key);
+    const card = linkCard({ url, title, reason }, { onOpen: (u) => this.host.openUrl?.(u) });
+    if (replace) { replace.replaceWith(card); if (toolUseId) this.tools.set(toolUseId, card); } else if (after?.isConnected) after.after(card); else this.$.T.append(card);
+    this.scrollDown();
+  }
+
+  /** A card for an artifact a caught "open" command or BROWSER showed. */
+  placeArtifact({ id, rev, title, kind, sub }, after = null) {
+    const key = `a:${id}:${rev}`;
+    if (this.cardKeys.has(key)) return;
+    this.cardKeys.add(key);
+    this.clearEmpty();
+    const card = artifactCard({ id, rev, title, kind, sub, state: 'ready' }, { onOpen: (c) => this.openCard(c) });
+    if (after?.isConnected) {
+      // After the tool line and any cards already placed after it.
+      let at = after;
+      while (at.nextElementSibling?.classList.contains('art-card')) at = at.nextElementSibling;
+      at.after(card);
+    } else this.$.T.append(card);
+    this.scrollDown();
+  }
+
+  /** The engine stored an artifact for this pane: fill its show card, or add a card. */
+  onArtifact(e) {
+    let card = e.toolUseId ? this.tools.get(e.toolUseId) : null;
+    if (card && !card.classList.contains('art-card')) card = null; // a Bash line: the open was caught
+    if (!card && e.via === 'show') card = [...this.$.T.querySelectorAll('.art-card[data-state=pending]')].pop() || null;
+    if (card) {
+      this.cardKeys.add(`a:${e.id}:${e.rev}`);
+      updateCard(card, { id: e.id, rev: e.rev, title: e.title, kind: e.kind, state: 'ready' });
+      return;
+    }
+    const via = e.via && e.via !== 'show' ? `Opened by ${e.via}` : '';
+    this.placeArtifact({ id: e.id, rev: e.rev, title: e.title, kind: e.kind, sub: via }, e.toolUseId ? this.tools.get(e.toolUseId) : null);
+  }
+
+  onOpenUrl(e) {
+    const tool = e.toolUseId ? this.tools.get(e.toolUseId) : null;
+    if (tool?.classList.contains('art-card')) { this.placeLink({ url: e.url, title: e.title, reason: e.reason, toolUseId: e.toolUseId }, tool); return; }
+    this.clearEmpty();
+    this.placeLink({ url: e.url, title: e.title, reason: e.reason, toolUseId: e.toolUseId }, null, tool);
+  }
+
   toolResult(id, content, isError) {
     const d = this.tools.get(id);
     if (!d) return;
     const text = Array.isArray(content) ? content.filter((c) => c.type === 'text').map((c) => c.text).join('\n') : String(content ?? '');
+    if (d.classList.contains('art-card')) {
+      if (d.classList.contains('link')) return;
+      const urlInput = d.dataset.input ? JSON.parse(d.dataset.input) : null;
+      if (urlInput && !isError) { this.placeLink({ url: urlInput.url, title: urlInput.title, reason: 'show', toolUseId: id }, d); return; }
+      const ref = parseRef(text);
+      if (isError || !ref) { updateCard(d, { state: 'error', error: text.replace(/^Apaki could not show that: /, '').slice(0, 240) }); return; }
+      this.cardKeys.add(`a:${ref.id}:${ref.rev}`);
+      updateCard(d, { id: ref.id, rev: ref.rev, state: 'ready' });
+      return;
+    }
+    // A shell command Apaki caught opening something: cards for what it showed.
+    const opened = parseOpened(text);
+    for (const o of opened) {
+      if (o.kind === 'url') this.placeLink({ url: o.url, reason: 'command', toolUseId: id }, null, d);
+      else this.placeArtifact({ id: o.id, rev: o.rev, title: o.path.split(/[\\/]/).pop(), kind: kindFromPath(o.path), sub: 'Opened by a command' }, d);
+    }
     const lines = text.split('\n').filter((l) => l.trim());
-    d.classList.add(isError ? 'err' : 'ok');
+    // Denied only because Apaki showed it itself: that is a success, not an error.
+    d.classList.add(isError && !opened.length ? 'err' : 'ok');
+    if (opened.length) d.classList.add('caught');
     d.querySelector('.sum').textContent = lines.length ? `${lines[0].slice(0, 200)}${lines.length > 1 ? `  … +${lines.length - 1} lines` : ''}` : '(no output)';
     const pre = el('pre');
     pre.textContent = text.slice(0, 20000);
@@ -438,6 +533,7 @@ export class Pane {
   renderHistory(messages, total) {
     this.$.T.innerHTML = '';
     this.tools.clear();
+    this.cardKeys.clear();
     if (total > messages.length) this.note(`Showing the latest ${messages.length} of ${total} messages. The whole conversation is in the session.`);
     for (const m of messages) {
       if (m.parent_tool_use_id) continue; // subagent traffic
@@ -742,7 +838,7 @@ export class Pane {
         this.lockedBy = null;
         if (e.sessionId !== this.sessionId) { this.queue = []; this.steering.clear(); this.stoppedByUser = false; this.renderQueue(); }
         this.sessionId = e.sessionId; this.cwd = e.cwd; this.billing = e.billing;
-        this.streams.clear(); this.tools.clear();
+        this.streams.clear(); this.tools.clear(); this.cardKeys.clear();
         this.setTitle(e.title || 'New conversation');
         this.setCwdLine();
         this.renderBilling();
@@ -777,6 +873,8 @@ export class Pane {
       }
       case 'billing': this.billing = e; this.renderBilling(); if (e.note) this.note(e.note); break;
       case 'commands': this.commands = e.commands || []; break;
+      case 'artifact': this.onArtifact(e); break;
+      case 'openUrl': this.onOpenUrl(e); break;
       case 'settings': this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode; this.renderChips(); break;
       case 'note': this.note(e.text, e.tone || ''); break;
       case 'steered': { const it = this.steering.get(e.qid); this.steering.delete(e.qid); if (it) this.addUser(it.text, it.attachments, { steered: true }); break; }

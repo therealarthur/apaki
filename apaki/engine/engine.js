@@ -38,6 +38,20 @@
  * remotePairCancel, remotePairDecision, remoteDevices, remoteRevoke (ev
  * remote). attach re-sends a pane's state without restarting it (a phone that
  * reconnected).
+ * Artifacts (2026-10-09, Arthur: like Codex's built-in artifacts, out of the
+ * box): every pane's Claude Code gets Apaki's tools at runtime, through SDK
+ * options only (apaki-tools.js): the in-process MCP server "apaki" with its
+ * show tool, a short appended system prompt, PreToolUse/PostToolUse hooks that
+ * turn "open this" shell commands into artifacts, and BROWSER pointing at
+ * apaki/bin/apaki-open.cmd with a per-pane token for this engine's localhost
+ * server (open-server.js), which also serves artifacts to the viewer.
+ *   ev artifact  { paneId, sessionId, id, title, kind, rev, path, src, ext, mime, size, source, revs, via, toolUseId }
+ *   ev openUrl   { paneId, sessionId, url, reason, title, toolUseId }  (a web page to open; the
+ *                built-in browser takes these over later, for now the window shows a link card)
+ *   op artifactGet { id, sessionId?, rev?, content? } -> ev artifactContent (meta, src, and the
+ *                content: utf8 for html/markdown/svg/text, base64 for image/pdf)
+ *   op artifactList { sessionId } -> ev artifacts { sessionId, items }
+ *   op openExternal { url } or { id, sessionId?, rev? } -> the system browser / default app
  */
 
 import { execFile, spawn } from 'node:child_process';
@@ -45,7 +59,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { getSessionInfo, getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
+import { ArtifactStore, kindOfExt } from './artifacts.js';
+import { createApakiTools } from './apaki-tools.js';
+import { startOpenServer } from './open-server.js';
 import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
 import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
 import { searchHybrid, startIndexServer, updateIndex, updateViaServer } from '../../src/deepindex.js';
@@ -91,8 +109,70 @@ const state = {
 // New panes start from these; the window can pass its own per pane.
 const defaults = { credential: glassCredential(), model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, mode: 'bypassPermissions' };
 
-/** paneId -> { id, runner, sessionId, credential, model, effort, mode } */
+/** paneId -> { id, runner, sessionId, credential, model, effort, mode, tools } */
 const panes = new Map();
+
+/* ---------- artifacts and "open this" (apaki-tools.js) ---------- */
+
+const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const OPEN_SHIM = path.join(ENGINE_ROOT, 'apaki', 'bin', 'apaki-open.cmd');
+const store = new ArtifactStore();
+
+/** A served address for one revision of an artifact, for the window's viewer. */
+const srcOf = (rec, rev) => (openServer ? openServer.artifactUrl(rec, rev) : null);
+
+function artifactEvent(p, rec, meta = {}) {
+  return {
+    ev: 'artifact', paneId: p.id, sessionId: rec.sessionId, id: rec.id, title: rec.title, kind: rec.kind, rev: rec.rev,
+    path: store.fileOf(rec).file, src: srcOf(rec), ext: rec.ext, mime: rec.mime, size: rec.size, source: rec.source,
+    revs: rec.revs.map((r) => ({ rev: r.rev, at: r.at, title: r.title, ext: r.ext })), via: meta.via || 'show', toolUseId: meta.toolUseId || null,
+  };
+}
+
+/** The tools one pane's Claude Code gets (made once per pane, shared by its restarts). */
+function toolsFor(p) {
+  if (!p.tools) {
+    p.tools = createApakiTools({
+      store,
+      sessionId: () => p.runner?.sessionId || p.sessionId || null,
+      cwd: () => p.runner?.cwd || os.homedir(),
+      onArtifact: (rec, meta) => emit(artifactEvent(p, rec, meta)),
+      onOpenUrl: (o) => emit({ ev: 'openUrl', paneId: p.id, sessionId: p.runner?.sessionId || p.sessionId || null, url: o.url, title: o.title || null, reason: o.reason || 'show', toolUseId: o.toolUseId || null }),
+    });
+  }
+  return p.tools;
+}
+
+/** BROWSER and friends for a pane's Claude Code, so tools that open a browser open in Apaki. */
+function browserEnv(p) {
+  if (!openServer || process.platform !== 'win32' || !fs.existsSync(OPEN_SHIM)) return {};
+  return { BROWSER: OPEN_SHIM, APAKI_OPEN_URL: openServer.openUrl, APAKI_OPEN_TOKEN: openServer.paneToken(p.id), APAKI_NODE: process.execPath };
+}
+
+/** A URL a pane's BROWSER shim handed over: local files become artifacts, pages go to the window. */
+function openedByBrowser(paneId, url) {
+  const p = panes.get(paneId);
+  if (!p) return;
+  if (/^file:\/\//i.test(url)) { toolsFor(p).show({ kind: 'file', path: url }, { via: 'BROWSER' }).catch(() => {}); return; }
+  emit({ ev: 'openUrl', paneId: p.id, sessionId: p.runner?.sessionId || p.sessionId || null, url, title: null, reason: 'BROWSER', toolUseId: null });
+}
+
+/** An artifact the stdio tool server (apaki-mcp-stdio.mjs) stored for a pane: show it like an in-process one. */
+function shownByStdio(paneId, { id, sessionId }) {
+  const p = panes.get(paneId);
+  const rec = p ? store.record(id, sessionId) : null;
+  if (rec) emit(artifactEvent(p, rec, { via: 'show' }));
+}
+
+let openServer = null;
+try { openServer = await startOpenServer({ store, onOpen: openedByBrowser, onShown: shownByStdio }); } catch (e) { process.stderr.write(`apaki: the localhost server did not start (${e.message}); artifacts show without the viewer\n`); }
+
+/** Opens a web page, or a stored artifact's file, outside Apaki (the system browser or default app). */
+function openOutside(target) {
+  const [cmd, args] = process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', target]]
+    : process.platform === 'darwin' ? ['open', [target]] : ['xdg-open', [target]];
+  spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+}
 
 function getPane(paneId) {
   const id = String(paneId || 'main');
@@ -311,10 +391,16 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   p.sessionId = sessionId || null;
   p.openedAt = new Date().toISOString();
   p.credential = p.credential.follow ? glassCredential() : p.credential;
+  const tools = toolsFor(p);
   const runner = new SessionRunner({
     sessionId: sessionId || null,
     cwd: cwd || info?.cwd || os.homedir(),
     env: childEnv(p.credential.key),
+    // Apaki's own tools and "open this" catcher, passed at runtime only.
+    mcpServers: tools.mcpServers,
+    appendSystemPrompt: tools.appendSystemPrompt,
+    hooks: tools.hooks,
+    envExtra: browserEnv(p),
     model: p.model,
     effort: p.effort,
     permissionMode: p.mode,
@@ -412,6 +498,7 @@ async function closePane(reqId, paneId) {
   if (!p) return;
   for (const [id, a] of state.asks) if (a.paneId === p.id) { state.asks.delete(id); a.resolve({ behavior: 'deny', message: 'The pane was closed.' }); }
   await closeRunner(p);
+  openServer?.forget(p.id);
   panes.delete(p.id);
   emit({ ev: 'closed', reqId, paneId: p.id });
 }
@@ -585,6 +672,37 @@ const handlers = {
     if (list.length) state.commandsByCwd.set(runner.cwd, list);
     emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: list });
   },
+  // One artifact revision for the viewer and (later) the phone: its record, a
+  // served address, and the content unless content:false (the viewer loads
+  // html, images and pdf from src and only needs the text of markdown and code).
+  artifactGet: (c) => {
+    const got = store.get(c.id, { sessionId: c.sessionId || null, rev: c.rev ?? null });
+    if (!got) { emit({ ev: 'artifactContent', reqId: c.reqId, paneId: c.paneId || null, id: c.id, sessionId: c.sessionId || null, error: 'This artifact is no longer on this PC.' }); return; }
+    const rec = got.record;
+    const kind = got.rev === rec.rev ? rec.kind : kindOfExt(got.ext);
+    const binary = kind === 'image' || kind === 'pdf';
+    // content: 'text' = only when it is text (the viewer); false = never; default = always (the phone).
+    const want = c.content === 'text' ? !binary : c.content !== false;
+    emit({
+      ev: 'artifactContent', reqId: c.reqId, paneId: c.paneId || null, id: rec.id, sessionId: rec.sessionId, title: (rec.revs.find((r) => r.rev === got.rev) || rec).title,
+      kind, ext: got.ext, mime: got.mime, rev: got.rev, latest: rec.rev, size: got.buf.length, src: srcOf(rec, got.rev), path: got.file, source: rec.source,
+      revs: rec.revs.map((r) => ({ rev: r.rev, at: r.at, title: r.title, ext: r.ext })),
+      ...(want ? { encoding: binary ? 'base64' : 'utf8', content: binary ? got.buf.toString('base64') : got.buf.toString('utf8') } : {}),
+    });
+  },
+  artifactList: (c) => emit({
+    ev: 'artifacts', reqId: c.reqId, sessionId: c.sessionId || null,
+    items: c.sessionId ? store.list(c.sessionId).map((r) => ({ id: r.id, title: r.title, kind: r.kind, rev: r.rev, ext: r.ext, size: r.size, updatedAt: r.updatedAt, src: srcOf(r) })) : [],
+  }),
+  openExternal: (c) => {
+    if (c.url) {
+      if (!/^https?:\/\/[^\s"'<>]+$/i.test(String(c.url))) { emit({ ev: 'error', reqId: c.reqId, paneId: c.paneId || null, message: `Not a web address: ${c.url}` }); return; }
+      openOutside(String(c.url));
+      return;
+    }
+    const got = c.id ? store.get(c.id, { sessionId: c.sessionId || null, rev: c.rev ?? null }) : null;
+    if (got) openOutside(got.file);
+  },
   folder: async (c) => {
     if (c.action === 'create') { const f = folders.createFolder(c.name); if (!f.error && c.sessionId) folders.moveToFolder(c.sessionId, f.id); }
     if (c.action === 'move') folders.moveToFolder(c.sessionId, c.folderId || null);
@@ -740,7 +858,7 @@ glassChanged().catch(() => {});
 // Usage numbers move without a login change; Glass keeps them, this only reads them.
 setInterval(() => { glassChanged().catch(() => {}); }, 60 * 1000).unref();
 
-emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady() });
+emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer) });
 // Keep the conversation indexes current in the background. The index server
 // (latch-index serve) holds the keyword index, the meaning index and the
 // embedding model open for searches, and updates both: keyword first (under a
