@@ -18,7 +18,10 @@
  *       0.7 s). Subagent transcripts (in subfolders) do not count. If the
  *       recursive watch cannot start, a refresh runs every 20 s instead.
  *
- * startLive({ liveDir, projectsDir, terminals, onTerminals, onChange }) returns stop().
+ *   ~/.claude/projects/<project>/<id>/subagents/...  a session's subagents:
+ *       onSubagents(sessionId), 1.5 s after that session's last change.
+ *
+ * startLive({ liveDir, projectsDir, terminals, onTerminals, onChange, onSubagents }) returns stop().
  */
 
 import fs from 'node:fs';
@@ -35,13 +38,20 @@ export function terminalSignature(map) {
   return [...map].map(([id, recs]) => `${id}:${recs.map((r) => `${r.pid}/${r.status}/${r.name}`).join(',')}`).sort().join('|');
 }
 
+/** The session a subagent transcript path (relative to the projects folder) belongs to, or null. */
+export function subagentSession(rel) {
+  const parts = String(rel || '').split(/[\\/]/);
+  if (parts.length < 4 || parts[2] !== 'subagents' || !parts[parts.length - 1].endsWith('.jsonl')) return null;
+  return /^[0-9a-f-]{36}$/i.test(parts[1]) ? parts[1] : null;
+}
+
 /** True for a top-level transcript path relative to the projects folder (not a subagent's). */
 export function isTopTranscript(rel) {
   if (!rel || !rel.endsWith('.jsonl')) return false;
   return rel.split(/[\\/]/).length === 2;
 }
 
-export function startLive({ liveDir, projectsDir, terminals, onTerminals, onChange }) {
+export function startLive({ liveDir, projectsDir, terminals, onTerminals, onChange, onSubagents = null }) {
   const timers = new Set();
   const watchers = [];
   let lastSig = terminalSignature(terminals());
@@ -74,7 +84,17 @@ export function startLive({ liveDir, projectsDir, terminals, onTerminals, onChan
     pending.unref?.();
   };
   try {
-    const w = fs.watch(projectsDir, { recursive: true }, (_event, file) => { if (isTopTranscript(String(file || ''))) schedule(); });
+    const subTimers = new Map();
+    const w = fs.watch(projectsDir, { recursive: true }, (_event, file) => {
+      const rel = String(file || '');
+      if (isTopTranscript(rel)) { schedule(); return; }
+      const sid = onSubagents ? subagentSession(rel) : null;
+      if (!sid) return;
+      clearTimeout(subTimers.get(sid));
+      const t = setTimeout(() => { subTimers.delete(sid); onSubagents(sid); }, LIST_QUIET_MS);
+      t.unref?.();
+      subTimers.set(sid, t);
+    });
     w.on('error', () => {});
     watchers.push(w);
   } catch {

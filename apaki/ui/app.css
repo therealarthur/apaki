@@ -1604,3 +1604,100 @@ input.rename {
   .tab.busy::after, .empty-grid.rand i, .status .dots i, .sec-refresh.spin svg { animation: none; }
   .status .dots i { opacity: .6; }
 }
+
+/* ==========================================================================
+   2026-10-10: subagents, shells, monitors (tasks.js). The Tasks button and
+   popover, the task viewer, Open on tool lines, and the rail's subagent lists.
+   ========================================================================== */
+
+/* The Tasks button in a conversation's bar: quiet with the session's subagent count, brand ink while some run. */
+.tasks-btn {
+  display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 8px; flex: none; border: 1px solid transparent; border-radius: 8px;
+  background: none; color: var(--soft); cursor: pointer; font: 700 11px/1 var(--font-mono);
+  transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.tasks-btn[hidden] { display: none; }
+.tasks-btn:hover { background: var(--tint); color: var(--brand-deep); }
+.tasks-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.tasks-btn.lit { color: var(--brand-strong); background: hsla(232, 60%, 62%, .1); border-color: hsla(232, 60%, 62%, .22); }
+.tasks-btn.lit .tb-n::after { content: ' running'; font-weight: 600; }
+
+/* Open on a tool line that started a subagent or a background shell. */
+.tool summary .tool-open {
+  margin-left: 8px; padding: 1px 8px; border: 1px solid var(--hairline-strong); border-radius: 6px; background: hsl(var(--w)); cursor: pointer;
+  font: 650 11px/1.5 var(--font-body); color: var(--brand-deep); vertical-align: 1px;
+  transition: border-color var(--dur-fast) var(--ease-hover), background var(--dur-fast) var(--ease-hover);
+}
+.tool summary .tool-open:hover { border-color: var(--brand); background: var(--brand-wash); }
+.tool summary .tool-open.running { border-color: hsla(var(--pearl-stop-blue), .45); }
+
+/* The Tasks popover. */
+.task-panel {
+  position: fixed; z-index: 22; display: flex; flex-direction: column; overflow: hidden; border-radius: 14px;
+  background: linear-gradient(120deg, hsla(var(--pearl-stop-blue), .07), hsla(var(--pearl-stop-purple), .05) 50%, hsla(var(--pearl-stop-cyan), .06)), hsla(var(--w), .92);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
+  border: 1px solid hsla(var(--w), .85); box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, .5), 0 0 0 1px hsla(232, 40%, 78%, .3), 0 18px 44px -20px rgba(var(--shadow-rgb), .55);
+  animation: menu-in var(--dur-fast) var(--ease-out); transform-origin: top right;
+}
+.task-panel.out { animation: menu-out var(--dur-exit) var(--ease-hover) forwards; }
+.tp-head { display: flex; align-items: baseline; gap: 10px; padding: 12px 14px 8px; border-bottom: 1px solid var(--hairline); }
+.tp-h { font: var(--heavy) 11px/1 var(--font-display); font-stretch: var(--wide); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-deep); }
+.tp-n { margin-left: auto; font: 500 11px var(--font-mono); color: var(--faint); }
+.tp-body { overflow-y: auto; padding: 4px 6px 8px; scrollbar-width: thin; }
+.tp-sec { padding: 10px 8px 4px; font: 820 9.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.tp-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 8px 8px; border-radius: 10px; cursor: pointer; transition: background var(--dur-fast) var(--ease-hover); }
+.tp-row:hover { background: hsla(232, 60%, 62%, .08); }
+.tp-g { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: hsla(232, 60%, 62%, .1); }
+.tp-g svg, .sub-g svg, .subs-n svg { width: 13px; height: 13px; fill: none; stroke: var(--brand-strong); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.tp-row.running .tp-g { background: linear-gradient(135deg, var(--send-a), var(--send-b)); }
+.tp-row.running .tp-g svg { stroke: #fff; }
+.tp-t { font-weight: 700; font-size: 13px; color: var(--ink-deep); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-m { margin-top: 2px; font: 500 11px var(--font-mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-row.running .tp-m { color: var(--brand-strong); }
+.tp-s { margin-top: 3px; font-size: 12px; font-style: italic; color: var(--soft); }
+.tp-act { display: flex; gap: 4px; align-items: center; opacity: .55; transition: opacity var(--dur-fast) var(--ease-hover); }
+.tp-row:hover .tp-act { opacity: 1; }
+.tp-act button { height: 24px; padding: 0 8px; border: 1px solid var(--hairline-strong); border-radius: 6px; background: hsl(var(--w)); cursor: pointer; font: 650 11px/1 var(--font-body); color: var(--brand-deep); }
+.tp-act button:hover { border-color: var(--brand); }
+.tp-act button.danger { color: var(--action-strong); }
+.tp-act button.danger:hover { border-color: var(--action); background: var(--action-tint); }
+.tp-act button.icon { display: grid; place-items: center; width: 24px; padding: 0; }
+.tp-act button.icon svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+.tp-act button:disabled { opacity: .5; cursor: default; }
+.tp-empty, .tp-wait { margin: 10px 10px 6px; font-size: 12.5px; color: var(--faint); }
+
+/* The task viewer. */
+.task-viewer .tk-stop { flex: none; height: 28px; padding: 0 12px; border: 1px solid var(--action); border-radius: 8px; background: var(--action-tint); color: var(--action-strong); cursor: pointer; font: 700 12px/1 var(--font-body); }
+.task-viewer .tk-stop[hidden] { display: none; }
+.task-viewer .tk-stop:disabled { opacity: .6; cursor: default; }
+.task-viewer.running .tk-badge { color: var(--brand-strong); }
+.task-viewer .tk-body { padding-bottom: 28px; }
+.tk-prompt { margin: 6px 0 14px; padding: 10px 14px 12px; border-radius: var(--radius); border: 1px solid var(--hairline); background: hsla(var(--w), .7); }
+.tk-prompt-h { margin-bottom: 4px; font: 820 9.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .1em; text-transform: uppercase; color: var(--brand-strong); }
+.tk-prompt-t { white-space: pre-wrap; word-break: break-word; font-size: 13.5px; color: var(--ink); }
+.tk-prompt.long .tk-prompt-t { max-height: 9.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 65%, transparent); mask-image: linear-gradient(#000 65%, transparent); }
+.tk-prompt.long.open .tk-prompt-t { max-height: none; -webkit-mask-image: none; mask-image: none; }
+.tk-more { margin-top: 6px; padding: 0; border: 0; background: none; cursor: pointer; font: 650 12px var(--font-body); color: var(--brand-strong); }
+.tk-out { margin: 0; padding: 14px 16px; border-radius: 10px; background: #1B1934; color: #E4E6FA; font: 12.5px/1.5 var(--font-mono); white-space: pre-wrap; word-break: break-word; min-height: 60px; }
+:root[data-theme="dark"] .tk-out { background: #0D0C1A; border: 1px solid var(--hairline); }
+.tk-cut, .tk-empty { font-size: 12.5px; color: var(--faint); margin: 4px 2px 10px; }
+
+/* The rail: a session's subagent count, and the list under it. */
+.subs-n {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 2px 8px 2px 6px; border: 1px solid var(--hairline); border-radius: 7px;
+  background: hsla(var(--w), .6); cursor: pointer; font: 650 11px/1.5 var(--font-body); color: var(--brand-deep);
+  transition: border-color var(--dur-fast) var(--ease-hover), background var(--dur-fast) var(--ease-hover);
+}
+.subs-n:hover { border-color: var(--brand-soft); background: var(--brand-wash); }
+.subs-n .chev { width: 10px; height: 10px; stroke: var(--soft); transition: transform var(--dur-fast) var(--ease-out); }
+.subs-n.open .chev { transform: rotate(90deg); }
+.sessions li.sub-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; align-items: start; margin: 0 0 2px 14px; padding: 6px 9px; border-radius: 8px; }
+.sessions li.sub-row.note { display: block; font-size: 12px; color: var(--faint); cursor: default; }
+.sub-g { display: grid; place-items: center; width: 18px; height: 18px; margin-top: 1px; }
+.sub-t { font-weight: 650; font-size: 12.5px; color: var(--ink-deep); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub-m { font: 500 10.5px var(--font-mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sessions li.sub-row.running .sub-m { color: var(--brand-strong); }
+.sessions li.sub-row.running .sub-g svg { stroke: var(--brand); }
+
+:root[data-theme="dark"] .task-panel { background: linear-gradient(120deg, hsla(var(--pearl-stop-blue), .06), hsla(var(--pearl-stop-purple), .05) 50%, hsla(var(--pearl-stop-cyan), .05)), hsla(var(--w), .94); border-color: hsla(0, 0%, 100%, .08); box-shadow: 0 18px 44px -18px rgba(0, 0, 0, .75); }
+:root[data-theme="dark"] .tool summary .tool-open, :root[data-theme="dark"] .tp-act button { background: var(--tint); }

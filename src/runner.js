@@ -156,6 +156,7 @@ export class SessionRunner {
       options.hooks = {};
       for (const [event, matchers] of Object.entries(this.hooks)) options.hooks[event] = [...matchers];
     }
+    if (this.progressSummaries) options.agentProgressSummaries = true;
     if (this.sessionId) options.resume = this.sessionId;
     if (this.model) options.model = this.model;
     if (this.effort) options.effort = this.effort;

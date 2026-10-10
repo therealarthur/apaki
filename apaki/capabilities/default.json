@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Myrlin Apaki main window: core events, the app's own commands (engine bridge), and its own window buttons and drag regions (no OS title bar since 2026-10-09).",
+  "description": "Myrlin Apaki main window: core events, the app's own commands (engine bridge), and its own window buttons and drag regions (no OS title bar since 2026-10-09); its own size and place, read and restored with the workspace (2026-10-10).",
   "windows": [
     "main"
   ],
@@ -12,6 +12,12 @@
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-is-maximized",
     "core:window:allow-close",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "core:window:allow-outer-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-maximize",
+    "core:window:allow-available-monitors"
   ]
 }

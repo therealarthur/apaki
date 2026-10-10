@@ -73,7 +73,7 @@ function el(tag, cls, html) {
   return e;
 }
 
-function toolArgs(name, input = {}) {
+export function toolArgs(name, input = {}) {
   const pick = input.command ?? input.file_path ?? input.notebook_path ?? input.pattern ?? input.url ?? input.query ?? input.description ?? input.prompt ?? input.skill ?? '';
   if (name === 'TodoWrite' && Array.isArray(input.todos)) return `${input.todos.length} todos`;
   return String(pick).replace(/\s+/g, ' ').slice(0, 160);
@@ -103,6 +103,9 @@ export class Pane {
     this.tools = new Map();
     this.cardKeys = new Set(); // artifact and link cards already in the transcript
     this.closedArts = new Map(); // viewers of this conversation's artifacts that were closed (by id)
+    // Subagents, shells, monitors and workflows this conversation's Claude Code
+    // started (task_* messages): taskId -> task. See tasks.js and the Tasks button.
+    this.liveTasks = new Map();
     this.slashSel = 0;
     this.curMsg = null;
     this.tick = null;
@@ -117,9 +120,9 @@ export class Pane {
       file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
       folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'),
       statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
-      pin: q('.prompt-pin'), artReopen: q('.art-reopen'),
+      pin: q('.prompt-pin'), artReopen: q('.art-reopen'), tasksBtn: q('.tasks-btn'),
     };
-    this.$.ground.addEventListener('scroll', () => this.schedulePin(), { passive: true });
+    this.$.ground.addEventListener('scroll', () => { this.schedulePin(); this.host.dirty?.(); }, { passive: true });
     // The composer floats over the conversation (frosted); keep the last
     // message clear of it as it grows and shrinks.
     new ResizeObserver(() => {
@@ -144,7 +147,7 @@ export class Pane {
     const { input } = this.$;
     this.el.addEventListener('pointerdown', () => this.host.focus(this), true);
     this.el.addEventListener('focusin', () => this.host.focus(this));
-    input.addEventListener('input', () => { this.autosize(); this.updateSlash(); this.renderSendButton(); });
+    input.addEventListener('input', () => { this.autosize(); this.updateSlash(); this.renderSendButton(); this.host.dirty?.(); });
     input.addEventListener('keydown', (e) => this.onKey(e));
     // Stop only when the box is empty; with text it queues (see submit).
     this.$.send.onclick = () => { if (this.busy && !this.hasDraft()) this.stop(); else this.submit(); };
@@ -157,6 +160,7 @@ export class Pane {
     this.$.billing.onclick = () => this.send('billingOptions');
     this.$.close.onclick = () => this.host.close(this);
     if (this.$.artReopen) this.$.artReopen.onclick = () => this.artifactsMenu();
+    if (this.$.tasksBtn) this.$.tasksBtn.onclick = () => this.host.openTasksPanel?.(this, this.$.tasksBtn);
     this.$.title.ondblclick = () => this.host.renameSession?.(this, this.$.title);
     this.$.title.title = 'Double-click to rename';
     this.$.grip.addEventListener('dragstart', (e) => this.host.dragPane(this, e));
@@ -440,6 +444,8 @@ export class Pane {
     }
     this.$.T.append(d);
     this.tools.set(block.id, d);
+    // A subagent: openable at once (the engine finds its transcript by this tool call).
+    if (block.name === 'Task' || block.name === 'Agent') this.linkTool(block.id, { id: null, type: 'local_agent', description: block.input?.description || '', subagentType: block.input?.subagent_type || 'agent', status: this.liveTasks.size ? 'running' : 'completed' });
     this.scrollDown();
   }
 
@@ -461,6 +467,84 @@ export class Pane {
   /** Opens a card's artifact in a viewer beside this conversation. */
   openCard(c) {
     this.host.showArtifact?.({ sessionId: this.sessionId, id: c.dataset.id, rev: Number(c.dataset.rev) || null, title: c.dataset.title, kind: c.dataset.kind, sourcePane: this.id }, { focus: true });
+  }
+
+  /* ---------- subagents, shells, monitors (tasks.js) ---------- */
+
+  /** Folds one task_* message (or the live set) into liveTasks and redraws what shows it. */
+  onTaskMessage(msg) {
+    const now = Date.now();
+    const get = (id) => this.liveTasks.get(id);
+    const put = (id, patch) => { const t = { ...(get(id) || { id, status: 'running', startedAt: now }), ...patch }; this.liveTasks.set(id, t); return t; };
+    switch (msg.subtype) {
+      case 'task_started':
+        put(msg.task_id, {
+          type: msg.task_type || (msg.subagent_type ? 'local_agent' : 'local_bash'), description: msg.description || '', subagentType: msg.subagent_type || '',
+          prompt: msg.prompt || '', toolUseId: msg.tool_use_id || null, parentId: msg.parent_task_id || null, depth: msg.spawn_depth || 1,
+          workflowName: msg.workflow_name || '', backgrounded: Boolean(msg.is_backgrounded), ambient: Boolean(msg.ambient || msg.skip_transcript), status: 'running', startedAt: now,
+        });
+        break;
+      case 'task_progress':
+        put(msg.task_id, { usage: msg.usage || get(msg.task_id)?.usage, lastTool: msg.last_tool_name || get(msg.task_id)?.lastTool || '', summary: msg.summary || get(msg.task_id)?.summary || '', ...(msg.description ? { description: msg.description } : {}), ...(msg.subagent_type ? { subagentType: msg.subagent_type } : {}) });
+        break;
+      case 'task_updated': {
+        const p = msg.patch || {};
+        put(msg.task_id, { ...(p.status ? { status: p.status } : {}), ...(p.description ? { description: p.description } : {}), ...(p.error ? { error: p.error } : {}), ...(p.is_backgrounded !== undefined ? { backgrounded: p.is_backgrounded } : {}), ...(p.end_time ? { endedAt: p.end_time } : {}) });
+        break;
+      }
+      case 'task_notification':
+        put(msg.task_id, { status: msg.status, outputFile: msg.output_file || '', summary: msg.summary || get(msg.task_id)?.summary || '', usage: msg.usage || get(msg.task_id)?.usage, endedAt: now, ...(msg.tool_use_id ? { toolUseId: msg.tool_use_id } : {}) });
+        break;
+      case 'background_tasks_changed':
+        for (const t of msg.tasks || []) put(t.task_id, { type: t.task_type, description: t.description || get(t.task_id)?.description || '', subagentType: t.subagent_type || get(t.task_id)?.subagentType || '', backgrounded: true, ambient: Boolean(t.ambient), ...(get(t.task_id) ? {} : { status: 'running' }) });
+        break;
+      default: break;
+    }
+    const t = get(msg.task_id);
+    if (t?.toolUseId) this.linkTool(t.toolUseId, t);
+    this.renderTasksButton();
+    this.host.tasksChanged?.(this);
+  }
+
+  /** Running (non-housekeeping) tasks, for the button and the tab. */
+  runningTasks() {
+    return [...this.liveTasks.values()].filter((t) => !t.ambient && (t.status === 'running' || t.status === 'pending'));
+  }
+
+  /** The Tasks button: shown once there is anything to list; brand ink and a count while some run. */
+  renderTasksButton() {
+    const b = this.$.tasksBtn;
+    if (!b) return;
+    const run = this.runningTasks();
+    const disk = this.sessionId ? this.host.subagentCount?.(this.sessionId) || 0 : 0;
+    const any = run.length || [...this.liveTasks.values()].some((t) => !t.ambient) || disk;
+    b.hidden = !any;
+    b.classList.toggle('lit', run.length > 0);
+    b.querySelector('.tb-n').textContent = run.length ? String(run.length) : disk ? String(disk) : '';
+    b.title = run.length ? `${run.length} running: ${run.map((t) => t.description || t.subagentType || t.type).slice(0, 4).join(', ')}${run.length > 4 ? '…' : ''}` : disk ? `${disk} subagent${disk === 1 ? '' : 's'} in this session` : 'Subagents and background tasks';
+  }
+
+  /** A tool line that started a task gets an Open button (and the task's name). */
+  linkTool(toolUseId, t) {
+    const d = this.tools.get(toolUseId);
+    if (!d || d.classList.contains('art-card')) return;
+    let b = d.querySelector('.tool-open');
+    if (!b) {
+      b = document.createElement('button');
+      b.className = 'tool-open';
+      b.textContent = 'Open';
+      d.querySelector('summary')?.append(b);
+    }
+    const kind = /agent/.test(t.type || '') ? 'agent' : 'shell';
+    b.title = `Open this ${kind === 'agent' ? 'subagent' : 'shell'} in a viewer (Ctrl+click: new tab; drag onto a pane edge or a tab)`;
+    b.classList.toggle('running', t.status === 'running');
+    const spec = () => (kind === 'agent'
+      ? { kind, sessionId: this.sessionId, toolUseId, taskId: t.id, ownerPane: this.id, title: t.description, type: t.subagentType || 'agent' }
+      : { kind, sessionId: this.sessionId, taskId: t.id, ownerPane: this.id, title: t.description, type: t.type });
+    b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this.host.openTask?.(spec(), { tab: e.ctrlKey || e.metaKey }); };
+    b.draggable = true;
+    b.ondragstart = (e) => this.host.dragTask?.(spec(), e);
+    b.ondragend = () => this.host.dragEnd();
   }
 
   /* ---------- reopening this conversation's artifacts ---------- */
@@ -580,6 +664,9 @@ export class Pane {
       this.renderArtifactsButton();
       return;
     }
+    // A command run in the background: its result names the task, so it can be opened.
+    const bg = text.match(/running in (?:the )?background with ID: ([\w-]+)/i);
+    if (bg && !d.querySelector('.tool-open')) this.linkTool(id, { id: bg[1], type: 'local_bash', description: d.querySelector('.args')?.textContent.slice(1, -1) || 'Shell', status: this.liveTasks.get(bg[1])?.status || 'completed' });
     // A shell command Apaki caught opening something: cards for what it showed.
     const opened = parseOpened(text);
     for (const o of opened) {
@@ -628,7 +715,11 @@ export class Pane {
     this._at = null;
     this.flushOpenNotes();
     this.scrollDown(true);
+    // Back where you were reading when the workspace was saved (crash recovery).
+    if (this.restoreScroll && !this.restoreScroll.atEnd) this.$.ground.scrollTop = this.restoreScroll.top;
+    this.restoreScroll = null;
     this.renderArtifactsButton();
+    this.renderTasksButton();
   }
 
   flushOpenNotes() {
@@ -697,6 +788,7 @@ export class Pane {
       return;
     }
     if (msg.type === 'system' && msg.subtype === 'compact_boundary') this.note('Conversation compacted.');
+    if (msg.type === 'system' && /^(task_|background_tasks_changed)/.test(msg.subtype || '')) this.onTaskMessage(msg);
   }
 
   /* ---------- status, busy state ---------- */
@@ -800,6 +892,7 @@ export class Pane {
   renderQueue() {
     const box = this.$.queue;
     if (!box) return;
+    this.host.dirty?.();
     box.hidden = !this.queue.length;
     if (!this.queue.length) { box.innerHTML = ''; return; }
     // While Claude works: Steer adds the message to the current work now.
@@ -979,6 +1072,9 @@ export class Pane {
         this.openNotes = [];
         if (e.tookOver) this.openNotes.push(['Taken over: the other window is stopped before its next message, so this conversation continues only here.', '']);
         if (e.terminal?.length) this.openNotes.push([`This session is also open in a Claude Code terminal window (${e.terminal.map((t) => t.name).join(', ')}). Stop typing there while you work here; that window must /resume to see these turns.`, 'warn']);
+        if (this.crashNote) { this.openNotes.push(['Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
+        if (e.sessionId !== this.sessionId || e.reset) this.liveTasks.clear();
+        this.renderTasksButton();
         if (!e.sessionId) this.flushOpenNotes();
         this.send('commands');
         this.host.changed(this);

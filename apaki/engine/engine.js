@@ -71,6 +71,7 @@ import { askSearch, digPrompt } from './asksearch.js';
 import * as folders from '../../src/folders.js';
 import { filterItems, terminalSessions, transcriptMap } from '../../src/picker.js';
 import { bareItem, startLive } from './live.js';
+import { agentByToolUse, countSubagents, listShells, listSubagents, readEntries, readText, RUNNING_MS, watchFile } from './tasks.js';
 import { SessionRunner } from '../../src/runner.js';
 import { listSessions, lockInfo, lockStolen, readTail, releaseLock, rememberCreated, setLockApp, takeLock } from '../../src/sessions.js';
 import { makeLoader } from '../../src/ui/picker.js';
@@ -197,7 +198,15 @@ function compact(it, term, folderOf) {
     folder: folderOf.get(it.id)?.id || null,
     // Started headless and never typed in (claude -p, workers, relayed-only windows); shown, and marked.
     headless: Boolean(it.headless), bare: Boolean(it.bare), warm: state.warm.has(it.id),
+    subagents: subagentCount(it.id),
   };
+}
+
+/** How many subagents a session has had (tasks.js; files under <session>/subagents). */
+function subagentCount(id) {
+  const file = state.files?.get(id);
+  if (!file) return 0;
+  try { return countSubagents(file); } catch { return 0; }
 }
 
 /**
@@ -228,6 +237,7 @@ async function loadSessions() {
   }
   state.byId = byId;
   state.items = [...byId.values()].sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
+  state.files = transcriptMap();
   return term;
 }
 
@@ -463,6 +473,9 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     state.asks.set(id, { resolve, paneId: p.id, toolName, input });
     emit({ ev: 'ask', askId: id, paneId: p.id, toolName, input });
   });
+  // A one-line "what it is doing" for running subagents (task_progress summary;
+  // a short fork every ~30 s on the subagent's own cache).
+  runner.progressSummaries = true;
   runner.onNewSession = (id) => {
     rememberCreated(id);
     p.sessionId = id;
@@ -680,6 +693,46 @@ const handlers = {
     emit({ ev: 'warmState', reqId: c.reqId, ...warmSummary() });
     refreshWarm();
   },
+  /* ---------- subagents, shells, monitors (tasks.js; the window's tasks panel and viewers) ---------- */
+
+  // A session's subagents and shell outputs on disk, for the rail and the tasks panel.
+  subagents: (c) => {
+    const id = String(c.sessionId || '');
+    const file = transcriptMap().get(id);
+    const agents = file ? listSubagents(file).map(({ file: _f, ...a }) => a) : [];
+    const shells = file ? listShells(file).map(({ file: _f, ...s }) => s) : [];
+    emit({ ev: 'subagents', reqId: c.reqId, sessionId: id, agents, shells });
+  },
+  // Stop one task of a conversation running here (Claude Code's own stop: a task_notification "stopped" follows).
+  taskStop: async (c) => {
+    const p = getPane(c.paneId);
+    if (!p.runner?.q) throw new Error('That conversation is not running here, so its tasks cannot be stopped from Apaki.');
+    await p.runner.q.stopTask(String(c.taskId));
+  },
+  // Ctrl+B: move a foreground subagent or shell to the background so the turn goes on.
+  taskBackground: async (c) => {
+    const p = getPane(c.paneId);
+    if (!p.runner?.q) throw new Error('That conversation is not running here.');
+    const ok = await p.runner.q.backgroundTasks(c.toolUseId ? String(c.toolUseId) : undefined);
+    if (!ok) emit({ ev: 'note', paneId: p.id, text: 'Nothing to move to the background.' });
+  },
+  // The end of a running shell's output (the 8 KB /tasks shows), polled by its viewer.
+  taskOutput: async (c) => {
+    const owner = panes.get(String(c.ownerPane || ''));
+    let r = null;
+    try { r = owner?.runner?.q ? await owner.runner.q.getTaskOutput(String(c.taskId)) : null; } catch (e) { r = { error: e.message }; }
+    emit({ ev: 'taskOutput', paneId: String(c.paneId), taskId: c.taskId, output: r?.output ?? null, error: r?.error || (r ? null : 'not running here') });
+  },
+  // A viewer following a subagent's transcript as it grows.
+  agentWatch: (c) => watchAgent(String(c.paneId), String(c.sessionId || ''), c.agentId ? String(c.agentId) : null, c.toolUseId ? String(c.toolUseId) : null),
+  // A viewer following a shell or Monitor output file.
+  outputWatch: (c) => watchOutput(String(c.paneId), String(c.sessionId || ''), String(c.taskId || '')),
+  unwatch: (c) => unwatchViewer(String(c.paneId)),
+
+  /* ---------- the workspace, saved to disk as well (crash recovery) ---------- */
+  saveState: (c) => saveWorkspace(c.state),
+  loadState: (c) => emit({ ev: 'state', reqId: c.reqId, state: loadWorkspace() }),
+
   // A name for a session, saved the way Claude Code's /rename saves it (a
   // custom-title entry in its transcript), so Claude Code, latch and Apaki
   // all show the same one.
@@ -827,8 +880,117 @@ rl.on('line', async (line) => {
   await dispatch(c);
 });
 rl.on('close', async () => {
+  if (workspaceTimer) { clearTimeout(workspaceTimer); workspaceTimer = null; if (workspacePending) { try { fs.writeFileSync(WORKSPACE_FILE, JSON.stringify(workspacePending)); } catch { /* exiting */ } } }
   remote?.stop();
   fs.unwatchFile(LIVE_LOGIN); await Promise.all([...panes.values()].map((p) => closeRunner(p))); process.exit(0); });
+
+/* ---------- task viewers: subagent transcripts and shell output, live ---------- */
+
+// viewerId -> stop(); a viewer watches one file at a time.
+const viewerWatch = new Map();
+
+function unwatchViewer(id) {
+  const stop = viewerWatch.get(id);
+  viewerWatch.delete(id);
+  try { stop?.(); } catch { /* gone */ }
+}
+
+/**
+ * Sends a subagent's transcript to its viewer, then every line it adds. One
+ * opened the moment it started may have no file yet: looked for again every
+ * second for 30 s.
+ */
+function watchAgent(viewer, sessionId, agentId, toolUseId) {
+  unwatchViewer(viewer);
+  let tries = 0;
+  let timer = null;
+  let stopFile = null;
+  const find = () => {
+    const file = transcriptMap().get(sessionId);
+    if (!file) return null;
+    return agentId ? listSubagents(file).find((a) => a.id === agentId) || null : agentByToolUse(file, toolUseId);
+  };
+  const start = (a) => {
+    let next = 0;
+    const meta = { id: a.id, type: a.type, description: a.description, model: a.model, workflow: a.workflow, startedAt: a.startedAt, toolUseId: a.toolUseId };
+    const push = (reset) => {
+      let r;
+      try { r = readEntries(a.file, next); } catch { return; }
+      next = r.next;
+      let lastAt = 0;
+      try { lastAt = fs.statSync(a.file).mtimeMs; } catch { /* gone */ }
+      if (reset || r.entries.length) emit({ ev: 'agentLines', paneId: viewer, reset, entries: r.entries, agent: meta, running: Date.now() - lastAt < RUNNING_MS, lastAt });
+    };
+    push(true);
+    stopFile = watchFile(a.file, () => push(false));
+  };
+  const attempt = () => {
+    const a = find();
+    if (a) { start(a); return; }
+    if (++tries > 30) { emit({ ev: 'agentLines', paneId: viewer, reset: true, missing: true, entries: [] }); return; }
+    timer = setTimeout(attempt, 1000);
+  };
+  viewerWatch.set(viewer, () => { clearTimeout(timer); stopFile?.(); });
+  attempt();
+}
+
+/** Sends the end of a shell or Monitor output file to its viewer, then what it appends. */
+function watchOutput(viewer, sessionId, taskId) {
+  unwatchViewer(viewer);
+  let tries = 0;
+  let timer = null;
+  let stopFile = null;
+  const attempt = () => {
+    const file = transcriptMap().get(sessionId);
+    const sh = file ? listShells(file).find((x) => x.id === taskId) : null;
+    if (!sh) {
+      if (++tries > 30) { emit({ ev: 'outputText', paneId: viewer, reset: true, missing: true, text: '' }); return; }
+      timer = setTimeout(attempt, 1000);
+      return;
+    }
+    let next = null;
+    const push = (reset) => {
+      let r;
+      try { r = readText(sh.file, next); } catch { return; }
+      next = r.next;
+      let lastAt = 0;
+      try { lastAt = fs.statSync(sh.file).mtimeMs; } catch { /* gone */ }
+      if (reset || r.text) emit({ ev: 'outputText', paneId: viewer, reset, text: r.text, cut: Boolean(r.cut), running: Date.now() - lastAt < RUNNING_MS, lastAt });
+    };
+    push(true);
+    stopFile = watchFile(sh.file, () => push(false));
+  };
+  viewerWatch.set(viewer, () => { clearTimeout(timer); stopFile?.(); });
+  attempt();
+}
+
+/* ---------- the workspace on disk ---------- */
+
+// The window keeps its workspace in localStorage and sends it here too, so a
+// crash (or a lost WebView profile) still reopens every tab, pane, draft and
+// queued message. Written at most once a second, atomically.
+const WORKSPACE_FILE = path.join(CLAUDE_DIR, 'latch', 'apaki-workspace.json');
+let workspacePending = null;
+let workspaceTimer = null;
+function saveWorkspace(st) {
+  if (!st || typeof st !== 'object') return;
+  workspacePending = st;
+  if (workspaceTimer) return;
+  workspaceTimer = setTimeout(() => {
+    workspaceTimer = null;
+    const data = workspacePending;
+    workspacePending = null;
+    try {
+      fs.mkdirSync(path.dirname(WORKSPACE_FILE), { recursive: true });
+      const tmp = `${WORKSPACE_FILE}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(data));
+      fs.renameSync(tmp, WORKSPACE_FILE);
+    } catch (e) { process.stderr.write(`apaki: workspace not saved (${e.message})\n`); }
+  }, 1000);
+}
+function loadWorkspace() {
+  try { return JSON.parse(fs.readFileSync(WORKSPACE_FILE, 'utf8')); } catch { return null; }
+}
 
 /* ---------- renames ---------- */
 
@@ -887,6 +1049,11 @@ startLive({
     refreshList();
   },
   onChange: () => refreshList(),
+  // A session's subagents changed on disk: the rail's count and an open list follow.
+  onSubagents: (sessionId) => {
+    const file = transcriptMap().get(sessionId);
+    emit({ ev: 'subagentsChanged', sessionId, count: file ? countSubagents(file) : 0 });
+  },
 });
 
 /** Which sessions keep-warm is looking after; the window draws a moving border on them. */

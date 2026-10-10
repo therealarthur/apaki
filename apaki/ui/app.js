@@ -32,6 +32,7 @@ import { MARK_SVG } from './mark.js';
 import { folderSheet } from './startfolder.js';
 import { initGlassCard } from './glasscard.js';
 import { initSettings } from './settings.js';
+import { DRAG_TASK, KIND_LABEL, TaskPane, closeTasksPanel, newTaskViewerId, specKey, taskGlyph, tasksPanel, tasksPanelPane } from './tasks.js';
 import { ArtifactPane, newViewerId } from './artifacts.js';
 
 const { invoke } = window.__TAURI__.core;
@@ -56,6 +57,8 @@ const DRAG_PANE = 'application/x-apaki-pane';
 
 const S = {
   warm: new Set(), // sessions keep-warm is looking after (engine 'warm' events)
+  expanded: new Set(), // rail rows showing their subagents
+  subs: new Map(), // sessionId -> { agents, shells, at } from the engine's subagents op
   sessions: [], folders: [], view: 'all', query: '', results: null, searchInfo: '', ai: null, asking: null, lastSearch: null,
   voice: false, seq: 0, engineLost: false,
   defaults: { model: 'claude-opus-5-5', effort: 'xhigh', mode: 'bypassPermissions', billing: null },
@@ -124,6 +127,18 @@ const host = {
   newConversation: (p) => newConversation(p),
   chooseFolder: (p) => { if (p && !p.sessionId && !p.busy) startUI = folderSheet(p, { sheet, send, esc, ago }); },
   changed: () => { renderTabs(); renderRailMarks(); save(); },
+  // Something worth saving changed (a draft, the queue, where you scrolled); no redraw.
+  dirty: () => save(),
+  // Subagents, shells, monitors (tasks.js).
+  openTask: (spec, opts) => openTask(spec, opts),
+  stopTask: (spec) => stopTask(spec),
+  taskState: (spec) => taskState(spec),
+  dragTask: (spec, e) => dragTask(spec, e),
+  openTasksPanel: (p, anchor) => openTasksPanel(p, anchor),
+  tasksChanged: (p) => tasksChanged(p),
+  subagentCount: (id) => S.sessions.find((s) => s.id === id)?.subagents || 0,
+  sessionTitle: (id) => S.sessions.find((s) => s.id === id)?.title || paneBySession(id)?.title || null,
+  showSession: (id) => { const p = paneBySession(id); if (p) { const t = tabOf(p); if (t && t.id !== S.active) switchTab(t); focusPane(p); return; } const s = S.sessions.find((x) => x.id === id); if (s) openFromRail(s, { ctrlKey: true }); },
   dragPane: (p, e) => {
     e.dataTransfer.setData(DRAG_PANE, p.id);
     e.dataTransfer.effectAllowed = 'move';
@@ -416,6 +431,7 @@ function arrangeGrid() {
 function dragKind(e) {
   const types = [...(e.dataTransfer?.types || [])];
   if (types.includes(DRAG_PANE)) return 'pane';
+  if (types.includes(DRAG_TASK)) return 'task';
   if (types.includes(DRAG_SESSION)) return 'session';
   if (types.includes('Files')) return 'files';
   return null;
@@ -457,6 +473,7 @@ function showHint(t, z, kind) {
   if (z.where === 'edge') text = `Split ${z.edge}`;
   if (z.where === 'center') {
     if (kind === 'pane') text = L.has(t.root, S.drag?.paneId) ? 'Swap these panes' : 'Move here';
+    else if (kind === 'task') text = z.pane.isViewer ? 'Replace this viewer' : 'Open beside this conversation';
     else text = z.full ? `${L.MAX_PANES} panes is the most per tab. Drop here to replace this one, or on + for a new tab` : z.pane.isViewer ? 'Replace this viewer' : 'Replace this conversation';
     if (z.pane.busy && kind === 'session') text = 'This pane is working; drop on an edge instead';
   }
@@ -505,9 +522,10 @@ function wireStage(t) {
       return;
     }
     const z = dropZone(t, e, kind);
-    const payload = kind === 'pane' ? e.dataTransfer.getData(DRAG_PANE) : e.dataTransfer.getData(DRAG_SESSION);
+    const payload = kind === 'pane' ? e.dataTransfer.getData(DRAG_PANE) : kind === 'task' ? e.dataTransfer.getData(DRAG_TASK) : e.dataTransfer.getData(DRAG_SESSION);
     endDrag();
     if (!z) return;
+    if (kind === 'task') { dropTask(t, z, JSON.parse(payload || 'null')); return; }
     if (kind === 'session') dropSession(t, z, JSON.parse(payload || 'null'));
     else dropPane(t, z, S.panes.get(payload));
   });
@@ -606,7 +624,7 @@ function renderTabs() {
     tab.onauxclick = (e) => { if (e.button === 1) closeTab(t); };
     tab.addEventListener('dragover', (e) => {
       const kind = dragKind(e);
-      if (kind !== 'session' && kind !== 'pane') return;
+      if (kind !== 'session' && kind !== 'pane' && kind !== 'task') return;
       e.preventDefault();
       tab.classList.add('drop');
       if (t.id !== S.active && !hoverTimer) hoverTimer = setTimeout(() => { hoverTimer = null; switchTab(t); }, TAB_HOVER_SWITCH_MS);
@@ -614,9 +632,10 @@ function renderTabs() {
     tab.addEventListener('dragleave', () => { tab.classList.remove('drop'); clearTimeout(hoverTimer); hoverTimer = null; });
     tab.addEventListener('drop', (e) => {
       const kind = dragKind(e);
-      if (kind !== 'session' && kind !== 'pane') return;
+      if (kind !== 'session' && kind !== 'pane' && kind !== 'task') return;
       e.preventDefault();
       clearTimeout(hoverTimer); hoverTimer = null;
+      if (kind === 'task') { const spec = JSON.parse(e.dataTransfer.getData(DRAG_TASK) || 'null'); endDrag(); switchTab(t); openTask(spec, { inTab: t }); return; }
       const data = e.dataTransfer.getData(kind === 'pane' ? DRAG_PANE : DRAG_SESSION);
       endDrag();
       if (kind === 'session') { switchTab(t); addToTab(t, JSON.parse(data || 'null')); return; }
@@ -631,12 +650,13 @@ function renderTabs() {
   const plus = el('button', 'tab-plus', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>');
   plus.title = 'New tab (Ctrl+T) · drop a session here to open it in a new tab';
   plus.onclick = () => addTab();
-  plus.addEventListener('dragover', (e) => { const k = dragKind(e); if (k === 'session' || k === 'pane') { e.preventDefault(); plus.classList.add('drop'); } });
+  plus.addEventListener('dragover', (e) => { const k = dragKind(e); if (k === 'session' || k === 'pane' || k === 'task') { e.preventDefault(); plus.classList.add('drop'); } });
   plus.addEventListener('dragleave', () => plus.classList.remove('drop'));
   plus.addEventListener('drop', (e) => {
     const kind = dragKind(e);
-    if (kind !== 'session' && kind !== 'pane') return;
+    if (kind !== 'session' && kind !== 'pane' && kind !== 'task') return;
     e.preventDefault();
+    if (kind === 'task') { const spec = JSON.parse(e.dataTransfer.getData(DRAG_TASK) || 'null'); endDrag(); openTask(spec, { tab: true }); return; }
     const data = e.dataTransfer.getData(kind === 'pane' ? DRAG_PANE : DRAG_SESSION);
     endDrag();
     if (kind === 'session') {
@@ -806,6 +826,155 @@ function folderMenu(sessionId, anchor) {
 }
 
 /** Right-click on a session row. */
+/* ---------- subagents, shells, monitors (tasks.js, 2026-10-10) ---------- */
+
+function createTaskViewer(spec, id = newTaskViewerId()) {
+  const v = new TaskPane(id, host, spec);
+  S.panes.set(v.id, v);
+  return v;
+}
+
+/** The live task a spec names, from the conversation that runs it here (or null). */
+function liveTask(spec) {
+  const owner = S.panes.get(spec?.ownerPane) || (spec?.sessionId ? paneBySession(spec.sessionId) : null);
+  if (!owner?.liveTasks) return null;
+  return (spec.taskId && owner.liveTasks.get(spec.taskId)) || [...owner.liveTasks.values()].find((t) => spec.toolUseId && t.toolUseId === spec.toolUseId) || null;
+}
+const taskState = (spec) => liveTask(spec);
+
+/**
+ * Opens a task viewer: the one already showing it, else beside the
+ * conversation that started it, else in a new tab (also when asked, or when
+ * that tab is full).
+ */
+function openTask(spec, { tab = false, inTab = null, focus = true } = {}) {
+  if (!spec?.sessionId) return null;
+  const have = [...S.panes.values()].find((x) => x.isTask && specKey(x.spec) === specKey(spec));
+  if (have) { const ht = tabOf(have); if (ht && ht.id !== S.active) switchTab(ht); focusPane(have); return have; }
+  const src = S.panes.get(spec.ownerPane) || paneBySession(spec.sessionId) || null;
+  const t = tab ? null : inTab || (src && tabOf(src)) || activeTab();
+  if (!t || (t.root && L.count(t.root) >= L.MAX_PANES)) {
+    const nt = createTab(null);
+    const v = createTaskViewer(spec);
+    nt.root = L.leaf(v.id);
+    nt.focused = v.id;
+    layout(nt);
+    switchTab(nt);
+    focusPane(v);
+    save();
+    return v;
+  }
+  const v = createTaskViewer(spec);
+  const anchor = src && L.has(t.root, src.id) ? src.id : t.focused || L.ids(t.root)[0];
+  t.root = t.root ? L.insert(t.root, anchor, v.id, 'right') : L.leaf(v.id);
+  if (!t.focused) t.focused = v.id;
+  layout(t);
+  if (t.id !== S.active) switchTab(t);
+  if (focus) focusPane(v);
+  renderTabs();
+  save();
+  return v;
+}
+
+function stopTask(spec) {
+  const live = liveTask(spec);
+  const owner = S.panes.get(spec?.ownerPane) || paneBySession(spec?.sessionId);
+  if (!live || !owner) { (owner || focusedPane())?.note('That task is not running in this window, so Apaki cannot stop it. Stop it in the window that started it.', 'warn'); return; }
+  send('taskStop', { paneId: owner.id, taskId: live.id });
+}
+
+function dragTask(spec, e) {
+  e.dataTransfer.setData(DRAG_TASK, JSON.stringify(spec));
+  e.dataTransfer.effectAllowed = 'copyMove';
+  S.drag = { kind: 'task' };
+  document.body.classList.add('dragging');
+}
+
+/** A task dropped on a stage: split at an edge, take a viewer's place, or open beside a conversation. */
+function dropTask(t, z, spec) {
+  if (!spec?.sessionId) return;
+  if (z.where === 'center' && !z.pane.isViewer && L.count(t.root) >= L.MAX_PANES) { z.pane.note(`${L.MAX_PANES} panes is the most per tab; drop it on + for a new tab.`, 'warn'); return; }
+  const v = createTaskViewer(spec);
+  if (z.where === 'root') t.root = L.leaf(v.id);
+  else if (z.where === 'edge') t.root = L.insert(t.root, z.pane.id, v.id, z.edge);
+  else if (z.pane.isViewer) {
+    const old = z.pane;
+    t.root = L.mapLeaves(t.root, (lf) => (lf.pane === old.id ? L.leaf(v.id) : lf));
+    S.panes.delete(old.id);
+    old.destroy();
+  } else t.root = L.insert(t.root, z.pane.id, v.id, 'right');
+  t.focused = v.id;
+  layout(t);
+  focusPane(v);
+  save();
+}
+
+const taskActions = {
+  open: (spec, o) => openTask(spec, o),
+  stop: (spec) => stopTask(spec),
+  background: (spec) => { const live = liveTask(spec); if (live?.toolUseId) send('taskBackground', { paneId: spec.ownerPane, toolUseId: live.toolUseId }); },
+  dragStart: (spec, e) => dragTask(spec, e),
+  dragEnd: () => endDrag(),
+};
+
+let panelAnchor = null;
+/** The Tasks popover for a conversation (asks the engine for its earlier subagents if not read lately). */
+function openTasksPanel(p, anchor) {
+  if (anchor) panelAnchor = anchor;
+  if (!panelAnchor || !p.sessionId) { if (!p.sessionId) p.note('Its tasks show once the conversation has a session.'); return; }
+  const disk = S.subs.get(p.sessionId) || null;
+  if (anchor && (!disk || Date.now() - disk.at > 3000)) send('subagents', { sessionId: p.sessionId });
+  tasksPanel(panelAnchor, p, taskActions, disk);
+}
+
+function tasksChanged(p) {
+  renderTabs();
+  if (tasksPanelPane() === p) openTasksPanel(p, null);
+  for (const v of S.panes.values()) if (v.isTask && (v.spec.ownerPane === p.id || v.spec.sessionId === p.sessionId)) v.renderHead();
+}
+
+/** Shows or hides a rail row's subagents. */
+function toggleSubs(id) {
+  if (S.expanded.has(id)) S.expanded.delete(id);
+  else { S.expanded.add(id); send('subagents', { sessionId: id }); }
+  renderRail();
+  save();
+}
+
+/** The rows under a session in the rail: its subagents, then its shells. */
+function subRows(s) {
+  const data = S.subs.get(s.id);
+  if (!data) return [el('li', 'sub-row note', 'Reading its subagents…')];
+  const rows = [];
+  const mk = (spec, title, meta, running) => {
+    const li = el('li', `sub-row${running ? ' running' : ''}`);
+    li.innerHTML = `<span class="sub-g">${taskGlyph(spec.kind === 'agent' ? 'agent' : 'shell')}</span><div class="sub-main"><div class="sub-t"></div><div class="sub-m"></div></div>`;
+    li.querySelector('.sub-t').textContent = title;
+    li.querySelector('.sub-m').textContent = meta;
+    li.title = 'Click: open beside it · Ctrl+click: new tab · drag onto a pane edge or a tab';
+    li.onclick = (e) => openTask(spec, { tab: e.ctrlKey || e.metaKey });
+    li.draggable = true;
+    li.addEventListener('dragstart', (e) => dragTask(spec, e));
+    li.addEventListener('dragend', endDrag);
+    li.oncontextmenu = (e) => { e.preventDefault(); menu({ x: e.clientX, y: e.clientY }, [{ value: 'open', label: 'Open beside it' }, { value: 'tab', label: 'Open in new tab', hint: 'Ctrl+click' }], { above: false, width: 200, onPick: (v) => openTask(spec, { tab: v === 'tab' }) }); };
+    return li;
+  };
+  const RAIL_SUBS = 30;
+  for (const a of data.agents.slice(0, RAIL_SUBS)) {
+    rows.push(mk({ kind: 'agent', sessionId: s.id, agentId: a.id, toolUseId: a.toolUseId, title: a.description || a.type, type: a.type, model: a.model },
+      a.description || a.type, [a.type, a.model, a.workflow ? 'workflow' : '', a.running ? 'running' : ago(a.lastAt)].filter(Boolean).join(' · '), a.running));
+  }
+  for (const sh of data.shells.slice(0, 12)) {
+    rows.push(mk({ kind: 'shell', sessionId: s.id, taskId: sh.id, title: `Shell ${sh.id}`, type: 'local_bash' }, `${KIND_LABEL.shell} ${sh.id}`, [sh.running ? 'running' : ago(sh.lastAt), `${Math.max(1, Math.round(sh.size / 1024))} KB`].join(' · '), sh.running));
+  }
+  if (data.agents.length > RAIL_SUBS) {
+    const more = el('li', 'sub-row note more', `${data.agents.length - RAIL_SUBS} older subagents not shown (the newest ${RAIL_SUBS} are)`);
+    rows.splice(RAIL_SUBS, 0, more);
+  }
+  if (!rows.length) rows.push(el('li', 'sub-row note', 'No subagents left on disk.'));
+  return rows;
+}
+
 /* ---------- renaming a session (2026-10-09) ---------- */
 
 // Arthur: tabs must be renamable, and the name must stick to the session:
@@ -951,6 +1120,14 @@ function renderRail() {
     li.innerHTML = `<div class="t">${esc(s.title || '(untitled)')}</div><div class="m">${meta}</div>${s.why ? `<div class="why">${esc(s.why)}</div>` : snip}`;
     // Keep-warm is holding this session's prompt cache: a slow moving border (2026-10-09).
     if (S.warm.has(s.id)) { li.classList.add('warm'); li.append(el('span', 'warm-ring')); }
+    // Its subagents (2026-10-10): a count to click open; the list follows the row.
+    const subsOpen = S.expanded.has(s.id);
+    if (s.subagents > 0) {
+      const sb = el('button', `subs-n${subsOpen ? ' open' : ''}`, `${taskGlyph('agent')}<span>${s.subagents} subagent${s.subagents === 1 ? '' : 's'}</span><svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>`);
+      sb.title = subsOpen ? 'Hide its subagents' : 'Show its subagents (and shells)';
+      sb.onclick = (e) => { e.stopPropagation(); toggleSubs(s.id); };
+      li.append(sb);
+    }
     li.onclick = (e) => openFromRail(s, e);
     li.oncontextmenu = (e) => sessionMenu(s, e);
     li.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); openFromRail(s, { ctrlKey: true }); } };
@@ -966,6 +1143,7 @@ function renderRail() {
       li.addEventListener('dragend', endDrag);
     }
     list.append(li);
+    if (subsOpen) for (const sub of subRows(s)) list.append(sub);
   }
   if (!rows.length) list.append(el('li', 'note', S.results ? 'Nothing matches in this view.' : 'No sessions here yet.'));
   if (S.results && S.query) {
@@ -1343,28 +1521,70 @@ function billingSheet(options, paneId) {
 /* ---------- saving and restoring the workspace ---------- */
 
 let saveTimer = null;
-function save() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    const tabs = S.tabs.map((t) => ({
-      focused: t.focused,
-      root: L.mapLeaves(t.root, (lf) => {
-        const p = S.panes.get(lf.pane);
-        if (p?.isViewer) return { type: 'leaf', pane: lf.pane, view: p.saved() };
-        return { type: 'leaf', pane: lf.pane, s: p?.sessionId || null, cwd: p?.cwd || '', title: p?.title || '', model: p?.model, effort: p?.effort, mode: p?.mode };
-      }),
-    }));
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 1, active: S.tabs.findIndex((t) => t.id === S.active), tabs })); } catch { /* not saved */ }
-  }, 250);
+/**
+ * Everything needed to reopen the window as it was (Arthur, 2026-10-10: "the
+ * state of everything in myrlin apaki needs to be persistent and constantly
+ * saved so in case of a crash, on opening it everything goes back to where it
+ * was"): tabs and splits with their sizes, each pane's session, settings,
+ * draft, queued messages, scroll position and whether it was working; viewers
+ * (artifacts, subagents, shells); the rail's view, open subagent lists and
+ * scroll; the window's size and place.
+ */
+function snapshot() {
+  const tabs = S.tabs.map((t) => ({
+    focused: t.focused,
+    root: L.mapLeaves(t.root, (lf) => {
+      const p = S.panes.get(lf.pane);
+      if (p?.isViewer) return { type: 'leaf', pane: lf.pane, view: p.saved() };
+      const g = p?.$?.ground;
+      return {
+        type: 'leaf', pane: lf.pane, s: p?.sessionId || null, cwd: p?.cwd || '', title: p?.title || '', model: p?.model, effort: p?.effort, mode: p?.mode,
+        draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ text: q.text })),
+        scroll: g ? { atEnd: g.scrollHeight - g.scrollTop - g.clientHeight < 40, top: Math.round(g.scrollTop) } : null,
+        busy: Boolean(p?.busy), pendingName: p?.pendingName || null,
+      };
+    }),
+  }));
+  return { v: 1, savedAt: Date.now(), active: S.tabs.findIndex((t) => t.id === S.active), tabs, rail: { view: S.view, expanded: [...S.expanded], scroll: $('sessions')?.scrollTop || 0 }, win: S.win || null };
 }
 
-function restore() {
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch { saved = null; }
+/** Saves at once: localStorage, and the engine's copy on disk (desktop only). */
+function saveNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (!S.restored) return; // nothing to save over the last good state before it is back
+  const st = snapshot();
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(st)); } catch { /* not saved */ }
+  if (!WEB) send('saveState', { state: st });
+}
+
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, 250);
+}
+// Closing, hiding or a reload: save what is there now, without waiting.
+window.addEventListener('pagehide', saveNow);
+window.addEventListener('beforeunload', saveNow);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
+setInterval(() => { if (S.restored) save(); }, 5000);
+
+function readLocal() {
+  try { return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch { return null; }
+}
+
+function restore(saved = readLocal()) {
   const tabs = saved?.v === 1 && Array.isArray(saved.tabs) ? saved.tabs : [];
+  if (saved?.rail) {
+    if (typeof saved.rail.view === 'string') S.view = saved.rail.view;
+    S.expanded = new Set(Array.isArray(saved.rail.expanded) ? saved.rail.expanded : []);
+    S.railScroll = saved.rail.scroll || 0;
+  }
+  if (saved?.win) S.win = saved.win;
   for (const st of tabs) {
     const seen = new Set();
     const root = L.mapLeaves(st.root, (lf) => {
+      // A subagent or shell viewer comes back following its file.
+      if (lf.view?.task) return L.leaf(createTaskViewer(lf.view, lf.pane).id);
       // A viewer comes back showing its artifact's latest revision.
       if (lf.view?.id) return L.leaf(createViewer(lf.view, lf.pane).id);
       // One session per pane, ever: a duplicate in old saved state opens as a new conversation.
@@ -1372,6 +1592,12 @@ function restore() {
       if (sid) seen.add(sid);
       // The session id is set at once so a save before the engine answers keeps it.
       const p = createPane({ id: lf.pane, sessionId: sid, cwd: lf.cwd, title: lf.title, model: lf.model, effort: lf.effort, mode: lf.mode });
+      // What you were typing, what was queued, where you were reading, a name waiting for its session.
+      if (lf.draft) { p.$.input.value = lf.draft; p.autosize(); p.renderSendButton?.(); }
+      if (Array.isArray(lf.queue) && lf.queue.length) { p.queue = lf.queue.map((q, i) => ({ id: `r${i}${Date.now().toString(36)}`, text: q.text, attachments: [] })); p.renderQueue(); }
+      if (lf.scroll) p.restoreScroll = lf.scroll;
+      if (lf.pendingName) p.pendingName = lf.pendingName;
+      if (lf.busy) p.crashNote = true;
       p.open(sid ? { id: sid, cwd: lf.cwd, title: lf.title } : null, { warm: false });
       return L.leaf(p.id);
     });
@@ -1387,7 +1613,7 @@ function restore() {
 
 /* ---------- engine events ---------- */
 
-const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent']);
+const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput']);
 
 /** Phone access (phone.js), set up at start; null in the phone web client. */
 let phone = null;
@@ -1452,8 +1678,12 @@ await listen('engine', ({ payload: e }) => {
         if (s?.title && s.title !== p.title && !s.bare && !p.renaming && !/^New session \(/.test(s.title)) { p.setTitle(s.title); renderTabs(); }
       }
       S.warm = new Set(S.sessions.filter((x) => x.warm).map((x) => x.id));
+      // Rows that were showing their subagents when the workspace was saved.
+      for (const id of S.expanded) if (!S.subs.has(id)) send('subagents', { sessionId: id });
       renderRail();
+      if (S.railScroll != null) { $('sessions').scrollTop = S.railScroll; S.railScroll = null; }
       renderTabs();
+      for (const p of S.panes.values()) p.renderTasksButton?.();
       break;
     case 'terminals': {
       // A terminal window opened, closed or changed status (engine live.js): marks and In terminals at once.
@@ -1465,6 +1695,26 @@ await listen('engine', ({ payload: e }) => {
       if (!S.drag) renderRail();
       break;
     }
+    case 'subagents': {
+      // A session's subagents and shells on disk (engine tasks.js): the rail list and the Tasks panel.
+      S.subs.set(e.sessionId, { agents: e.agents || [], shells: e.shells || [], at: Date.now() });
+      const s = S.sessions.find((x) => x.id === e.sessionId);
+      if (s) s.subagents = (e.agents || []).length;
+      if (S.expanded.has(e.sessionId) && !S.drag) renderRail();
+      const pp = tasksPanelPane();
+      if (pp && pp.sessionId === e.sessionId) openTasksPanel(pp, null);
+      for (const p of S.panes.values()) if (p.sessionId === e.sessionId) p.renderTasksButton?.();
+      break;
+    }
+    case 'subagentsChanged': {
+      const s = S.sessions.find((x) => x.id === e.sessionId);
+      if (s) s.subagents = e.count;
+      if (S.expanded.has(e.sessionId) || tasksPanelPane()?.sessionId === e.sessionId) send('subagents', { sessionId: e.sessionId });
+      else if (s && !S.drag) renderRail();
+      for (const p of S.panes.values()) if (p.sessionId === e.sessionId) p.renderTasksButton?.();
+      break;
+    }
+    case 'state': S.stateWait?.(e.state || null); S.stateWait = null; break;
     case 'warm':
       S.warm = new Set(e.sessions || []);
       if (!S.drag) renderRail();
@@ -1569,6 +1819,16 @@ await listen('engine', ({ payload: e }) => {
     box.querySelector('[data-w=max]').title = max ? 'Restore' : 'Maximize';
   };
   win.onResized(syncMax);
+  // Its size and place are part of the workspace (restoreWindow below puts them back).
+  const track = async () => {
+    try {
+      const [pos, size, max] = await Promise.all([win.outerPosition(), win.outerSize(), win.isMaximized()]);
+      S.win = max ? { ...(S.win || {}), max: true } : { x: pos.x, y: pos.y, w: size.width, h: size.height, max: false };
+      save();
+    } catch { /* not allowed or closing */ }
+  };
+  win.onResized(track);
+  win.onMoved?.(track);
   syncMax();
 }
 
@@ -1579,7 +1839,34 @@ renderTheme();
 // Phone access (phone.js, with the QR encoder) loads on the desktop only.
 if (WEB) $('phone')?.remove();
 else phone = (await import('./phone.js')).initPhone({ send, sheet, ding, button: $('phone') });
-restore();
+/** Puts the window back where it was, if that place is still on a screen. */
+async function restoreWindow(w) {
+  if (!w || WEB) return;
+  const T = window.__TAURI__;
+  const win = T.window.getCurrentWindow();
+  try {
+    if (w.max) { await win.maximize(); return; }
+    if (!(w.w > 480 && w.h > 360)) return;
+    await win.setSize(new T.dpi.PhysicalSize(w.w, w.h));
+    const mons = await T.window.availableMonitors();
+    const onScreen = mons.some((m) => w.x + 120 > m.position.x && w.x + 120 < m.position.x + m.size.width && w.y + 20 > m.position.y && w.y + 20 < m.position.y + m.size.height);
+    if (onScreen) await win.setPosition(new T.dpi.PhysicalPosition(w.x, w.y));
+  } catch { /* stays where Windows put it */ }
+}
+
+// The engine's copy of the workspace (on disk, so a crash or a lost WebView
+// profile cannot lose it); the newer of it and localStorage wins.
+const diskState = WEB ? null : await new Promise((resolve) => {
+  S.stateWait = resolve;
+  send('loadState');
+  setTimeout(() => { if (S.stateWait === resolve) { S.stateWait = null; resolve(null); } }, 1500);
+});
+const localState = readLocal();
+const startState = (diskState?.savedAt || 0) > (localState?.savedAt || 0) ? diskState : localState;
+restore(startState);
+S.restored = true;
+restoreWindow(startState?.win);
+save();
 renderTabs();
 // Ask the engine for its state in case it was ready before this page loaded.
 send('sessions');
