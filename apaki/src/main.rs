@@ -27,6 +27,15 @@
 //! Only one Apaki runs at a time: starting it again (the `apaki` command, the
 //! shortcut) brings the open window forward instead of a second engine
 //! fighting over the same session locks.
+//!
+//! The built-in browser (2026-10-09, browser.rs) lives here in the shell,
+//! because only the shell can put a native WebView2 into the window. The
+//! engine reaches it through a small request channel on the same pipes: it
+//! prints {ev:"shell", id, cmd, args} (kept from the window), the shell
+//! answers on the engine's stdin with {op:"shellReply", id, ok, result |
+//! error}, and right after starting the engine it says what it can do with
+//! {op:"shellHello", version, features}. Writes to the engine go through one
+//! writer thread, so a large answer (a screenshot) never blocks the window.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -34,16 +43,44 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+mod browser;
+
 struct Engine {
-    stdin: Mutex<Option<ChildStdin>>,
+    /// Lines for the engine's stdin; a writer thread owns the pipe itself.
+    stdin: Mutex<Option<Sender<String>>>,
     child: Mutex<Option<Child>>,
     restarts: Mutex<Vec<Instant>>,
+}
+
+/// The one thread that writes to the engine's stdin, in order. It ends when
+/// the engine's pipe breaks or the engine is replaced (its sender dropped).
+fn engine_writer(mut stdin: ChildStdin) -> Sender<String> {
+    let (tx, rx) = channel::<String>();
+    std::thread::spawn(move || {
+        for line in rx {
+            if stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush()).is_err() {
+                break;
+            }
+        }
+    });
+    tx
+}
+
+/// Sends one JSON line to the engine from anywhere in the shell (the browser's answers).
+pub(crate) fn engine_write(app: &AppHandle, msg: &Value) {
+    let state: State<Engine> = app.state();
+    let guard = state.stdin.lock().unwrap();
+    if let (Some(tx), Ok(mut line)) = (guard.as_ref(), serde_json::to_string(msg)) {
+        line.push('\n');
+        let _ = tx.send(line);
+    }
 }
 
 fn exe_dir() -> Option<PathBuf> {
@@ -90,6 +127,9 @@ fn start_engine(app: &AppHandle) -> Result<(), String> {
     if index.is_file() && std::env::var_os("LATCH_INDEX_BIN").is_none() {
         cmd.env("LATCH_INDEX_BIN", &index);
     }
+    // Which app this is (a dev build has its own identifier), so state the
+    // engine keeps per window, like the saved workspace, never mixes builds.
+    cmd.env("APAKI_APP_ID", &app.config().identifier);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -100,14 +140,21 @@ fn start_engine(app: &AppHandle) -> Result<(), String> {
     let stdout = child.stdout.take().ok_or("engine has no stdout")?;
     let stdin = child.stdin.take().ok_or("engine has no stdin")?;
     let state: State<Engine> = app.state();
-    *state.stdin.lock().unwrap() = Some(stdin);
+    *state.stdin.lock().unwrap() = Some(engine_writer(stdin));
     *state.child.lock().unwrap() = Some(child);
+    // First line the engine reads: what this shell can do for it.
+    engine_write(app, &json!({ "op": "shellHello", "version": 1, "features": browser::features() }));
 
     let handle = app.clone();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
             if let Ok(v) = serde_json::from_str::<Value>(&line) {
+                // A request for the shell itself (the browser), not an event for the window.
+                if v.get("ev").and_then(Value::as_str) == Some("shell") {
+                    browser::shell_request(&handle, v);
+                    continue;
+                }
                 let _ = handle.emit("engine", v);
             }
         }
@@ -138,12 +185,12 @@ fn restart_engine(app: &AppHandle) {
 /// Sends one command (a JSON object) to the engine.
 #[tauri::command]
 fn engine_send(state: State<Engine>, msg: Value) -> Result<(), String> {
-    let mut guard = state.stdin.lock().unwrap();
-    let stdin = guard.as_mut().ok_or("engine is not running")?;
+    let guard = state.stdin.lock().unwrap();
+    let stdin = guard.as_ref().ok_or("engine is not running")?;
     let mut line = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
     line.push('\n');
-    stdin.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
-    stdin.flush().map_err(|e| e.to_string())
+    // The writer thread owns the pipe; a failed send means the engine is gone.
+    stdin.send(line).map_err(|_| "engine is not running".to_string())
 }
 
 fn main() {
@@ -157,14 +204,19 @@ fn main() {
             }
         }))
         .manage(Engine { stdin: Mutex::new(None), child: Mutex::new(None), restarts: Mutex::new(Vec::new()) })
-        .invoke_handler(tauri::generate_handler![engine_send])
+        .invoke_handler(tauri::generate_handler![engine_send, browser::browser])
         .setup(|app| {
+            // The browser borrows the main webview's WebView2 environment; nothing starts until one opens.
+            browser::init(app.handle());
             if let Err(e) = start_engine(app.handle()) {
                 eprintln!("{e}");
             }
             Ok(())
         })
         .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Moved(_) = event {
+                browser::parent_moved(window.app_handle());
+            }
             if let tauri::WindowEvent::Destroyed = event {
                 // Our own engine child only, by handle; never a process-name kill.
                 let state: State<Engine> = window.state();

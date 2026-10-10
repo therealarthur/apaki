@@ -21,6 +21,13 @@
  *
  * The tabs and layout are saved in localStorage and come back at launch;
  * restored panes start Claude Code on their first message.
+ *
+ * Browser panes (2026-10-09, browser.js): web pages open in a built-in
+ * browser pane beside the conversation that asked (Claude's browser_open,
+ * show with a URL, a caught "start https://...", BROWSER, or a link card's
+ * Open). The page is a native WebView2 the shell lays over the pane's body;
+ * syncBrowsers() below tells it where the body is and hides it (with a
+ * picture in its place) while a menu, a sheet or a drag needs the space.
  */
 
 import { esc, md } from './markdown.js';
@@ -35,6 +42,7 @@ import { initSettings } from './settings.js';
 import { findStep, openFind } from './find.js';
 import { DRAG_TASK, KIND_LABEL, TaskPane, closeTasksPanel, newTaskViewerId, specKey, taskGlyph, tasksPanel, tasksPanelPane } from './tasks.js';
 import { ArtifactPane, newViewerId } from './artifacts.js';
+import { BrowserPane } from './browser.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -148,18 +156,23 @@ const host = {
   },
   dragEnd: () => endDrag(),
   linkSessions: (node) => linkSessions(node),
-  // Artifacts (artifacts.js): a card's Open, and web pages. The built-in
-  // browser (next) takes openUrl over; for now pages open in the system browser.
+  // Artifacts (artifacts.js): a card's Open, and web pages, which the
+  // built-in browser (browser.js) shows since 2026-10-09.
   showArtifact: (art, opts) => openViewer(art, opts),
   // Whether a viewer shows this artifact now (the conversation's reopen icon, pane.js).
   artifactOpen: (sessionId, id) => viewers().some((v) => v.art.id === id && v.art.sessionId === sessionId),
-  openUrl: (url) => send('openExternal', { url }),
+  // Web pages open in the built-in browser beside the pane they came from
+  // (2026-10-09); without one (no shell browser) in the system browser.
+  openUrl: (url, from) => openUrlHere(url, from),
+  openOutside: (url) => send('openExternal', { url }),
+  browser: (cmd, args = {}) => invoke('browser', { cmd, args }),
+  shortcut: (key, shift) => shortcut(key, shift),
   paneTitle: (id) => S.panes.get(id)?.title || null,
 };
 
 /* ---------- artifact viewers ---------- */
 
-const viewers = () => [...S.panes.values()].filter((p) => p.isViewer);
+const viewers = () => [...S.panes.values()].filter((p) => p.isViewer && !p.isBrowser);
 
 function createViewer(art, id = newViewerId()) {
   const v = new ArtifactPane(id, host, art);
@@ -197,7 +210,7 @@ function openViewerIn(art, { focus = false, auto = false } = {}) {
   const src = S.panes.get(art.sourcePane) || null;
   let v = viewers().find((x) => x.art.id === art.id && x.art.sessionId === art.sessionId) || null;
   const t = (v && tabOf(v)) || (src && tabOf(src)) || activeTab();
-  if (!v && t?.root) v = L.ids(t.root).map((id) => S.panes.get(id)).find((x) => x?.isViewer && x.sourcePane === art.sourcePane) || null;
+  if (!v && t?.root) v = L.ids(t.root).map((id) => S.panes.get(id)).find((x) => x?.isViewer && !x.isBrowser && x.sourcePane === art.sourcePane) || null;
   const keep = document.activeElement;
   const restoreFocus = () => { if (!focus && keep && document.contains(keep) && document.activeElement !== keep) keep.focus({ preventScroll: true }); };
   if (v) {
@@ -228,6 +241,119 @@ function openViewerIn(art, { focus = false, auto = false } = {}) {
   renderTabs();
   save();
   return v;
+}
+
+/* ---------- browser panes (browser.js, the shell's src/browser.rs) ---------- */
+
+const browsers = () => [...S.panes.values()].filter((p) => p.isBrowser);
+// Pages the shell still held when this window (re)loaded; restored panes adopt them.
+S.alive = new Set();
+
+function createBrowser(o, id) {
+  const b = new BrowserPane(id, host, o);
+  S.panes.set(b.id, b);
+  new ResizeObserver(() => syncSoon()).observe(b.$.body);
+  return b;
+}
+
+/**
+ * Opens a web page in the built-in browser beside `from` (a conversation, or
+ * a viewer or browser that belongs to one). Without a built-in browser it
+ * goes to the system browser.
+ */
+function openUrlHere(url, from = null, { focus = true, reason = 'card' } = {}) {
+  if (!/^(https?:\/\/|file:\/\/\/)/i.test(String(url || ''))) return;
+  let owner = from || focusedPane();
+  if (owner?.isViewer) owner = S.panes.get(owner.sourcePane) || null;
+  invoke('browser', { cmd: 'open', args: { owner: owner?.id || null, url, focus, reason } })
+    .catch(() => send('openExternal', { url }));
+}
+
+/**
+ * The shell made a browser (Claude's browser_open, a page from show or a
+ * command, or openUrlHere): its pane goes beside the conversation it belongs
+ * to, under that conversation's viewer or browser when it has one, else to
+ * its right; in a new tab when the tab is full or Claude asked for one.
+ * Claude's own opens never take the focus.
+ */
+function placeBrowser(e) {
+  let b = S.panes.get(e.id);
+  if (b?.isBrowser) {
+    b.attach(e.state);
+    if (e.focus) focusPane(b);
+    syncSoon();
+    return;
+  }
+  b = createBrowser({ owner: e.owner, url: e.url || e.state?.url || '', title: e.state?.title || '' }, e.id);
+  b.attach(e.state);
+  const owner = S.panes.get(e.owner) || null;
+  const t = (owner && tabOf(owner)) || activeTab();
+  const keep = document.activeElement;
+  if (e.hint === 'tab' || !t || (t.root && L.count(t.root) >= L.MAX_PANES)) {
+    const nt = createTab(L.leaf(b.id));
+    nt.focused = b.id;
+    layout(nt);
+    if (e.focus || !t) { switchTab(nt); focusPane(b); }
+  } else {
+    const ids = L.ids(t.root);
+    const mates = ids.map((id) => S.panes.get(id)).filter((x) => x && x !== b && x.isViewer && x.sourcePane && x.sourcePane === e.owner);
+    const anchor = mates.find((x) => x.isBrowser) || mates[0] || (owner && ids.includes(owner.id) ? owner : null);
+    if (!t.root) t.root = L.leaf(b.id);
+    else t.root = L.insert(t.root, anchor?.id || t.focused || ids[0], b.id, anchor && anchor !== owner ? 'bottom' : 'right');
+    if (!t.focused) t.focused = b.id;
+    layout(t);
+    if (e.focus) focusPane(b);
+    else if (keep && document.contains(keep) && document.activeElement !== keep) keep.focus({ preventScroll: true });
+  }
+  renderTabs();
+  save();
+  syncSoon();
+}
+
+/** Something covers part of the window: an open menu, a sheet, a drag. */
+function overlays() {
+  if (document.body.classList.contains('dragging')) return 'all';
+  if (!$('scrim').hidden) return 'all';
+  return [...document.querySelectorAll('body > .menu:not(.out)')].map((m) => m.getBoundingClientRect());
+}
+
+const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+
+/** Tells the shell where every browser pane's page goes, and which show. */
+function syncBrowsers() {
+  syncQueued = false;
+  const cover = overlays();
+  const active = activeTab();
+  for (const b of browsers()) {
+    const t = tabOf(b);
+    const here = Boolean(t && t === active && b.el.isConnected);
+    const r = b.$.body.getBoundingClientRect();
+    const covered = cover === 'all' || (Array.isArray(cover) && cover.some((c) => overlaps(c, r)));
+    b.place(here && !covered, here && covered ? 'overlay' : 'away');
+  }
+}
+let syncQueued = false;
+function syncSoon() {
+  if (syncQueued) return;
+  syncQueued = true;
+  // A minimized window gets no animation frames; the pages still have to be told.
+  if (document.visibilityState === 'visible') requestAnimationFrame(syncBrowsers);
+  else setTimeout(syncBrowsers, 30);
+}
+
+/** Apaki's shortcuts pressed while a page had the keyboard (the shell passes them on). */
+function shortcut(key, shift) {
+  const k = String(key).toLowerCase();
+  if (k === 't') { addTab(); return; }
+  if (k === 'w') { const p = focusedPane(); if (p) closePane(p); return; }
+  if (k === 'l') { const p = focusedPane(); if (p?.isBrowser) p.focusAddress(); return; }
+  if (key === 'Tab') {
+    const i = S.tabs.indexOf(activeTab());
+    switchTab(S.tabs[(i + (shift ? -1 : 1) + S.tabs.length) % S.tabs.length]);
+    focusPane(focusedPane());
+    return;
+  }
+  if (/^[1-6]$/.test(k)) { const id = L.ids(activeTab()?.root)[Number(k) - 1]; if (id) focusPane(S.panes.get(id)); }
 }
 
 function createPane(settings = {}) {
@@ -265,6 +391,7 @@ function switchTab(t) {
   if (!t) return;
   S.active = t.id;
   for (const x of S.tabs) x.stage.classList.toggle('on', x === t);
+  syncSoon();
   const p = S.panes.get(t.focused);
   if (p) { p.unread = false; p.el.classList.remove('unread'); }
   renderTabs();
@@ -284,6 +411,7 @@ function focusPane(p, { scroll = true } = {}) {
   }
   if (p.unread) { p.unread = false; p.el.classList.remove('unread'); }
   if (scroll && document.activeElement?.closest?.('.pane') !== p.el) p.$.input?.focus({ preventScroll: true });
+  if (scroll && p.isBrowser && document.activeElement?.closest?.('.pane') !== p.el) p.focusInto();
   document.title = `Myrlin Apaki · ${p.title}`;
   renderTabs();
   renderRailMarks();
@@ -363,6 +491,7 @@ function layout(t) {
   t.stage.append(rootEl);
   for (const [p, top] of scrolls) p.$.ground.scrollTop = top;
   for (const id of L.ids(t.root)) S.panes.get(id)?.el.classList.toggle('focused', id === t.focused);
+  syncSoon();
 }
 
 /** The draggable bar between two neighbours of a split. Double-click evens the split out. */
@@ -475,7 +604,7 @@ function showHint(t, z, kind) {
   if (z.where === 'center') {
     if (kind === 'pane') text = L.has(t.root, S.drag?.paneId) ? 'Swap these panes' : 'Move here';
     else if (kind === 'task') text = z.pane.isViewer ? 'Replace this viewer' : 'Open beside this conversation';
-    else text = z.full ? `${L.MAX_PANES} panes is the most per tab. Drop here to replace this one, or on + for a new tab` : z.pane.isViewer ? 'Replace this viewer' : 'Replace this conversation';
+    else text = z.full ? `${L.MAX_PANES} panes is the most per tab. Drop here to replace this one, or on + for a new tab` : z.pane.isBrowser ? 'Replace this browser' : z.pane.isViewer ? 'Replace this viewer' : 'Replace this conversation';
     if (z.pane.busy && kind === 'session') text = 'This pane is working; drop on an edge instead';
   }
   hint.textContent = text;
@@ -1540,6 +1669,7 @@ function snapshot() {
     focused: t.focused,
     root: L.mapLeaves(t.root, (lf) => {
       const p = S.panes.get(lf.pane);
+      if (p?.isBrowser) return { type: 'leaf', pane: lf.pane, web: p.saved() };
       if (p?.isViewer) return { type: 'leaf', pane: lf.pane, view: p.saved() };
       const g = p?.$?.ground;
       return {
@@ -1590,6 +1720,8 @@ function restore(saved = readLocal()) {
     const root = L.mapLeaves(st.root, (lf) => {
       // A subagent or shell viewer comes back following its file.
       if (lf.view?.task) return L.leaf(createTaskViewer(lf.view, lf.pane).id);
+      // A browser comes back with its page, loaded the first time it is on screen.
+      if (lf.web) return L.leaf(createBrowser({ ...lf.web, adopt: S.alive.has(lf.pane) }, lf.pane).id);
       // A viewer comes back showing its artifact's latest revision.
       if (lf.view?.id) return L.leaf(createViewer(lf.view, lf.pane).id);
       // One session per pane, ever: a duplicate in old saved state opens as a new conversation.
@@ -1631,7 +1763,15 @@ await listen('engine', ({ payload: e }) => {
     const p = S.panes.get(e.paneId);
     p?.handle(e);
     if (e.ev === 'artifact') openViewer({ ...e, sourcePane: e.paneId }, { auto: true });
-    // openUrl: the built-in browser takes these over; until then the card's button opens the system browser.
+    // openUrl: the engine already put it in the built-in browser (browserId),
+    // or this window does now (beside the conversation, without the focus).
+    if (e.ev === 'openUrl' && !e.browserId && p) openUrlHere(e.url, p, { focus: false, reason: e.reason || 'show' });
+    return;
+  }
+  // What Claude just did in a browser (browser_click, _type...): a line in that browser's strip.
+  if (e.ev === 'browserActivity') {
+    const b = S.panes.get(e.browserId);
+    if (b?.isBrowser) b.activity(e.text || e.action || '');
     return;
   }
   if (e.paneId && PANE_EVENTS.has(e.ev)) {
@@ -1806,6 +1946,32 @@ await listen('engine', ({ payload: e }) => {
   }
 });
 
+// The built-in browser's events (src/browser.rs): pages made, their state,
+// the keyboard in a page, a page closing itself.
+await listen('browser', ({ payload: e }) => {
+  const b = S.panes.get(e.id);
+  switch (e.ev) {
+    case 'created': case 'reveal': placeBrowser(e); break;
+    case 'state': if (b?.isBrowser) { b.update(e); if (!b.live) b.attach(e); } break;
+    case 'focus': if (b) focusPane(b, { scroll: false }); break;
+    case 'key': if (b) focusPane(b, { scroll: false }); shortcut(e.key, e.shift); break;
+    case 'closeRequested': if (b) closePane(b, { confirmBusy: false }); break;
+    case 'closed': if (b?.isBrowser && e.error) b.gone(`The browser could not start: ${e.error}`); break;
+    default: break;
+  }
+});
+// The pages are native windows over this one: they follow every layout
+// change, and step aside (a picture in their place) for menus, sheets and drags.
+new MutationObserver(() => syncSoon()).observe(document.body, { attributes: true, attributeFilter: ['class'], childList: true });
+new MutationObserver(() => syncSoon()).observe($('scrim'), { attributes: true, attributeFilter: ['hidden'] });
+window.addEventListener('resize', () => syncSoon());
+// Pages see Apaki's theme (prefers-color-scheme) and its ground while loading.
+const sendTheme = () => invoke('browser', { cmd: 'theme', args: { dark: document.documentElement.dataset.theme === 'dark' } }).catch(() => {});
+new MutationObserver(sendTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+sendTheme();
+// Pages the shell kept across a reload of this window: restored panes adopt them, the rest close.
+try { S.alive = new Set(((await invoke('browser', { cmd: 'list', args: {} }))?.browsers || []).map((x) => x.id)); } catch { S.alive = new Set(); }
+
 /* ---------- window buttons (the OS title bar is off) ---------- */
 
 // Arthur, 2026-10-09: the title bar "needs to not be a separate section -
@@ -1873,6 +2039,8 @@ S.restored = true;
 restoreWindow(startState?.win);
 save();
 renderTabs();
+for (const id of S.alive) if (!S.panes.get(id)?.isBrowser) invoke('browser', { cmd: 'close', args: { id } }).catch(() => {});
+syncSoon();
 // Ask the engine for its state in case it was ready before this page loaded.
 send('sessions');
 // Sessions open in terminals change on their own: refresh the list now and then.
@@ -1885,4 +2053,4 @@ $('refreshSessions').onclick = () => {
 };
 
 // For apaki/scripts/cdp-check.mjs: the live state, read only.
-window.__apaki = { S, L, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };
+window.__apaki = { S, L, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };
