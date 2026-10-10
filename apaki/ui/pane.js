@@ -15,7 +15,7 @@
 
 import { esc, md } from './markdown.js';
 import { EFFORTS, effortGrid, menu } from './menu.js';
-import { SHOW_TOOL, artifactCard, linkCard, parseOpened, parseRef, updateCard } from './artifacts.js';
+import { SHOW_TOOL, artifactCard, kindGlyph, kindLabel, linkCard, parseOpened, parseRef, updateCard } from './artifacts.js';
 
 // Images go in at most this many pixels on the long edge (the API's sweet
 // spot, and under the 2000 px limit that breaks a session).
@@ -86,6 +86,7 @@ export class Pane {
     this.streams = new Map();
     this.tools = new Map();
     this.cardKeys = new Set(); // artifact and link cards already in the transcript
+    this.closedArts = new Map(); // viewers of this conversation's artifacts that were closed (by id)
     this.slashSel = 0;
     this.curMsg = null;
     this.tick = null;
@@ -100,7 +101,7 @@ export class Pane {
       file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
       folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'),
       statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
-      pin: q('.prompt-pin'),
+      pin: q('.prompt-pin'), artReopen: q('.art-reopen'),
     };
     this.$.ground.addEventListener('scroll', () => this.schedulePin(), { passive: true });
     // The composer floats over the conversation (frosted); keep the last
@@ -139,6 +140,7 @@ export class Pane {
     this.$.folder.onclick = () => this.host.folderMenu(this, this.$.folder);
     this.$.billing.onclick = () => this.send('billingOptions');
     this.$.close.onclick = () => this.host.close(this);
+    if (this.$.artReopen) this.$.artReopen.onclick = () => this.artifactsMenu();
     this.$.grip.addEventListener('dragstart', (e) => this.host.dragPane(this, e));
     this.$.grip.addEventListener('dragend', () => this.host.dragEnd());
   }
@@ -437,6 +439,59 @@ export class Pane {
     this.host.showArtifact?.({ sessionId: this.sessionId, id: c.dataset.id, rev: Number(c.dataset.rev) || null, title: c.dataset.title, kind: c.dataset.kind, sourcePane: this.id }, { focus: true });
   }
 
+  /* ---------- reopening this conversation's artifacts ---------- */
+
+  // Arthur, 2026-10-09: "when you close the artifact page it should be linked
+  // to the session and there should be an icon on the top left to let you open
+  // it back up again". The icon beside the grip lists what this conversation
+  // showed (its ready cards, plus viewers of it that were closed).
+
+  /** A viewer of one of this conversation's artifacts closed: keep it to reopen. */
+  rememberArtifact(a) {
+    if (!a?.id) return;
+    this.closedArts.set(a.id, { id: a.id, title: a.title || 'Artifact', kind: a.kind || 'file', rev: null });
+    this.renderArtifactsButton();
+  }
+
+  /** This conversation's artifacts, newest first, one entry per artifact (its latest card). */
+  artifactsList() {
+    const by = new Map(this.closedArts);
+    for (const c of this.$.T.querySelectorAll('.art-card[data-state=ready][data-id]')) {
+      if (c.classList.contains('link')) continue;
+      by.delete(c.dataset.id);
+      by.set(c.dataset.id, { id: c.dataset.id, title: c.dataset.title || 'Artifact', kind: c.dataset.kind || 'file', rev: Number(c.dataset.rev) || null });
+    }
+    return [...by.values()].reverse();
+  }
+
+  renderArtifactsButton() {
+    const b = this.$.artReopen;
+    if (!b) return;
+    const list = this.sessionId ? this.artifactsList() : [];
+    // Lit only for viewers you closed here (not for every artifact of an old session).
+    const shut = list.filter((a) => this.closedArts.has(a.id) && !this.host.artifactOpen?.(this.sessionId, a.id));
+    b.hidden = !list.length;
+    b.classList.toggle('lit', shut.length > 0);
+    b.querySelector('.ar-n').textContent = list.length > 1 ? String(list.length) : '';
+    const one = list.length === 1 ? list[0] : null;
+    b.title = !list.length ? '' : one ? (this.host.artifactOpen?.(this.sessionId, one.id) ? `"${one.title}" is open` : `Reopen "${one.title}"`) : `${list.length} artifacts from this conversation${shut.length ? `, ${shut.length} closed here` : ''}`;
+  }
+
+  /** One artifact: reopen it (or bring its viewer forward). Several: a menu, newest first. */
+  artifactsMenu() {
+    const list = this.artifactsList();
+    if (!list.length) return;
+    const open = (a) => this.host.showArtifact?.({ sessionId: this.sessionId, id: a.id, rev: null, title: a.title, kind: a.kind, sourcePane: this.id }, { focus: true });
+    if (list.length === 1) { open(list[0]); return; }
+    const items = list.map((a) => ({
+      value: a.id,
+      html: `<span class="ar-g">${kindGlyph(a.kind)}</span><span class="ml">${esc(a.title)}</span>`,
+      hint: `${kindLabel(a.kind)}${a.rev > 1 ? ` · rev ${a.rev}` : ''}`,
+      checked: Boolean(this.host.artifactOpen?.(this.sessionId, a.id)),
+    }));
+    menu(this.$.artReopen, [{ heading: 'Artifacts from this conversation' }, ...items], { above: false, width: 300, onPick: (v) => { const a = list.find((x) => x.id === v); if (a) open(a); } });
+  }
+
   /** Swaps a show card for a link card (kind url), or adds one after `after`. */
   placeLink({ url, title, reason, toolUseId }, replace = null, after = null) {
     const key = `u:${url}:${toolUseId || Math.random()}`;
@@ -461,6 +516,7 @@ export class Pane {
       at.after(card);
     } else this.$.T.append(card);
     this.scrollDown();
+    this.renderArtifactsButton();
   }
 
   /** The engine stored an artifact for this pane: fill its show card, or add a card. */
@@ -471,6 +527,7 @@ export class Pane {
     if (card) {
       this.cardKeys.add(`a:${e.id}:${e.rev}`);
       updateCard(card, { id: e.id, rev: e.rev, title: e.title, kind: e.kind, state: 'ready' });
+      this.renderArtifactsButton();
       return;
     }
     const via = e.via && e.via !== 'show' ? `Opened by ${e.via}` : '';
@@ -496,6 +553,7 @@ export class Pane {
       if (isError || !ref) { updateCard(d, { state: 'error', error: text.replace(/^Apaki could not show that: /, '').slice(0, 240) }); return; }
       this.cardKeys.add(`a:${ref.id}:${ref.rev}`);
       updateCard(d, { id: ref.id, rev: ref.rev, state: 'ready' });
+      this.renderArtifactsButton();
       return;
     }
     // A shell command Apaki caught opening something: cards for what it showed.
@@ -544,6 +602,7 @@ export class Pane {
     }
     this.flushOpenNotes();
     this.scrollDown(true);
+    this.renderArtifactsButton();
   }
 
   flushOpenNotes() {
@@ -836,7 +895,7 @@ export class Pane {
       case 'taken_over': this.showLocked(e, { lost: true }); break;
       case 'opened':
         this.lockedBy = null;
-        if (e.sessionId !== this.sessionId) { this.queue = []; this.steering.clear(); this.stoppedByUser = false; this.renderQueue(); }
+        if (e.sessionId !== this.sessionId) { this.queue = []; this.steering.clear(); this.stoppedByUser = false; this.renderQueue(); this.closedArts.clear(); }
         this.sessionId = e.sessionId; this.cwd = e.cwd; this.billing = e.billing;
         this.streams.clear(); this.tools.clear(); this.cardKeys.clear();
         this.setTitle(e.title || 'New conversation');

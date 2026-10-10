@@ -45,6 +45,8 @@ const GLYPH = {
 };
 const glyph = (kind) => `<svg viewBox="0 0 16 16" aria-hidden="true">${GLYPH[kind] || GLYPH.text}</svg>`;
 const label = (kind) => KIND_LABEL[kind] || 'File';
+// For the conversation's reopen menu (pane.js).
+export { glyph as kindGlyph, label as kindLabel };
 
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
 const hostOf = (u) => { try { const x = new URL(u); return x.host + (x.pathname !== '/' ? x.pathname : ''); } catch { return u; } };

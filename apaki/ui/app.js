@@ -132,6 +132,8 @@ const host = {
   // Artifacts (artifacts.js): a card's Open, and web pages. The built-in
   // browser (next) takes openUrl over; for now pages open in the system browser.
   showArtifact: (art, opts) => openViewer(art, opts),
+  // Whether a viewer shows this artifact now (the conversation's reopen icon, pane.js).
+  artifactOpen: (sessionId, id) => viewers().some((v) => v.art.id === id && v.art.sessionId === sessionId),
   openUrl: (url) => send('openExternal', { url }),
   paneTitle: (id) => S.panes.get(id)?.title || null,
 };
@@ -153,7 +155,26 @@ function createViewer(art, id = newViewerId()) {
  * full tab; the card's Open then puts the viewer in a new tab. Focus stays
  * where it was unless asked, so typing in the conversation is not interrupted.
  */
-function openViewer(art, { focus = false, auto = false } = {}) {
+function openViewer(art, opts = {}) {
+  const v = openViewerIn(art, opts);
+  refreshArtifactButtons();
+  return v;
+}
+
+/** Every conversation's reopen icon, after a viewer opened or closed. */
+function refreshArtifactButtons() {
+  for (const p of S.panes.values()) if (!p.isViewer) p.renderArtifactsButton?.();
+}
+
+/** A viewer closed: its conversation keeps a link to reopen it (the icon beside its grip). */
+function viewerClosed(v) {
+  const a = v.art || {};
+  const owner = S.panes.get(v.sourcePane);
+  const p = owner && !owner.isViewer && owner.sessionId === a.sessionId ? owner : [...S.panes.values()].find((x) => !x.isViewer && x.sessionId && x.sessionId === a.sessionId);
+  p?.rememberArtifact(a);
+}
+
+function openViewerIn(art, { focus = false, auto = false } = {}) {
   const src = S.panes.get(art.sourcePane) || null;
   let v = viewers().find((x) => x.art.id === art.id && x.art.sessionId === art.sessionId) || null;
   const t = (v && tabOf(v)) || (src && tabOf(src)) || activeTab();
@@ -256,6 +277,7 @@ function closePane(p, { confirmBusy = true } = {}) {
   if (!p.isViewer) send('close', { paneId: p.id });
   S.panes.delete(p.id);
   p.destroy();
+  if (p.isViewer) { viewerClosed(p); refreshArtifactButtons(); }
   if (!t) return;
   t.root = L.remove(t.root, p.id);
   if (t.focused === p.id) t.focused = L.ids(t.root)[0] || null;
@@ -269,6 +291,8 @@ function closeTab(t, { confirmBusy = true } = {}) {
   const panes = L.ids(t.root).map((id) => S.panes.get(id)).filter(Boolean);
   if (confirmBusy && panes.some((p) => p.busy) && !window.confirm('A pane in this tab is still working. Stop it and close the tab?')) return;
   for (const p of panes) { if (!p.isViewer) send('close', { paneId: p.id }); S.panes.delete(p.id); p.destroy(); }
+  for (const p of panes) if (p.isViewer) viewerClosed(p);
+  refreshArtifactButtons();
   const i = S.tabs.indexOf(t);
   S.tabs.splice(i, 1);
   t.stage.remove();
