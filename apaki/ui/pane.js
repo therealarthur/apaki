@@ -15,6 +15,7 @@
 
 import { esc, md } from './markdown.js';
 import { EFFORTS, effortGrid, menu } from './menu.js';
+import { pickVerb } from './verbs.js';
 import { SHOW_TOOL, artifactCard, kindGlyph, kindLabel, linkCard, parseOpened, parseRef, updateCard } from './artifacts.js';
 
 // Images go in at most this many pixels on the long edge (the API's sweet
@@ -824,7 +825,10 @@ export class Pane {
       }
       if (ev.type === 'content_block_start') {
         const b = ev.content_block || {};
-        const next = b.type === 'thinking' || b.type === 'redacted_thinking' ? 'Thinking' : b.type === 'text' ? 'Writing' : b.type === 'tool_use' ? `Running ${String(b.name || 'a tool').replace(/^mcp__\w+__/, '')}` : this.phase;
+        // Thinking reads as Claude Code's own playful words (verbs.js), a fresh one for each stretch of thinking.
+        const thinking = b.type === 'thinking' || b.type === 'redacted_thinking';
+        if (thinking && this.phase !== this.verb) this.verb = pickVerb(this.verb);
+        const next = thinking ? this.verb : b.type === 'text' ? 'Writing' : b.type === 'tool_use' ? `Running ${String(b.name || 'a tool').replace(/^mcp__\w+__/, '')}` : this.phase;
         if (next !== this.phase) { this.phase = next; if (this.busy) this.showWorking(); }
       }
       if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
@@ -890,7 +894,7 @@ export class Pane {
       this._working = true;
       this.statusOn(true);
     }
-    st.querySelector('.ph').textContent = this.phase || 'Working';
+    st.querySelector('.ph').textContent = this.phase || this.verb || 'Working';
     st.querySelector('.st-rest').textContent = ` · ${Math.round((Date.now() - this.turnStart) / 1000)}s · esc to stop`;
   }
 
@@ -905,7 +909,9 @@ export class Pane {
     this.$.egridSlot.innerHTML = on ? effortGrid('max', { live: true }) : '';
     if (on) {
       this.turnStart = Date.now();
-      this.phase = 'Working';
+      // Until Claude writes or runs something, the line shows a random thinking word, as Claude Code does.
+      this.verb = pickVerb(this.verb);
+      this.phase = this.verb;
       this.tick = setInterval(() => this.showWorking(), 500);
       this.showWorking();
     }
