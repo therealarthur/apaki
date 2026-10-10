@@ -37,3 +37,21 @@ test('steer pushes into the running turn without a pending entry and with no pri
   // priority "now" interrupts the turn (measured 2026-10-09); steering must not set it.
   assert.equal(pushed[0].priority, undefined);
 });
+
+test('a turn Claude started by itself (no pending send) can be steered until its result', async () => {
+  const { r, pushed } = fakeRunner();
+  const msgs = [{ type: 'stream_event', event: { type: 'message_start' } }, { type: 'assistant', message: { content: [] } }];
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  // A fake query: streams the start of a turn, waits, then ends it with a result.
+  const q = (async function* stream() { for (const m of msgs) yield m; await gate; yield { type: 'result', subtype: 'success' }; }());
+  r.q = q;
+  const done = r.pump(q);
+  await new Promise((res) => setImmediate(res));
+  assert.equal(r.pending.length, 0, 'nothing was sent from here');
+  assert.equal(r.steer('also check the tests'), true, 'steerable while it runs');
+  assert.equal(pushed.length, 1);
+  release();
+  await done;
+  assert.equal(r.steer('too late'), false, 'not after its result');
+});

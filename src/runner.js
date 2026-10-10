@@ -209,12 +209,18 @@ export class SessionRunner {
           if (created) this.onNewSession?.(msg.session_id);
         }
         if (msg.type === 'result') this.finishTurn(msg);
+        // A turn is running from its first streamed or assistant message to its
+        // result, including turns Claude Code starts by itself (a background
+        // task finished) that no send() is waiting for: steer() needs to know.
+        if (msg.type === 'result') this.turnActive = false;
+        else if (msg.type === 'stream_event' || msg.type === 'assistant') this.turnActive = true;
         this.onMessage(msg);
       }
     } catch (error) {
       this.onMessage({ type: 'latch_error', error });
     } finally {
       if (this.q === q) this.q = null;
+      this.turnActive = false;
       for (const turn of this.pending.splice(0)) turn.reject(new Error('Claude Code process ended'));
     }
   }
@@ -302,7 +308,10 @@ export class SessionRunner {
    * Returns false when no turn is running (send it as a normal message then).
    */
   steer(content) {
-    if (!this.running || !this.pending.length) return false;
+    // A turn Claude started by itself has no pending send but can be steered
+    // too (2026-10-10: steering into such a turn used to bounce back to the
+    // queue, so the Steer button looked dead).
+    if (!this.running || (!this.pending.length && !this.turnActive)) return false;
     this.inbox.push({
       type: 'user',
       message: { role: 'user', content },
@@ -321,6 +330,16 @@ export class SessionRunner {
   async ask(method) {
     if (!this.running) this.start();
     return this.q[method]();
+  }
+
+  /**
+   * How full the context window is, the numbers behind /context ('summary':
+   * from the last response's usage and local estimates, no token-count API
+   * calls). Null when no Claude Code process runs (nothing to measure).
+   */
+  async contextUsage() {
+    if (!this.running || typeof this.q?.getContextUsage !== 'function') return null;
+    return this.q.getContextUsage({ detail: 'summary' });
   }
 
   /** Slash commands Claude Code knows here: built-ins, skills, plugins, custom commands. */

@@ -28,10 +28,12 @@ export const PHONE_OPS = Object.freeze([
   'sessions', 'search',
   'open', 'attach', 'send', 'interrupt', 'answer', 'model', 'effort', 'mode', 'commands', 'close',
   'artifactGet',
+  // 2026-10-10: steering a queued message into the running turn (same power as send), and the context meter.
+  'steer', 'contextUsage',
 ]);
 
 /** Ops that act on one pane (paneId required). */
-const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close']);
+const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage']);
 
 /** Most panes one phone may have open at once (the desktop's limit per tab). */
 export const MAX_PHONE_PANES = 6;
@@ -146,6 +148,11 @@ export function checkPhoneCommand(cmd, ctx) {
       }
       break;
     }
+    case 'steer':
+      // The window's own id for the steered message comes back on steered / steer_missed.
+      if (typeof cmd.qid !== 'string' || !LOCAL_ID_RE.test(cmd.qid)) return fail('Bad message id.', cmd);
+      out.qid = cmd.qid;
+      // falls through: the text and images are checked like a sent message
     case 'send': {
       if (cmd.text != null && typeof cmd.text !== 'string') return fail('Bad message.', cmd);
       const text = String(cmd.text ?? '');
@@ -165,6 +172,7 @@ export function checkPhoneCommand(cmd, ctx) {
     case 'interrupt':
     case 'commands':
     case 'close':
+    case 'contextUsage':
       break;
     case 'answer': {
       if (typeof cmd.askId !== 'string' || cmd.askId.length > 80) return fail('Bad question id.', cmd);

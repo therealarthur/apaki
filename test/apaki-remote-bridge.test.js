@@ -644,3 +644,18 @@ test('bridge: a paired phone links an Apaki account; any phone with the account 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('policy: a phone may steer its own running pane and ask for its context meter', () => {
+  const ctx = { deviceId: DEV, paneExists: () => true };
+  const ok = checkPhoneCommand({ op: 'steer', reqId: 'r1', paneId: 'p1', qid: 'q1abc', text: 'also check the tests', images: [] }, ctx);
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.equal(ok.cmd.paneId, phonePaneId(DEV, 'p1'));
+  assert.equal(ok.cmd.qid, 'q1abc');
+  assert.equal(ok.cmd.text, 'also check the tests');
+  assert.equal(checkPhoneCommand({ op: 'steer', paneId: 'p1', qid: '../x', text: 'hi' }, ctx).ok, false, 'a bad message id');
+  assert.equal(checkPhoneCommand({ op: 'steer', paneId: 'p1', qid: 'q2', text: '' }, ctx).ok, false, 'nothing to steer');
+  const meter = checkPhoneCommand({ op: 'contextUsage', paneId: 'p1', extra: 'dropped' }, ctx);
+  assert.equal(meter.ok, true);
+  assert.deepEqual(meter.cmd, { op: 'contextUsage', paneId: phonePaneId(DEV, 'p1') });
+  assert.equal(checkPhoneCommand({ op: 'contextUsage', paneId: 'p1' }, { ...ctx, paneExists: () => false }).ok, false, 'only its own open panes');
+});

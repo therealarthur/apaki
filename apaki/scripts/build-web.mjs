@@ -253,9 +253,9 @@ export function writeLanding(site = DEFAULT_SITE) {
     <p class="lead">This address connects a phone to Myrlin Apaki on a computer. Open the pairing code in Apaki on your PC and scan it; the code opens the exact phone page that matches your Apaki.</p>
     <h2>What this site can and cannot see</h2>
     <ul>
-      <li>It serves the phone page and relays frames between your PC and your phones. Everything in those frames is end-to-end encrypted between the two; this site holds no keys and stores nothing.</li>
+      <li>It serves the phone page and relays frames between your PC and your phones. Everything in those frames is end-to-end encrypted between the two; this site cannot read them and keeps nothing about your conversations. If you make an Apaki account, it stores the account's name, its passkeys' public keys and a vault it cannot open.</li>
       <li>The one-time pairing secret is in the part of the link after #, which browsers never send to a server.</li>
-      <li>Your Claude and Codex logins never leave your PC. A phone can only use its own conversations and the session list.</li>
+      <li>Your Claude and Codex logins never leave your PC. A paired phone works in conversations on your PC as you would there, so Claude can run commands and edit files for it; billing, accounts and pairing stay on the PC.</li>
       <li>Every version of the phone page has its own address and never changes. Before your PC shows a pairing code, it builds the page it expects from its own code and checks, file by file, that this site serves exactly that.</li>
     </ul>
     <h2>Published phone pages</h2>

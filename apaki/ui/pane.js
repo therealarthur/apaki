@@ -128,7 +128,7 @@ export class Pane {
       title: q('.title'), cwd: q('.cwd'), T: q('.transcript'), ground: q('.ground'), input: q('textarea'),
       send: q('.send'), status: q('.status'), slash: q('.slash'), attachments: q('.attachments'), composer: q('.composer'),
       file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
-      folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'),
+      folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'), ctx: q('.chip-btn.ctx'),
       statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
       pin: q('.prompt-pin'), artReopen: q('.art-reopen'), tasksBtn: q('.tasks-btn'),
     };
@@ -168,6 +168,7 @@ export class Pane {
     this.$.mode.onclick = () => menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 });
     this.$.folder.onclick = () => this.host.folderMenu(this, this.$.folder);
     this.$.billing.onclick = () => this.send('billingOptions');
+    if (this.$.ctx) this.$.ctx.onclick = () => this.contextMenu();
     this.$.close.onclick = () => this.host.close(this);
     if (this.$.artReopen) this.$.artReopen.onclick = () => this.artifactsMenu();
     if (this.$.tasksBtn) this.$.tasksBtn.onclick = () => this.host.openTasksPanel?.(this, this.$.tasksBtn);
@@ -188,6 +189,9 @@ export class Pane {
       }
       if (e.key === 'Escape') { this.hideSlash(); return; }
     }
+    // Ctrl+Enter (Cmd+Enter on a Mac) steers: while Claude works the message goes into the running
+    // turn now instead of the queue (Arthur, 2026-10-10). Enter alone still queues it.
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); this.submit({ steer: true }); return; }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.submit(); return; }
     // Up in an empty box pulls the last queued message back to edit, as in Codex.
     if (e.key === 'ArrowUp' && !input.value && this.queue.length) { e.preventDefault(); this.editItem(this.queue[this.queue.length - 1].id); return; }
@@ -259,7 +263,52 @@ export class Pane {
     this.folderId = f?.id || null;
   }
 
-  setModel(m) { this.model = m; this.renderChips(); this.send('model', { model: m }); this.host.changed(this); }
+  setModel(m) { this.model = m; this.renderChips(); this.send('model', { model: m }); this.host.changed(this); this.askContext(1500); }
+
+  /* ---------- the context meter (2026-10-10) ---------- */
+
+  /** Asks the engine how full this conversation's context window is (it also says so after every turn). */
+  askContext(ms = 1200) {
+    clearTimeout(this.ctxTimer);
+    this.ctxTimer = setTimeout(() => { if (this.sessionId || this.busy) this.send('contextUsage'); }, ms);
+  }
+
+  /** The meter in the settings line: a thin bar and the percentage, warmer as the window fills. */
+  renderContext() {
+    const b = this.$.ctx;
+    const c = this.ctx;
+    if (!b) return;
+    if (!c || c.percentage == null) { b.hidden = true; return; }
+    const pct = Math.max(0, Math.round(c.percentage));
+    b.hidden = false;
+    b.querySelector('.ctx-n').textContent = `${pct}%`;
+    b.style.setProperty('--ctx', Math.min(1, pct / 100).toFixed(3));
+    b.classList.toggle('warm', pct >= 70 && pct < 88);
+    b.classList.toggle('full', pct >= 88);
+    const k = (n) => (n == null ? '?' : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+    const auto = typeof c.autoCompact === 'number' ? ` Claude Code compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off.' : '';
+    b.title = `Context: ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens used (${pct}%).${auto} Click for the breakdown.`;
+    b.setAttribute('aria-label', `Context ${pct}% used`);
+  }
+
+  /** The breakdown: what fills the window, and Compact now. */
+  contextMenu() {
+    const c = this.ctx;
+    if (!c) { this.askContext(0); return; }
+    const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
+    const items = [{ heading: `Context ${Math.round(c.percentage)}% · ${k(c.totalTokens || 0)} of ${k(c.maxTokens || 0)}` }];
+    for (const u of c.used || []) items.push({ label: u.name, hint: `${k(u.tokens)} tokens`, value: null, disabled: true });
+    items.push({ divider: true });
+    items.push({ label: 'Compact now', hint: 'summarize the conversation to free the window', value: 'compact', disabled: this.busy ? 'Wait until Claude finishes' : false });
+    items.push({ label: 'Measure again', value: 'refresh' });
+    menu(this.$.ctx, items, {
+      width: 300,
+      onPick: (v) => {
+        if (v === 'refresh') this.askContext(0);
+        if (v === 'compact' && !this.busy) { this.$.input.value = '/compact'; this.submit(); }
+      },
+    });
+  }
   setEffort(x) { this.effort = x; this.renderChips(); this.send('effort', { effort: x }); this.host.changed(this); }
   setMode(x) { this.mode = x; this.renderChips(); this.send('mode', { mode: x }); this.host.changed(this); }
 
@@ -892,7 +941,7 @@ export class Pane {
     b.textContent = { send: 'Send', queue: 'Queue', stop: 'Stop' }[mode];
     b.classList.toggle('stop', mode === 'stop');
     b.classList.toggle('queue', mode === 'queue');
-    b.title = { send: 'Send (Enter)', queue: 'Queue this for when Claude finishes (Enter)', stop: 'Stop Claude (Esc)' }[mode];
+    b.title = { send: 'Send (Enter)', queue: 'Queue this for when Claude finishes (Enter). Ctrl+Enter steers it in now', stop: 'Stop Claude (Esc)' }[mode];
   }
 
   /** Stops the running turn. Queued messages stay; they do not go out on their own after a stop. */
@@ -915,19 +964,31 @@ export class Pane {
     if (!box) return;
     this.host.dirty?.();
     box.hidden = !this.queue.length;
-    if (!this.queue.length) { box.innerHTML = ''; return; }
+    if (!this.queue.length) { box.innerHTML = ''; this.queueSig = ''; return; }
     // While Claude works: Steer adds the message to the current work now.
     // After a stop (nothing to steer): Send starts a new turn with it.
     const act = this.busy ? 'Steer' : 'Send';
-    const actTip = this.busy ? 'Add this to what Claude is doing now, without stopping it' : 'Send this now';
-    box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? 'Sends when Claude finishes · Steer to add it now' : 'Not sent: Claude was stopped'}</span></div>`
-      + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Click to edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} image${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" title="${actTip}">${act}</button><button class="q-x" title="Remove">×</button></div>`).join('');
-    box.querySelectorAll('.q-item').forEach((row) => {
-      const id = row.dataset.id;
-      row.querySelector('.q-text').onclick = () => this.editItem(id);
-      row.querySelector('.q-act').onclick = () => (this.busy ? this.steerItem(id) : this.sendItem(id));
-      row.querySelector('.q-x').onclick = () => this.removeItem(id);
-    });
+    const actTip = this.busy ? 'Add this to what Claude is doing now, without stopping it (Ctrl+Enter in the box does the same)' : 'Send this now';
+    // Rebuilt only when something changed: a row replaced between press and release swallows the click
+    // (2026-10-10, "the steer button doesnt work").
+    const sig = `${this.busy}|${this.queue.map((it) => `${it.id}:${it.text.length}:${it.attachments.length}`).join(',')}`;
+    if (sig === this.queueSig && box.childElementCount) return;
+    this.queueSig = sig;
+    box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? 'Sends when Claude finishes · Steer or Ctrl+Enter adds it now' : 'Not sent: Claude was stopped'}</span></div>`
+      + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} image${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" data-q="act" title="${actTip}">${act}</button><button class="q-edit" data-q="edit" title="Put it back in the message box to change it (Up arrow in an empty box does the same)">Edit</button><button class="q-x" data-q="x" title="Remove" aria-label="Remove">×</button></div>`).join('');
+    // One listener for the whole list (set once), reading the row and the button at click time.
+    if (!box.dataset.wired) {
+      box.dataset.wired = '1';
+      box.addEventListener('click', (e) => {
+        const row = e.target.closest('.q-item');
+        if (!row) return;
+        const id = row.dataset.id;
+        const k = e.target.closest('[data-q]')?.dataset.q || (e.target.closest('.q-text') ? 'edit' : null);
+        if (k === 'act') { if (this.busy) this.steerItem(id); else this.sendItem(id); }
+        else if (k === 'edit') this.editItem(id);
+        else if (k === 'x') this.removeItem(id);
+      });
+    }
   }
 
   takeItem(id) {
@@ -984,7 +1045,8 @@ export class Pane {
     this.sendNow(items.map((it) => it.text).filter(Boolean).join('\n\n'), items.flatMap((it) => it.attachments));
   }
 
-  submit() {
+  /** Sends the box. While Claude works it queues, or with { steer: true } (Ctrl+Enter) goes into the running turn now. */
+  submit({ steer = false } = {}) {
     // Held elsewhere: the card's button is the way forward, not a message.
     if (this.lockedBy) { this.$.T.querySelector('.takeover')?.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }], { duration: 220, easing: 'ease-out' }); return; }
     const { input } = this.$;
@@ -998,6 +1060,7 @@ export class Pane {
     input.value = '';
     this.autosize();
     // Working: queue it (Steer adds it to the current work). Never stops the turn.
+    if (this.busy && steer) { this.enqueue(text, attachments); this.steerItem(this.queue[this.queue.length - 1].id); this.renderSendButton(); return; }
     if (this.busy) { this.enqueue(text, attachments); this.renderSendButton(); return; }
     this.sendNow(text, attachments);
   }
@@ -1057,7 +1120,7 @@ export class Pane {
     box.innerHTML = '';
     this.attachments.forEach((a, i) => {
       const c = el('div', 'chip', `<img src="${a.url}" alt=""><span class="dim">${a.w}×${a.h}</span>`);
-      const x = el('button', '', '×');
+      const x = el('button', 'chip-x', '×');
       x.title = 'Remove';
       x.onclick = () => { this.attachments.splice(i, 1); this.renderAttachments(); };
       c.append(x);
@@ -1084,6 +1147,9 @@ export class Pane {
         this.setTitle(e.title || 'New conversation');
         this.setCwdLine();
         this.renderBilling();
+        // The context meter belongs to the session: another one starts empty, then measures.
+        if (this.ctx && this.ctx.sessionId !== e.sessionId) { this.ctx = null; this.renderContext(); }
+        this.askContext(1500);
         if (e.sessionId) this.$.T.innerHTML = '';
         else this.showEmpty();
         // Re-attached after a reconnect (the phone client): busy says whether a turn is still running.
@@ -1093,6 +1159,8 @@ export class Pane {
         this.openNotes = [];
         if (e.tookOver) this.openNotes.push(['Taken over: the other window is stopped before its next message, so this conversation continues only here.', '']);
         if (e.terminal?.length) this.openNotes.push([`This session is also open in a Claude Code terminal window (${e.terminal.map((t) => t.name).join(', ')}). Stop typing there while you work here; that window must /resume to see these turns.`, 'warn']);
+        // Re-attached (the background host kept this Claude Code process running): nothing was cut off.
+        if (this.crashNote && e.attached) this.crashNote = false;
         if (this.crashNote) { this.openNotes.push(['Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
         if (e.sessionId !== this.sessionId || e.reset) this.liveTasks.clear();
         this.renderTasksButton();
@@ -1120,6 +1188,7 @@ export class Pane {
         break;
       }
       case 'billing': this.billing = e; this.renderBilling(); if (e.note) this.note(e.note); break;
+      case 'context': if (!e.none && (!e.sessionId || !this.sessionId || e.sessionId === this.sessionId)) { this.ctx = e; this.renderContext(); } break;
       case 'commands': this.commands = e.commands || []; break;
       case 'artifact': this.onArtifact(e); break;
       case 'openUrl': this.onOpenUrl(e); break;
