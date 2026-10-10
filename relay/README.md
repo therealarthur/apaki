@@ -8,12 +8,19 @@ sockets of a room. It holds no keys, parses no payloads and stores nothing.
 The crypto lives on the two ends: `apaki/remote/protocol.js`, documented in
 `apaki/remote/PROTOCOL.md`.
 
-**Not deployed yet.** Deploying is a separate, explicit step (see the end).
+**Live at `apaki.myrlin.io` since 2026-10-10**, for anyone's Apaki: every
+install makes its own room (its id is a hash of a secret only that PC holds),
+so one relay serves many people without accounts and without being able to
+read or join any of them. The same Worker serves the phone page (`site/`).
+Apaki points at it by default; `APAKI_RELAY_URL` and `APAKI_WEB_URL` point an
+Apaki at a copy you run yourself (see the end).
 
 ## Endpoints
 
 ```
-GET /                          one line saying what this is
+GET /                          the front page (site/index.html): what this is, and every published phone page
+GET /v/<version>/              a published phone page; each version is its own folder and never changes
+GET /health                    one line saying what this is
 GET /v1/rooms/<roomId>/pc      WebSocket for the PC; subprotocols "apaki.v1" and "apaki-token.<token>"
 GET /v1/rooms/<roomId>/phone   WebSocket for a phone; subprotocol "apaki.v1"
 ```
@@ -116,38 +123,49 @@ Worker) can see:**
 sockets, or inject the plaintext alerts and control messages, and the
 clients will see failures. That is all.
 
-### The weak spot: the website supplies the code
+### The weak spot: the website supplies the code, and how the PC checks it
 
-The phone runs whatever JavaScript the web client's site serves. Whoever
-controls that site (or its hosting, or its DNS) could serve a version that
-sends the phone's device secret and decrypted messages somewhere else. That
-is the limit of any web app that does end-to-end encryption. Mitigations
-(the web client exists since 2026-10-09, in `apaki/web`, and is already an
-installable PWA whose service worker keeps one build's files together;
-published hashes and publishing the source are still to do; the last two
-are in place):
+The phone runs whatever JavaScript the site serves. Whoever controls that
+site (or its hosting, or its DNS) could serve a version that sends the
+phone's device secret and decrypted messages somewhere else. That is the
+limit of any web app that does end-to-end encryption, so Apaki does not take
+the site's word for it (since 2026-10-10):
 
-- **Versioned, immutable bundles with published hashes.** Serve each release
-  of the web client from a path that never changes (for example
-  `/v/<version>/`) and publish its SHA-256 in the repo and in the Apaki app.
-  Apaki can show the expected hash next to the QR, and the client can load its
-  modules with Subresource Integrity.
+- **Reproducible pages.** The phone page is built from Apaki's own window
+  code by `apaki/scripts/build-web.mjs`: text files with LF endings, every
+  file hashed, one version id for the whole build. The same code builds the
+  same bytes on any machine.
+- **One address per version, never changed.** `build-web.mjs --release`
+  publishes a build at `site/v/<version>/` with a `manifest.json` of its
+  files' SHA-256 hashes, and refuses to publish over a version that differs.
+  Earlier versions stay, so a PC on an older Apaki still opens its own page.
+  These files are served `immutable`.
+- **The PC checks before every pairing code** (`apaki/engine/remote-page.js`).
+  It builds the version it expects from its own files, fetches every file of
+  that version from the site and compares the hashes. Only an exact match
+  gets a pairing code, and the code opens that exact version
+  (`https://apaki.myrlin.io/v/<version>/#p=...`). A changed or missing file
+  means no code, and the Phone sheet says why. Every Apaki that pairs is
+  checking the same address, so a site swap shows up at once.
+- **What the check cannot catch:** a site that serves the right files to the
+  PC and other files to one chosen phone. Doing that needs the operator to
+  single the phone out; running your own copy (below) removes even that.
 - **Installable PWA.** Once installed, the phone keeps the version it
   installed; a changed bundle is a visible update, not a silent swap.
 - **Open source.** With the client, the protocol and this relay published,
-  anyone can build the bundle and compare hashes. The repository
-  (therealarthur/claude-latch) is private today, so this one applies only once
-  it is published.
+  anyone can build the bundle and compare hashes with the `manifest.json` of
+  each version. The repository (therealarthur/claude-latch) is private today,
+  so this one applies once it is published.
 - **Least power on the phone** (in place): the device key is non-extractable
   (WebCrypto keeps it out of reach of page scripts; IndexedDB stores the key
   object, not the bytes), and the PC decides what a phone may do
   (`apaki/engine/remote-policy.js`: an allowlist of conversation and
   session-list commands; never billing, pairing, folders or anything that
   reaches the shell or the filesystem).
-- **A strict page policy** (in place): the web client's
+- **A strict page policy** (in place): the phone page's
   Content-Security-Policy allows only its own files and a WebSocket to the one
-  relay it was built for (`connect-src <relay origin>`), so even an injected
-  script in the page could not send anything anywhere else.
+  relay it was built for (`connect-src wss://apaki.myrlin.io`), so even an
+  injected script in the page could not send anything anywhere else.
 
 ### Stolen or lost phone
 
@@ -168,10 +186,29 @@ Anyone who knows a room id (it is in the QR and on paired phones) can open up
 to `MAX_PHONES` phone sockets in that room and send junk to the PC. The PC
 rejects it (no valid handshake) and can `kick` such connections, and the
 per-room connection rate and per-socket frame and byte rates bound the load.
-Cloudflare's own DDoS protection sits in front. `ALLOWED_ORIGINS` can limit
-phone sockets to the web client's origin (this does not add security against
-a script outside a browser, it only stops other websites from using visitors'
-browsers).
+Cloudflare's own DDoS protection sits in front. New connections are also
+limited per IP address (20 a minute, the `CONNECTS` rate limit binding).
+`ALLOWED_ORIGINS` is set to the phone page's own origin, so other websites
+cannot use their visitors' browsers against rooms (it adds nothing against a
+script outside a browser).
+
+### Cost, with anyone able to use it
+
+The Worker runs on an account with Workers Paid, which has no spend cap, so
+the relay guards its own budget. Every room counts the frames it receives
+and the time its object stays awake, and about every 1000 frames or minute
+awake reports them to one `Budget` object, which prices them at Cloudflare's
+overage rates (`PRICES` in `src/lib.js`: $0.15 per million Durable Object
+requests with 20 WebSocket messages per request, $12.50 per million GB-s at
+128 MB, $0.30 per million Worker requests) for the current UTC day. Past
+`DAILY_BUDGET_USD` ($3) rooms close their sockets with code 4503 and new
+connections get HTTP 503 until 00:00 UTC; the PC then tries again every 30
+minutes. The count ignores the plan's included amounts, so it overcounts.
+Expected: one person's heavy day (about 2 hours of replies streaming to a
+phone) is about 14k requests and 900 GB-s, inside what the plan includes;
+twenty such people would be about $3 a month over it. The worst case is
+about $3 a day. The account's budget alert (Cloudflare Notifications)
+emails at $10 of monthly spend.
 
 ## Develop and test
 
@@ -186,10 +223,34 @@ npm run check     # bundle only (wrangler deploy --dry-run), no upload
 The tests also run a full pairing and a reconnect with `protocol.js` on both
 sides of the local relay. They need no Cloudflare account and no network.
 
-## Deploy (later, on request)
+## Deploy, release, and run your own
 
-The Workers free plan is enough. `wrangler deploy` from this folder creates
-the `apaki-relay` Worker with its Durable Object; a custom domain (for example
-`relay.apaki.myrlin.io`, see the commented `routes` in `wrangler.jsonc`)
-keeps the URL stable. The `ABOUT` var says what the Worker is and that it is
-safe to delete. Nothing has been deployed by this change.
+The hosted copy is the `apaki-relay` Worker on `apaki.myrlin.io` (custom
+domain, no workers.dev address), deployed 2026-10-10. Its `ABOUT` var says
+what it is and that it is safe to delete (paired phones then stop reaching
+their PCs until Apaki points at another relay).
+
+Releasing a new phone page: any change to the window's code (apaki/ui), the
+phone's parts (apaki/web) or the protocol makes a new version, and a PC on
+that Apaki refuses to pair until the site has it.
+
+```
+node apaki/scripts/build-web.mjs --release      # adds relay/site/v/<version>/ (commit it)
+cd relay && npx wrangler deploy                 # uploads only the new files
+```
+
+`package-apaki.ps1` warns when the build it packages has no published page.
+
+Running your own (anyone, on any Cloudflare account):
+
+```
+cd relay
+# wrangler.jsonc: set "routes" to your hostname and ALLOWED_ORIGINS to https://<your hostname>
+node ../apaki/scripts/build-web.mjs --release --relay wss://<your hostname>
+npx wrangler deploy
+# then start Apaki with APAKI_RELAY_URL=wss://<your hostname> and APAKI_WEB_URL=https://<your hostname>/
+```
+
+The Workers free plan is enough for a few people (SQLite-backed Durable
+Objects are on it), and there it cannot bill at all: past the free limits
+requests fail instead.

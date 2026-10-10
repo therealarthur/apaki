@@ -209,10 +209,12 @@ test('store: on Windows the secrets are sealed with DPAPI and open again', { ski
   }
 });
 
-test('the relay and web addresses are placeholders until configured', () => {
-  assert.equal(relayUrl({}), RELAY_PLACEHOLDER);
-  assert.equal(isPlaceholder(relayUrl({})), true);
-  assert.equal(isPlaceholder(webUrl({})), true);
+test('the relay and web addresses: the hosted ones by default, yours when set; placeholders say not set up', () => {
+  assert.equal(relayUrl({}), 'wss://apaki.myrlin.io');
+  assert.equal(webUrl({}), 'https://apaki.myrlin.io/');
+  assert.equal(isPlaceholder(relayUrl({})), false);
+  assert.equal(isPlaceholder(RELAY_PLACEHOLDER), true);
+  assert.equal(webUrl({ APAKI_WEB_URL: 'https://mine.example/' }), 'https://mine.example/');
   assert.equal(relayUrl({ APAKI_RELAY_URL: 'wss://relay.example' }), 'wss://relay.example');
   assert.equal(isPlaceholder('ws://127.0.0.1:8787'), false);
   assert.equal(store.remoteDir().replace(/\\/g, '/').endsWith(process.env.APAKI_REMOTE_DIR ? process.env.APAKI_REMOTE_DIR.replace(/\\/g, '/') : '.claude/latch/remote'), true);
@@ -350,6 +352,7 @@ function bridgeFor(relay, dir, extra = {}) {
     web: 'http://127.0.0.1:9/',
     pcName: 'Test PC',
     log: () => {},
+    pageCheck: false, // the page check has its own tests below
     ...extra,
   });
   return { b, desktop, dispatched, panes, asks, last: () => desktop[desktop.length - 1] };
@@ -526,6 +529,39 @@ test('bridge: with the placeholder relay it says "not set up" and never dials ou
     await b.op({ op: 'remotePairStart', reqId: 'x' });
     assert.match(last().opError, /not set up/);
     assert.equal(relay.pcSockets, 0);
+  } finally {
+    b.stop();
+    delete process.env.APAKI_REMOTE_PROTECT;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('bridge: no pairing code unless the phone page checks out, and the code opens that exact version', async () => {
+  const dir = tmp();
+  process.env.APAKI_REMOTE_PROTECT = 'file';
+  const relay = fakeRelay();
+  const base = { version: 'abc123def456', url: 'http://127.0.0.1:9/v/abc123def456/', files: 40, missing: [], at: Date.now() };
+  let page = { ...base, state: 'differs', differs: ['app.js'] };
+  let checks = 0;
+  const { b, last } = bridgeFor(relay, dir, { pageCheck: async () => { checks++; return page; } });
+  try {
+    await b.op({ op: 'remoteEnable' });
+    await until(() => b.status === 'online');
+    await b.op({ op: 'remotePairStart', reqId: 'p1' });
+    assert.match(last().opError, /will not show a pairing code/);
+    assert.equal(last().pairing, null, 'no code for a page that is not the one this Apaki builds');
+    assert.equal(last().page.state, 'differs');
+    page = { ...base, state: 'missing', differs: [] };
+    await b.op({ op: 'remotePairStart', reqId: 'p2' });
+    assert.match(last().opError, /not published/);
+    page = { ...base, state: 'ok', differs: [] };
+    await b.op({ op: 'remotePairStart', reqId: 'p3' });
+    assert.match(last().pairing.url, /^http:\/\/127\.0\.0\.1:9\/v\/abc123def456\/#p=/);
+    assert.match(last().page.text, /serves exactly/);
+    // A fresh match is reused for the next code.
+    const n = checks;
+    await b.op({ op: 'remotePairStart', reqId: 'p4' });
+    assert.equal(checks, n);
   } finally {
     b.stop();
     delete process.env.APAKI_REMOTE_PROTECT;

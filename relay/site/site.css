@@ -1,0 +1,21 @@
+/* The front page of the Apaki relay site (relay/site/index.html, written by apaki/scripts/build-web.mjs writeLanding). */
+:root { color-scheme: light dark; --ink: #171717; --soft: #55566B; --faint: #63647D; --brand: #5361C9; --ground: #FDFDFF; --line: #E3E5F6; }
+@media (prefers-color-scheme: dark) { :root { --ink: #ECEDF8; --soft: #B7B9D3; --faint: #8D8FAD; --brand: #A3ABF2; --ground: #121120; --line: #2A2940; } }
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh; color: var(--ink); font: 16px/1.6 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: radial-gradient(circle at 1px 1px, rgba(142, 150, 220, .14) 1px, transparent 1.2px) 0 0 / 8px 8px,
+    linear-gradient(160deg, rgba(101, 114, 212, .1), rgba(64, 200, 190, .05) 55%, transparent 80%), var(--ground);
+}
+main { max-width: 680px; margin: 0 auto; padding: 64px 24px 48px; }
+h1 { margin: 0 0 12px; font-size: 40px; line-height: 1.1; font-weight: 900; letter-spacing: -.02em; font-stretch: 125%; }
+h2 { margin: 36px 0 10px; font-size: 13px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--brand); }
+.lead { font-size: 18px; color: var(--soft); margin: 0; }
+ul { padding-left: 20px; }
+li { margin: 8px 0; color: var(--soft); }
+.versions { list-style: none; padding: 0; }
+.versions li { padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; }
+.versions code { font: 600 14px ui-monospace, Consolas, monospace; color: var(--ink); }
+.versions span { margin: 0 8px; font-size: 13px; color: var(--faint); }
+a { color: var(--brand); }
+.small { margin-top: 32px; font-size: 13px; color: var(--faint); }

@@ -29,6 +29,8 @@ export const CLOSE = Object.freeze({
   TOO_LARGE: 4009,
   ROOM_FULL: 4029,
   IDLE: 4408,
+  // The relay reached its daily budget (DAILY_BUDGET_USD); it takes connections again after 00:00 UTC.
+  BUDGET: 4503,
 });
 
 /**
@@ -50,7 +52,43 @@ export const DEFAULT_LIMITS = Object.freeze({
   PHONE_BPS: 2 * 1024 * 1024,
   PC_BPS: 8 * 1024 * 1024,
   IDLE_MS: 10 * 60 * 1000,
+  // The daily budget guard (2026-10-10): what all rooms together may cost per UTC day, in USD, at
+  // Cloudflare's overage prices (PRICES), before new connections are refused until the next day.
+  DAILY_BUDGET_USD: 3,
+  // A room reports its usage to the budget after this many frames or this much busy time.
+  REPORT_FRAMES: 1000,
+  REPORT_BUSY_MS: 60 * 1000,
 });
+
+/**
+ * What the budget guard counts, at Cloudflare Workers Paid overage prices
+ * (2026): a Durable Object request ($0.15 per million; 20 incoming WebSocket
+ * messages bill as one), Durable Object duration ($12.50 per million GB-s at
+ * 128 MB while the object is awake), and a Worker request ($0.30 per million)
+ * for each new connection. It ignores the plan's included amounts, so it
+ * overcounts on purpose.
+ */
+export const PRICES = Object.freeze({ DO_REQUEST: 0.15e-6, WS_PER_REQUEST: 20, GB_S: 12.5e-6, DO_GB: 0.128, WORKER_REQUEST: 0.3e-6 });
+
+/** USD for some relay activity: frames received, milliseconds awake, new connections. */
+export function costOf({ frames = 0, busyMs = 0, connects = 0 } = {}) {
+  return (frames / PRICES.WS_PER_REQUEST) * PRICES.DO_REQUEST
+    + (busyMs / 1000) * PRICES.DO_GB * PRICES.GB_S
+    + connects * (PRICES.WORKER_REQUEST + PRICES.DO_REQUEST);
+}
+
+/** A Durable Object stays in memory about this long after its last event before it can hibernate. */
+export const AWAKE_MS = 10_000;
+
+/** Busy time one event adds: the gap since the last one, or a full AWAKE_MS when the room had gone quiet. */
+export function busyAdd(last, now) {
+  if (!last) return AWAKE_MS;
+  const gap = Math.max(0, now - last);
+  return gap >= AWAKE_MS ? AWAKE_MS : gap;
+}
+
+/** The UTC day a timestamp falls on, "YYYY-MM-DD": the budget's period. */
+export const utcDay = (now = Date.now()) => new Date(now).toISOString().slice(0, 10);
 
 /** The limits in force: defaults, overridden by positive numeric Worker vars. */
 export function readLimits(env = {}) {

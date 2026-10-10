@@ -431,6 +431,8 @@ export const RELAY_CLOSE = Object.freeze({
   ROOM_FULL: 4029,
   /** Nothing (not even a ping) for the relay's idle timeout. */
   IDLE: 4408,
+  /** The relay reached its daily budget; it takes connections again after 00:00 UTC. */
+  BUDGET: 4503,
 });
 
 /** PC side of the relay: every binary frame carries the phone connection id (u32) in front. */

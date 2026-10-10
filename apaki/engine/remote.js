@@ -21,9 +21,12 @@
  * changes: the relay connection, a phone connecting or leaving, a pairing
  * request with its code and the phone's name.
  *
- * Relay and web client addresses: APAKI_RELAY_URL and APAKI_WEB_URL. Until
- * the relay is deployed the defaults are placeholders on the reserved
- * .invalid domain, so phone access says "not set up" instead of trying.
+ * Relay and web client addresses: apaki.myrlin.io for both since
+ * 2026-10-10 (one Worker serves the relay and the phone page), or
+ * APAKI_RELAY_URL and APAKI_WEB_URL for a copy you run yourself. Before a
+ * pairing code is shown, remote-page.js checks that the site serves exactly
+ * the phone page this Apaki builds from its own code; the code then opens
+ * that version's own address (<web>/v/<version>/).
  *
  * Idle cost: one "ping" text every 25 s while on; nothing while off.
  */
@@ -36,12 +39,18 @@ import {
 import { Inbox, Outbox, WIRE_VERSION } from '../remote/wire.js';
 import { BROADCAST_EVENTS, PHONE_OPS, checkPhoneCommand, hashText, parsePhoneId, phoneView, routeEvent } from './remote-policy.js';
 import * as store from './remote-store.js';
+import { checkPage, pageText } from './remote-page.js';
 
-/** Placeholders until the relay and the web client are deployed (the reserved .invalid domain never resolves). */
+/** Placeholders on the reserved .invalid domain (never resolves): what tests and "not set up" use. */
 export const RELAY_PLACEHOLDER = 'wss://relay.apaki.invalid';
 export const WEB_PLACEHOLDER = 'https://apaki.invalid/';
-export const relayUrl = (env = process.env) => env.APAKI_RELAY_URL || RELAY_PLACEHOLDER;
-export const webUrl = (env = process.env) => env.APAKI_WEB_URL || WEB_PLACEHOLDER;
+/** The hosted relay and phone page (one Cloudflare Worker, relay/), live since 2026-10-10. */
+export const RELAY_DEFAULT = 'wss://apaki.myrlin.io';
+export const WEB_DEFAULT = 'https://apaki.myrlin.io/';
+export const relayUrl = (env = process.env) => env.APAKI_RELAY_URL || RELAY_DEFAULT;
+export const webUrl = (env = process.env) => env.APAKI_WEB_URL || WEB_DEFAULT;
+/** A page check this recent is reused for the next pairing code. */
+const PAGE_CHECK_MS = 10 * 60_000;
 
 /** True for an address that is a placeholder (or not an address at all). */
 export function isPlaceholder(url) {
@@ -54,6 +63,7 @@ const HANDSHAKE_MS = 30_000;
 const APPROVAL_MS = LIMITS.PAIR_APPROVE_MS + 5_000;
 const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
 const REPLACED_RETRY_MS = 5 * 60_000;
+const BUDGET_RETRY_MS = 30 * 60_000;
 const STABLE_MS = 30_000;
 /** A phone that went away keeps its conversations this long, so a network change or a locked screen does not stop them. */
 const PANE_GRACE_MS = 15 * 60_000;
@@ -101,6 +111,9 @@ export class RemoteBridge {
     this.relay = o.relay || relayUrl();
     this.web = o.web || webUrl();
     this.pcName = String(o.pcName || os.hostname() || 'PC').slice(0, 60);
+    // The phone page check (remote-page.js); tests pass false (no check, the code opens <web>) or their own.
+    this.pageCheck = o.pageCheck === false ? null : (o.pageCheck || ((a) => checkPage(a)));
+    this.page = null;
     this.log = o.log || ((line) => process.stderr.write(`apaki remote: ${line}\n`));
     // Timings (tests shorten them).
     this.handshakeMs = o.handshakeMs ?? HANDSHAKE_MS;
@@ -283,10 +296,13 @@ export class RemoteBridge {
     for (const id of devices) this.afterLeave(id);
     if (!this.state.enabled) { this.setStatus('off'); return; }
     const replaced = this.byeCode === RELAY_CLOSE.REPLACED || code === RELAY_CLOSE.REPLACED;
+    const budget = this.byeCode === RELAY_CLOSE.BUDGET || code === RELAY_CLOSE.BUDGET;
     this.byeCode = null;
     if (this.connectedAt && Date.now() - this.connectedAt > STABLE_MS) this.attempt = 0;
     this.connectedAt = null;
     if (replaced) this.scheduleReconnect('Another Apaki took this PC\'s relay connection; trying again in a few minutes.', REPLACED_RETRY_MS, 'replaced');
+    // The hosted relay spent its daily budget: wait instead of knocking every minute.
+    else if (budget) this.scheduleReconnect('The Apaki relay has used today\'s budget; it takes connections again after 00:00 UTC. Trying again every 30 minutes.', BUDGET_RETRY_MS);
     else this.scheduleReconnect(null);
   }
 
@@ -605,13 +621,31 @@ export class RemoteBridge {
     if (isPlaceholder(this.relay)) throw new Error('The Apaki relay is not set up yet, so a phone could not reach this PC.');
     if (!this.state.enabled) await this.enable();
     if (this.request) throw new Error('A phone is waiting for your answer; allow or deny it first.');
-    this.offer = createPairingOffer({ identity: this.identity, relay: checkRelayUrl(this.relay), roomId: this.state.roomId, name: this.pcName, web: this.web });
+    let web = this.web;
+    if (this.pageCheck) {
+      const page = await this.checkedPage();
+      if (page.state === 'differs' || page.state === 'missing') { this.pushStatus(); throw new Error(pageText(page)); }
+      // Unreachable from here: a phone may still reach it, and the code opens the version this Apaki checks.
+      if (page.url) web = page.url;
+    }
+    this.offer = createPairingOffer({ identity: this.identity, relay: checkRelayUrl(this.relay), roomId: this.state.roomId, name: this.pcName, web });
     clearTimeout(this.offerTimer);
     const offer = this.offer;
     this.offerTimer = unref(setTimeout(() => {
       this.offerTimer = null;
       if (this.offer === offer) { this.offer = null; this.pushStatus(); }
     }, Math.max(1000, offer.exp * 1000 - Date.now() + 500)));
+  }
+
+  /** The last phone page check, run again when it is old or was not a match. */
+  async checkedPage() {
+    const p = this.page;
+    if (p && p.state === 'ok' && Date.now() - p.at < PAGE_CHECK_MS) return p;
+    this.page = { state: 'checking', at: Date.now() };
+    this.pushStatus();
+    try { this.page = await this.pageCheck({ web: this.web, relay: this.relay }); } catch (e) { this.page = { state: 'unreachable', error: e.message, at: Date.now() }; }
+    this.pushStatus();
+    return this.page;
   }
 
   clearOffer({ quiet = false } = {}) {
@@ -689,6 +723,8 @@ export class RemoteBridge {
       relay: hostOf(this.relay),
       relayConfigured: !isPlaceholder(this.relay),
       web: this.web,
+      // The phone page check, for the Phone sheet (state, version, what it says).
+      page: this.page ? { state: this.page.state, version: this.page.version || null, url: this.page.url || null, at: this.page.at, text: this.page.state === 'checking' ? 'Checking the phone page…' : pageText(this.page) } : null,
       pcName: this.pcName,
       protection: this.scheme === 'dpapi-user' ? 'dpapi' : this.scheme ? 'file' : null,
       devices: this.state.devices.map((d) => ({ id: d.id, name: d.name, pairedAt: d.pairedAt, lastSeen: d.lastSeen, connected: connected.has(d.id), panes: (this.engine.phonePanes?.(d.id) || []).length })),

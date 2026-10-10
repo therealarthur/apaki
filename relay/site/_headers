@@ -1,0 +1,13 @@
+# Headers for the static files the relay Worker serves (Workers static assets).
+# A published phone page (/v/<version>/) never changes: cache it for good.
+/v/*
+  Cache-Control: public, max-age=31536000, immutable
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Cross-Origin-Opener-Policy: same-origin
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Cross-Origin-Opener-Policy: same-origin

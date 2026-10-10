@@ -8,12 +8,25 @@
  *
  *   GET /v1/rooms/<roomId>/pc     WebSocket, the PC (needs the room token)
  *   GET /v1/rooms/<roomId>/phone  WebSocket, a phone
- *   GET /                         a one-line description
+ *   GET /health                   a one-line description
+ *   everything else               the static site (../site: the front page and
+ *                                 /v/<version>/, the phone pages), served by
+ *                                 Workers static assets before this runs;
+ *                                 GET / falls back to the line when there is no site
  *
  * Idle rooms cost nothing: sockets are accepted with the WebSocket
  * Hibernation API, and "ping" is answered by the runtime without waking the
  * object. The DO class is SQLite backed (new_sqlite_classes), so it runs on
  * the Workers free plan; it writes nothing but its idle alarm.
+ *
+ * Cost (2026-10-10): the relay is open to anyone's Apaki, on a Workers Paid
+ * account with no spend cap, so it guards its own budget. Every room counts
+ * the frames it receives and the time it stays awake, and reports them about
+ * every 1000 frames or minute awake to one Budget object, which prices them
+ * at Cloudflare's overage rates (lib.js PRICES) per UTC day. Past
+ * DAILY_BUDGET_USD ($3 by default) rooms close their sockets with BUDGET and
+ * new connections get HTTP 503 until 00:00 UTC. New connections are also
+ * limited per IP address (the CONNECTS rate limit binding).
  *
  * Threat model and wire format: ../README.md.
  */
@@ -23,6 +36,7 @@ import {
   SUBPROTOCOL, ROLE_HEADER, ROOM_PATH, CLOSE,
   readLimits, publicLimits, parseProtocols, tokenFrom, roomIdForToken, sameString, originAllowed,
   Bucket, prefixConn, splitConn, newConnId,
+  costOf, busyAdd, utcDay,
 } from './lib.js';
 
 const ABOUT_TEXT = 'Myrlin Apaki relay. It forwards end-to-end encrypted frames between a PC and its paired phones and cannot read them.\n';
@@ -42,6 +56,12 @@ export default {
     if (!m) return text(404, 'not found');
     if (request.method !== 'GET') return text(405, 'method not allowed', { allow: 'GET' });
     if ((request.headers.get('Upgrade') || '').toLowerCase() !== 'websocket') return text(426, 'expected a WebSocket upgrade', { upgrade: 'websocket' });
+    // At most a few new connections a minute from one address (absent in local tests without the binding).
+    if (env.CONNECTS && env.IP_LIMIT !== 'off') {
+      const ip = request.headers.get('CF-Connecting-IP') || 'local';
+      const { success } = await env.CONNECTS.limit({ key: ip });
+      if (!success) return text(429, 'too many connections from this address; try again in a minute', { 'retry-after': '60' });
+    }
     const offered = parseProtocols(request.headers.get('Sec-WebSocket-Protocol'));
     if (!offered.includes(SUBPROTOCOL)) return text(400, `offer the ${SUBPROTOCOL} subprotocol`);
     const [, roomId, role] = m;
@@ -55,6 +75,10 @@ export default {
       return text(403, 'origin not allowed');
     }
 
+    // Today's budget: this connection is counted, and refused when the day's budget is spent.
+    const budget = await spend(env, costOf({ connects: 1 }));
+    if (budget.over) return text(503, `The Apaki relay has used today's budget; it takes new connections again after 00:00 UTC (in about ${Math.ceil((Date.parse(`${budget.day}T00:00:00Z`) + 86_400_000 - Date.now()) / 3_600_000)} h).`, { 'retry-after': '1800' });
+
     // The DO only ever sees the role, never the token.
     const headers = new Headers(request.headers);
     headers.set(ROLE_HEADER, role);
@@ -63,6 +87,38 @@ export default {
     return stub.fetch(new Request(url.toString(), { method: 'GET', headers }));
   },
 };
+
+/** Adds `usd` to today's spending and returns { day, usd, over } (never throws: a failed check lets traffic through). */
+async function spend(env, usd) {
+  try {
+    if (!env.BUDGET) return { day: utcDay(), usd: 0, over: false };
+    const limit = readLimits(env).DAILY_BUDGET_USD;
+    const stub = env.BUDGET.get(env.BUDGET.idFromName('global'));
+    const res = await stub.fetch(`https://budget/add?usd=${encodeURIComponent(usd)}&limit=${encodeURIComponent(limit)}`);
+    return await res.json();
+  } catch { return { day: utcDay(), usd: 0, over: false }; }
+}
+
+/**
+ * The relay's spending for the current UTC day, across every room: one small
+ * SQLite-backed object, a few bytes of storage, one write per report.
+ */
+export class Budget extends DurableObject {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const day = utcDay();
+    let st = this.st || (await this.ctx.storage.get('st')) || { day, usd: 0 };
+    if (st.day !== day) st = { day, usd: 0 };
+    const add = Number(url.searchParams.get('usd'));
+    if (url.pathname === '/add' && Number.isFinite(add) && add > 0) {
+      st = { day, usd: st.usd + add };
+      await this.ctx.storage.put('st', st);
+    }
+    this.st = st;
+    const limit = Number(url.searchParams.get('limit')) || 3;
+    return new Response(JSON.stringify({ day, usd: st.usd, over: st.usd >= limit }), { headers: { 'content-type': 'application/json' } });
+  }
+}
 
 /** What each accepted socket carries through hibernation (structured clone, tiny). */
 // { role: 'pc'|'phone', conn: number, at: ms, seen: ms, closing?: true, full?: true }
@@ -107,6 +163,10 @@ export class Room extends DurableObject {
     this.rates = new Map();
     /** Connection times in the last minute; in memory only. */
     this.connects = [];
+    /** Usage not yet reported to the Budget object: frames received and time awake. */
+    this.usage = { frames: 0, busyMs: 0 };
+    this.lastEvent = 0;
+    this.reporting = false;
     // Keepalives never wake the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
@@ -168,10 +228,29 @@ export class Room extends DurableObject {
     return r.frames.take(1, now) && r.bytes.take(bytes, now);
   }
 
+  /** Counts one event (a frame, an alarm) and reports to the Budget object when enough has built up. */
+  count(now, frames = 1) {
+    this.usage.frames += frames;
+    this.usage.busyMs += busyAdd(this.lastEvent, now);
+    this.lastEvent = now;
+    if (this.reporting) return;
+    if (this.usage.frames < this.limits.REPORT_FRAMES && this.usage.busyMs < this.limits.REPORT_BUSY_MS) return;
+    const usd = costOf(this.usage);
+    this.usage = { frames: 0, busyMs: 0 };
+    this.reporting = true;
+    // Not awaited: frames keep flowing while the report is on its way.
+    spend(this.env, usd).then((b) => {
+      this.reporting = false;
+      if (!b.over) return;
+      for (const ws of this.ctx.getWebSockets()) closeWith(ws, CLOSE.BUDGET, 'the relay has used today\'s budget');
+    }, () => { this.reporting = false; });
+  }
+
   async webSocketMessage(ws, message) {
     const a = attachment(ws);
     if (!a || a.closing || a.full) return;
     const now = Date.now();
+    this.count(now);
     a.seen = now;
     ws.serializeAttachment(a);
     const size = typeof message === 'string' ? message.length : message.byteLength;
@@ -254,6 +333,7 @@ export class Room extends DurableObject {
   /** The idle check. Scheduled only while the room has sockets, at most once per IDLE_MS per socket. */
   async alarm() {
     const now = Date.now();
+    this.count(now, 0);
     const next = this.sweep(now);
     if (next !== Infinity) await this.ctx.storage.setAlarm(Math.max(next, now + 1000));
   }

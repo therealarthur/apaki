@@ -1,0 +1,4 @@
+
+# Published phone pages are served and checked byte for byte (apaki/engine/remote-page.js):
+# never convert their line endings, or a checkout on Windows would break every hash.
+relay/site/** -text

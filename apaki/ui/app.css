@@ -1803,3 +1803,8 @@ mark.find-hit.cur { background: var(--peach-glow); color: #1E1B33; box-shadow: 0
   .web-act { transition: none; transform: none; }
 }
 :root[data-theme="dark"] .web-addr .addr:focus { box-shadow: 0 6px 18px -12px rgba(0, 0, 0, .8); }
+
+/* The phone page check in the Phone sheet (engine remote-page.js, 2026-10-10): green when the site serves exactly what this Apaki builds, peach when it does not. */
+.phone-sheet .ph-page { margin: 10px 0 0; padding: 9px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.45; color: var(--soft); background: hsla(232, 60%, 62%, .07); border: 1px solid var(--hairline); }
+.phone-sheet .ph-page[data-state="ok"] { color: var(--good); background: var(--good-tint); border-color: hsla(145, 40%, 45%, .25); }
+.phone-sheet .ph-page[data-state="differs"], .phone-sheet .ph-page[data-state="missing"] { color: var(--action-strong); background: var(--action-tint); border-color: hsla(16, 62%, 54%, .3); }

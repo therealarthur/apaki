@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Myrlin Apaki phone access</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <main>
+    <h1>Myrlin Apaki</h1>
+    <p class="lead">This address connects a phone to Myrlin Apaki on a computer. Open the pairing code in Apaki on your PC and scan it; the code opens the exact phone page that matches your Apaki.</p>
+    <h2>What this site can and cannot see</h2>
+    <ul>
+      <li>It serves the phone page and relays frames between your PC and your phones. Everything in those frames is end-to-end encrypted between the two; this site holds no keys and stores nothing.</li>
+      <li>The one-time pairing secret is in the part of the link after #, which browsers never send to a server.</li>
+      <li>Your Claude and Codex logins never leave your PC. A phone can only use its own conversations and the session list.</li>
+      <li>Every version of the phone page has its own address and never changes. Before your PC shows a pairing code, it builds the page it expects from its own code and checks, file by file, that this site serves exactly that.</li>
+    </ul>
+    <h2>Published phone pages</h2>
+    <ul class="versions">
+      <li><code>ac45f97a9b01</code> <span>2026-10-10 · 35 files · relay apaki.myrlin.io</span> <a href="v/ac45f97a9b01/manifest.json">file hashes</a></li>
+    </ul>
+    <p class="small">Anyone can run their own copy: the relay and this page come from the Apaki source (relay/ and apaki/web/), and Apaki can point at another address.</p>
+  </main>
+</body>
+</html>

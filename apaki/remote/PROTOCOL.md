@@ -41,8 +41,10 @@ can squat a room. Phones learn only the room id.
 
 ## The QR
 
-The QR encodes a URL: `https://apaki.myrlin.io/#p=<payload>`. The payload is
-in the **fragment**, which browsers never send to any server. The web client
+The QR encodes a URL: `https://apaki.myrlin.io/v/<version>/#p=<payload>`,
+where `<version>` is the phone page this PC built and checked on the site
+(`apaki/engine/remote-page.js`; see relay/README.md). The payload is in the
+**fragment**, which browsers never send to any server. The web client
 reads it, then calls `history.replaceState` so the secret leaves the address
 bar and history.
 
@@ -243,6 +245,8 @@ history sent again.
 - The relay sees the device id in HELLO1 (it already sees connections, IPs,
   timing and sizes; see `relay/README.md`).
 - Whoever controls the website could ship code that leaks a phone's psk and
-  messages. Mitigations are in `relay/README.md`.
+  messages. The PC checks, file by file, that the site serves exactly the
+  page it builds itself before it shows a pairing code; what that cannot
+  catch (a site singling out one phone) is in `relay/README.md`.
 - A stolen, unlocked phone with the web client open is a paired device until
   the PC removes it.

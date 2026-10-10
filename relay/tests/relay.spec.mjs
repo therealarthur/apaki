@@ -23,7 +23,7 @@ import {
   createRoom, createPcIdentity, createDeviceIdentity, createPairingOffer, parsePairingUrl,
   PcSession, PhoneSession, roomUrl, relaySubprotocols, encodePcFrame, decodePcFrame, parseRelayControl, RELAY_CLOSE,
 } from '../../apaki/remote/protocol.js';
-import { CLOSE, DEFAULT_LIMITS, Bucket, readLimits, splitConn, prefixConn, originAllowed, parseProtocols, tokenFrom, roomIdForToken as relayRoomId } from '../src/lib.js';
+import { CLOSE, DEFAULT_LIMITS, Bucket, readLimits, splitConn, prefixConn, originAllowed, parseProtocols, tokenFrom, roomIdForToken as relayRoomId, costOf, busyAdd, utcDay } from '../src/lib.js';
 
 process.env.WRANGLER_SEND_METRICS = 'false';
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -38,7 +38,10 @@ async function startRelay(vars = {}) {
     local: true,
     persist: false,
     logLevel: 'error',
-    vars,
+    // These clients are Node sockets with no Origin; the deployed relay allows only the phone page's
+    // own (wrangler.jsonc ALLOWED_ORIGINS, checked by originAllowed's tests above).
+    // IP_LIMIT off: every test client comes from 127.0.0.1, far over 20 connections a minute.
+    vars: { ALLOWED_ORIGINS: '', IP_LIMIT: 'off', ...vars },
     experimental: { disableExperimentalWarning: true, disableDevRegistry: true, watch: false },
   });
   return { worker, base: `ws://127.0.0.1:${worker.port}`, port: worker.port };
@@ -153,13 +156,17 @@ test('lib: room ids match protocol.js, buckets, conn framing, limits', async () 
   assert.deepEqual(parseProtocols(' apaki.v1 , apaki-token.abc '), ['apaki.v1', 'apaki-token.abc']);
   assert.equal(tokenFrom(['apaki.v1', `apaki-token.${room.token}`]), room.token);
   assert.equal(tokenFrom(['apaki.v1', 'apaki-token.short']), null);
-  assert.deepEqual(RELAY_CLOSE, { REPLACED: CLOSE.REPLACED, KICKED: CLOSE.KICKED, RATE: CLOSE.RATE, TOO_LARGE: CLOSE.TOO_LARGE, ROOM_FULL: CLOSE.ROOM_FULL, IDLE: CLOSE.IDLE });
+  assert.deepEqual(RELAY_CLOSE, { REPLACED: CLOSE.REPLACED, KICKED: CLOSE.KICKED, RATE: CLOSE.RATE, TOO_LARGE: CLOSE.TOO_LARGE, ROOM_FULL: CLOSE.ROOM_FULL, IDLE: CLOSE.IDLE, BUDGET: CLOSE.BUDGET });
 });
 
 test('http: health, unknown paths, non-upgrade requests, missing subprotocol', async () => {
-  const res = await normal.worker.fetch('http://127.0.0.1/');
+  const res = await normal.worker.fetch('http://127.0.0.1/health');
   assert.equal(res.status, 200);
   assert.match(await res.text(), /cannot read them/);
+  // The front page is the static site (site/index.html).
+  const front = await normal.worker.fetch('http://127.0.0.1/');
+  assert.equal(front.status, 200);
+  assert.match(await front.text(), /Myrlin Apaki/);
   assert.equal((await normal.worker.fetch('http://127.0.0.1/v1/rooms/x/pc')).status, 404);
   const { roomId } = await createRoom();
   assert.equal((await normal.worker.fetch(`http://127.0.0.1/v1/rooms/${roomId}/phone`)).status, 426);
@@ -399,4 +406,40 @@ test('limits: a socket that goes quiet (no frames, no pings) is closed as idle; 
     clearInterval(timer);
     chatty.close();
   }
+});
+
+
+test('budget: past the daily budget a room closes with BUDGET and new connections get 503', async () => {
+  // Two connections fit (about $0.45 per million each); the first report (10 s awake, about $0.000016) does not.
+  const broke = await startRelay({ DAILY_BUDGET_USD: '0.000005', REPORT_FRAMES: '3' });
+  try {
+    const room = await createRoom();
+    const pc = await pcClient(broke, room);
+    const phone = await phoneClient(broke, room.roomId);
+    for (let i = 0; i < 4; i++) phone.send(new Uint8Array([1, 2, 3]));
+    const bye = await Promise.race([phone.bye, new Promise((_, rej) => setTimeout(() => rej(new Error('no bye')), 5000))]);
+    assert.equal(bye.code, CLOSE.BUDGET);
+    assert.equal((await pc.bye).code, CLOSE.BUDGET);
+    assert.equal(await upgradeStatus(broke, `/v1/rooms/${room.roomId}/phone`, ['apaki.v1']), 503);
+  } finally { await broke.worker.stop(); }
+});
+
+test('cost: what the guard counts', () => {
+  assert.ok(Math.abs(costOf({ frames: 20e6 }) - 0.15) < 1e-9, '20 million frames are a million requests');
+  assert.ok(Math.abs(costOf({ busyMs: 86_400_000 }) - 0.128 * 86_400 * 12.5e-6) < 1e-9, 'a room awake all day');
+  assert.equal(busyAdd(0, 5000), 10_000);
+  assert.equal(busyAdd(1000, 4000), 3000);
+  assert.equal(busyAdd(1000, 60_000), 10_000);
+  assert.equal(utcDay(Date.parse('2026-10-10T23:59:59Z')), '2026-10-10');
+});
+
+test('ip limit: new connections from one address are limited per minute', async () => {
+  const limited = await startRelay({ IP_LIMIT: 'on' });
+  try {
+    const { roomId } = await createRoom();
+    const codes = [];
+    for (let i = 0; i < 24; i++) codes.push(await upgradeStatus(limited, `/v1/rooms/${roomId}/phone`, ['apaki.v1']));
+    assert.ok(codes.slice(0, 20).every((c) => c === 101 || c === 429), String(codes));
+    assert.ok(codes.includes(429), `no 429 in ${codes}`);
+  } finally { await limited.worker.stop(); }
 });

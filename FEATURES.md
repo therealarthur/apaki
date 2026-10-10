@@ -5,8 +5,7 @@ runs the real Claude Code underneath, shows every session on your computer in
 one window, lets each conversation bill your subscription or an API key, and
 follows Myrlin Glass as it switches accounts.
 
-Written 2026-10-10 from what is built and tested. Items marked "coming" are
-not live yet.
+Written 2026-10-10 from what is built and tested.
 
 ## What makes it different
 
@@ -39,12 +38,18 @@ not live yet.
   windows). Sessions open in terminal windows appear and drop out within about
   2 seconds. Search finds sessions by words and by meaning, using a local
   index and a local embedding model; nothing is uploaded to search.
-- Your phone, through a relay that cannot read anything (coming). Scan a QR
-  code, compare a 6-digit code, and the phone becomes a remote window onto
-  the Apaki on your PC. Everything is end-to-end encrypted between the two
-  (P-256 key exchange, AES-256-GCM, fresh keys per connection); the relay
-  forwards opaque frames, holds no keys and stores nothing, and your Claude
-  and Codex logins never leave the PC.
+- Your phone, through a relay that cannot read anything. Scan a QR code,
+  compare a 6-digit code, and the phone becomes a remote window onto the
+  Apaki on your PC. Everything is end-to-end encrypted between the two
+  (P-256 key exchange, AES-256-GCM, fresh keys per connection); the hosted
+  relay at apaki.myrlin.io forwards opaque frames, holds no keys and stores
+  nothing, and your Claude and Codex logins never leave the PC. Anyone's
+  Apaki can use it: each install gets its own room, with no accounts.
+- Your PC checks the phone page before trusting it. The page your phone runs
+  is a reproducible build of Apaki's own code, published at an address that
+  never changes. Before showing a pairing code, Apaki builds that page itself
+  and compares every file with what the site serves; if one byte differs, it
+  will not show a code.
 
 ## Conversations
 
@@ -111,7 +116,7 @@ not live yet.
   the Agent SDK, or in the real Claude Code window with relay mode.
 - Keep-warm from the command line: `latch warm on`, `latch warm status`.
 
-## Phone access details (coming)
+## Phone access details
 
 - Pairing needs the one-time secret in the QR, which stays in the link's
   fragment and never reaches a server. The PC approves each phone after both
@@ -120,3 +125,5 @@ not live yet.
   Billing, account switching, settings, the shell and the file system are
   out of its reach.
 - Remove a phone on the PC and it can never reconnect without a new QR.
+- The relay is one Cloudflare Worker anyone can run on their own account
+  with two commands; Apaki points at it with two settings.

@@ -14,6 +14,16 @@
  *   node apaki/scripts/build-web.mjs                    relay from APAKI_RELAY_URL, else the placeholder
  *   node apaki/scripts/build-web.mjs --relay ws://127.0.0.1:8787 [--out <dir>]
  *   node apaki/scripts/build-web.mjs --serve 8790        then serve dist on 127.0.0.1:8790 (local testing)
+ *   node apaki/scripts/build-web.mjs --release [--relay wss://apaki.myrlin.io] [--site <dir>] [--serve 8790]
+ *        publish this build at <site>/v/<version>/ (relay/site by default, which
+ *        the relay Worker serves), keeping every earlier version
+ *
+ * Trust (2026-10-10, Arthur: "a trustless solution where other users can use
+ * this to reach their remote computers"): a build is reproducible (text files
+ * with LF endings, everything hashed), so a PC can build the page it expects
+ * from its own code (expected()) and compare it, file by file, with what the
+ * site serves at /v/<version>/ before it shows a pairing code (engine
+ * remote-page.js). Each version lives at its own path and never changes.
  *
  * The page's Content-Security-Policy (a meta tag) allows its own files and a
  * WebSocket to that ONE relay origin, nothing else: no other connections,
@@ -23,6 +33,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -65,7 +76,13 @@ export function build({ relay = process.env.APAKI_RELAY_URL || RELAY_PLACEHOLDER
   fs.mkdirSync(path.join(out, 'fonts'), { recursive: true });
   fs.mkdirSync(path.join(out, 'icons'), { recursive: true });
   const files = [];
-  const copy = (from, rel) => { fs.copyFileSync(from, path.join(out, rel)); files.push(rel); };
+  // Text with LF endings whatever the checkout uses, so the same code builds the same bytes on any machine.
+  const TEXT = /\.(js|css|html|webmanifest|svg|json)$/i;
+  const copy = (from, rel) => {
+    if (TEXT.test(rel)) fs.writeFileSync(path.join(out, rel), fs.readFileSync(from, 'utf8').replace(/\r\n/g, '\n'));
+    else fs.copyFileSync(from, path.join(out, rel));
+    files.push(rel);
+  };
   for (const f of uiFiles()) copy(path.join(UI, f), f);
   for (const f of WEB_FILES) copy(path.join(SRC, f), f);
   for (const f of REMOTE_FILES) copy(path.join(REMOTE, f), f);
@@ -74,10 +91,11 @@ export function build({ relay = process.env.APAKI_RELAY_URL || RELAY_PLACEHOLDER
   copy(path.join(APAKI, 'icons', 'source', 'apaki-icon.svg'), 'icons/favicon.svg');
   copy(path.join(SRC, 'manifest.webmanifest'), 'manifest.webmanifest');
 
-  const template = fs.readFileSync(path.join(UI, 'index.html'), 'utf8');
-  const markSrc = fs.readFileSync(path.join(UI, 'mark.js'), 'utf8');
+  const lf = (s) => s.replace(/\r\n/g, '\n');
+  const template = lf(fs.readFileSync(path.join(UI, 'index.html'), 'utf8'));
+  const markSrc = lf(fs.readFileSync(path.join(UI, 'mark.js'), 'utf8'));
   const mark = JSON.parse(markSrc.slice(markSrc.indexOf('"'), markSrc.lastIndexOf('"') + 1)).replace('class="m-mark"', 'class="m-mark pair-mark"');
-  const shell = fs.readFileSync(path.join(SRC, 'shell.html'), 'utf8').replace('%MARK%', () => mark);
+  const shell = lf(fs.readFileSync(path.join(SRC, 'shell.html'), 'utf8')).replace('%MARK%', () => mark);
 
   // One version for the whole build: a hash of everything in it.
   const hash = crypto.createHash('sha256');
@@ -127,7 +145,7 @@ export function build({ relay = process.env.APAKI_RELAY_URL || RELAY_PLACEHOLDER
   files.push('index.html');
 
   const assets = ['./', ...files, `app.css?v=${v}`, `web.css?v=${v}`, `boot.js?v=${v}`].map((f) => (f === './' ? f : `./${f}`));
-  const sw = fs.readFileSync(path.join(SRC, 'sw.js'), 'utf8').replace('__VERSION__', v).replace('__ASSETS__', () => JSON.stringify(assets));
+  const sw = lf(fs.readFileSync(path.join(SRC, 'sw.js'), 'utf8')).replace('__VERSION__', v).replace('__ASSETS__', () => JSON.stringify(assets));
   fs.writeFileSync(path.join(out, 'sw.js'), sw);
   files.push('sw.js');
 
@@ -146,6 +164,110 @@ export function build({ relay = process.env.APAKI_RELAY_URL || RELAY_PLACEHOLDER
 
   const bytes = files.reduce((n, f) => n + fs.statSync(path.join(out, f)).size, 0);
   return { out, version: v, relay, origin, csp, files: files.length, bytes };
+}
+
+/* ---------- publishing and checking (2026-10-10) ---------- */
+
+const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+
+/** Every file under `dir` (forward-slash paths) with its SHA-256, sorted; manifest.json itself left out. */
+export function manifestOf(dir) {
+  const out = {};
+  const walk = (d, pre) => {
+    for (const name of fs.readdirSync(d).sort()) {
+      const full = path.join(d, name);
+      const rel = pre ? `${pre}/${name}` : name;
+      if (fs.statSync(full).isDirectory()) walk(full, rel);
+      else if (rel !== 'manifest.json') out[rel] = sha256(fs.readFileSync(full));
+    }
+  };
+  walk(dir, '');
+  return out;
+}
+
+/** The phone page a PC expects for `relay`: { version, files: { path: sha256 } }, built in a temp folder. */
+export function expected({ relay }) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-web-'));
+  try {
+    const r = build({ relay, out: tmp });
+    return { version: r.version, relay: r.relay, files: manifestOf(tmp) };
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
+export const DEFAULT_SITE = path.resolve(APAKI, '..', 'relay', 'site');
+
+/**
+ * Publishes this build at <site>/v/<version>/ with a manifest.json of its
+ * files' hashes. Earlier versions stay (a PC on an older Apaki still opens the
+ * page it was built with); a version already there must match byte for byte.
+ */
+export function release({ relay, site = DEFAULT_SITE } = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-web-'));
+  try {
+    const r = build({ relay, out: tmp });
+    const files = manifestOf(tmp);
+    const dest = path.join(site, 'v', r.version);
+    if (fs.existsSync(dest)) {
+      const have = manifestOf(dest);
+      const differ = [...new Set([...Object.keys(files), ...Object.keys(have)])].filter((k) => files[k] !== have[k]);
+      if (differ.length) throw new Error(`build-web: ${dest} exists with different files (${differ.slice(0, 5).join(', ')}); a published version never changes`);
+    } else {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.cpSync(tmp, dest, { recursive: true });
+      fs.writeFileSync(path.join(dest, 'manifest.json'), `${JSON.stringify({ version: r.version, relay: r.relay, publishedAt: new Date().toISOString(), files }, null, 1)}\n`);
+    }
+    writeLanding(site);
+    return { ...r, dest, files: Object.keys(files).length };
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
+/** The published versions in a site, newest first: [{ version, relay, publishedAt, files }]. */
+export function versionsOf(site = DEFAULT_SITE) {
+  const root = path.join(site, 'v');
+  let names = [];
+  try { names = fs.readdirSync(root); } catch { return []; }
+  return names.map((v) => { try { const m = JSON.parse(fs.readFileSync(path.join(root, v, 'manifest.json'), 'utf8')); return { version: v, relay: m.relay, publishedAt: m.publishedAt, files: Object.keys(m.files || {}).length }; } catch { return null; } })
+    .filter(Boolean).sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)));
+}
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/** The site's front page: what this is, how it stays private, and every published version with its manifest. */
+export function writeLanding(site = DEFAULT_SITE) {
+  const list = versionsOf(site).map((v) => `<li><code>${esc(v.version)}</code> <span>${esc(String(v.publishedAt || '').slice(0, 10))} · ${v.files} files · relay ${esc(new URL(v.relay).host)}</span> <a href="v/${esc(v.version)}/manifest.json">file hashes</a></li>`).join('\n      ');
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Myrlin Apaki phone access</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <main>
+    <h1>Myrlin Apaki</h1>
+    <p class="lead">This address connects a phone to Myrlin Apaki on a computer. Open the pairing code in Apaki on your PC and scan it; the code opens the exact phone page that matches your Apaki.</p>
+    <h2>What this site can and cannot see</h2>
+    <ul>
+      <li>It serves the phone page and relays frames between your PC and your phones. Everything in those frames is end-to-end encrypted between the two; this site holds no keys and stores nothing.</li>
+      <li>The one-time pairing secret is in the part of the link after #, which browsers never send to a server.</li>
+      <li>Your Claude and Codex logins never leave your PC. A phone can only use its own conversations and the session list.</li>
+      <li>Every version of the phone page has its own address and never changes. Before your PC shows a pairing code, it builds the page it expects from its own code and checks, file by file, that this site serves exactly that.</li>
+    </ul>
+    <h2>Published phone pages</h2>
+    <ul class="versions">
+      ${list || '<li>None yet.</li>'}
+    </ul>
+    <p class="small">Anyone can run their own copy: the relay and this page come from the Apaki source (relay/ and apaki/web/), and Apaki can point at another address.</p>
+  </main>
+</body>
+</html>
+`;
+  fs.mkdirSync(site, { recursive: true });
+  fs.writeFileSync(path.join(site, 'index.html'), html);
+  return html;
 }
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
@@ -172,11 +294,29 @@ export function serve(dir, port, { log = (line) => process.stdout.write(`${line}
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2));
-  const r = build({ relay: typeof args.relay === 'string' ? args.relay : undefined, out: typeof args.out === 'string' ? path.resolve(args.out) : undefined });
-  process.stdout.write(`built ${r.files} files (${Math.round(r.bytes / 1024)} KB) into ${r.out}\nversion ${r.version}; the page may connect to ${r.origin} only${r.relay === RELAY_PLACEHOLDER ? ' (placeholder: set APAKI_RELAY_URL or --relay)' : ''}\n`);
-  if (args.serve) {
-    const port = Number(args.serve) || 8790;
-    await serve(r.out, port);
-    process.stdout.write(`serving ${r.out} on http://127.0.0.1:${port}/\n`);
+  const relayArg = typeof args.relay === 'string' ? args.relay : undefined;
+  if (args.release) {
+    const site = typeof args.site === 'string' ? path.resolve(args.site) : DEFAULT_SITE;
+    const r = release({ relay: relayArg || process.env.APAKI_RELAY_URL || 'wss://apaki.myrlin.io', site });
+    process.stdout.write(`published version ${r.version} (${r.files} files) at ${r.dest}
+the page may connect to ${r.origin} only
+`);
+    if (args.serve) {
+      const port = Number(args.serve) || 8790;
+      await serve(site, port);
+      process.stdout.write(`serving ${site} on http://127.0.0.1:${port}/ (the page: /v/${r.version}/)
+`);
+    }
+  } else {
+    const r = build({ relay: relayArg, out: typeof args.out === 'string' ? path.resolve(args.out) : undefined });
+    process.stdout.write(`built ${r.files} files (${Math.round(r.bytes / 1024)} KB) into ${r.out}
+version ${r.version}; the page may connect to ${r.origin} only${r.relay === RELAY_PLACEHOLDER ? ' (placeholder: set APAKI_RELAY_URL or --relay)' : ''}
+`);
+    if (args.serve) {
+      const port = Number(args.serve) || 8790;
+      await serve(r.out, port);
+      process.stdout.write(`serving ${r.out} on http://127.0.0.1:${port}/
+`);
+    }
   }
 }

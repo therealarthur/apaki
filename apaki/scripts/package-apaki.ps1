@@ -60,6 +60,14 @@ Mirror (Join-Path $repo 'apaki\engine') (Join-Path $engine 'apaki\engine')
 Mirror (Join-Path $repo 'apaki\remote') (Join-Path $engine 'apaki\remote')
 # The BROWSER shim the engine gives Claude Code (apaki-open.cmd + .mjs), so pages open inside Apaki.
 Mirror (Join-Path $repo 'apaki\bin') (Join-Path $engine 'apaki\bin')
+# The phone page check (2026-10-10, engine remote-page.js): the engine builds the phone page this
+# Apaki expects from its own window code and compares it with what the site serves, so it needs
+# the sources of that build (apaki\ui, apaki\web, the icon, scripts\build-web.mjs). About 1 MB.
+Mirror (Join-Path $repo 'apaki\ui') (Join-Path $engine 'apaki\ui')
+Mirror (Join-Path $repo 'apaki\web') (Join-Path $engine 'apaki\web')
+Mirror (Join-Path $repo 'apaki\icons\source') (Join-Path $engine 'apaki\icons\source')
+New-Item -ItemType Directory -Force (Join-Path $engine 'apaki\scripts') | Out-Null
+Copy-Item (Join-Path $repo 'apaki\scripts\build-web.mjs') (Join-Path $engine 'apaki\scripts\build-web.mjs')
 Mirror (Join-Path $repo 'node_modules') (Join-Path $engine 'node_modules') -Whole
 New-Item -ItemType Directory -Force (Join-Path $engine 'index\target\release') | Out-Null
 Copy-Item $index (Join-Path $engine 'index\target\release')
@@ -107,3 +115,10 @@ Set-Content -Path (Join-Path $dist 'node\_WHY_THIS_IS_HERE.md') -Value "# node`r
 
 $size = [math]::Round(((Get-ChildItem -LiteralPath $dist -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB)
 "packaged: $dist ($size MB, commit $commit)"
+# Phone pairing only works when the hosted site has this build's phone page (engine remote-page.js
+# refuses otherwise). Say so here, so a release is never shipped with phone access quietly broken.
+$pageVersion = (& node -e "import('file:///$($repo -replace '\\','/')/apaki/scripts/build-web.mjs').then((m) => process.stdout.write(m.expected({ relay: process.env.APAKI_RELAY_URL || 'wss://apaki.myrlin.io' }).version))") 2>$null
+if ($pageVersion -and -not (Test-Path (Join-Path $repo "relay\site\v\$pageVersion"))) {
+  "WARNING: this build's phone page (version $pageVersion) is not published. Phone pairing will refuse until it is:"
+  "  node apaki/scripts/build-web.mjs --release   then deploy the relay (cd relay; npx wrangler deploy)"
+} elseif ($pageVersion) { "phone page: version $pageVersion is published in relay/site (deploy the relay if it is new)" }

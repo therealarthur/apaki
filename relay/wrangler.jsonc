@@ -1,4 +1,6 @@
-// Myrlin Apaki relay (Cloudflare Worker + Durable Object). Not deployed yet.
+// Myrlin Apaki relay (Cloudflare Worker + Durable Object), on apaki.myrlin.io
+// since 2026-10-10. It also serves the phone web page (site/: one immutable
+// folder per published version, written by apaki/scripts/build-web.mjs --release).
 // Forwards opaque end-to-end encrypted frames between a PC running Myrlin
 // Apaki and its paired phones. See README.md for the threat model.
 {
@@ -6,20 +8,27 @@
   "name": "apaki-relay",
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
-  "workers_dev": true,
-  // When deploying on myrlin.io, a custom domain keeps the URL stable, for example:
-  // "routes": [{ "pattern": "relay.apaki.myrlin.io", "custom_domain": true }],
+  // One address for the relay and the phone page; no workers.dev copy.
+  "workers_dev": false,
+  "routes": [{ "pattern": "apaki.myrlin.io", "custom_domain": true }],
+  // Files that exist are served as they are (the Worker is not run for them);
+  // everything else (/v1/rooms/..., /health) reaches the Worker.
+  "assets": { "directory": "./site", "html_handling": "auto-trailing-slash", "not_found_handling": "none" },
   "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }, { "name": "BUDGET", "class_name": "Budget" }]
   },
   // SQLite-backed Durable Objects work on the Workers free plan.
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  // v2 (2026-10-10): the daily budget guard (src/index.js Budget).
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }, { "tag": "v2", "new_sqlite_classes": ["Budget"] }],
+  // New relay connections per IP address: 20 a minute (a PC and a few phones reconnecting fit easily).
+  "ratelimits": [{ "name": "CONNECTS", "namespace_id": "4503", "simple": { "limit": 20, "period": 60 } }],
   // The relay logs nothing about frames; keep platform logs off too.
   "observability": { "enabled": false },
   "vars": {
-    "ABOUT": "Myrlin Apaki relay: forwards opaque end-to-end encrypted frames between a PC running Myrlin Apaki and its paired phones; stores nothing, holds no keys. Made 2026-10-09 by Claude Code (Opus 5.5) for Arthur. Source: github.com/therealarthur/claude-latch relay/. Safe to delete: paired phones stop reaching their PCs until Apaki points at another relay.",
-    // Comma-separated Origins allowed for phone sockets (empty = any; the crypto does not depend on it).
-    "ALLOWED_ORIGINS": ""
+    "ABOUT": "Myrlin Apaki relay and phone page (apaki.myrlin.io): forwards opaque end-to-end encrypted frames between a PC running Myrlin Apaki and its paired phones, and serves the phone page (one immutable folder per version); stores nothing but a daily cost counter, holds no keys. Made 2026-10-09 by Claude Code (Opus 5.5) for Arthur. Source: github.com/therealarthur/claude-latch relay/. Safe to delete: paired phones stop reaching their PCs until Apaki points at another relay.",
+    // Origins allowed for phone sockets: the phone page's own. The crypto does not depend on it;
+    // it stops other websites from using their visitors' browsers against rooms.
+    "ALLOWED_ORIGINS": "https://apaki.myrlin.io"
     // Limits (see src/lib.js DEFAULT_LIMITS) can be overridden here, for example "MAX_PHONES": "8".
   }
 }
