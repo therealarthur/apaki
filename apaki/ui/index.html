@@ -48,8 +48,14 @@
     </section>
 
     <footer class="rail-foot">
-      <div class="glass-line" id="glassState" title="Myrlin Glass: the account Claude Code bills right now"></div>
-      <div class="foot-row"><span id="indexState">Loading…</span><button class="theme-btn" id="theme"></button><button class="sound" id="sound" title="Ding when a session comes back"></button></div>
+      <!-- Myrlin Glass, compact (2026-10-09): the live Claude account (a key says so) and the live Codex
+           account, each with its usage; click a row to switch it. Filled in by app.js from the engine's glass event. -->
+      <div class="glass-card" id="glassState" hidden></div>
+      <div class="foot-row">
+        <span id="indexState">Loading…</span>
+        <button class="foot-icon phone-btn" id="phone" title="Use Apaki from your phone" aria-label="Phone access"></button>
+        <button class="foot-icon" id="settings" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" class="i24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
     </footer>
   </aside>
 
@@ -80,6 +86,7 @@
         </button>
       </header>
       <div class="ground"><div class="transcript"></div></div>
+      <div class="prompt-pin" hidden></div>
       <section class="composer-wrap">
         <div class="status-line"><span class="egrid-slot"></span><span class="status"></span></div>
         <ul class="slash" hidden></ul>

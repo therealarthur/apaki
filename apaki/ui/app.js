@@ -30,6 +30,8 @@ import { closeMenu, menu } from './menu.js';
 import { arm, ding, setSoundOn, soundOn } from './sound.js';
 import { MARK_SVG } from './mark.js';
 import { folderSheet } from './startfolder.js';
+import { initGlassCard } from './glasscard.js';
+import { initSettings } from './settings.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -926,16 +928,21 @@ function paneFolder(p, v) {
 function renderIndexState() {
   const building = /%/.test(S.meaningLine || '');
   $('indexState').textContent = building ? S.meaningLine : [S.indexLine, S.meaningLine].filter(Boolean).join(' · ') || 'Loading…';
+  $('indexState').title = indexText();
+  settings?.refresh();
 }
+const indexText = () => [S.indexLine, S.meaningLine].filter(Boolean).join(' · ') || 'Loading…';
 
 /* ---------- sound ---------- */
 
 function renderSound() {
+  settings?.refresh();
   const b = $('sound');
+  if (!b) return;
   b.textContent = soundOn() ? 'Ding on' : 'Ding off';
   b.classList.toggle('off', !soundOn());
 }
-$('sound').onclick = () => { setSoundOn(!soundOn()); renderSound(); if (soundOn()) ding('done'); };
+if ($('sound')) $('sound').onclick = () => { setSoundOn(!soundOn()); renderSound(); if (soundOn()) ding('done'); };
 
 /* ---------- theme (theme.js sets it before first paint) ---------- */
 
@@ -945,14 +952,28 @@ const THEME_UI = {
   dark: { label: 'Dark', next: 'auto', icon: '<path class="i-fill" d="M12.8 10.2A5.6 5.6 0 0 1 5.8 3.2a5.6 5.6 0 1 0 7 7z"/>' },
 };
 function renderTheme() {
+  settings?.refresh();
   const t = window.apakiTheme;
   const b = $('theme');
+  if (!b) return;
   if (!t) { b.hidden = true; return; }
   const ui = THEME_UI[t.get()];
   b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${ui.icon}</svg>${ui.label}`;
   b.title = t.get() === 'auto' ? `Theme follows Windows (now ${t.effective()}). Click for ${THEME_UI[ui.next].label.toLowerCase()}.` : `${ui.label} theme. Click for ${THEME_UI[ui.next].label.toLowerCase()}.`;
 }
-$('theme').onclick = () => window.apakiTheme.set(THEME_UI[window.apakiTheme.get()].next);
+if ($('theme')) $('theme').onclick = () => window.apakiTheme.set(THEME_UI[window.apakiTheme.get()].next);
+
+/* ---------- the rail's bottom-left corner: Glass, Settings, Phone (2026-10-09) ---------- */
+
+const glassCard = initGlassCard({ root: $('glassState'), send, menu, note: (text, tone) => focusedPane()?.note(text, tone) });
+const settings = initSettings({
+  button: $('settings'), sheet, send, theme: window.apakiTheme, themeUi: THEME_UI, indexText,
+  sound: { on: soundOn, set: (on) => { setSoundOn(on); if (on) ding('done'); } },
+});
+// The Phone button is phone.js's (the remote track); until that is in this build it shows its glyph only.
+if ($('phone') && !$('phone').innerHTML.trim()) {
+  $('phone').innerHTML = '<svg viewBox="0 0 16 16" class="ph-glyph" aria-hidden="true"><rect class="ph-body" x="3.8" y="1.2" width="8.4" height="13.6" rx="2.1"/><rect class="ph-screen" x="5.3" y="3" width="5.4" height="8.6" rx=".9"/><path class="ph-home" d="M7 13.2h2"/></svg>';
+}
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderTheme);
 window.addEventListener('apaki-theme', renderTheme);
 // The webview plays sound only after a user gesture: arm on the first one.
@@ -1277,13 +1298,12 @@ await listen('engine', ({ payload: e }) => {
     case 'billingOptions': billingSheet(e.options, e.paneId); break;
     case 'places': startUI?.places(e); break;
     case 'dir': startUI?.dir(e); break;
-    case 'glass': {
-      // What Myrlin Glass has Claude Code on right now; updates the moment Glass swaps.
-      const g = $('glassState');
-      g.innerHTML = e.installed ? `<span class="gl">Glass</span>${esc(e.name)}${e.headroom != null ? `<span class="gh">${Math.round(e.headroom)}% left</span>` : ''}` : '<span class="gl">Glass</span>not installed';
-      if (e.changed) { g.classList.remove('flash'); void g.offsetWidth; g.classList.add('flash'); }
+    case 'glass':
+    case 'glass_swap':
+      // What Myrlin Glass has Claude Code and Codex on right now; updates the moment Glass swaps (glasscard.js).
+      glassCard.handle(e);
       break;
-    }
+    case 'warmState': settings.handle(e); break;
     case 'closed': break;
     case 'note': focusedPane()?.note(e.text, e.tone || ''); break;
     case 'error': focusedPane()?.note(e.message, 'error'); break;

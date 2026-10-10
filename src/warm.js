@@ -439,6 +439,17 @@ export async function statusText() {
   return lines.join('\n');
 }
 
+/** Keep-warm in a few fields, for Apaki's Settings sheet. */
+export function summary() {
+  const s = readSettings();
+  const k = readJson(path.join(DIR(), 'keeper.json'), {});
+  const v = readJson(path.join(DIR(), 'verify.json'));
+  return {
+    on: Boolean(s.on), hours: s.hours, dailyCapUsd: s.dailyCapUsd, spentToday: spentToday(), ttl: cacheTtl(),
+    keeper: Boolean(k.pid && pidAlive(k.pid)), sessions: uses().length, verdict: v?.verdict || null,
+  };
+}
+
 /** Turns keep-warm on or off for every session. */
 export function setOn(on, { hours, cap } = {}) {
   const patch = { on };

@@ -3,7 +3,8 @@
  * pickers in the composer, and the right-click menu on a session).
  *
  * menu(anchor, items, { onPick, above }) where each item is
- * { label, value, hint?, html?, checked?, danger?, divider? }. It opens next to
+ * { label, value, hint?, html?, checked?, danger?, disabled?, divider? }.
+ * A disabled item is shown dimmed and cannot be picked (keys skip it). It opens next to
  * the anchor element (or at an {x, y} point), keeps inside the window, and
  * closes on a pick, a click outside, Escape or a scroll. Arrow keys and Enter
  * work. No library: one element, reused.
@@ -32,11 +33,12 @@ export function menu(anchor, items, { onPick, above = true, width } = {}) {
     if (it.divider) { el.append(Object.assign(document.createElement('div'), { className: 'menu-div' })); continue; }
     if (it.heading) { el.append(Object.assign(document.createElement('div'), { className: 'menu-head', textContent: it.heading })); continue; }
     const b = document.createElement('button');
-    b.className = `menu-item${it.checked ? ' on' : ''}${it.danger ? ' danger' : ''}`;
+    b.className = `menu-item${it.checked ? ' on' : ''}${it.danger ? ' danger' : ''}${it.disabled ? ' disabled' : ''}`;
+    if (it.disabled) { b.disabled = true; b.title = it.disabled === true ? '' : String(it.disabled); }
     b.innerHTML = `${it.html || `<span class="ml">${esc(it.label)}</span>`}${it.hint ? `<span class="mh">${esc(it.hint)}</span>` : ''}`;
     b.onclick = (e) => { e.stopPropagation(); closeMenu(); onPick?.(it.value, it); };
     el.append(b);
-    buttons.push(b);
+    if (!it.disabled) buttons.push(b);
   }
   document.body.append(el);
   const r = anchor instanceof Element ? anchor.getBoundingClientRect() : { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y, width: 0 };

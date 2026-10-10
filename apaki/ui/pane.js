@@ -92,7 +92,9 @@ export class Pane {
       file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
       folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'),
       statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
+      pin: q('.prompt-pin'),
     };
+    this.$.ground.addEventListener('scroll', () => this.schedulePin(), { passive: true });
     // The composer floats over the conversation (frosted); keep the last
     // message clear of it as it grows and shrinks.
     new ResizeObserver(() => {
@@ -198,8 +200,10 @@ export class Pane {
   renderBilling() {
     const b = this.billing;
     if (!b) return;
-    this.$.billing.innerHTML = `${esc(b.name)}${b.follow && !/glass/i.test(b.name) ? '<span class="src">Glass</span>' : ''}`;
-    this.$.billing.title = `Billing: ${b.name}${b.follow ? ' (follows Myrlin Glass)' : ''} · click to change`;
+    // A key says so beside its name (Arthur, 2026-10-09): it bills per token, a subscription does not.
+    const key = b.isKey ? '<span class="key-tag" aria-label="(API key)">API key</span>' : '';
+    this.$.billing.innerHTML = `${esc(b.name)}${key}${b.follow && !/glass/i.test(b.name) ? '<span class="src">Glass</span>' : ''}`;
+    this.$.billing.title = `Billing: ${b.name}${b.isKey ? ' (API key, billed per token)' : ''}${b.follow ? ' (follows Myrlin Glass)' : ''} · click to change`;
   }
 
   /** The folder chip under the title: the folder's name, or a quiet "Add to folder". */
@@ -287,6 +291,62 @@ export class Pane {
   scrollDown(force = false) {
     const g = this.$.ground;
     if (force || g.scrollHeight - g.scrollTop - g.clientHeight < 160) g.scrollTop = g.scrollHeight;
+    this.schedulePin();
+  }
+
+  /* ---------- the prompt pin ---------- */
+
+  // Arthur, 2026-10-09: scrolled down, the message that started what you are
+  // reading sits in a card at the top; a click scrolls back up to it. Scroll
+  // up past that message and the card shows the one before it.
+  schedulePin() {
+    if (this._pinRaf) return;
+    this._pinRaf = requestAnimationFrame(() => { this._pinRaf = 0; this.updatePin(); });
+  }
+
+  /** Your last message scrolled out above the top edge ({ el, n, of }), or null. */
+  pinnedTurn() {
+    const turns = this.$.T.querySelectorAll(':scope > .turn-user');
+    if (!turns.length) return null;
+    const edge = this.$.ground.getBoundingClientRect().top + 6;
+    // Turns run top to bottom, so the last one above the edge is a binary search away.
+    let lo = 0;
+    let hi = turns.length - 1;
+    let hit = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (turns[mid].getBoundingClientRect().bottom < edge) { hit = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return hit < 0 ? null : { el: turns[hit], n: hit + 1, of: turns.length };
+  }
+
+  updatePin() {
+    const pin = this.$.pin;
+    if (!pin) return;
+    const t = this.pinnedTurn();
+    if (!t) { pin.hidden = true; this._pinKey = ''; return; }
+    const key = `${t.n}/${t.of}`;
+    if (key === this._pinKey && !pin.hidden && this._pinEl === t.el) return;
+    this._pinKey = key;
+    this._pinEl = t.el;
+    const words = [...t.el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join('').trim();
+    const imgs = t.el.querySelectorAll('.imgs img, .imgs .img-marker').length;
+    const text = words || (imgs ? `${imgs} image${imgs > 1 ? 's' : ''}` : 'Your message');
+    pin.innerHTML = `<button class="pin-card" title="Scroll up to this message"><span class="pin-head"><span class="pin-who">${t.el.classList.contains('steered') ? 'You, steered in' : 'You asked'}</span><span class="pin-n">${t.n} of ${t.of}</span><span class="pin-go">Jump up<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2"/></svg></span></span><span class="pin-text">${esc(text)}</span></button>`;
+    pin.querySelector('.pin-card').onclick = () => this.jumpTo(t.el);
+    pin.hidden = false;
+  }
+
+  /** Scrolls a message of yours to the top (just under the pin) and marks it for a moment. */
+  jumpTo(u) {
+    const g = this.$.ground;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const top = u.getBoundingClientRect().top - g.getBoundingClientRect().top + g.scrollTop - (this.$.pin.offsetHeight || 0) - 14;
+    g.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' });
+    u.classList.remove('pin-arrive');
+    void u.offsetWidth;
+    u.classList.add('pin-arrive');
+    setTimeout(() => u.classList.remove('pin-arrive'), 1400);
   }
 
   note(text, tone = '') {
@@ -310,6 +370,16 @@ export class Pane {
     u.append(document.createTextNode(text));
     this.$.T.append(u);
     this.scrollDown(true);
+  }
+
+  /** Redraws a streaming reply as markdown, once per animation frame. */
+  paintStream(a) {
+    if (a._raf) return;
+    a._raf = requestAnimationFrame(() => {
+      a._raf = 0;
+      a.innerHTML = md(a._raw || '');
+      this.scrollDown();
+    });
   }
 
   addAssistant(text) {
@@ -402,7 +472,8 @@ export class Pane {
       if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') this.setStatus('Thinking…');
       if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
         const a = this.streams.get(`${this.curMsg}:${ev.index}`);
-        if (a) { a.textContent += ev.delta.text; this.scrollDown(); }
+        // Formatted while it streams (Arthur saw raw ** before), redrawn at most once a frame.
+        if (a) { a._raw = (a._raw || '') + ev.delta.text; this.paintStream(a); }
       }
       return;
     }
@@ -416,7 +487,7 @@ export class Pane {
         if (!this.streams.has(key)) key = [...this.streams.keys()].find((k) => k.startsWith(`${id}:`)) || key;
         const live = this.streams.get(key);
         if (b.type === 'text') {
-          if (live) { live.classList.remove('streaming'); live.innerHTML = md(b.text); this.host.linkSessions?.(live); this.streams.delete(key); } else this.addAssistant(b.text);
+          if (live) { cancelAnimationFrame(live._raf); live.classList.remove('streaming'); live.innerHTML = md(b.text); this.host.linkSessions?.(live); this.streams.delete(key); } else this.addAssistant(b.text);
         } else if (b.type === 'tool_use') {
           this.addTool(b);
         }
@@ -694,7 +765,7 @@ export class Pane {
         queueMicrotask(() => this.flushQueue());
         const u = e.usage || {};
         const k = (n) => `${((n || 0) / 1000).toFixed(1)}k`;
-        const foot = [`${((e.durationMs || 0) / 1000).toFixed(1)}s`, `${k(u.cache_read_input_tokens)} cached`, `${k(u.cache_creation_input_tokens)} new`, e.cost != null ? `$${e.cost.toFixed(3)}` : null, this.billing?.name].filter(Boolean).join(' · ');
+        const foot = [`${((e.durationMs || 0) / 1000).toFixed(1)}s`, `${k(u.cache_read_input_tokens)} cached`, `${k(u.cache_creation_input_tokens)} new`, e.cost != null ? `$${e.cost.toFixed(3)}` : null, this.billing?.name ? `${this.billing.name}${this.billing.isKey ? ' (API key)' : ''}` : null].filter(Boolean).join(' · ');
         this.$.T.append(el('div', 'foot', esc(foot)));
         if (e.isError) this.note(e.result || (e.errors || []).join('; ') || e.subtype, 'error');
         this.setStatus('');

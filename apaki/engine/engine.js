@@ -44,7 +44,7 @@ import { filterItems, terminalSessions } from '../../src/picker.js';
 import { SessionRunner } from '../../src/runner.js';
 import { lockInfo, lockStolen, releaseLock, rememberCreated, setLockApp, takeLock } from '../../src/sessions.js';
 import { makeLoader } from '../../src/ui/picker.js';
-import { noteRunnerUse, setOn as setWarm, statusText as warmStatus } from '../../src/warm.js';
+import { noteRunnerUse, setOn as setWarm, statusText as warmStatus, summary as warmSummary } from '../../src/warm.js';
 import { folderStats, listDir, makeDir } from '../../src/places.js';
 
 // Locks this engine takes name it, so a blocked terminal window can say who has the session.
@@ -208,7 +208,7 @@ function compactMessages(msgs) {
 
 function billingInfo(p) {
   const c = p ? p.credential : defaults.credential;
-  return { name: c.name, source: c.source, follow: Boolean(c.follow) };
+  return { name: c.name, source: c.source, follow: Boolean(c.follow), isKey: Boolean(c.key) };
 }
 
 async function closeRunner(p) {
@@ -457,6 +457,27 @@ const handlers = {
     const text = v && v !== 'on' && v !== 'off' && v !== 'status' ? 'Use /warm on, /warm off or /warm' : await warmStatus();
     emit({ ev: 'note', paneId: c.paneId || null, text });
   },
+  // The Settings sheet's keep-warm switch: the state, and on/off without a note in a pane.
+  warmState: (c) => {
+    if (c.on === true || c.on === false) setWarm(c.on);
+    emit({ ev: 'warmState', reqId: c.reqId, ...warmSummary() });
+  },
+  // The footer's Glass card: read again now, or switch an account (Arthur picked it, so --user-asked).
+  glass: (c) => (c.refresh
+    ? new Promise((resolve) => execFile(GLASS_CLI, ['refresh', '--json'], { timeout: 30000, windowsHide: true }, () => resolve())).then(() => glassChanged())
+    : glassChanged()),
+  glassSwap: (c) => new Promise((resolve) => {
+    const provider = c.provider === 'codex' ? 'codex' : 'claude';
+    const args = ['swap', provider, String(c.account || ''), '--reason', 'Picked in Myrlin Apaki', '--requester', 'myrlin-apaki', '--user-asked', '--json'];
+    execFile(GLASS_CLI, args, { timeout: 30000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      let out = null;
+      try { out = JSON.parse(stdout); } catch { out = null; }
+      const ok = !err && out?.ok !== false && !out?.error;
+      const message = ok ? '' : String(out?.error || out?.message || stderr || err?.message || 'Glass could not switch').trim().split('\n')[0].slice(0, 240);
+      emit({ ev: 'glass_swap', reqId: c.reqId, provider, account: c.account, ok, message, detail: out?.message || '' });
+      glassChanged().catch(() => {}).finally(resolve);
+    });
+  }),
   billingOptions: (c) => emit({
     ev: 'billingOptions', reqId: c.reqId, paneId: c.paneId || null,
     options: [
@@ -527,24 +548,62 @@ const LIVE_LOGIN = process.env.LATCH_LIVE_LOGIN_FILE || path.join(CLAUDE_DIR, '.
 const GLASS_CLI = process.env.LATCH_GLASS_CLI || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Myrlin Glass', 'glass.exe');
 let glassSeen = null;
 
-function glassActive() {
+/** Glass's full status (both providers, their accounts, API credit orgs), or null. */
+function glassStatus() {
   return new Promise((resolve) => {
     if (!fs.existsSync(GLASS_CLI)) { resolve(null); return; }
-    execFile(GLASS_CLI, ['status', '--provider', 'claude', '--json'], { timeout: 10000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+    execFile(GLASS_CLI, ['status', '--json'], { timeout: 10000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
       if (err) { resolve(null); return; }
-      try {
-        const live = (JSON.parse(stdout).accounts || []).find((a) => a.provider === 'claude' && a.active);
-        resolve(live ? { label: live.label || live.email || '', plan: live.plan || '', headroom: live.headroom ?? null } : null);
-      } catch { resolve(null); }
+      try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
     });
   });
+}
+
+const accountName = (a) => a?.label || (a?.email ? String(a.email).split('@')[0] : '') || 'Account';
+
+/**
+ * One Glass account for the footer and its menu. An API-credit entry is
+ * marked isKey and its plan reads "API key" (Arthur, 2026-10-09: it must be
+ * apparent when Claude bills a key, not a subscription).
+ */
+function glassAccount(a) {
+  if (!a) return null;
+  const isKey = /api credits/i.test(a.plan || '');
+  const seen = new Set();
+  const windows = (a.windows || []).filter((w) => { const k = `${w.label}:${Math.round(w.percent)}`; if (seen.has(k)) return false; seen.add(k); return true; })
+    .map((w) => ({ label: w.label, percent: Math.round(w.percent ?? 0), resetsAt: w.resetsAt || null }));
+  return {
+    id: a.id, name: accountName(a), plan: isKey ? 'API key' : (a.plan || ''), isKey, state: a.state || 'ok',
+    headroom: a.headroom == null ? null : Math.round(a.headroom), detail: a.stateDetail || '', windows, active: Boolean(a.active),
+    leftUsd: a.apiCredit?.leftUsd ?? null,
+  };
+}
+
+/** The live account and the swappable list for each provider, from glassStatus(). */
+function glassView(st) {
+  if (!st) return null;
+  const acc = st.accounts || [];
+  const live = (p) => glassAccount(acc.find((a) => a.provider === p && a.active));
+  const claude = live('claude');
+  // A key's dollars live on its API-credit entry, not on the account Glass made for it.
+  const credit = claude?.isKey ? (st.apiCredits || []).find((c) => c.id === claude.id) || (st.apiCredits || []).find((c) => c.active) : null;
+  if (credit) Object.assign(claude, { leftUsd: credit.leftUsd ?? null, creditUsd: credit.creditUsd ?? null, detail: credit.orgName || claude.detail });
+  // Subscriptions come from the accounts; every API-credit org is offered as a key.
+  const subs = acc.filter((a) => a.provider === 'claude' && !/api credits/i.test(a.plan || '')).map(glassAccount);
+  const keys = (st.apiCredits || []).map((c) => ({
+    id: c.id, name: c.label, plan: 'API key', isKey: true, state: c.keyStatus === 'active' ? 'ok' : (c.keyStatus || 'unknown'),
+    headroom: c.creditUsd ? Math.round((100 * (c.leftUsd ?? 0)) / c.creditUsd) : null, leftUsd: c.leftUsd ?? null, creditUsd: c.creditUsd ?? null, windows: [],
+    active: Boolean(c.active) || Boolean(claude?.isKey && claude.id === c.id), detail: c.orgName || '',
+  }));
+  return { claude, codex: live('codex'), lists: { claude: [...keys, ...subs], codex: acc.filter((a) => a.provider === 'codex').map(glassAccount) } };
 }
 
 async function glassChanged() {
   const c = glassCredential();
   const id = `${c.source}:${c.key ? c.key.slice(-12) : ''}`;
-  const account = await glassActive();
-  const name = c.key ? c.name : account?.label ? `${account.label} (${account.plan || 'subscription'})` : c.name;
+  const view = glassView(await glassStatus());
+  const account = view?.claude ? { label: view.claude.name, plan: view.claude.plan, headroom: view.claude.headroom } : null;
+  const name = c.key ? (view?.claude?.isKey ? view.claude.name : c.name) : account?.label ? `${account.label} (${account.plan || 'subscription'})` : c.name;
   const changed = glassSeen !== null && glassSeen !== id;
   glassSeen = id;
   const next = { ...c, name };
@@ -555,11 +614,13 @@ async function glassChanged() {
     p.credential = next;
     if (changed || moved) emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: moved ? `Myrlin Glass switched Claude to ${name}; the next message here uses it.` : undefined });
   }
-  emit({ ev: 'glass', installed: fs.existsSync(GLASS_CLI), name, source: c.source, plan: account?.plan || null, headroom: account?.headroom ?? null, changed });
+  emit({ ev: 'glass', installed: fs.existsSync(GLASS_CLI), name, source: c.source, plan: account?.plan || null, headroom: account?.headroom ?? null, changed, isKey: Boolean(c.key), claude: view?.claude || null, codex: view?.codex || null, lists: view?.lists || null });
 }
 
 fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => { glassChanged().catch(() => {}); });
 glassChanged().catch(() => {});
+// Usage numbers move without a login change; Glass keeps them, this only reads them.
+setInterval(() => { glassChanged().catch(() => {}); }, 60 * 1000).unref();
 
 emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady() });
 // Keep the conversation indexes current in the background. The index server
