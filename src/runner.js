@@ -24,6 +24,9 @@ import { noteRunnerUse } from './warm.js';
 // How long after a result to wait before recording the transcript size, so
 // the process's own trailing writes are not mistaken for an outside change.
 const SETTLE_MS = 1500;
+// How long a question or plan approval may wait for its answer: a week, in
+// seconds (Claude Code's hook timeout unit).
+export const ASK_TIMEOUT_S = 7 * 24 * 3600;
 
 /** Minimal async queue used as the SDK's prompt stream. */
 class Inbox {
@@ -175,6 +178,11 @@ export class SessionRunner {
       options.hooks = options.hooks || {};
       options.hooks.PreToolUse = [...(options.hooks.PreToolUse || []), {
         matcher: 'AskUserQuestion|ExitPlanMode',
+        // A person answers these, and may take a while. Under Claude Code's
+        // default hook timeout a slow answer was dropped ("hook did not
+        // respond before its timeout"), Claude asked again and the person
+        // had to answer twice (Arthur, 2026-10-10). Wait as long as it takes.
+        timeout: ASK_TIMEOUT_S,
         hooks: [async (input) => {
           const r = await this.onInteractiveTool(input.tool_name, input.tool_input || {});
           if (!r) return {};

@@ -8,7 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { SessionRunner } from '../src/runner.js';
+import { ASK_TIMEOUT_S, SessionRunner } from '../src/runner.js';
 
 const base = { sessionId: 'abc', cwd: '/tmp', env: { A: '1' }, canUseTool: async () => ({ behavior: 'allow' }), onMessage: () => {} };
 
@@ -25,6 +25,9 @@ test('without extras the options are the plain latch shape', () => {
   assert.deepEqual(Object.keys(h), ['PreToolUse']);
   assert.equal(h.PreToolUse.length, 1);
   assert.equal(h.PreToolUse[0].matcher, 'AskUserQuestion|ExitPlanMode');
+  // A person may take a while to answer: the hook waits a week, not Claude Code's default (2026-10-10).
+  assert.equal(h.PreToolUse[0].timeout, ASK_TIMEOUT_S);
+  assert.ok(ASK_TIMEOUT_S >= 24 * 3600);
 });
 
 test('Apaki extras: fresh MCP servers per start, appended prompt, merged hooks, env on top', () => {

@@ -1586,17 +1586,37 @@ document.addEventListener('keydown', (e) => {
 const sheetQueue = [];
 let sheetOpen = false;
 
-function sheet(html, wire) {
-  if (sheetOpen) { sheetQueue.push([html, wire]); return; }
+// The key of the sheet showing now (a question's askId), and how to close it, so a question that
+// went stale can be taken away (ask_gone) before anyone answers it twice.
+let sheetKey = null;
+let sheetClose = null;
+
+function sheet(html, wire, key = null) {
+  if (sheetOpen) { sheetQueue.push([html, wire, key]); return; }
   sheetOpen = true;
+  sheetKey = key;
   $('sheet').innerHTML = html;
   $('scrim').hidden = false;
-  wire($('sheet'), () => {
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
     $('scrim').hidden = true;
     sheetOpen = false;
+    sheetKey = null;
+    sheetClose = null;
     const next = sheetQueue.shift();
     if (next) sheet(...next);
-  });
+  };
+  sheetClose = close;
+  wire($('sheet'), close);
+}
+
+/** Takes away the sheet for `key`, showing or still queued. */
+function dropSheet(key) {
+  if (!key) return;
+  for (let i = sheetQueue.length - 1; i >= 0; i--) if (sheetQueue[i][2] === key) sheetQueue.splice(i, 1);
+  if (sheetOpen && sheetKey === key) sheetClose?.();
 }
 
 function askSheet(e) {
@@ -1609,7 +1629,7 @@ function askSheet(e) {
       <div class="row"><button data-k="keep">Keep planning</button><button class="primary" data-k="go">Approve</button></div>`, (root, close) => {
       root.querySelector('[data-k=go]').onclick = () => { close(); reply({ behavior: 'allow', updatedInput: input }); if (pane?.mode === 'plan') pane.setMode('bypassPermissions'); };
       root.querySelector('[data-k=keep]').onclick = () => { close(); reply({ behavior: 'deny', message: 'The user wants to keep planning.' }); };
-    });
+    }, e.askId);
     return;
   }
   const qs = input.questions || [];
@@ -1639,7 +1659,7 @@ function askSheet(e) {
       reply({ behavior: 'allow', updatedInput: { ...input, answers } });
     };
     root.querySelector('[data-k=skip]').onclick = () => { close(); reply({ behavior: 'deny', message: 'The user skipped the question.' }); };
-  });
+  }, e.askId);
 }
 
 function billingSheet(options, paneId) {
@@ -1925,6 +1945,8 @@ await listen('engine', ({ payload: e }) => {
       askSheet(e);
       break;
     }
+    // A question nobody waits for any more (the turn ended, or Claude asked again): take its sheet away.
+    case 'ask_gone': dropSheet(e.askId); break;
     case 'billingOptions': billingSheet(e.options, e.paneId); break;
     case 'places': startUI?.places(e); break;
     case 'dir': startUI?.dir(e); break;

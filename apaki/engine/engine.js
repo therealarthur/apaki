@@ -456,6 +456,22 @@ async function takeFrom(other, taker) {
 }
 
 /**
+ * Questions (AskUserQuestion, plan approval) of a pane that no longer wait
+ * for anyone: the turn ended, or Claude Code gave up and asked again. Each is
+ * settled with no answer and the window drops its sheet (ask_gone), so a
+ * person never answers the same question twice (Arthur, 2026-10-10).
+ */
+function dropStaleAsks(paneId, { olderThanMs = 0 } = {}) {
+  const now = Date.now();
+  for (const [id, a] of state.asks) {
+    if (a.paneId !== paneId || now - (a.at || 0) < olderThanMs) continue;
+    state.asks.delete(id);
+    a.resolve(null);
+    emit({ ev: 'ask_gone', askId: id, paneId });
+  }
+}
+
+/**
  * Opens a session (or a new conversation) in a pane. warm=false defers
  * starting Claude Code to the first message, so restoring six panes at launch
  * does not start six processes.
@@ -507,14 +523,21 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     effort: p.effort,
     permissionMode: p.mode,
     canUseTool: async (_name, input) => ({ behavior: 'allow', updatedInput: input }),
-    onMessage: (msg) => emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg }),
+    onMessage: (msg) => {
+      // A turn cannot end while a question really waits (its tool call is held), so any still open now went stale.
+      if (msg?.type === 'result' || msg?.type === 'latch_error') dropStaleAsks(p.id);
+      emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
+    },
     onStderr: (d) => process.stderr.write(String(d).replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***')),
   });
   // Questions and plan approval go to the window and wait for its answer.
   runner.onInteractiveTool = (toolName, input) => new Promise((resolve) => {
+    // Asked again while an earlier one has been open a while: Claude Code gave up on the earlier one (a
+    // retry comes a minute or more later; questions asked together arrive within a second), so the window drops it.
+    dropStaleAsks(p.id, { olderThanMs: 5000 });
     const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     // toolName and input are kept so attach can ask a reconnected window again.
-    state.asks.set(id, { resolve, paneId: p.id, toolName, input });
+    state.asks.set(id, { resolve, paneId: p.id, toolName, input, at: Date.now() });
     emit({ ev: 'ask', askId: id, paneId: p.id, toolName, input });
   });
   // A one-line "what it is doing" for running subagents (task_progress summary;
