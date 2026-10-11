@@ -246,6 +246,18 @@ export class Pane {
     if (start) start.textContent = short(this.cwd) || '~';
   }
 
+  /**
+   * Phones that show this conversation too (the shared view, 2026-10-11): one plain line in the header, "Also on iPhone", gone
+   * when nobody does. Text only: no dot, no badge, no motion. The engine sends it when the phones watching change (ev followers).
+   */
+  setFollowers(phones) {
+    const names = (Array.isArray(phones) ? phones : []).filter((n) => typeof n === 'string' && n).slice(0, 4);
+    if (!names.length) { this.$.also?.remove(); this.$.also = null; return; }
+    if (!this.$.also) { this.$.also = el('span', 'also-on'); this.$.cwd.after(this.$.also); }
+    this.$.also.textContent = `Also on ${names.join(', ')}`;
+    this.$.also.title = 'A phone is watching this conversation. Nothing was taken over from this window.';
+  }
+
   /** Starts this new conversation in another folder (only before its first message). */
   setStartFolder(dir) {
     if (this.sessionId || this.busy) return;
@@ -1542,6 +1554,10 @@ export class Pane {
         break;
       }
       case 'error': this.setBusy(false); this.setStatus(''); this.note(e.message, 'error'); break;
+      // The shared view (2026-10-11): which phones watch this pane, and a message one of them sent into it (the engine does not
+      // echo user messages, and the phone drew its own copy).
+      case 'followers': this.setFollowers(e.phones); break;
+      case 'peerMessage': this.addUser(e.text || '', (e.images || []).map((im) => ({ url: `data:${im.media_type};base64,${im.data}` })), { steered: Boolean(e.steered) }); break;
       case 'transcript': {
         if (!this.busy) this.setStatus(e.text ? `Transcribed in ${(e.ms / 1000).toFixed(1)}s` : 'Heard nothing');
         const { input } = this.$;
