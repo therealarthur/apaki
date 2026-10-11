@@ -55,3 +55,14 @@ test('a turn Claude started by itself (no pending send) can be steered until its
   await done;
   assert.equal(r.steer('too late'), false, 'not after its result');
 });
+
+test('a pane the engine still counts as busy can be steered even between turn flags (2026-10-11)', async () => {
+  const { r, pushed } = fakeRunner();
+  // The process is up, nothing pending and no turn flag seen yet, but the engine's pane is in a send.
+  r.q = (async function* idle() {}());
+  assert.equal(r.steer('not now'), false, 'idle and not busy: it goes out as a normal message');
+  assert.equal(r.steer('take this in', { busy: true }), true, 'busy: taken in');
+  assert.equal(pushed.length, 1);
+  r.q = null;
+  assert.equal(r.steer('no process', { busy: true }), false, 'never without a process');
+});

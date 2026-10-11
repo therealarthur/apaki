@@ -918,7 +918,10 @@ const handlers = {
     const content = images.length
       ? [...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })), ...(text ? [{ type: 'text', text }] : [])]
       : text;
-    if (p.runner?.steer(content)) { emit({ ev: 'steered', reqId: c.reqId, paneId: p.id, qid: c.qid }); return; }
+    if (p.runner?.steer(content, { busy: Boolean(p.busy) })) { emit({ ev: 'steered', reqId: c.reqId, paneId: p.id, qid: c.qid }); return; }
+    // Why it could not be taken in, in the engine log (2026-10-11: a steer that went out only after the turn ended).
+    const r = p.runner;
+    process.stderr.write(`apaki: steer missed in pane ${p.id}: runner ${r ? 'yes' : 'none'}, process ${r?.running ? 'up' : 'down'}, pending ${r?.pending?.length ?? 0}, turn ${r?.turnActive ? 'active' : 'idle'}, pane busy ${Boolean(p.busy)}\n`);
     emit({ ev: 'steer_missed', reqId: c.reqId, paneId: p.id, qid: c.qid });
   },
   answer: (c) => { const a = state.asks.get(c.askId); state.asks.delete(c.askId); a?.resolve(c.result || null); },

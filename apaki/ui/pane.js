@@ -1397,11 +1397,13 @@ export class Pane {
   }
 
   /** Steer: hand a queued message to the running turn; it is shown once Claude Code took it. */
-  steerItem(id) {
+  steerItem(id, it = null) {
     // The steer op names this item (qid), so the engine drops its copy with it.
-    const it = this.takeItem(id, { sync: false });
+    it = it || this.takeItem(id, { sync: false });
     if (!it) return;
     this.steering.set(id, it);
+    // Seen while it goes (2026-10-11): "Steering..." until Claude Code took it or it comes back.
+    if (this.$?.status) this.setStatus('Steering your message in…');
     this.send('steer', { qid: id, text: it.text, images: it.attachments.map(({ media_type, data }) => ({ media_type, data })) });
   }
 
@@ -1610,13 +1612,20 @@ export class Pane {
       case 'openUrl': this.onOpenUrl(e); break;
       case 'settings': this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode; this.renderChips(); break;
       case 'note': this.note(e.text, e.tone || ''); break;
-      case 'steered': { const it = this.steering.get(e.qid); this.steering.delete(e.qid); if (it) this.addUser(it.text, it.attachments, { steered: true }); break; }
+      case 'steered': { const it = this.steering.get(e.qid); this.steering.delete(e.qid); if (it) this.addUser(it.text, it.attachments, { steered: true }); if (this.busy) this.showWorking?.(); break; }
       case 'steer_missed': {
         // The turn ended before the steer arrived: send it as the next message.
         const it = this.steering.get(e.qid);
         this.steering.delete(e.qid);
         if (!it) break;
-        if (this.busy) { this.queue.unshift(it); this.renderQueue(); this.syncQueue(); } else this.sendNow(it.text, it.attachments);
+        // Still working here: try once more a moment later (the turn may be between steps) before it waits in the queue.
+        if (this.busy && !it.steerRetried) { it.steerRetried = true; setTimeout(() => (this.busy ? this.steerItem(e.qid, it) : this.sendNow(it.text, it.attachments)), 1000); break; }
+        if (this.busy) {
+          this.queue.unshift(it); this.renderQueue(); this.syncQueue();
+          this.note('Could not add that to the running turn; it goes out as soon as Claude finishes.', 'warn');
+          break;
+        }
+        this.sendNow(it.text, it.attachments);
         break;
       }
       case 'error': this.setBusy(false); this.setStatus(''); this.note(e.message, 'error'); break;

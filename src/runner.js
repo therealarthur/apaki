@@ -343,11 +343,14 @@ export class SessionRunner {
    * reason. Never set priority 'now' here: that interrupts the turn.
    * Returns false when no turn is running (send it as a normal message then).
    */
-  steer(content) {
+  steer(content, { busy = false } = {}) {
     // A turn Claude started by itself has no pending send but can be steered
     // too (2026-10-10: steering into such a turn used to bounce back to the
-    // queue, so the Steer button looked dead).
-    if (!this.running || (!this.pending.length && !this.turnActive)) return false;
+    // queue, so the Steer button looked dead). busy: the engine still counts a
+    // send of this pane as running (2026-10-11, Arthur: "clicking steer doesnt
+    // actually steer"; his steer went out only after the turn ended), so it is
+    // taken in too.
+    if (!this.running || (!this.pending.length && !this.turnActive && !busy)) return false;
     this.inbox.push({
       type: 'user',
       message: { role: 'user', content },
