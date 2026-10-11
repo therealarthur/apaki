@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Myrlin Apaki (demo)</title>
+  <base href="/ui/">
+  <script>
+    /* The theme from the address (theme=light|dark|auto) is saved before theme.js reads it. */
+    (function () {
+      try {
+        var t = new URLSearchParams(location.search).get('theme');
+        if (t === 'light' || t === 'dark' || t === 'auto') localStorage.setItem('apaki.theme', t);
+      } catch (e) { /* storage unavailable */ }
+    })();
+  </script>
+  {{UI_HEAD}}
+  <link rel="stylesheet" href="/harness/demo.css">
+</head>
+<body>
+{{UI_BODY}}
+  <script type="module" src="/harness/shim.mjs"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

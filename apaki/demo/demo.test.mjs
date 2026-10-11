@@ -1,0 +1,123 @@
+/**
+ * demo.test.mjs: guards for Apaki's demo harness (node --test).
+ *
+ * The harness shows marketing pictures, so the main thing to protect is that
+ * nothing real ever lands in them: no real names, projects or paths in the
+ * dataset, scripts or pages. The rest checks that the page composes from the
+ * live UI and that the pretend engine answers the first ops of a window.
+ */
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { composeDesktop } from './server.mjs';
+import { buildSessions, buildGlass, buildHistory, ID, PRESETS } from './harness/data.mjs';
+import { createEngine } from './harness/engine.mjs';
+import { Turn } from './harness/turns.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const HARNESS = path.join(HERE, 'harness');
+const files = fs.readdirSync(HARNESS).filter((f) => f.endsWith('.mjs') || f.endsWith('.css')).map((f) => path.join(HARNESS, f));
+const sources = [...files, path.join(HERE, 'scenes.mjs'), path.join(HERE, 'capture.mjs'), path.join(HERE, 'server.mjs'), path.join(HERE, 'desktop.html')];
+
+const DOUBLE_HYPHEN = '-'.repeat(2);
+const EM_DASH = String.fromCharCode(0x2014);
+
+test('no real names, projects or paths in the dataset, scripts and pages', () => {
+  // apaki.myrlin.io is the product's own public address, used in the phone sheet.
+  const forbidden = [/arthur/i, /hytale/i, /claude-latch/i, /workbook/i, /forge/i, /jobs\.myrlin/i, /users\\\\arthur/i, /@gmail\./i];
+  for (const f of [...files, path.join(HERE, 'scenes.mjs')]) {
+    const text = fs.readFileSync(f, 'utf8').replace(/apaki\.myrlin\.io/g, 'apaki.example');
+    for (const re of forbidden) assert.ok(!re.test(text), `${path.basename(f)} matches ${re}`);
+  }
+});
+
+test('no em dashes or double hyphens in the harness, scenes or README', () => {
+  for (const f of [...sources, path.join(HERE, 'README.md')]) {
+    const text = fs.readFileSync(f, 'utf8');
+    assert.ok(!text.includes(EM_DASH), `${path.basename(f)} has an em dash`);
+    assert.ok(!text.includes(DOUBLE_HYPHEN), `${path.basename(f)} has a double hyphen`);
+  }
+});
+
+test('sessions: five folders on disk, some working in terminals, some Codex', () => {
+  const s = buildSessions(Date.UTC(2026, 9, 13, 14, 42));
+  assert.ok(new Set(s.map((x) => x.cwd)).size >= 4);
+  assert.ok(s.some((x) => x.terminal?.status === 'working'));
+  assert.ok(s.filter((x) => x.codex).length >= 3);
+  for (const x of s) assert.ok(x.cwd.startsWith('C:\\Users\\dev\\code\\'), x.cwd);
+});
+
+test('Glass has two or three Claude subscriptions, one API key and a live account per provider', () => {
+  const g = buildGlass(Date.now());
+  assert.equal(g.claude.filter((a) => a.isKey).length, 1);
+  assert.ok(g.claude.filter((a) => !a.isKey).length >= 3);
+  assert.equal(g.claude.filter((a) => a.active).length, 1);
+  assert.equal(g.codex.filter((a) => a.active).length, 1);
+});
+
+test('the long transcript has a compaction, tool calls, a diff and the system lines', () => {
+  const h = buildHistory(ID.uploads, Date.now());
+  assert.ok(h.earlier.some((m) => m.type === 'compact'));
+  const kinds = h.messages.filter((m) => m.type === 'notice').map((m) => m.notice.label);
+  for (const want of ['Hook', 'API', 'Limit']) assert.ok(kinds.includes(want), want);
+  assert.ok(h.messages.some((m) => JSON.stringify(m).includes('"name":"Edit"')));
+  assert.ok(h.messages.some((m) => JSON.stringify(m).includes('"name":"Task"')));
+});
+
+test('every preset names panes whose sessions exist', () => {
+  const ids = new Set(Object.values(ID));
+  for (const [name, make] of Object.entries(PRESETS)) {
+    const p = make();
+    assert.ok(p.tabs.length >= 1, name);
+    for (const t of p.tabs) assert.ok(ids.has(t.root.s), `${name}: ${t.root.s}`);
+  }
+});
+
+test('desktop.html composes from the live UI index', () => {
+  const html = composeDesktop();
+  assert.ok(html.includes('id="stages"'), 'the UI body is in');
+  assert.ok(html.includes('/harness/shim.mjs'), 'the shim is in');
+  assert.ok(/<script type="module" src="app\.js">/.test(html), 'app.js is loaded once');
+  assert.equal(html.split('src="app.js"').length - 1, 1);
+  assert.ok(!html.includes('{{UI_'), 'no placeholder is left');
+});
+
+test('the pretend engine answers a window start: sessions, open with history, a scripted send, a stop', async () => {
+  const events = [];
+  const engine = createEngine({ send: (ev) => events.push(ev), browser: null, preset: 'base' });
+  engine.boot();
+  engine.handle({ op: 'sessions', reqId: 'r1' });
+  engine.handle({ op: 'open', reqId: 'r2', paneId: 'p1', sessionId: ID.flaky });
+  await new Promise((r) => setTimeout(r, 400));
+  const list = events.find((e) => e.ev === 'sessions');
+  assert.ok(list && list.items.length > 8 && list.folders.length === 3);
+  assert.ok(events.some((e) => e.ev === 'ready'));
+  assert.ok(events.some((e) => e.ev === 'glass' && e.claude && e.codex));
+  assert.equal(events.find((e) => e.ev === 'opened')?.sessionId, ID.flaky);
+  assert.ok(events.find((e) => e.ev === 'history')?.messages.length >= 5);
+  // A message starts its script; a stop ends it with a result.
+  events.length = 0;
+  engine.handle({ op: 'send', paneId: 'p1', text: 'go' });
+  await new Promise((r) => setTimeout(r, 1300));
+  assert.ok(events.some((e) => e.ev === 'sdk' && e.msg.type === 'stream_event'));
+  engine.handle({ op: 'interrupt', paneId: 'p1' });
+  await new Promise((r) => setTimeout(r, 200));
+  assert.ok(events.some((e) => e.ev === 'result'));
+  // A steer with nothing running comes back to be sent as a message.
+  engine.handle({ op: 'steer', paneId: 'p1', qid: 'q9', text: 'late' });
+  await new Promise((r) => setTimeout(r, 120));
+  assert.ok(events.some((e) => e.ev === 'steer_missed' && e.qid === 'q9'));
+});
+
+test('a turn takes in a steer at its steer point and tells the window', async () => {
+  const events = [];
+  const turn = new Turn({ emit: (ev) => events.push(ev), nextId: (p) => `${p}_1` }, { paneId: 'p1', sessionId: ID.flaky, text: 'x' });
+  turn.steers.push({ qid: 'q1', text: 'also this' });
+  const got = await turn.steerPoint({ timeoutMs: 500 });
+  assert.equal(got.text, 'also this');
+  assert.ok(events.some((e) => e.ev === 'steered' && e.qid === 'q1'));
+  assert.equal(await turn.steerPoint({ timeoutMs: 150 }), null);
+});
