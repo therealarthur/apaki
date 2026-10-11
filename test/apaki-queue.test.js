@@ -237,16 +237,19 @@ test('pane: an opened event with attached sets the queue from the engine; a fres
 /* ------------------------------------------------------------ auto-compact setting (pure) */
 
 test('auto-compact: the choices, the default, and what is passed to Claude Code', () => {
-  assert.deepEqual([...COMPACT_CHOICES], [200000, 300000, 500000, 'default']);
-  assert.equal(COMPACT_DEFAULT, 300000);
+  assert.deepEqual([...COMPACT_CHOICES], ['off', 200000, 300000, 500000, 'default']);
+  assert.equal(COMPACT_DEFAULT, 'off', 'off by default (Arthur, 2026-10-10 night)');
   assert.equal(normalizeCompact(500000), 500000);
   assert.equal(normalizeCompact('200000'), 200000);
   assert.equal(normalizeCompact('default'), 'default');
-  for (const bad of [undefined, null, 0, 12345, 'auto', '5e5', {}, -1]) assert.equal(normalizeCompact(bad), 300000);
+  assert.equal(normalizeCompact('off'), 'off');
+  assert.equal(normalizeCompact(false), 'off');
+  for (const bad of [undefined, null, 0, 12345, 'auto', '5e5', {}, -1]) assert.equal(normalizeCompact(bad), 'off');
   assert.deepEqual(compactSettings(300000), { autoCompactWindow: 300000 });
   assert.deepEqual(compactSettings('500000'), { autoCompactWindow: 500000 });
   assert.equal(compactSettings('default'), null, 'Claude Code decides: nothing is passed');
-  assert.deepEqual(compactSettings(undefined), { autoCompactWindow: 300000 });
+  assert.deepEqual(compactSettings('off'), { autoCompactEnabled: false, idleCompaction: false });
+  assert.deepEqual(compactSettings(undefined), { autoCompactEnabled: false, idleCompaction: false }, 'the default is off');
 });
 
 test('auto-compact: kept in one small file under ~/.claude/latch, never in Claude Code\'s own settings', () => {
@@ -255,15 +258,17 @@ test('auto-compact: kept in one small file under ~/.claude/latch, never in Claud
     const env = { CLAUDE_CONFIG_DIR: path.join(dir, 'claude') };
     const file = prefsFile(env);
     assert.equal(file, path.join(dir, 'claude', 'latch', 'apaki-settings.json'));
-    assert.deepEqual(loadPrefs(file), { autoCompact: 300000 }, 'no file yet: the default');
+    assert.deepEqual(loadPrefs(file), { autoCompact: 'off' }, 'no file yet: the default');
     savePrefs(file, { autoCompact: 200000 });
     assert.deepEqual(loadPrefs(file), { autoCompact: 200000 });
     savePrefs(file, { autoCompact: 'default' });
     assert.deepEqual(loadPrefs(file), { autoCompact: 'default' });
+    savePrefs(file, { autoCompact: 'off' });
+    assert.deepEqual(loadPrefs(file), { autoCompact: 'off' });
     fs.writeFileSync(file, '{ not json');
-    assert.deepEqual(loadPrefs(file), { autoCompact: 300000 }, 'a damaged file reads as the default');
+    assert.deepEqual(loadPrefs(file), { autoCompact: 'off' }, 'a damaged file reads as the default');
     fs.writeFileSync(file, JSON.stringify({ autoCompact: 42 }));
-    assert.deepEqual(loadPrefs(file), { autoCompact: 300000 });
+    assert.deepEqual(loadPrefs(file), { autoCompact: 'off' });
     assert.deepEqual(fs.readdirSync(path.join(dir, 'claude')), ['latch'], 'nothing written beside the latch folder');
     assert.deepEqual(fs.readdirSync(path.join(dir, 'claude', 'latch')), ['apaki-settings.json'], 'no temp file left behind');
   } finally { rm(dir); }
@@ -484,13 +489,13 @@ test('end to end: the window owns the queue while connected; with no window the 
   w.close();
 });
 
-test('end to end: Auto-compact at is kept by the engine, defaults to 300k, and reaches each new Claude Code process as its own setting', { timeout: 90000 }, async (t) => {
+test('end to end: Auto-compact is kept by the engine, defaults to off, and reaches each new Claude Code process as its own setting', { timeout: 90000 }, async (t) => {
   const h = await startHost(t);
   const w = await windowOf(h);
   const ask = async (reqId, extra = {}) => { w.send({ op: 'autoCompact', reqId, ...extra }); return w.next((m) => m.ev === 'autoCompact' && m.reqId === reqId); };
   const first = await ask('c1');
-  assert.equal(first.value, 300000);
-  assert.deepEqual(first.choices, [200000, 300000, 500000, 'default']);
+  assert.equal(first.value, 'off');
+  assert.deepEqual(first.choices, ['off', 200000, 300000, 500000, 'default']);
   const file = path.join(h.claude, 'latch', 'apaki-settings.json');
   assert.equal((await ask('c2', { value: 500000 })).value, 500000);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { autoCompact: 500000 });
@@ -511,8 +516,12 @@ test('end to end: Auto-compact at is kept by the engine, defaults to 300k, and r
   assert.equal((await ask('c4', { value: 'default' })).value, 'default');
   assert.equal(await startedWith('p3'), null);
   // A value that is not one of the choices falls back to the install default.
-  assert.equal((await ask('c5', { value: 12345 })).value, 300000);
-  assert.deepEqual(await startedWith('p4'), { autoCompactWindow: 300000 });
+  assert.equal((await ask('c5', { value: 12345 })).value, 'off');
+  assert.deepEqual(await startedWith('p4'), { autoCompactEnabled: false, idleCompaction: false });
+  // Off by choice: the same settings.
+  assert.equal((await ask('c6', { value: 'off' })).value, 'off');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { autoCompact: 'off' });
+  assert.deepEqual(await startedWith('p5'), { autoCompactEnabled: false, idleCompaction: false });
   // Claude Code's own settings file is never written (the temp CLAUDE_CONFIG_DIR holds only the latch folder).
   assert.equal(fs.existsSync(path.join(h.claude, 'settings.json')), false);
   assert.equal(fs.existsSync(path.join(h.dir, '.claude.json')), false);

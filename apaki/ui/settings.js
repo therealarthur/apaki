@@ -24,8 +24,8 @@ function seg(name, options, value) {
   return `<div class="seg" role="radiogroup" data-seg="${name}">${options.map((o) => `<button role="radio" aria-checked="${o.value === value}" class="${o.value === value ? 'on' : ''}" data-v="${o.value}">${o.icon ? `<svg viewBox="0 0 16 16" aria-hidden="true">${o.icon}</svg>` : ''}${esc(o.label)}</button>`).join('')}</div>`;
 }
 
-/** The choices of "Auto-compact at", in the order shown (the engine's COMPACT_CHOICES; 'default' leaves it to Claude Code). */
-const COMPACT_LABELS = [{ value: 200000, label: '200k' }, { value: 300000, label: '300k' }, { value: 500000, label: '500k' }, { value: 'default', label: 'Claude Code default' }];
+/** The choices of "Auto-compact", in the order shown (the engine's COMPACT_CHOICES; 'off' is the default, 'default' leaves it to Claude Code). */
+const COMPACT_LABELS = [{ value: 'off', label: 'Off' }, { value: 200000, label: '200k' }, { value: 300000, label: '300k' }, { value: 500000, label: '500k' }, { value: 'default', label: 'Claude Code default' }];
 
 export function initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm: showWarm = true, compact: showCompact = true }) {
   let warm = null;
@@ -60,7 +60,7 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
         ${seg('warm', [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }], warm?.on ? 'on' : 'off')}
       </section>` : ''}
       ${showCompact ? `<section class="set-row set-stack">
-        <div class="set-t"><b>Auto-compact at</b><small>Claude Code summarizes a conversation once its context reaches this size. Left to Claude Code, a 1M-token window such as Opus's only compacts near 967k, and every call re-reads that whole history; a lower size costs less. Applies to conversations as they next start.</small></div>
+        <div class="set-t"><b>Auto-compact</b><small>Off: a conversation keeps its whole context until the window is full, and you summarize it when you choose (Compact now on the context meter, or /compact). A size: Claude Code summarizes it on its own once its context reaches that size; a lower size costs less per call, since every call re-reads the history. Left to Claude Code, a 1M-token window such as Opus's compacts near 967k. Applies to conversations as they next start.</small></div>
         ${seg('compact', COMPACT_LABELS, compact?.value ?? null)}
       </section>` : ''}
       <section class="set-row set-info">
@@ -84,7 +84,7 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
         if (which === 'theme') theme?.set?.(v);
         if (which === 'ding') sound.set(v === 'on');
         if (which === 'warm') { warm = { ...(warm || {}), on: v === 'on' }; send('warmState', { on: v === 'on' }); }
-        if (which === 'compact') { const value = v === 'default' ? 'default' : Number(v); compact = { ...(compact || {}), value }; send('autoCompact', { value }); }
+        if (which === 'compact') { const value = v === 'default' || v === 'off' ? v : Number(v); compact = { ...(compact || {}), value }; send('autoCompact', { value }); }
         paint();
       };
     });

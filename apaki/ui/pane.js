@@ -293,7 +293,7 @@ export class Pane {
     b.classList.toggle('warm', pct >= 70 && pct < 88);
     b.classList.toggle('full', pct >= 88);
     const k = (n) => (n == null ? '?' : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-    const auto = typeof c.autoCompact === 'number' ? ` Claude Code compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off.' : '';
+    const auto = typeof c.autoCompact === 'number' ? ` Claude Code compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off: Compact now (click) summarizes it when you choose.' : '';
     b.title = `Context: ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens used (${pct}%).${auto} Click for the breakdown.`;
     b.setAttribute('aria-label', `Context ${pct}% used`);
   }

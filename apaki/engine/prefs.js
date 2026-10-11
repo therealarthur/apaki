@@ -11,25 +11,34 @@
  * `autoCompactWindow` setting, through the Agent SDK's `settings` option (the
  * same layer as `claude --settings`, in force for that process only), see
  * compactSettings and SessionRunner.flagSettings.
+ *
+ * Off by default (Arthur, 2026-10-10 night: "should not auto compact"). 'off'
+ * passes { autoCompactEnabled: false, idleCompaction: false }, checked live
+ * against the bundled Claude Code the same night (getContextUsage reported
+ * isAutoCompactEnabled false; with nothing passed it was true at 967k, with
+ * 300k it was true at 267k). A conversation then grows until the window is
+ * full; Compact now (the context meter) or /compact summarizes it by hand.
+ * The sizes stay as choices for anyone who wants Claude Code to do it.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { latchDir } from './host.js';
 
-/** The choices, in the sheet's order; 'default' leaves it to Claude Code (nothing is passed). */
-export const COMPACT_CHOICES = Object.freeze([200000, 300000, 500000, 'default']);
-/** What a new install starts with (Arthur approved 300k). */
-export const COMPACT_DEFAULT = 300000;
+/** The choices, in the sheet's order; 'off' turns auto-compact off, 'default' leaves it to Claude Code (nothing is passed). */
+export const COMPACT_CHOICES = Object.freeze(['off', 200000, 300000, 500000, 'default']);
+/** What a new install starts with: off (Arthur, 2026-10-10 night; 300k before that). */
+export const COMPACT_DEFAULT = 'off';
 
 /** Where the engine's settings are kept. */
 export function prefsFile(env = process.env) {
   return path.join(latchDir(env), 'apaki-settings.json');
 }
 
-/** One of COMPACT_CHOICES: a number or its text ('300000'), or 'default'; anything else is the install default. */
+/** One of COMPACT_CHOICES: a number or its text ('300000'), 'off' or 'default'; anything else is the install default. */
 export function normalizeCompact(v) {
   if (v === 'default') return 'default';
+  if (v === 'off' || v === false) return 'off';
   const n = typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v) : v;
   return COMPACT_CHOICES.includes(n) ? n : COMPACT_DEFAULT;
 }
@@ -51,10 +60,12 @@ export function savePrefs(file, prefs) {
 
 /**
  * The per-process Claude Code settings for a choice: { autoCompactWindow: n }
- * (100000 to 1000000 tokens), or null for 'default' so Claude Code (and the
- * user's own settings files) decide as before.
+ * (100000 to 1000000 tokens), { autoCompactEnabled: false, idleCompaction:
+ * false } for 'off', or null for 'default' so Claude Code (and the user's own
+ * settings files) decide as before.
  */
 export function compactSettings(choice) {
   const c = normalizeCompact(choice);
+  if (c === 'off') return { autoCompactEnabled: false, idleCompaction: false };
   return c === 'default' ? null : { autoCompactWindow: c };
 }
