@@ -412,7 +412,9 @@ test('table, Private: blocked is closed; enrolled and allowed are let in; auto a
       assert.ok(!results[s].c.ready(), `${s}: held`);
       assert.equal(results[s].c.wire('phone-ok').length, 0, s);
       assert.equal(results[s].c.wire('phone-wait').length, 1, s);
-      assert.equal(results[s].c.wire('phone-wait')[0].timeoutMs, 5000, `${s}: the phone is told how long it waits`);
+      // The time left, so a busy run can read 4999 (it failed once that way under the full parallel suite, 2026-10-11).
+      const left = results[s].c.wire('phone-wait')[0].timeoutMs;
+      assert.ok(left > 4000 && left <= 5000, `${s}: the phone is told how long it waits (${left} ms)`);
     }
     const st = env.last();
     assert.equal(st.phoneRequest.accountDeviceId, a.id);

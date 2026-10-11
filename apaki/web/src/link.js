@@ -50,6 +50,8 @@
  * phone on ..." is the state 'phone-timeout' (retryNow asks again). A PC
  * without 'phone-key' gets the older { t: 'via', name } and nothing is held.
  * on.phone({ kind: 'wait' | 'ok' | 'timeout' }) tells the page each step.
+ * The PC's close frame is followed at once by the relay's bye (its kick) and the socket's close; both wait for
+ * the frames before them to be read (afterFrames), or the reason above would be lost.
  */
 
 import { PhoneSession, ProtocolError, RELAY_CLOSE, b64urlDecode, parseRelayControl, relaySubprotocols, roomUrl } from './protocol.js';
@@ -182,8 +184,18 @@ export class Link {
       this.timers.ping = setInterval(() => this.sendText('ping'), PING_MS);
     };
     ws.onmessage = (e) => { if (this.ws === ws) this.onFrame(e.data); };
-    ws.onclose = (e) => this.gone(ws, e.code);
+    ws.onclose = (e) => this.afterFrames(() => this.gone(ws, e.code));
     ws.onerror = () => { /* a close follows */ };
+  }
+
+  /**
+   * Runs fn once the frames that arrived before it have been read. 2026-10-11 (found by test/apaki-e2e-phone.test.js):
+   * the PC sends its encrypted close (BLOCKED, removed, expired, switched to Private) and then asks the relay to kick
+   * the phone, so the relay's bye and the socket's close arrive right behind that frame, while it is still being
+   * decrypted. gone() drops the session, which threw the PC's reason away and made a blocked phone dial again.
+   */
+  afterFrames(fn) {
+    this.chain = this.chain.then(fn).catch((e) => console.warn('apaki link:', e));
   }
 
   sendText(text) {
@@ -207,7 +219,7 @@ export class Link {
       } else if (m.t === 'bye') {
         const ws = this.ws;
         try { ws?.close(); } catch { /* gone */ }
-        this.gone(ws, m.code);
+        this.afterFrames(() => this.gone(ws, m.code));
       }
       return;
     }
