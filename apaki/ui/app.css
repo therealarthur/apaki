@@ -222,7 +222,7 @@ body.dragging .pane .ground { pointer-events: none; }
 .turn-user .imgs img { max-height: 120px; border-radius: var(--radius-sm); border: 1px solid var(--hairline); }
 .img-marker { font-family: var(--font-mono); font-size: 12px; color: var(--faint); }
 .turn-assistant { margin: 10px 0; padding-left: 18px; position: relative; }
-.turn-assistant::before { content: ''; position: absolute; left: 1px; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: currentColor; color: var(--ink); }
+.turn-assistant::before { content: ''; position: absolute; left: 1px; top: 7px; width: 8px; height: 8px; border-radius: 50%; background: currentColor; color: var(--ink); }
 /* The turn mark is drawn, not typed (2026-10-10): the character it replaces (U+23FA) is an emoji on iOS and shows as a white box in the Apaki app.
    A circle in CSS is the same plain dot everywhere. */
 .turn-assistant.streaming { white-space: pre-wrap; }
@@ -246,7 +246,7 @@ body.dragging .pane .ground { pointer-events: none; }
 .tool > summary::-webkit-details-marker { display: none; }
 .tool .dot { color: var(--faint); margin: 0 8px 0 2px; }
 /* The tool line's dot is the same character in the markup (pane.js, tasks.js): hide the text (it stays in the DOM) and draw the circle, for the same reason as .turn-assistant::before. Margins keep the 18px the result line indents by. */
-.tool .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; font-size: 0; }
+.tool .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; font-size: 0; vertical-align: middle; }
 .tool.ok .dot { color: var(--good); }
 .tool.err .dot { color: var(--action); }
 .tool .name { font-weight: 600; }
