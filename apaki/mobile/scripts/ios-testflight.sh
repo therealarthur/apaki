@@ -53,17 +53,17 @@ require_mac
 # ---- prerequisites (before anything is built) -----------------------------------------------------------------
 if [ "$MODE" != unsigned ]; then
   missing=()
-  [ -n "$(team_id)" ] || missing+=("the Apple team id: set DEVELOPMENT_TEAM in apaki/mobile/ios/App/Signing.xcconfig (or APAKI_TEAM_ID); a 10 character id, developer.apple.com > Account > Membership details")
-  [ -n "${ASC_KEY_ID:-}" ] || missing+=("ASC_KEY_ID: the API key's Key ID (App Store Connect > Users and Access > Integrations > App Store Connect API)")
-  [ -n "${ASC_ISSUER_ID:-}" ] || missing+=("ASC_ISSUER_ID: the Issuer ID, shown above the key list on that same page")
+  [ -n "$(team_id)" ] || missing+=("missing the Apple team id: set DEVELOPMENT_TEAM in apaki/mobile/ios/App/Signing.xcconfig (or APAKI_TEAM_ID); a 10 character id, developer.apple.com > Account > Membership details")
+  [ -n "${ASC_KEY_ID:-}" ] || missing+=("missing ASC_KEY_ID: the API key's Key ID (App Store Connect > Users and Access > Integrations > App Store Connect API)")
+  [ -n "${ASC_ISSUER_ID:-}" ] || missing+=("missing ASC_ISSUER_ID: the Issuer ID, shown above the key list on that same page")
   if [ -z "${ASC_KEY_PATH:-}" ]; then
-    missing+=("ASC_KEY_PATH: path to the downloaded AuthKey_<KEY_ID>.p8 (downloadable once; keep it outside the repo, for example ~/.appstoreconnect/private_keys/)")
+    missing+=("missing ASC_KEY_PATH: path to the downloaded AuthKey_<KEY_ID>.p8 (downloadable once; keep it outside the repo, for example ~/.appstoreconnect/private_keys/)")
   elif [ ! -f "$ASC_KEY_PATH" ]; then
     missing+=("ASC_KEY_PATH points to $ASC_KEY_PATH, which is not a file")
   fi
   if [ "${#missing[@]}" -gt 0 ]; then
     printf 'cannot continue: not set up for a TestFlight upload. Nothing was built and nothing was uploaded.\n' >&2
-    for m in "${missing[@]}"; do printf '  missing %s\n' "$m" >&2; done
+    for m in "${missing[@]}"; do printf '  %s\n' "$m" >&2; done
     printf '  Set the ASC_ variables in your shell (never in a file in the repo); the full steps are in apaki/mobile/README.md, "Ship it".\n' >&2
     printf '  To check that the project archives without any account: scripts/ios-testflight.sh --unsigned\n' >&2
     exit 2

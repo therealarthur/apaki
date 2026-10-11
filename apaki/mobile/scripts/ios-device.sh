@@ -40,7 +40,7 @@ while [ $# -gt 0 ]; do
 done
 
 require_mac
-if [ "$LIST" = 1 ]; then xcrun devicectl list devices; exit 0; fi
+if [ "$LIST" = 1 ]; then xcrun devicectl list devices 2>&1 | grep -v -e "provisioning paramter" -e "devicectl manage create"; exit 0; fi
 
 # ---- find the phone ---------------------------------------------------------------------------------------
 # Lines: identifier, udid, name, tunnelState, transport, pairingState, developerMode, os, model (tab separated).
