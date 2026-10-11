@@ -2333,3 +2333,36 @@ body.rail-collapsed .signin-card { left: 22px; }
 /* The gap appears at once: animating margin would lay out the whole bar every frame (Impeccable layout-transition). */
 .tab.tab-before { margin-left: 44px; }
 .tab.tab-after { margin-right: 44px; }
+
+/* Working glow (Arthur, 2026-10-11: "when a session is thinking and doing stuff lets add a subtle glow at the bottom
+   of the screen ... in the background of the pane thats actively thinking - should not be overwhelming, should be
+   subtle, shimmering a bit, and very slow ... similar to the aesthetic/color of the background its shimmering over").
+   A soft wash of the background's own peach and periwinkle rises behind a busy pane's content (pane.js setBusy puts
+   .busy on the pane), drifts over 11 s, and fades away when the turn ends. Transform and opacity only; reduced
+   motion keeps a still, fainter glow. The phone uses the same panes, so it glows there too. */
+.pane { isolation: isolate; }
+.pane::before {
+  content: ''; position: absolute; z-index: -1; left: -12%; right: -12%; bottom: -48px; height: 42%;
+  pointer-events: none; opacity: 0;
+  background:
+    radial-gradient(52% 70% at 28% 100%, rgba(var(--peach), .34), transparent 72%),
+    radial-gradient(48% 64% at 74% 100%, hsla(232, 62%, 74%, .24), transparent 74%);
+  filter: blur(22px);
+  transform: translate3d(0, 18px, 0);
+  transition: opacity 1400ms var(--ease-out), transform 1400ms var(--ease-out);
+}
+.pane.busy::before { opacity: .8; transform: translate3d(0, 6px, 0); animation: pane-glow 11s ease-in-out infinite alternate; }
+@keyframes pane-glow {
+  0% { transform: translate3d(-3%, 10px, 0) scale(1); opacity: .5; }
+  50% { transform: translate3d(1.5%, 2px, 0) scale(1.05); opacity: .85; }
+  100% { transform: translate3d(3.5%, 7px, 0) scale(1.02); opacity: .6; }
+}
+:root[data-theme="dark"] .pane::before {
+  background:
+    radial-gradient(52% 70% at 28% 100%, rgba(242, 165, 126, .16), transparent 72%),
+    radial-gradient(48% 64% at 74% 100%, hsla(232, 70%, 70%, .2), transparent 74%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane::before { transition: opacity 400ms linear; transform: none; }
+  .pane.busy::before { animation: none; transform: none; opacity: .45; }
+}
