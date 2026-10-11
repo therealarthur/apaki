@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  xcodebuild -exportArchive options for a TestFlight upload (apaki/mobile, 2026-10-10).
+  method app-store-connect + destination upload: the export signs for distribution and sends the build to
+  App Store Connect in one step (it shows up under TestFlight after processing).
+  No secrets here, and no teamID: scripts/ios-testflight.sh copies this file and adds the team id from
+  Signing.xcconfig (or APAKI_TEAM_ID) before exporting. The App Store Connect API key is passed on the
+  command line from environment variables, never stored.
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>upload</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>testFlightInternalTestingOnly</key>
+	<false/>
+</dict>
+</plist>

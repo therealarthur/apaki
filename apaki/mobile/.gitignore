@@ -16,3 +16,5 @@ android/build/
 android/app/build/
 android/local.properties
 .DS_Store
+# One machine's signing overrides (a different team, the personal-team entitlements); see ios/App/Signing.xcconfig.
+ios/App/Signing.local.xcconfig

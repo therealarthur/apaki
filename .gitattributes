@@ -2,3 +2,6 @@
 # Published phone pages are served and checked byte for byte (apaki/engine/remote-page.js):
 # never convert their line endings, or a checkout on Windows would break every hash.
 relay/site/** -text
+
+# The iOS pipeline's shell scripts run on the Mac and on a GitHub macOS runner: LF only, even when checked out on Windows.
+apaki/mobile/scripts/*.sh text eol=lf

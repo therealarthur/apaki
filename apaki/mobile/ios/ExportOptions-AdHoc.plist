@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  xcodebuild -exportArchive options for an installable .ipa that is NOT uploaded (apaki/mobile, 2026-10-10).
+  method release-testing (what Xcode called ad-hoc before 15.3) + destination export: the .ipa is written to
+  disk, signed for the iPhones registered under the paid team; install it over USB with
+  scripts/ios-device.sh --ipa <file>. Needs the Apple Developer Program (a free team cannot do this).
+  No secrets, no teamID: scripts/ios-testflight.sh --ipa adds the team id from Signing.xcconfig (or APAKI_TEAM_ID).
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>release-testing</string>
+	<key>destination</key>
+	<string>export</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>thinning</key>
+	<string>&lt;none&gt;</string>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>
