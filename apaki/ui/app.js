@@ -342,8 +342,68 @@ function syncSoon() {
 }
 
 /** Apaki's shortcuts pressed while a page had the keyboard (the shell passes them on). */
+/* ---------- the sidebar: resize and collapse (Arthur, 2026-10-10) ----------
+   "the sidebar should be resizeable and then at some point collapse to the
+   left (where it can then be reopened by clicking on the relevant button)".
+   Drag its right edge (220 to 560 px); past the left edge (under 150 px) it
+   hides; the button at the left of the tab row, the one in its header, or
+   Ctrl+B toggles it. Width and state are saved with the workspace. */
+const RAIL_MIN = 220;
+const RAIL_MAX = 560;
+const RAIL_DEFAULT = 312;
+const RAIL_HIDE_AT = 150;
+
+function applyRail() {
+  if (WEB) return;
+  document.documentElement.style.setProperty('--rail', `${Math.round(S.railW || RAIL_DEFAULT)}px`);
+  document.body.classList.toggle('rail-collapsed', Boolean(S.railCollapsed));
+  if ($('railShow')) $('railShow').hidden = !S.railCollapsed;
+}
+
+function setRailCollapsed(on) {
+  S.railCollapsed = Boolean(on);
+  applyRail();
+  save();
+}
+
+function wireRail() {
+  const handle = $('railResize');
+  if (!handle || WEB) return;
+  $('railHide')?.addEventListener('click', () => setRailCollapsed(true));
+  $('railShow')?.addEventListener('click', () => setRailCollapsed(false));
+  handle.addEventListener('dblclick', () => { S.railW = RAIL_DEFAULT; applyRail(); save(); });
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    document.body.classList.add('rail-dragging');
+    // Dragged to hiding, the sidebar keeps the width it had before this drag for when it comes back.
+    const startW = S.railW || RAIL_DEFAULT;
+    const move = (ev) => {
+      if (ev.clientX < RAIL_HIDE_AT) { S.railW = startW; S.railCollapsed = true; end(); return; }
+      S.railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, ev.clientX));
+      applyRail();
+    };
+    const end = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      document.body.classList.remove('rail-dragging');
+      applyRail();
+      save();
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  });
+  applyRail();
+}
+wireRail();
+
 function shortcut(key, shift) {
   const k = String(key).toLowerCase();
+  // Ctrl+B from inside a browser pane (it forwards keys): the sidebar.
+  if (k === 'b' && !shift && !WEB) { setRailCollapsed(!S.railCollapsed); return; }
   if (k === 't') { addTab(); return; }
   if (k === 'w') { const p = focusedPane(); if (p) closePane(p); return; }
   if (k === 'l') { const p = focusedPane(); if (p?.isBrowser) p.focusAddress(); return; }
@@ -821,10 +881,13 @@ function renderTabs() {
 /* ---------- rail ---------- */
 
 function viewList() {
-  const term = S.sessions.filter((s) => s.terminal).length;
+  const live = S.sessions.filter((s) => !s.archived);
+  const term = live.filter((s) => s.terminal).length;
   return [
-    { id: 'all', label: 'All', n: S.sessions.length },
+    { id: 'all', label: 'All', n: live.length },
     { id: 'terminal', label: 'In terminals', n: term },
+    // Archived sessions (right-click > Archive) open from a link under the list (renderRail), so the
+    // header keeps two switches; while that view shows, the header's x leaves it.
   ];
 }
 
@@ -1171,16 +1234,40 @@ function beginRename(sessionId, anchor, { pane = null } = {}) {
   for (const ev of ['click', 'dblclick', 'pointerdown']) input.addEventListener(ev, (e) => e.stopPropagation());
 }
 
+/**
+ * A session's right-click menu (Arthur, 2026-10-10: "right click session in
+ * the navbar and stop them among other things (think of what codex and claude
+ * desktop would let you do)"): open it (new tab, here, split), stop or close
+ * it where it runs, rename, fork it into a new conversation, move it between
+ * folders, archive it (hidden from the lists, nothing deleted), copy its id or
+ * resume command, and show its folder.
+ */
 function sessionMenu(s, e) {
   e.preventDefault();
   if (s.codex) return;
   const cur = s.folder || null;
+  const pane = paneBySession(s.id);
+  const runningHere = Boolean(pane?.busy);
+  const running = runningHere || Boolean(s.running);
+  let stopItem = { value: null, label: 'Stop', hint: 'nothing is running', disabled: true };
+  if (running) stopItem = { value: 'stop', label: 'Stop', hint: runningHere ? 'stop Claude here (Esc)' : 'stop its running turn', danger: true };
+  else if (s.terminal) stopItem = { value: null, label: 'Stop', hint: 'runs in a terminal; stop it there', disabled: 'It runs in a Claude Code terminal window; stop it there' };
   const items = [
-    { value: 'rename', label: 'Rename…', hint: 'saved in the session' },
+    { heading: (s.title || 'Session').slice(0, 48) },
+    { value: 'tab', label: pane ? 'Show it' : 'Open', hint: pane ? 'it is open in a pane' : 'new tab, click' },
+    ...(pane ? [] : [{ value: 'here', label: 'Open here', hint: 'replaces the focused pane' }]),
+    ...(pane ? [] : [{ value: 'split', label: 'Split right', hint: 'Shift+click' }]),
     { divider: true },
-    { value: 'here', label: 'Open here' },
-    { value: 'tab', label: 'Open in new tab', hint: 'Ctrl+click' },
-    { value: 'split', label: 'Split right', hint: 'Shift+click' },
+    stopItem,
+    ...(pane ? [{ value: 'close', label: 'Close its pane', hint: pane.busy ? 'asks first: it is working' : '' }] : []),
+    { divider: true },
+    { value: 'rename', label: 'Rename…', hint: 'saved in the session' },
+    ...(WEB ? [] : [{ value: 'fork', label: 'Fork into a new conversation', hint: 'a copy to take elsewhere' }]),
+    ...(WEB ? [] : [s.archived ? { value: 'unarchive', label: 'Unarchive', hint: 'back in the lists' } : { value: 'archive', label: 'Archive', hint: 'hide it; nothing is deleted' }]),
+    { divider: true },
+    { value: 'copy-id', label: 'Copy session id' },
+    { value: 'copy-resume', label: 'Copy resume command', hint: 'claude --resume' },
+    ...(WEB || !s.cwd ? [] : [{ value: 'reveal', label: 'Show folder', hint: short(s.cwd) }]),
     { divider: true },
     { heading: 'Move to folder' },
     ...S.folders.map((f) => ({ value: `f:${f.id}`, label: f.name, checked: f.id === cur })),
@@ -1189,12 +1276,19 @@ function sessionMenu(s, e) {
   ];
   menu({ x: e.clientX, y: e.clientY }, items, {
     above: false,
-    width: 210,
+    width: 270,
     onPick: (v) => {
       if (v === 'rename') { const row = [...$('sessions').children].find((li) => li.dataset.id === s.id); beginRename(s.id, row?.querySelector('.t') || null); return; }
-      if (v === 'here') openFromRail(s, {});
-      else if (v === 'tab') openFromRail(s, { ctrlKey: true });
+      if (v === 'here') openFromRail(s, { here: true });
+      else if (v === 'tab') { if (pane) focusPane(pane); else openFromRail(s, { ctrlKey: true }); }
       else if (v === 'split') openFromRail(s, { shiftKey: true });
+      else if (v === 'stop') { if (runningHere) pane.stop(); else send('stopSession', { sessionId: s.id }); }
+      else if (v === 'close') closePane(pane);
+      else if (v === 'fork') send('forkSession', { sessionId: s.id });
+      else if (v === 'archive' || v === 'unarchive') send('archive', { sessionId: s.id, archived: v === 'archive' });
+      else if (v === 'copy-id') copyText(s.id, 'Session id copied.');
+      else if (v === 'copy-resume') copyText(`${s.cwd ? `cd "${s.cwd}" && ` : ''}claude --resume ${s.id}`, 'Resume command copied.');
+      else if (v === 'reveal') send('revealFolder', { cwd: s.cwd });
       else if (v === 'new') startNewFolder(s.id);
       else if (v === 'out') moveToFolder(s.id, null);
       else if (v.startsWith('f:')) moveToFolder(s.id, v.slice(2));
@@ -1202,7 +1296,48 @@ function sessionMenu(s, e) {
   });
 }
 
+/**
+ * The sign-in card (2026-10-10, for a PC where Claude Code has never been
+ * signed in): it sits at the top of the window until the engine reports a
+ * login. Sign in opens Claude Code's own sign-in (engine op signIn); with an
+ * API key in Myrlin Glass the card never shows (the engine counts that as
+ * signed in). Desktop only: a phone never runs this.
+ */
+function renderSignIn(e) {
+  if (WEB) return;
+  S.auth = e;
+  let card = $('signInCard');
+  if (e.loggedIn || e.method === 'unknown') { card?.remove(); return; }
+  if (!card) {
+    card = el('div', 'signin-card');
+    card.id = 'signInCard';
+    card.setAttribute('role', 'status');
+    document.querySelector('.main')?.prepend(card);
+  }
+  card.innerHTML = `<div class="sc-t"><b>Sign in to Claude to start</b><span>Claude Code on this PC has no login yet. Sign in with your Claude account (or a Console account for API billing); Apaki picks it up as soon as you finish.</span>${e.note ? `<span class="sc-note${e.noteOk === false ? ' bad' : ''}">${esc(e.note)}</span>` : ''}</div>
+    <div class="sc-act"><button class="primary" data-k="claude">Sign in</button><button data-k="console" title="Bill an Anthropic Console account (API credits) instead of a subscription">Console account</button></div>`;
+  card.querySelector('[data-k=claude]').onclick = () => send('signIn', {});
+  card.querySelector('[data-k=console]').onclick = () => send('signIn', { console: true });
+}
+
+/** Copies text, and says so in the focused pane (a textarea fallback where the clipboard API is refused). */
+function copyText(text, said) {
+  const done = () => focusedPane()?.note(said, '');
+  const fallback = () => {
+    const t = el('textarea');
+    t.value = text;
+    document.body.append(t);
+    t.select();
+    try { document.execCommand('copy'); done(); } catch { /* nothing more to try */ }
+    t.remove();
+  };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+  else fallback();
+}
+
 function inView(s) {
+  if (S.view === 'archived') return Boolean(s.archived);
+  if (s.archived) return false;
   if (S.view === 'all') return true;
   if (S.view === 'terminal') return Boolean(s.terminal);
   const f = S.folders.find((x) => x.id === S.view);
@@ -1227,9 +1362,9 @@ function renderRail() {
   }
   renderFolders();
   const folder = S.folders.find((f) => f.id === S.view);
-  $('sessionsTitle').textContent = S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : 'Sessions';
+  $('sessionsTitle').textContent = S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : S.view === 'archived' ? 'Archived' : 'Sessions';
   $('sessionsCount').textContent = String(Math.min(rows.length, 400));
-  $('clearView').hidden = !folder;
+  $('clearView').hidden = !folder && S.view !== 'archived';
   $('searchState').textContent = S.results ? S.searchInfo : '';
   $('searchState').hidden = !S.results;
   const list = $('sessions');
@@ -1264,7 +1399,7 @@ function renderRail() {
     li.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); openFromRail(s, { ctrlKey: true }); } };
     if (!s.codex) {
       li.draggable = true;
-      li.title = `Click: open here · Ctrl+click: new tab · Shift+click: split right · drag onto a pane edge to split, or onto a folder · right-click to rename and more${S.warm.has(s.id) ? '\nKeep-warm is keeping its prompt cache warm' : ''}`;
+      li.title = `Click: open (a new tab, or the empty pane) · Shift+click: split right · drag onto a pane edge to split, or onto a folder · right-click: stop, rename, fork, archive and more${S.warm.has(s.id) ? '\nKeep-warm is keeping its prompt cache warm' : ''}`;
       li.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData(DRAG_SESSION, JSON.stringify({ id: s.id, cwd: s.cwd, title: s.title }));
         e.dataTransfer.effectAllowed = 'copyMove';
@@ -1276,7 +1411,14 @@ function renderRail() {
     list.append(li);
     if (subsOpen) for (const sub of subRows(s)) list.append(sub);
   }
-  if (!rows.length) list.append(el('li', 'note', S.results ? 'Nothing matches in this view.' : 'No sessions here yet.'));
+  if (!rows.length) list.append(el('li', 'note', S.results ? 'Nothing matches in this view.' : S.view === 'archived' ? 'Nothing archived.' : 'No sessions here yet.'));
+  // Archived sessions: one quiet link at the end of the list opens them (right-click > Unarchive brings one back).
+  const archivedN = S.sessions.filter((x) => x.archived).length;
+  if (archivedN && S.view !== 'archived' && !S.results) {
+    const more = el('li', 'note archived-link', `<button class="link-btn">${archivedN} archived</button>`);
+    more.querySelector('button').onclick = () => { S.view = 'archived'; renderRail(); };
+    list.append(more);
+  }
   if (S.results && S.query) {
     const dig = el('button', 'dig', '<b>Dig deeper in a dedicated session</b>Claude searches every transcript with its tools and reports what it finds.');
     dig.onclick = () => digDeeper(S.query);
@@ -1306,6 +1448,10 @@ function openFromRail(s, e = {}) {
   const t = activeTab();
   let p = focusedPane();
   if (e.shiftKey && t?.root) { addToTab(t, s); return; }
+  // A click never replaces a conversation you have open (Arthur, 2026-10-10): it opens in a new tab,
+  // unless the focused pane is an empty new conversation, which it fills. "Open here" in the
+  // right-click menu still replaces on purpose (e.here). The phone's single-pane stack keeps replacing.
+  if (!WEB && !e.here && p && !p.isViewer && (p.sessionId || p.busy || p.$?.T?.querySelector('.turn-user'))) { addTab({ session: s }); return; }
   // A viewer is focused: open in the conversation it belongs to, if that is here and free.
   if (p?.isViewer) {
     const src = S.panes.get(p.sourcePane);
@@ -1568,6 +1714,8 @@ document.addEventListener('keydown', (e) => {
   if (k === 'f' && !e.shiftKey) { e.preventDefault(); openFind(focusedPane()); return; }
   if (k === 't') { e.preventDefault(); addTab(); return; }
   if (k === 'w') { e.preventDefault(); const p = focusedPane(); if (p) closePane(p); return; }
+  // Ctrl+B: hide or show the sidebar, as in VS Code.
+  if (k === 'b' && !e.shiftKey && !WEB) { e.preventDefault(); setRailCollapsed(!S.railCollapsed); return; }
   if (e.key === 'Tab') {
     e.preventDefault();
     const i = S.tabs.indexOf(activeTab());
@@ -1701,7 +1849,7 @@ function snapshot() {
       };
     }),
   }));
-  return { v: 1, savedAt: Date.now(), active: S.tabs.findIndex((t) => t.id === S.active), tabs, rail: { view: S.view, expanded: [...S.expanded], scroll: $('sessions')?.scrollTop || 0 }, win: S.win || null };
+  return { v: 1, savedAt: Date.now(), active: S.tabs.findIndex((t) => t.id === S.active), tabs, rail: { view: S.view, expanded: [...S.expanded], scroll: $('sessions')?.scrollTop || 0, width: S.railW || null, collapsed: Boolean(S.railCollapsed) }, win: S.win || null };
 }
 
 /** Saves at once: localStorage, and the engine's copy on disk (desktop only). */
@@ -1734,6 +1882,9 @@ function restore(saved = readLocal()) {
     if (typeof saved.rail.view === 'string') S.view = saved.rail.view;
     S.expanded = new Set(Array.isArray(saved.rail.expanded) ? saved.rail.expanded : []);
     S.railScroll = saved.rail.scroll || 0;
+    if (Number.isFinite(saved.rail.width)) S.railW = saved.rail.width;
+    S.railCollapsed = saved.rail.collapsed === true;
+    applyRail();
   }
   if (saved?.win) S.win = saved.win;
   for (const st of tabs) {
@@ -1771,7 +1922,7 @@ function restore(saved = readLocal()) {
 
 /* ---------- engine events ---------- */
 
-const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context']);
+const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context', 'historyPage', 'historyBlock']);
 
 /** Phone access (phone.js), set up at start; null in the phone web client. */
 let phone = null;
@@ -1960,11 +2111,17 @@ await listen('engine', ({ payload: e }) => {
     case 'closed': break;
     case 'remote': phone?.handle(e); break;
     case 'note': focusedPane()?.note(e.text, e.tone || ''); break;
+    // Fresh installs (2026-10-10): Claude Code has no login yet, so the first message would fail.
+    case 'auth': renderSignIn(e); break;
+    case 'auth_signin': renderSignIn({ ...(S.auth || {}), note: e.message, noteOk: e.ok }); break;
+    // A fork from the session menu: open it next to the original.
+    case 'forked': addTab({ session: { id: e.sessionId, title: 'Fork', cwd: S.sessions.find((x) => x.id === e.from)?.cwd || '' } }); break;
     case 'error': focusedPane()?.note(e.message, 'error'); break;
     case 'engine_exit':
       S.engineLost = true;
       for (const p of S.panes.values()) p.engineLost();
-      focusedPane()?.note('The engine stopped and is restarting…', 'warn');
+      // The background engine may still be running (its turns keep going): reconnecting re-attaches the panes.
+      focusedPane()?.note('Lost the engine for a moment; reconnecting…', 'warn');
       break;
     default: break;
   }

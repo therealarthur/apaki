@@ -54,8 +54,17 @@ Written 2026-10-10 from what is built and tested.
   ciphertext and public keys and cannot open the vault. The page that opens
   it on your phone comes from apaki.myrlin.io, as with any web app (the
   native app will ship its own copy). Pair a PC once from any
-  phone and every phone signed in to the account can reach it; remove the
-  account on the PC and they all stop at once.
+  phone and, after you allow the account on the PC (nothing is added
+  without that), every phone signed in to the account can reach it; remove
+  the account on the PC and they all stop at once. The Phone sheet says how:
+  "Sign in at apaki.myrlin.io on your phone to reach this PC from any
+  device".
+- Connected or Private, chosen on the PC. Connected is the default: Apaki
+  accounts work as above. Private is a switch in the Phone sheet: only
+  phones paired with the PC's code reach it, account links are refused,
+  accounts already linked are removed or paused, and the phone page stops
+  asking the relay which of its PCs are online. Phones still run the page
+  from apaki.myrlin.io in both modes until the native app ships.
 - It feels like an app on the phone. The sessions list is home with a large
   title, a conversation slides in from the right and a swipe from the left
   edge goes back, menus and sheets rise from the bottom and close with a
@@ -65,9 +74,13 @@ Written 2026-10-10 from what is built and tested.
   is a reproducible build of Apaki's own code, published at an address that
   never changes. Before showing a pairing code, Apaki builds that page itself
   and compares every file with what the site serves; if a file it fetches
-  differs, it will not show a code. The check sees what the site sends your
-  PC when you pair; it cannot see what a phone is sent later. Details and
-  limits: apaki/SECURITY.md.
+  differs, or it cannot reach the site, it will not show a code (the Phone
+  sheet offers "Pair without checking the page" for an unreachable site,
+  saying what it risks). While phone access is on, the PC fetches the pages
+  it verified again every hour, the way a phone browser asks for them, and
+  turns phone access off with the reason if a file changed. The checks run
+  from your PC's network, so they cannot prove what one phone is sent.
+  Details and limits: apaki/SECURITY.md.
 
 ## Conversations
 
@@ -140,9 +153,16 @@ Written 2026-10-10 from what is built and tested.
   fragment and never reaches a server. The PC approves each phone after both
   screens show the same code.
 - A phone works in conversations and the session list, with the same
-  Claude Code a desktop pane has: Claude can run commands and edit files
-  there, as on the PC. Billing, account switching, pairing and settings are
-  controls only the PC has.
+  Claude Code a desktop pane has. What Claude may do for it is chosen on
+  the PC per phone, at Allow and later in the Phone sheet: Full (Claude can
+  run commands and edit files, as on the PC), No shell (no commands, file
+  edits, browser or added MCP tools; reading, searching and answering stay)
+  or Chat only (plan mode, nothing runs). The PC enforces it whatever the
+  phone page does: the tools are removed from the pane's Claude Code and
+  refused by a hook that holds in every permission mode. Every phone can
+  read the PC's conversations. Phone panes never start in the desktop's
+  bypassPermissions default. Billing, account switching, pairing and
+  settings are controls only the PC has.
 - Remove a phone on the PC and it can never reconnect without a new QR. If
   it was signed in to an Apaki account linked to that PC, remove the account
   there too.

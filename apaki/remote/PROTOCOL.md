@@ -204,6 +204,19 @@ refused at HELLO3). The PC also closes any open `PcSession` whose
 connection. The device psk and public key are gone from the PC, so the phone
 cannot come back without scanning a new QR.
 
+Pairing lifetimes and staying paired (2026-10-10): a device record may
+carry `expiresAt` (ISO time; absent means never). The PC user picks it at
+Allow (forever by default, or 1, 7 or 30 days) and may change it later. When
+it passes, the PC removes the device exactly as above, and an open channel
+gets the encrypted close `"This phone's pairing expired, so it was removed
+on the PC."` (an older phone page matches "removed"; a newer one matches
+"expired" first). The phone learns its expiry inside the channel: `hello`
+carries `expiresAt` (null: never) and `{ t: 'lifetime', expiresAt }` follows
+a change. Because `unknown-device` is a plaintext alert, a phone keeps its
+saved pairing when it gets one and tries again slowly; it treats it as final
+only once its own `expiresAt` has passed. Only an encrypted close, or the
+person, makes a phone forget a PC.
+
 ## Saved state
 
 PC (keep private, for example next to Apaki's other settings):
@@ -234,6 +247,8 @@ phone; both use `wire.js`):
 ```
 phone -> PC   { t: 'cmd', cmd }               one engine command, the same shape the desktop window sends
 PC -> phone   { t: 'hello', v, pcName, ops }  right after the channel opens; ops = what this phone may send
+                                              (since 2026-10-10 also features, expiresAt; asAccount for an account device)
+              { t: 'lifetime', expiresAt }    the PC user changed how long this phone stays paired (null: forever)
               { t: 'evs', list }              engine events, batched (25 ms or 64 KiB, whichever comes first)
 either way    { t: 'big', stream, bytes }     a message larger than one record, then CHUNK records of
                                               that stream (seq 0, 1, ...; the last one flagged)

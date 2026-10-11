@@ -113,6 +113,10 @@ export class SessionRunner {
    * @param {object} [o.hooks]         SDK hooks ({ PreToolUse: [{ matcher, hooks }] ... }),
    *                                   merged with the question/plan hook below
    * @param {object} [o.envExtra]      variables added on top of env (kept when env changes)
+   * @param {string[]} [o.disallowedTools]  SDK disallowedTools: removed from Claude's context and
+   *                                   refused (Apaki's restricted phone panes, remote-policy.js)
+   * @param {string[]} [o.allowedTools]     SDK allowedTools: tools allowed without asking (and, in
+   *                                   a native build, Grep and Glob are only there when named)
    */
   constructor(o) {
     Object.assign(this, { model: undefined, effort: undefined, permissionMode: undefined, onStderr: () => {} }, o);
@@ -164,6 +168,9 @@ export class SessionRunner {
     if (this.model) options.model = this.model;
     if (this.effort) options.effort = this.effort;
     if (this.permissionMode) options.permissionMode = this.permissionMode;
+    // Apaki's restricted phone panes (2026-10-10): tools they never get, and the read-only search tools they do.
+    if (Array.isArray(this.disallowedTools) && this.disallowedTools.length) options.disallowedTools = [...this.disallowedTools];
+    if (Array.isArray(this.allowedTools) && this.allowedTools.length) options.allowedTools = [...this.allowedTools];
     // Required for bypassPermissions, and lets /mode switch into it later.
     // Hooks (the PreToolUse guards) still run in that mode, and questions and
     // plan approvals still reach canUseTool.

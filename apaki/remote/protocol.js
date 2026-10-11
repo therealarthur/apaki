@@ -447,6 +447,12 @@ export const RELAY_CLOSE = Object.freeze({
   IDLE: 4408,
   /** The relay reached its daily budget; it takes connections again after 00:00 UTC. */
   BUDGET: 4503,
+  /** A phone in a room whose PC is not connected (2026-10-10): wait, then try again; nothing is wrong. */
+  NO_PC: 4404,
+  /** This address used its share of the relay's day (2026-10-10): try again after 00:00 UTC. */
+  IP_SHARE: 4504,
+  /** This room used its share of the relay's day (2026-10-10): try again after 00:00 UTC. */
+  ROOM_SHARE: 4505,
 });
 
 /** PC side of the relay: every binary frame carries the phone connection id (u32) in front. */

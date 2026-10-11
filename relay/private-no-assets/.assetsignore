@@ -1,0 +1,5 @@
+# The Private relay (wrangler.jsonc, env "private") serves no files at all.
+# This folder is its static assets directory only because environments
+# inherit "assets" from the top level; it is meant to stay empty, and this
+# line makes sure nothing put here is ever uploaded:
+*

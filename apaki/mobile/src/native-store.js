@@ -10,7 +10,8 @@
  * asks it to sign (protocol.js deviceSign).
  *
  * Same API as apaki/web/src/store.js (build-app.mjs puts a store.js that
- * re-exports this one into the app and checks every export is here), plus
+ * re-exports this one into the app and checks every export is here; merged
+ * with master d077b7a: StorageError, onWait, updatePc, persist), plus
  * newDevice(), which boot.js uses for a new pairing when the store has it.
  *
  * Keychain items (service io.myrlin.apaki.store): "pc:<roomId>" per paired PC
@@ -24,22 +25,69 @@ import { b64d, b64e, decodeAccount, decodePc, encodeAccount, encodePc } from './
 const PC = 'pc:';
 const ACCOUNT = 'account';
 
+/**
+ * Storage that could not be read or written, as opposed to "nothing saved"
+ * (the same contract as the web store.js since 2026-10-10: boot.js shows a
+ * retry screen for it instead of the pairing screen). The Keychain can be
+ * unavailable, for instance before the phone's first unlock after a restart.
+ */
+export class StorageError extends Error {
+  constructor(message, cause = null) {
+    super(message);
+    this.name = 'StorageError';
+    this.code = 'storage';
+    this.cause = cause;
+  }
+}
+
+export const isStorageError = (e) => e instanceof StorageError || e?.code === 'storage';
+
+/** Runs a Keychain call; any failure of the call itself becomes a StorageError. */
+async function keychain(fn) {
+  try {
+    return await fn();
+  } catch (e) {
+    if (isStorageError(e)) throw e;
+    throw new StorageError(`This phone's keychain could not be used (${e?.name || 'Error'}: ${e?.message || e}).`, e);
+  }
+}
+
+/**
+ * The web store.js tells the page when its database is held by another tab
+ * (onWait). The Keychain has no such thing: nothing to hear, so this only
+ * keeps the same surface (returns the function that stops listening).
+ */
+export function onWait() {
+  return () => {};
+}
+
+/**
+ * The web store.js asks the browser to keep its storage under storage
+ * pressure (persist). The Keychain is never cleared that way: always true.
+ */
+export async function persist() {
+  return true;
+}
+
 /** device.sign for a native key: ECDSA P-256 / SHA-256, 64-byte P1363 signature. */
 const signerFor = (keyId) => async (bytes) => b64d((await Keys.sign({ keyId, data: b64e(bytes) })).sig);
 
 async function readJson(key) {
-  const { value } = await Keys.vaultGet({ key });
+  const { value } = await keychain(() => Keys.vaultGet({ key }));
   if (value == null) return null;
   try { return JSON.parse(value); } catch { return null; }
 }
 
-const writeJson = (key, obj) => Keys.vaultSet({ key, value: JSON.stringify(obj) });
+const writeJson = (key, obj) => keychain(() => Keys.vaultSet({ key, value: JSON.stringify(obj) }));
 
 /* ---------- paired PCs ---------- */
 
-/** Every paired PC, most recently used first. A record that cannot be read is skipped (and logged), not fatal. */
+/**
+ * Every paired PC, most recently used first. A record that cannot be read is skipped (and logged), not fatal;
+ * a Keychain that cannot be read at all throws a StorageError (never [] for that).
+ */
 export async function listPcs() {
-  const { items = [] } = await Keys.vaultList({ prefix: PC });
+  const { items = [] } = await keychain(() => Keys.vaultList({ prefix: PC }));
   const out = [];
   for (const it of items) {
     try { out.push(await decodePc(JSON.parse(it.value), signerFor)); } catch (e) { console.warn('apaki store: skipped a record', it.key, e.message); }
@@ -59,13 +107,20 @@ export async function savePc(rec) {
 /** Forgets a PC; its own Secure Enclave key goes with it (an account PC shares the account's key, which stays). */
 export async function forgetPc(roomId) {
   const obj = await readJson(PC + roomId);
-  await Keys.vaultRemove({ key: PC + roomId });
+  await keychain(() => Keys.vaultRemove({ key: PC + roomId }));
   if (obj?.device?.kind === 'native') await Keys.deleteKey({ keyId: obj.device.keyId }).catch(() => {});
 }
 
 export async function touchPc(roomId) {
   const rec = await getPc(roomId);
   if (rec) await savePc({ ...rec, lastUsed: new Date().toISOString() });
+}
+
+/** Changes some fields of a saved PC (its expiry or mode, say); nothing when it is not saved. */
+export async function updatePc(roomId, fields) {
+  const rec = await getPc(roomId);
+  if (rec) await savePc({ ...rec, ...fields });
+  return rec ? { ...rec, ...fields } : null;
 }
 
 /* ---------- the device key for a new pairing ---------- */
@@ -106,6 +161,6 @@ export async function saveAccount(rec) {
 
 /** Signs this phone out: the account record goes, and so do the PCs that came only from the account. */
 export async function forgetAccount() {
-  await Keys.vaultRemove({ key: ACCOUNT });
+  await keychain(() => Keys.vaultRemove({ key: ACCOUNT }));
   for (const pc of await listPcs()) if (pc.via === 'account') await forgetPc(pc.roomId);
 }

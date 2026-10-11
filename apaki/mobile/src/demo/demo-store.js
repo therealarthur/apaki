@@ -27,6 +27,20 @@ export async function touchPc(roomId) {
 
 export const newDevice = async () => fakeDevice();
 
+/* The rest of the web store.js's surface (storage errors, waiting on another tab, persist, updatePc): nothing to fail or wait on in memory. */
+export class StorageError extends Error {
+  constructor(message, cause = null) { super(message); this.name = 'StorageError'; this.code = 'storage'; this.cause = cause; }
+}
+export const isStorageError = (e) => e instanceof StorageError || e?.code === 'storage';
+export const onWait = () => () => {};
+export const persist = async () => true;
+export async function updatePc(roomId, fields) {
+  const rec = pcs.get(roomId);
+  if (!rec) return null;
+  pcs.set(roomId, { ...rec, ...fields });
+  return pcs.get(roomId);
+}
+
 export const getAccount = async () => account;
 
 export async function saveAccount(rec) { account = { ...rec, key: 'me' }; }

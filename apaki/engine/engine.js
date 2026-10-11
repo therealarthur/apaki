@@ -67,6 +67,27 @@
  *   ev browserActivity { paneId, browserId, action, text }   what Claude just did there
  *   op browserTool { paneId, tool, input } -> ev browserToolResult { ok, text, image? }
  *                  (runs one of Claude's browser tools for a pane: checks, later the phone)
+ *
+ * The background host (2026-10-10, Arthur: closing Apaki must not close the
+ * Claude sessions that are open; see host.js for the whole design): the
+ * Apaki shell runs this file as `engine.js --host`, detached, one per app id.
+ * The same JSON lines then travel over an authenticated 127.0.0.1 connection
+ * instead of stdin/stdout, and closing the window only disconnects it. Run
+ * without --host (tests, scripts), the engine works on stdin/stdout exactly
+ * as before and exits when stdin closes.
+ *
+ * The whole history (2026-10-10, history.js): ev history now carries the
+ * newest page of the full conversation, across compactions, read from the
+ * transcript (source 'transcript'; the SDK's list is the fallback, source
+ * 'sdk'), with compaction markers, thinking text and flags on cut blocks.
+ *   ev history     { paneId, sessionId, messages, total, hasMore, first, earlier, compactions, source }
+ *   op historyBefore { paneId, sessionId?, before, limit?, all? } -> ev historyPage (same fields, to prepend)
+ *   op historyBlock  { paneId, sessionId?, ref } -> ev historyBlock { ref, kind, text | media_type + data }
+ *
+ *   op hostStatus -> ev host { pid, window, remoteOn, panes, lifecycle }
+ *   op hostQuit { whenIdle: true } | { now: true } -> ev hostQuit { ok, pending, waiting }
+ *   ev opened from attach also carries running (its Claude Code process is up)
+ *                  and turn (any turn runs, also one Claude started by itself)
  */
 
 import { execFile, spawn } from 'node:child_process';
@@ -75,13 +96,21 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { getSessionInfo, getSessionMessages, renameSession } from '@anthropic-ai/claude-agent-sdk';
+import { forkSession, getSessionInfo, getSessionMessages, renameSession } from '@anthropic-ai/claude-agent-sdk';
+import * as archive from './archive.js';
 import { ArtifactStore, kindOfExt } from './artifacts.js';
 import { createApakiTools } from './apaki-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createShell } from './shell-channel.js';
+import {
+  DEFAULT_APP_ID, HostServer, connectHost, createLifecycle, engineStamp, hostFile, noteSdkMessage, paneTurnBusy, paneWorking,
+  patchWorkspaceLeaves, restoreAsAttach, taskReplay,
+} from './host.js';
 import { startOpenServer } from './open-server.js';
 import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
+// Signing in on a fresh install (2026-10-10, see "signing in to Claude" below).
+import { liveLogin } from '../../src/auth.js';
+import { claudeBinary } from '../../src/launch.js';
 import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
 import { searchHybrid, startIndexServer, updateIndex, updateViaServer } from '../../src/deepindex.js';
 import { askSearch, digPrompt } from './asksearch.js';
@@ -89,6 +118,8 @@ import * as folders from '../../src/folders.js';
 import { filterItems, terminalSessions, transcriptMap } from '../../src/picker.js';
 import { bareItem, startLive } from './live.js';
 import { agentByToolUse, countSubagents, listShells, listSubagents, readEntries, readText, RUNNING_MS, watchFile } from './tasks.js';
+// A session's whole conversation, across compactions, read from its transcript (2026-10-10).
+import { HistoryStore, PAGE as HISTORY_PAGE } from './history.js';
 import { SessionRunner } from '../../src/runner.js';
 import { listSessions, lockInfo, lockStolen, readTail, releaseLock, rememberCreated, setLockApp, takeLock } from '../../src/sessions.js';
 import { makeLoader } from '../../src/ui/picker.js';
@@ -96,6 +127,8 @@ import { noteRunnerUse, setOn as setWarm, statusText as warmStatus, summary as w
 import { folderStats, listDir, makeDir } from '../../src/places.js';
 import { createRemote } from './remote.js';
 import { parsePhoneId, windowOf } from './remote-policy.js';
+// What a paired phone may make Claude do (2026-10-10, apaki/SECURITY.md 4.4 item 4): enforced on every phone pane below.
+import { CAP_PLAN_TEXT, capCanUseTool, capDefaultMode, capModeText, capModes, capPreToolUse, capRunnerOptions, clampMode } from './remote-policy.js';
 
 // Locks this engine takes name it, so a blocked terminal window can say who has the session.
 setLockApp('apaki');
@@ -111,14 +144,42 @@ const RESULT_CHARS = 4000;
 /** Phone access (remote.js), created once the command handlers exist. */
 let remote = null;
 
+// The background host (host.js): events go to the connected window, not stdout.
+const HOST_MODE = process.argv.includes('--host');
+const HOST_APP_ID = String(process.env.APAKI_APP_ID || DEFAULT_APP_ID);
+/** The host's server (host.js HostServer) and lifecycle, in host mode, once start-up is done. */
+let host = null;
+let lifecycle = null;
+// The last of these, for a window that connects later (they are only sent when they change).
+const HOST_CACHED = new Set(['index', 'meaning', 'warm']);
+const hostCache = new Map();
+
+if (HOST_MODE) {
+  // One host per app id: if one already answers (a window that gave up waiting
+  // for a slow start and started another), this one leaves it in charge.
+  const other = await connectHost({ file: hostFile(HOST_APP_ID), role: 'control', timeoutMs: 3000 }).catch(() => null);
+  if (other && other.ok?.pid !== process.pid) {
+    process.stderr.write(`apaki host: another host (pid ${other.ok?.pid}) already serves ${HOST_APP_ID}; this one exits\n`);
+    other.close();
+    process.exit(0);
+  }
+}
+
 function emit(ev) {
   // Events for a phone's panes and requests go to that phone only.
   if (remote && remote.route(ev)) return;
+  if (HOST_MODE) {
+    if (ev && HOST_CACHED.has(ev.ev)) hostCache.set(ev.ev, ev);
+    host?.send(ev);
+    return;
+  }
   process.stdout.write(`${JSON.stringify(ev)}\n`);
 }
 
 // Requests to the Apaki shell (the built-in browser), answered on stdin.
 const shell = createShell({ emit });
+// A host's shell is the window, which comes and goes; what it can do is known up front (main.rs).
+if (HOST_MODE) shell.expect(String(process.env.APAKI_SHELL_FEATURES || '').split(',').map((s) => s.trim()).filter(Boolean));
 
 // Session list shared by every pane.
 const state = {
@@ -157,7 +218,8 @@ function artifactEvent(p, rec, meta = {}) {
 function toolsFor(p) {
   if (!p.tools) {
     // The browser tools only where the shell has a browser (not in tests or latch).
-    const browser = shell.has('browser')
+    // expects: a background host's window may be closed right now and come back later.
+    const browser = shell.expects('browser')
       ? createBrowserTools({ shell, owner: () => p.id, onActivity: (a) => emit({ ev: 'browserActivity', paneId: p.id, ...a }) })
       : null;
     p.tools = createApakiTools({
@@ -227,6 +289,8 @@ function getPane(paneId) {
   let p = panes.get(id);
   if (!p) {
     p = { id, runner: null, sessionId: null, credential: defaults.credential, model: defaults.model, effort: defaults.effort, mode: defaults.mode };
+    // A phone pane never starts in the desktop's default mode (it starts as bypassPermissions): it starts in the mode its phone's access allows.
+    if (parsePhoneId(id)) p.mode = capDefaultMode(phoneCap(id));
     panes.set(id, p);
   }
   return p;
@@ -243,6 +307,10 @@ function compact(it, term, folderOf) {
     // Started headless and never typed in (claude -p, workers, relayed-only windows); shown, and marked.
     headless: Boolean(it.headless), bare: Boolean(it.bare), warm: state.warm.has(it.id),
     subagents: subagentCount(it.id),
+    // Archived in Apaki's list (archive.js): hidden from All, In terminals and folders, shown under Archived.
+    archived: archive.archived().has(it.id),
+    // A turn is running in this engine (a pane here, a phone's pane, or one kept running in the background).
+    running: [...panes.values()].some((p) => p.sessionId === it.id && (p.runner?.turnRunning || p.runner?.turnActive)),
   };
 }
 
@@ -404,6 +472,31 @@ function compactMessages(msgs, sessionId = null) {
   });
 }
 
+/**
+ * The whole conversation, not just what follows the last compaction
+ * (history.js; Arthur, 2026-10-10: "im not entirely sure if we;re really
+ * pulling the FULL transcript of sessions"). Read from the transcript and
+ * cached; the SDK's getSessionMessages (above) stays the fallback for a
+ * session whose file cannot be read.
+ */
+const historyFileOf = (id) => {
+  const known = state.files?.get(id);
+  return known && fs.existsSync(known) ? known : transcriptMap().get(id) || null;
+};
+const historyStore = new HistoryStore({ fileOf: historyFileOf, log: (line) => process.stderr.write(`${line}\n`) });
+
+/** Sends a pane its session's newest page of history ({ ev: 'history' }; earlier pages come with historyBefore). */
+async function sendHistory(p, sessionId) {
+  const t0 = Date.now();
+  const page = await historyStore.firstPage(sessionId, { limit: HISTORY_PAGE }).catch((e) => { process.stderr.write(`history: ${e.message || e}\n`); return null; });
+  if (page) {
+    emit({ ev: 'history', paneId: p.id, sessionId, ...page, ms: Date.now() - t0 });
+    return;
+  }
+  const msgs = await getSessionMessages(sessionId).catch(() => []);
+  emit({ ev: 'history', paneId: p.id, sessionId, messages: compactMessages(msgs, sessionId), total: msgs.length, source: 'sdk' });
+}
+
 /* ---------- the open conversations (one per pane) ---------- */
 
 function billingInfo(p) {
@@ -521,6 +614,9 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   if (opts.model) p.model = opts.model;
   if (opts.effort) p.effort = opts.effort;
   if (opts.mode) p.mode = opts.mode;
+  // A phone pane: the mode, tools and permission answers its phone's access allows (remote-policy.js capabilities).
+  const capOpts = parsePhoneId(p.id) ? capRunnerOptions(phoneCap(p.id), p.mode) : null;
+  if (capOpts) p.mode = capOpts.permissionMode;
   let info = null;
   if (sessionId) {
     // Held by a live latch or another Apaki: the pane offers "Take over here",
@@ -535,6 +631,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     info = await getSessionInfo(sessionId).catch(() => null);
   }
   p.sessionId = sessionId || null;
+  // Set once this pane's new conversation gets its session id (host.js restoreAsAttach).
+  p.createdHere = false;
   p.openedAt = new Date().toISOString();
   p.credential = p.credential.follow ? glassCredential() : p.credential;
   const tools = toolsFor(p);
@@ -545,16 +643,21 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     // Apaki's own tools and "open this" catcher, passed at runtime only.
     mcpServers: tools.mcpServers,
     appendSystemPrompt: tools.appendSystemPrompt,
-    hooks: tools.hooks,
+    // A phone pane also gets the capability hook (it holds in bypassPermissions too) and its tool limits.
+    hooks: capOpts ? { ...tools.hooks, PreToolUse: [...(tools.hooks.PreToolUse || []), capPreToolUse(() => phoneCap(p.id))] } : tools.hooks,
+    disallowedTools: capOpts?.disallowedTools,
+    allowedTools: capOpts?.allowedTools,
     envExtra: browserEnv(p),
     model: p.model,
     effort: p.effort,
     permissionMode: p.mode,
-    canUseTool: async (_name, input) => ({ behavior: 'allow', updatedInput: input }),
+    canUseTool: capOpts ? capCanUseTool(() => phoneCap(p.id), async (_name, input) => ({ behavior: 'allow', updatedInput: input })) : async (_name, input) => ({ behavior: 'allow', updatedInput: input }),
     onMessage: (msg) => {
       // A turn cannot end while a question really waits (its tool call is held), so any still open now went stale.
       if (msg?.type === 'result' || msg?.type === 'latch_error') dropStaleAsks(p.id);
       emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
+      // What the pane is doing (a turn, background tasks), for attach and the host's idle rules (host.js).
+      paneActivity(p, runner, msg);
       // The context meter: measured once the process is up, after every turn and after a compaction.
       if (msg?.type === 'result' || (msg?.type === 'system' && (msg.subtype === 'init' || msg.subtype === 'compact_boundary'))) contextSoon(p);
     },
@@ -570,12 +673,20 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     state.asks.set(id, { resolve, paneId: p.id, toolName, input, at: Date.now() });
     emit({ ev: 'ask', askId: id, paneId: p.id, toolName, input });
   });
+  // A chat-only phone cannot carry out a plan: ExitPlanMode is answered here, before the phone is asked.
+  if (capOpts) {
+    const ask = runner.onInteractiveTool;
+    runner.onInteractiveTool = (toolName, input) => (toolName === 'ExitPlanMode' && phoneCap(p.id) === 'chat' ? Promise.resolve({ behavior: 'deny', message: CAP_PLAN_TEXT }) : ask(toolName, input));
+  }
   // A one-line "what it is doing" for running subagents (task_progress summary;
   // a short fork every ~30 s on the subagent's own cache).
   runner.progressSummaries = true;
   runner.onNewSession = (id) => {
     rememberCreated(id);
     p.sessionId = id;
+    p.createdHere = true;
+    // Made while no window is connected: the saved workspace learns the new session (host mode).
+    markAway(p, { s: id });
     takeLock(id, { force: true });
     emit({ ev: 'session_id', paneId: p.id, sessionId: id });
   };
@@ -593,10 +704,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   p.runner = runner;
   emit({ ev: 'opened', tookOver: Boolean(opts.force),  reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
   if (opts.warm !== false) runner.start();
-  if (sessionId) {
-    const msgs = await getSessionMessages(sessionId).catch(() => []);
-    emit({ ev: 'history', paneId: p.id, sessionId, messages: compactMessages(msgs, sessionId), total: msgs.length });
-  }
+  // The whole conversation, newest page first (history.js; the SDK's list when the file cannot be read).
+  if (sessionId) await sendHistory(p, sessionId);
 }
 
 async function send(reqId, paneId, text, images = []) {
@@ -643,12 +752,14 @@ async function attach(reqId, paneId, sessionId, cwd) {
   const p = panes.get(String(paneId));
   if (!p || !p.runner || (p.sessionId || null) !== (sessionId || null)) { await open(reqId, paneId, sessionId, cwd, { warm: false }); return; }
   const info = p.sessionId ? await getSessionInfo(p.sessionId).catch(() => null) : null;
-  emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), reqId, paneId: p.id, sessionId: p.sessionId, cwd: p.runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [] });
-  if (p.sessionId) {
-    const msgs = await getSessionMessages(p.sessionId).catch(() => []);
-    emit({ ev: 'history', paneId: p.id, sessionId: p.sessionId, messages: compactMessages(msgs, p.sessionId), total: msgs.length });
-  }
+  // busy: a message sent here is still running (its result event follows, which clears it in the window);
+  // turn: any turn is running, also one Claude started by itself (the window picks that up from its next
+  // message_start); running: its Claude Code process is up (a restored pane not started yet attaches too).
+  emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: paneTurnBusy(p), running: Boolean(p.runner.running), reqId, paneId: p.id, sessionId: p.sessionId, cwd: p.runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [] });
+  if (p.sessionId) await sendHistory(p, p.sessionId);
   for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: p.id, toolName: a.toolName, input: a.input });
+  // Subagents and background tasks still running in this process, so the window's Tasks button and panel show them again.
+  for (const msg of taskReplay(p)) emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
 }
 
 /** Closes a pane: its Claude Code process stops and its session lock is freed. */
@@ -717,15 +828,15 @@ const handlers = {
   send: (c) => send(c.reqId, c.paneId, String(c.text || ''), Array.isArray(c.images) ? c.images : []),
   close: (c) => closePane(c.reqId, c.paneId),
   interrupt: (c) => getPane(c.paneId).runner?.interrupt(),
-  // Steer: add a message to the running turn without stopping it (Claude
-  // Code takes it in at its next step). If the turn already ended, it goes
-  // out as a normal message instead.
   // The context meter on demand (the window asks when a pane comes into view or its meter is clicked).
   contextUsage: async (c) => {
     const p = panes.get(String(c.paneId || ''));
     if (!p) { emit({ ev: 'context', reqId: c.reqId, paneId: c.paneId, none: true }); return; }
     await sendContext(p, c.reqId || null).catch(() => emit({ ev: 'context', reqId: c.reqId, paneId: c.paneId, none: true }));
   },
+  // Steer: add a message to the running turn without stopping it (Claude
+  // Code takes it in at its next step). If the turn already ended, it goes
+  // out as a normal message instead.
   steer: async (c) => {
     const p = getPane(c.paneId);
     const images = Array.isArray(c.images) ? c.images : [];
@@ -745,6 +856,12 @@ const handlers = {
   },
   mode: async (c) => {
     const p = getPane(c.paneId);
+    // A phone pane takes only the modes its phone's access allows (remote-policy.js refuses others first; this holds anyway).
+    if (parsePhoneId(p.id) && !capModes(phoneCap(p.id)).includes(c.mode)) {
+      emit({ ev: 'error', reqId: c.reqId, paneId: p.id, message: capModeText(phoneCap(p.id), c.mode), refused: true });
+      emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
+      return;
+    }
     p.mode = c.mode; if (!parsePhoneId(p.id)) defaults.mode = c.mode;
     await p.runner?.setPermissionMode(c.mode);
     emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
@@ -861,12 +978,14 @@ const handlers = {
     : glassChanged()),
   glassSwap: (c) => new Promise((resolve) => {
     const provider = c.provider === 'codex' ? 'codex' : 'claude';
+    // No Glass on this PC (2026-10-10): say so instead of "spawn ... ENOENT".
+    if (!fs.existsSync(GLASS_CLI)) { emit({ ev: 'glass_swap', reqId: c.reqId, provider, account: c.account, ok: false, message: GLASS_MISSING, detail: '' }); resolve(); return; }
     const args = ['swap', provider, String(c.account || ''), '--reason', 'Picked in Myrlin Apaki', '--requester', 'myrlin-apaki', '--user-asked', '--json'];
     execFile(GLASS_CLI, args, { timeout: 30000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
       let out = null;
       try { out = JSON.parse(stdout); } catch { out = null; }
       const ok = !err && out?.ok !== false && !out?.error;
-      const message = ok ? '' : String(out?.error || out?.message || stderr || err?.message || 'Glass could not switch').trim().split('\n')[0].slice(0, 240);
+      const message = ok ? '' : String(out?.message || out?.error || stderr || err?.message || 'Glass could not switch').trim().split('\n')[0].slice(0, 240);
       emit({ ev: 'glass_swap', reqId: c.reqId, provider, account: c.account, ok, message, detail: out?.message || '' });
       glassChanged().catch(() => {}).finally(resolve);
     });
@@ -881,6 +1000,9 @@ const handlers = {
   glassApiAdd: (c) => glassOp(c, ['api', 'add', '--label', String(c.label || '').trim(), '--credit', String(Number(c.credit) || 200), '--reset-day', String(Number(c.resetDay) || 1)],
     `${String(c.adminKey || '').trim()}\n${String(c.usageKey || '').trim()}\n`),
   glassApiRemove: (c) => glassOp(c, ['api', 'remove', String(c.label || '')]),
+  // Signing in to Claude on a PC that has no login yet (2026-10-10, see authStatus / signIn).
+  authStatus: (c) => authStatus(c.reqId || null),
+  signIn: (c) => signIn(c.reqId || null, Boolean(c.console)),
   billingOptions: (c) => emit({
     ev: 'billingOptions', reqId: c.reqId, paneId: c.paneId || null,
     options: [
@@ -929,6 +1051,29 @@ const handlers = {
     ev: 'artifacts', reqId: c.reqId, sessionId: c.sessionId || null,
     items: c.sessionId ? store.list(c.sessionId).map((r) => ({ id: r.id, title: r.title, kind: r.kind, rev: r.rev, ext: r.ext, size: r.size, updatedAt: r.updatedAt, src: srcOf(r) })) : [],
   }),
+  /* ---------- the rest of a conversation's history (history.js, 2026-10-10) ---------- */
+  // Read only, and only the session open in that pane (whatever session the command names), so a
+  // phone can page through its own conversations and nothing else (remote-policy.js allows both).
+  // historyBefore { paneId, sessionId?, before, limit?, all? } -> historyPage { messages, total, hasMore, first, earlier }
+  historyBefore: async (c) => {
+    const p = panes.get(String(c.paneId || ''));
+    const base = { ev: 'historyPage', reqId: c.reqId || null, paneId: c.paneId || null, before: c.before || null };
+    if (!p?.sessionId || (c.sessionId && c.sessionId !== p.sessionId)) { emit({ ...base, sessionId: c.sessionId || null, error: 'That conversation is not open in this pane.' }); return; }
+    if (!c.before) { emit({ ...base, sessionId: p.sessionId, error: 'Which message to load before is missing.' }); return; }
+    const limit = Math.min(5000, Math.max(1, Math.floor(Number(c.limit)) || HISTORY_PAGE));
+    const page = await historyStore.pageBefore(p.sessionId, String(c.before), { limit, all: c.all === true }).catch(() => null);
+    if (!page) { emit({ ...base, sessionId: p.sessionId, error: 'The rest of this conversation cannot be read from its transcript.' }); return; }
+    emit({ ...base, sessionId: p.sessionId, ...page });
+  },
+  // One cut tool result, thinking block, summary or image in full, from its own line of the transcript.
+  // historyBlock { paneId, sessionId?, ref } -> historyBlock { ref, kind: 'text', text, length, cut } | { kind: 'image', media_type, data, bytes } | { error }
+  historyBlock: async (c) => {
+    const p = panes.get(String(c.paneId || ''));
+    const base = { ev: 'historyBlock', reqId: c.reqId || null, paneId: c.paneId || null, ref: c.ref || null };
+    if (!p?.sessionId || (c.sessionId && c.sessionId !== p.sessionId)) { emit({ ...base, sessionId: c.sessionId || null, error: 'That conversation is not open in this pane.' }); return; }
+    const r = await historyStore.block(p.sessionId, c.ref).catch((e) => ({ error: e.message || String(e) }));
+    emit({ ...base, sessionId: p.sessionId, ...r });
+  },
   openExternal: (c) => {
     if (c.url) {
       if (!/^https?:\/\/[^\s"'<>]+$/i.test(String(c.url))) { emit({ ev: 'error', reqId: c.reqId, paneId: c.paneId || null, message: `Not a web address: ${c.url}` }); return; }
@@ -937,6 +1082,42 @@ const handlers = {
     }
     const got = c.id ? store.get(c.id, { sessionId: c.sessionId || null, rev: c.rev ?? null }) : null;
     if (got) openOutside(got.file);
+  },
+  /* ---------- the session list's right-click menu (2026-10-10) ---------- */
+  // Arthur: right-click a session to "stop" it "among other things (think of what codex and claude
+  // desktop would let you do)". Stop any turn this engine runs for a session, wherever its pane is.
+  stopSession: (c) => {
+    let n = 0;
+    for (const p of panes.values()) {
+      if (p.sessionId !== c.sessionId || !(p.runner?.turnRunning || p.runner?.turnActive)) continue;
+      p.runner.interrupt();
+      n += 1;
+    }
+    emit({ ev: 'note', paneId: null, reqId: c.reqId, text: n ? 'Stopping it.' : 'Nothing of it is running in Apaki.' });
+  },
+  // Fork: a new session with this one's conversation so far (fresh ids; the original is untouched).
+  forkSession: async (c) => {
+    try {
+      const r = await forkSession(String(c.sessionId));
+      emit({ ev: 'forked', reqId: c.reqId, from: c.sessionId, sessionId: r.sessionId });
+      await sessions(null);
+    } catch (e) {
+      emit({ ev: 'error', reqId: c.reqId, paneId: null, message: `Could not fork it: ${e.message || e}` });
+    }
+  },
+  // Archive: hidden from Apaki's lists, nothing deleted (archive.js); archived: false brings it back.
+  archive: async (c) => {
+    archive.setArchived(c.sessionId, c.archived !== false);
+    await sessions(c.reqId || null);
+  },
+  // The session's folder in Explorer (or Finder, or the file manager).
+  revealFolder: (c) => {
+    const dir = String(c.cwd || '');
+    let ok = false;
+    try { ok = Boolean(dir) && fs.statSync(dir).isDirectory(); } catch { ok = false; }
+    if (!ok) { emit({ ev: 'note', paneId: null, reqId: c.reqId, text: 'That folder is not there any more.' }); return; }
+    const cmd = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+    try { spawn(cmd, [dir], { detached: true, stdio: 'ignore', windowsHide: false }).unref(); } catch { /* nothing to open it with */ }
   },
   folder: async (c) => {
     if (c.action === 'create') { const f = folders.createFolder(c.name); if (!f.error && c.sessionId) folders.moveToFolder(c.sessionId, f.id); }
@@ -955,6 +1136,17 @@ const handlers = {
   remotePairCancel: (c) => remote.op(c),
   remotePairDecision: (c) => remote.op(c),
   remoteRevoke: (c) => remote.op(c),
+  // A paired phone's lifetime (forever, 30, 7 or 1 days), and Start over when the saved keys cannot be opened (2026-10-10).
+  remoteDeviceLifetime: (c) => remote.op(c),
+  remoteReset: (c) => remote.op(c),
+  // Private or Connected, a phone's access (Full, No shell, Chat only), and the answer to an account-link held for the PC (2026-10-10).
+  remoteMode: (c) => remote.op(c),
+  remoteDeviceCap: (c) => remote.op(c),
+  remoteLinkDecision: (c) => remote.op(c),
+  // The background host (host.js): its state, and exit once idle (an update) or now. Desktop only:
+  // remote-policy.js does not allow them for phones.
+  hostStatus: (c) => emit(hostControl({ ...c, op: 'hostStatus' })),
+  hostQuit: (c) => emit(hostControl(c)),
 };
 
 const SERIAL_OPS = new Set(['open', 'attach', 'send', 'close', 'model', 'mode', 'effort', 'billing']);
@@ -971,6 +1163,12 @@ async function dispatch(c) {
   // not wait: the running turn is what they act on.
   if (c.paneId && SERIAL_OPS.has(c.op)) {
     const p = getPane(c.paneId);
+    // attach to a pane whose process is up only sends its state again, so it
+    // runs at once: queued, it waited behind the running send until the turn
+    // ended, and behind a question it was meant to ask again for good
+    // (2026-10-10, found re-attaching to the background host mid-turn). An
+    // attach that falls back to open stays in the queue.
+    if (c.op === 'attach' && p.runner && (p.sessionId || null) === (c.sessionId || null)) { await run(); return; }
     p.queue = (p.queue || Promise.resolve()).then(run);
     return;
   }
@@ -979,6 +1177,32 @@ async function dispatch(c) {
 
 /** The panes of one phone (phone:<deviceId>:...). */
 const phonePanes = (deviceId) => [...panes.keys()].filter((id) => parsePhoneId(id)?.deviceId === deviceId);
+
+/** A phone pane's access (remote.js capFor): 'chat', the narrowest, while phone access is not set up or the phone is gone. */
+function phoneCap(paneId) {
+  return remote?.capFor?.(paneId) || 'chat';
+}
+
+/**
+ * A phone's access changed on the PC: each of its panes takes the mode it
+ * may use now; an idle running one restarts with the new tool limits (a
+ * busy one keeps its stricter or looser list until it is reopened, while
+ * the hook and canUseTool apply the new access at once).
+ */
+async function capChanged(deviceId) {
+  for (const id of phonePanes(deviceId)) {
+    const p = panes.get(id);
+    if (!p) continue;
+    const o = capRunnerOptions(phoneCap(id), p.mode);
+    p.mode = clampMode(phoneCap(id), p.mode);
+    if (p.runner) {
+      Object.assign(p.runner, { disallowedTools: o.disallowedTools, allowedTools: o.allowedTools });
+      if (p.runner.running && !p.busy && !paneTurnBusy(p)) await p.runner.restart({ permissionMode: p.mode }).catch(() => {});
+      else await p.runner.setPermissionMode(p.mode).catch(() => {});
+    }
+    emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
+  }
+}
 
 remote = createRemote({
   emit,
@@ -989,23 +1213,49 @@ remote = createRemote({
     paneExists: (id) => panes.has(id),
     paneCount: (deviceId) => phonePanes(deviceId).length,
     phonePanes,
-    paneInfo: (id) => { const p = panes.get(id); return p ? { sessionId: p.sessionId, running: Boolean(p.runner), busy: Boolean(p.busy) } : null; },
+    paneInfo: (id) => { const p = panes.get(id); return p ? { sessionId: p.sessionId, running: Boolean(p.runner), busy: Boolean(p.busy), model: p.model, effort: p.effort, mode: p.mode } : null; },
+    capChanged: (deviceId) => { capChanged(deviceId).catch((e) => process.stderr.write(`apaki: applying a phone's access: ${e.message}
+`)); },
     askPane: (askId) => state.asks.get(askId)?.paneId || null,
     knownCwd: (cwd) => Boolean(state.items?.some((it) => it.cwd === cwd)),
     phoneSessions: (deviceId) => phonePanes(deviceId).map((id) => panes.get(id)?.sessionId).filter(Boolean),
   },
 });
 
-const rl = readline.createInterface({ input: process.stdin });
-rl.on('line', async (line) => {
-  let c;
-  try { c = JSON.parse(line); } catch { return; }
-  await dispatch(c);
-});
-rl.on('close', async () => {
-  if (workspaceTimer) { clearTimeout(workspaceTimer); workspaceTimer = null; if (workspacePending) { try { fs.writeFileSync(WORKSPACE_FILE, JSON.stringify(workspacePending)); } catch { /* exiting */ } } }
-  remote?.stop();
-  fs.unwatchFile(LIVE_LOGIN); await Promise.all([...panes.values()].map((p) => closeRunner(p))); process.exit(0); });
+// The window's commands: on stdin, or in host mode from the connected window (startHostMode below;
+// a host's stdin is empty and must not end it).
+let rl = null;
+if (!HOST_MODE) {
+  rl = readline.createInterface({ input: process.stdin });
+  rl.on('line', async (line) => {
+    let c;
+    try { c = JSON.parse(line); } catch { return; }
+    await dispatch(c);
+  });
+  rl.on('close', () => { shutdown('stdin closed'); });
+}
+
+let shuttingDown = null;
+/**
+ * Saves what is pending, stops phone access and every Claude Code process,
+ * and exits: stdin closed (the window that started a stdio engine went away),
+ * or the host's lifecycle decided so (host.js: idle with no window, or a quit).
+ */
+function shutdown(reason = 'stdin closed') {
+  if (shuttingDown) return shuttingDown;
+  shuttingDown = (async () => {
+    // A host stops taking connections and forgets its address first, so a window opening now starts a fresh host.
+    if (host) { lifecycle?.stop(); host.close(); process.stderr.write(`apaki host: exiting (${reason})\n`); }
+    if (workspaceTimer) { clearTimeout(workspaceTimer); workspaceTimer = null; if (workspacePending) { try { fs.writeFileSync(WORKSPACE_FILE, JSON.stringify(workspacePending)); } catch { /* exiting */ } } }
+    remote?.stop();
+    fs.unwatchFile(LIVE_LOGIN);
+    // Asked to stop now: running turns are interrupted, as closing the window did before the host.
+    if (reason === 'quit-now') for (const p of panes.values()) if (p.runner?.running && paneTurnBusy(p)) await p.runner.interrupt();
+    await Promise.all([...panes.values()].map((p) => closeRunner(p)));
+    process.exit(0);
+  })();
+  return shuttingDown;
+}
 
 /* ---------- task viewers: subagent transcripts and shell output, live ---------- */
 
@@ -1161,6 +1411,8 @@ async function applyRename(id, title, { reqId = null, paneId = null } = {}) {
 let listBusy = false;
 async function refreshList() {
   if (listBusy) return;
+  // A host with no window and no phone connected has nobody to show the list to; whoever connects asks for it.
+  if (!listening()) return;
   listBusy = true;
   try { await sessions(null); } catch { /* the next change tries again */ } finally { listBusy = false; }
 }
@@ -1206,6 +1458,9 @@ setTimeout(refreshWarm, 2000).unref();
 const LIVE_LOGIN = process.env.LATCH_LIVE_LOGIN_FILE || path.join(CLAUDE_DIR, '.credentials.json');
 const GLASS_CLI = process.env.LATCH_GLASS_CLI || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Myrlin Glass', 'glass.exe');
 let glassSeen = null;
+// Fresh installs (2026-10-10): what the window says when Glass is missing, or runs without Workbook.
+const GLASS_MISSING = 'Myrlin Glass is not installed. Run the Myrlin Apaki installer again to add it.';
+const GLASS_LITE_NOTE = 'Myrlin Workbook is not installed, so Glass works with the live Claude and Codex logins and your API keys. Keeping several subscription logins and switching between them is Workbook\'s job.';
 
 const glassProvider = (c) => (c.provider === 'codex' ? 'codex' : 'claude');
 
@@ -1216,6 +1471,8 @@ const glassProvider = (c) => (c.provider === 'codex' ? 'codex' : 'claude');
  */
 function glassOp(c, args, input = null) {
   return new Promise((resolve) => {
+    // No Glass on this PC (2026-10-10): say so instead of "spawn ... ENOENT".
+    if (!fs.existsSync(GLASS_CLI)) { emit({ ev: 'glass_op', reqId: c.reqId, op: c.op, provider: glassProvider(c), ok: false, message: GLASS_MISSING }); resolve(); return; }
     const child = execFile(GLASS_CLI, [...args, '--json'], { timeout: 60000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
       let out = null;
       try { out = JSON.parse(stdout); } catch { out = null; }
@@ -1278,7 +1535,17 @@ function glassView(st) {
     active: Boolean(c.active) || Boolean(claude?.isKey && claude.id === c.id), detail: c.orgName || '',
     label: c.label, hidden: false, keyHint: c.usageKeyHint || c.adminKeyHint || '', spentUsd: c.spentUsd ?? null, error: c.error || '',
   }));
-  return { claude, codex: live('codex'), lists: { claude: [...keys, ...subs], codex: acc.filter((a) => a.provider === 'codex').map(glassAccount) } };
+  return {
+    claude, codex: live('codex'), lists: { claude: [...keys, ...subs], codex: acc.filter((a) => a.provider === 'codex').map(glassAccount) },
+    // 2026-10-10: how Glass runs here. lite = no Myrlin Workbook on this PC: Glass shows the live
+    // logins and API-credit entries and switches between the live login and API keys; keeping
+    // several subscription logins is Workbook's job (the panel says so).
+    mode: {
+      lite: Boolean(st.workbook?.lite), swapsEnabled: Boolean(st.swapsEnabled),
+      swapsReason: st.swapsDisabledReason || null, signInReason: st.signInDisabledReason || null,
+      note: st.workbook?.lite ? GLASS_LITE_NOTE : null,
+    },
+  };
 }
 
 async function glassChanged() {
@@ -1297,13 +1564,73 @@ async function glassChanged() {
     p.credential = next;
     if (changed || moved) emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: moved ? `Myrlin Glass switched Claude to ${name}; the next message here uses it.` : undefined });
   }
-  emit({ ev: 'glass', installed: fs.existsSync(GLASS_CLI), name, source: c.source, plan: account?.plan || null, headroom: account?.headroom ?? null, changed, isKey: Boolean(c.key), claude: view?.claude || null, codex: view?.codex || null, lists: view?.lists || null });
+  emit({ ev: 'glass', installed: fs.existsSync(GLASS_CLI), name, source: c.source, plan: account?.plan || null, headroom: account?.headroom ?? null, changed, isKey: Boolean(c.key), claude: view?.claude || null, codex: view?.codex || null, lists: view?.lists || null, mode: view?.mode || null });
 }
 
 fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => { glassChanged().catch(() => {}); });
 glassChanged().catch(() => {});
 // Usage numbers move without a login change; Glass keeps them, this only reads them.
 setInterval(() => { glassChanged().catch(() => {}); }, 60 * 1000).unref();
+
+/* ---------- signing in to Claude (fresh installs, 2026-10-10) ---------- */
+
+// A PC that only has Myrlin Apaki has no Claude Code login, and the Agent SDK
+// cannot run /login, so the first message used to end in "Not logged in" with
+// no way forward (seen in a clean-profile run, 2026-10-10). Apaki's own Claude
+// Code (the binary the SDK ships, src/launch.js claudeBinary) signs in with
+// `claude auth login` in a console window of its own, where the person finishes
+// the browser sign-in; Claude Code writes its login files itself, Apaki never does.
+//   op authStatus { reqId }           -> ev auth { reqId, loggedIn, method, email, org, plan, viaKey }
+//   op signIn { reqId, console? }     -> ev auth_signin { reqId, ok, message }; ev auth follows
+//                                        once the login file appears (console: Console API billing)
+
+function authStatus(reqId = null) {
+  return new Promise((resolve) => {
+    // A key Glass made live counts as signed in (Claude Code bills it without a claude.ai login).
+    const viaKey = liveLogin().kind === 'key';
+    const bin = claudeBinary();
+    if (!bin) { emit({ ev: 'auth', reqId, loggedIn: viaKey, method: viaKey ? 'key' : 'unknown', viaKey, error: 'Claude Code was not found' }); resolve(); return; }
+    // `auth status` exits 1 when signed out but still prints its JSON.
+    execFile(bin, ['auth', 'status', '--json'], { timeout: 20000, windowsHide: true, env: childEnv(null) }, (err, stdout) => {
+      let s = null;
+      try { s = JSON.parse(stdout); } catch { s = null; }
+      emit({
+        ev: 'auth', reqId, loggedIn: Boolean(s?.loggedIn) || viaKey, method: s?.authMethod || (viaKey ? 'key' : 'none'),
+        email: s?.email || null, org: s?.orgName || null, plan: s?.subscriptionType || null, viaKey,
+        error: s ? undefined : String(err?.message || 'no answer from Claude Code').split('\n')[0].slice(0, 200),
+      });
+      resolve();
+    });
+  });
+}
+
+function signIn(reqId = null, consoleBilling = false) {
+  const bin = claudeBinary();
+  if (!bin) { emit({ ev: 'auth_signin', reqId, ok: false, message: 'Claude Code was not found, so Apaki cannot open the sign-in.' }); return; }
+  if (process.platform !== 'win32') { emit({ ev: 'auth_signin', reqId, ok: false, message: `Run this in a terminal to sign in: "${bin}" auth login` }); return; }
+  const env = childEnv(null);
+  delete env.PROMPT_RELAY_CHILD;
+  delete env.CLAUDE_AGENT_SDK_CLIENT_APP;
+  // `start` gives the sign-in a console window of its own (the engine has none);
+  // with /s, cmd keeps the quoted path intact. The path is ours (no quotes in it).
+  const line = `"start "Sign in to Claude" "${bin}" auth login${consoleBilling ? ' --console' : ''}"`;
+  try {
+    const child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', line], { env, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true });
+    child.on('error', (e) => emit({ ev: 'auth_signin', reqId, ok: false, message: `Could not open the sign-in: ${e.message}` }));
+    child.unref();
+    emit({ ev: 'auth_signin', reqId, ok: true, message: 'Finish signing in in the window that opened. Apaki picks the login up as soon as Claude Code saves it.' });
+  } catch (e) {
+    emit({ ev: 'auth_signin', reqId, ok: false, message: `Could not open the sign-in: ${e.message}` });
+  }
+}
+
+// The login file appears (or changes) when a sign-in finishes: tell the window.
+let authTimer = null;
+fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => {
+  clearTimeout(authTimer);
+  authTimer = setTimeout(() => { authStatus(null).catch(() => {}); }, 800);
+});
+setTimeout(() => { authStatus(null).catch(() => {}); }, 1500).unref();
 
 emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer) });
 // Keep the conversation indexes current in the background. The index server
@@ -1326,3 +1653,159 @@ async function refreshIndexes() {
 }
 refreshIndexes();
 setInterval(() => { refreshIndexes().catch(() => {}); }, UPDATE_EVERY_MS).unref();
+
+/* ---------- the background host (host.js; Arthur 2026-10-10: sessions outlive the window) ---------- */
+
+/** How many questions wait in one pane. */
+function asksOf(paneId) {
+  let n = 0;
+  for (const a of state.asks.values()) if (a.paneId === paneId) n += 1;
+  return n;
+}
+
+/** A paired phone is connected right now (remote.js). */
+function phoneConnected() {
+  for (const c of remote?.conns?.values?.() || []) if (c.open) return true;
+  return false;
+}
+
+/** Someone receives list updates: always on stdin/stdout; for a host, a window or a phone. */
+function listening() {
+  return !HOST_MODE || Boolean(host?.window) || phoneConnected();
+}
+
+/**
+ * One SDK message of a pane's runner: what the pane is doing (a turn, its
+ * tasks; host.js noteSdkMessage), and in host mode a turn that ended with no
+ * window connected is written into the saved workspace, so the window that
+ * comes back knows it finished instead of saying it was cut off.
+ */
+function paneActivity(p, runner, msg) {
+  if (p.runner && p.runner !== runner) return; // a runner this pane already replaced
+  noteSdkMessage(p, msg, { q: runner.q || null });
+  if (msg?.type === 'result') markAway(p, { busy: false, s: p.sessionId || null, away: { at: new Date().toISOString(), sessionId: p.sessionId || null } });
+}
+
+/** Patches a desktop pane's leaves in the saved workspace while no window is connected (host mode only). */
+function markAway(p, patch) {
+  if (!HOST_MODE || host?.window || parsePhoneId(p.id)) return;
+  const next = patchWorkspaceLeaves(workspacePending || loadWorkspace(), p.id, patch);
+  if (!next) return;
+  // Written at once (it includes any save still pending): a window may open any moment and read the file.
+  if (workspaceTimer) { clearTimeout(workspaceTimer); workspaceTimer = null; }
+  workspacePending = null;
+  try {
+    fs.mkdirSync(path.dirname(WORKSPACE_FILE), { recursive: true });
+    const tmpFile = `${WORKSPACE_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmpFile, JSON.stringify(next));
+    fs.renameSync(tmpFile, WORKSPACE_FILE);
+  } catch (e) { process.stderr.write(`apaki host: workspace not updated (${e.message})\n`); }
+}
+
+/** The lines of the connected window: restored panes still running here are taken over (attach), not restarted. */
+async function windowLine(line) {
+  let c;
+  try { c = JSON.parse(line); } catch { return; }
+  if (!c || typeof c !== 'object') return;
+  const p = c.paneId != null ? panes.get(String(c.paneId)) : null;
+  await dispatch(restoreAsAttach(c, p) || c);
+}
+
+function hostWindowConnected(conn) {
+  lifecycle?.windowConnected();
+  const desk = [...panes.values()].filter((p) => !parsePhoneId(p.id));
+  conn.send({
+    ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer),
+    host: { pid: process.pid, startedAt: host?.startedAt || null, panes: desk.length, running: desk.filter((p) => p.runner?.running).length, working: desk.filter((p) => paneWorking(p)).length },
+  });
+  // What changed while no window was connected: the index lines and keep-warm marks as last sent, Glass read now.
+  for (const ev of hostCache.values()) conn.send(ev);
+  glassChanged().catch(() => {});
+}
+
+function hostWindowGone() {
+  // The browser lives in the window: its requests fail now and work again with the next window.
+  shell.goodbye('The Apaki window closed.');
+  // Desktop task viewers follow files for a window that is gone; a window that comes back asks again.
+  for (const id of [...viewerWatch.keys()]) if (!parsePhoneId(id)) unwatchViewer(id);
+  lifecycle?.windowGone();
+}
+
+/** What the lifecycle (host.js planIdle) looks at. */
+function hostView() {
+  return {
+    remoteOn: Boolean(remote?.state?.enabled),
+    panes: [...panes.values()].map((p) => ({
+      id: p.id, sessionId: p.sessionId || null, phone: Boolean(parsePhoneId(p.id)), open: Boolean(p.runner), running: Boolean(p.runner?.running),
+      busy: paneTurnBusy(p), working: paneWorking(p), tasks: p.bgTasks?.size || 0, asks: asksOf(p.id), lastActiveAt: p.lastActiveAt || 0,
+    })),
+  };
+}
+
+/**
+ * Closes an idle pane's Claude Code process and frees its session lock (no
+ * window for a while, or a quit). The pane itself stays, so a window that
+ * comes back reopens it from disk. Runs in the pane's queue so it never
+ * interleaves with an open or attach from a window that is just coming back.
+ */
+function closeIdlePane(id) {
+  const p = panes.get(id);
+  if (!p) return;
+  p.queue = (p.queue || Promise.resolve()).then(async () => {
+    if ((host?.window && !lifecycle?.status().quit) || paneWorking(p) || asksOf(p.id)) return;
+    await closeRunner(p);
+    p.inTurn = false;
+  }).catch((e) => process.stderr.write(`apaki host: closing pane ${id}: ${e.message}\n`));
+}
+
+/** hostStatus and hostQuit, from the window or a control connection (the installer). */
+function hostControl(c = {}) {
+  const reqId = c.reqId ?? null;
+  if (!lifecycle) return { ev: c.op === 'hostQuit' ? 'hostQuit' : 'host', reqId, ok: false, host: false, message: 'This engine is not running as a background host.' };
+  if (c.op === 'hostQuit') {
+    if (c.now === true) {
+      // Answer first, then stop everything.
+      setTimeout(() => lifecycle.requestQuit({ now: true, by: String(c.by || 'a request') }), 50);
+      return { ev: 'hostQuit', reqId, ok: true, now: true, pending: false };
+    }
+    lifecycle.requestQuit({ by: String(c.by || 'a request') });
+    const plan = lifecycle.tick();
+    return { ev: 'hostQuit', reqId, ok: true, pending: !lifecycle.exiting, waiting: plan?.waiting || [] };
+  }
+  const st = lifecycle.status();
+  return {
+    ev: 'host', reqId, ok: true, host: true, app: HOST_APP_ID, pid: process.pid, startedAt: host?.startedAt || null, window: Boolean(host?.window),
+    remoteOn: Boolean(remote?.state?.enabled), quit: st.quit, exiting: st.exiting, idleCloseMs: st.idleCloseMs, exitGraceMs: st.exitGraceMs, panes: hostView().panes,
+  };
+}
+
+/** Starts listening for windows (host mode): the address and token go to the host file (host.js). */
+async function startHostMode() {
+  host = new HostServer({
+    appId: HOST_APP_ID,
+    file: hostFile(HOST_APP_ID),
+    root: ENGINE_ROOT,
+    stamp: engineStamp(fileURLToPath(import.meta.url)),
+    onConnect: hostWindowConnected,
+    onLine: (line) => { windowLine(line).catch((e) => process.stderr.write(`apaki host: ${e.message}\n`)); },
+    onGone: hostWindowGone,
+    control: (c) => hostControl(c),
+  });
+  lifecycle = createLifecycle({
+    view: hostView,
+    closeIdle: closeIdlePane,
+    exit: (reason) => { shutdown(reason); },
+    log: (line) => process.stderr.write(`apaki host: ${line}\n`),
+  });
+  await host.start();
+  process.stderr.write(`apaki host: ${HOST_APP_ID} listening (pid ${process.pid})\n`);
+}
+
+if (HOST_MODE) {
+  try {
+    await startHostMode();
+  } catch (e) {
+    process.stderr.write(`apaki host: could not start (${e.message})\n`);
+    process.exit(1);
+  }
+}

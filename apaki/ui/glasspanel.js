@@ -25,6 +25,13 @@
  *
  * openGlassPanel(anchor, provider, data, actions) / closeGlassPanel() /
  * glassPanelProvider(); actions = { send, onSwitch }.
+ *
+ * Without Myrlin Workbook (2026-10-10, data.mode.lite from the engine): Glass
+ * works with the live logins and API keys only, so the panel says that
+ * keeping several subscription logins is Workbook's job, and "Add a Claude
+ * subscription" / "Sign in again" become Claude Code's own sign-in (engine op
+ * signIn, `claude auth login` in a window of its own). Codex sign-in stays
+ * with the Codex CLI there.
  */
 
 import { esc } from './markdown.js';
@@ -78,6 +85,8 @@ function subLine(a) {
 /** The row's "more" menu: rename, sign in again, hide or show, remove (API keys). */
 function menu(a, ui) {
   const confirming = ui.confirm === a.id;
+  // Lite mode (no Workbook): a subscription's name and hiding live in Workbook, so only signing in again is offered.
+  if (ui.lite && !a.isKey) return `<div class="gp-menu" role="menu"><button data-a="login">${ICON.refresh}<span>Sign in again<small>${ui.provider === 'codex' ? 'Codex signs in with codex login in a terminal' : "Claude Code's own sign-in, in a new window"}</small></span></button></div>`;
   const items = [`<button data-a="rename">${ICON.edit}<span>Rename${a.isKey ? '' : '<small>in Workbook, so it shows everywhere</small>'}</span></button>`];
   if (!a.isKey) items.push(`<button data-a="login">${ICON.refresh}<span>Sign in again<small>reconnect this login in a browser</small></span></button>`);
   if (a.isKey && !a.active) items.push(`<button data-a="remove" class="${confirming ? 'sure' : 'danger'}">${ICON.trash}<span>${confirming ? 'Click again to remove' : 'Remove this key'}<small>Glass deletes the entry and its keys</small></span></button>`);
@@ -125,10 +134,18 @@ function render(box, provider, data, ui) {
       <p class="gp-note">The keys go straight to Glass (Windows Credential Manager); Apaki does not keep them.</p>
       <div class="gp-form-act"><button type="button" class="gp-btn" data-a="cancel-add">Cancel</button><button type="submit" class="gp-btn primary">Add key</button></div>
     </form>` : '';
+  const lite = Boolean(data?.mode?.lite);
+  ui.lite = lite;
+  ui.provider = provider;
+  // Lite mode (no Workbook): Claude's "add" is Claude Code's own sign-in; Codex has none here.
+  const addLogin = !lite
+    ? `<button class="gp-btn" data-a="add-login">${ICON.plus}Add a ${NAMES[provider]} ${provider === 'claude' ? 'subscription' : 'account'}</button>`
+    : provider === 'claude' ? `<button class="gp-btn" data-a="signin" title="Claude Code's own sign-in, in a window of its own">${ICON.plus}${live ? 'Sign in with another Claude account' : 'Sign in to Claude'}</button>` : '';
   box.innerHTML = `
     <div class="gp-head"><span class="gp-h">${NAMES[provider]}</span><span class="gp-brand">Myrlin Glass</span>
       <button class="gp-icon" data-a="refresh" title="Ask Glass to check usage now">${ICON.refresh}</button></div>
     <div class="gp-body">
+      ${lite && data.mode.note ? `<p class="gp-note">${esc(data.mode.note)}</p>` : ''}
       ${live ? `<div class="gp-sec"><span>Live on this PC</span></div>${row(provider, { ...live, active: true }, ui)}` : `<p class="gp-empty">No ${NAMES[provider]} account is live on this PC.</p>`}
       ${sec('Subscriptions', subs)}
       ${provider === 'claude' ? sec('API keys · billed per token', keys) : ''}
@@ -137,7 +154,7 @@ function render(box, provider, data, ui) {
       ${form}
     </div>
     <div class="gp-foot">
-      <button class="gp-btn" data-a="add-login">${ICON.plus}Add a ${NAMES[provider]} ${provider === 'claude' ? 'subscription' : 'account'}</button>
+      ${addLogin}
       ${provider === 'claude' ? `<button class="gp-btn" data-a="add-key">${ICON.plus}Add an API key</button>` : ''}
     </div>
     ${ui.msg ? `<div class="gp-msg${ui.msg.ok ? '' : ' err'}">${esc(ui.msg.text)}</div>` : ''}`;
@@ -168,6 +185,8 @@ export function openGlassPanel(anchor, provider, data, actions) {
         if (a !== 'remove') { ui.menu = null; ui.confirm = null; }
         if (a === 'refresh') { actions.send('glass', { refresh: true }); say('Asked Glass to check usage now.'); return; }
         if (a === 'use' && acct) { actions.onSwitch(provider, acct.id); say(`Switching ${NAMES[provider]} to ${acct.name}…`); return; }
+        // Lite mode (no Workbook): Claude Code's own sign-in instead of Glass's Workbook capture.
+        if ((a === 'signin' || a === 'login') && data?.mode?.lite && provider === 'claude') { actions.send('signIn', {}); say('A Claude sign-in window is opening; finish it there and the login shows here.'); return; }
         if (a === 'login') { actions.send('glassLogin', { provider, email: acct?.email || '' }); say('A sign-in window is opening; finish it there and the account shows here.'); return; }
         if (a === 'rename' && acct) { ui.renaming = acct.id; paint(); const inp = box.querySelector('.gp-rename'); inp?.focus(); inp?.select(); return; }
         if ((a === 'hide' || a === 'show') && acct) { actions.send('glassHide', { provider, account: acct.id, hidden: a === 'hide' }); say(a === 'hide' ? `Hiding ${acct.name}; it stays in Workbook.` : `Showing ${acct.name} again.`); return; }

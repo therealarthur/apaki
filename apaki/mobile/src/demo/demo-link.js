@@ -18,9 +18,13 @@ import { createDemoEngine, DEMO_PC } from './demo-engine.js';
 
 export const DEMO_SAS = '482913';
 
+/** link.js exports budgetReason (why the relay closed for the day); the demo has no relay, so it never has one. */
+export const budgetReason = () => null;
+
 export class Link {
-  constructor({ device, offer = null, pairing = null, name = '', on = {} }) {
+  constructor({ device, offer = null, pairing = null, name = '', expiresAt = null, on = {} }) {
     this.device = device;
+    this.expiresAt = expiresAt || null;
     this.offer = offer;
     this.pairing = pairing;
     this.name = name;

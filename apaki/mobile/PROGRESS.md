@@ -3,6 +3,14 @@
 Branch `feat/apaki-mobile`. Newest first. 2026-10-10, Claude Code (Opus 5.5) for Arthur,
 driving the Mac Mini over SSH (the Mac's own Claude login was at its weekly limit).
 
+## 2026-10-10, later: merged master d077b7a
+
+- **Merge**: origin/master (d077b7a: durable sessions, Private mode and phone limits, storage robustness, pairing lifetimes, close codes 4404/4504/4505, account approval) merged into the branch. No textual conflicts; the branch's hooks in `protocol.js`, `boot.js`, `account.js`, `PROTOCOL.md` and `relay/site/_headers` are all still in place on top of master's code.
+- **What master's changes needed from the app**: `store.js` gained `StorageError`, `isStorageError`, `onWait`, `updatePc` and `persist`, and the build refuses a swapped store that lacks one. `native-store.js` now has them (a Keychain failure is a `StorageError`, so the page shows its retry screen and never the pairing screen; `persist` is always true, `onWait` has nothing to wait on). `demo-store.js` too. `demo-link.js` takes `expiresAt` and exports `budgetReason` like `link.js`.
+- **Close codes** need nothing in the app: the native socket already reports the server's close code as it is (`closeCode.rawValue`), so 4404/4504/4505 reach `link.js` unchanged.
+- **The assistant dot** (`ui/app.css`): the turn mark and the tool line's dot were the character U+23FA, which iOS draws as an emoji (a white box in the app). Both are circles drawn in CSS now.
+- **Tests**: 227 of 227 at the root, 21 of 21 in `apaki/mobile`.
+
 ## 2026-10-10
 
 ### Done

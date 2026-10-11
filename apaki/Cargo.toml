@@ -17,6 +17,9 @@ tauri = { version = "2.11", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-single-instance = "2"
+# HMAC-SHA256 for the engine host's handshake (src/host.rs). Same crate and
+# version Tauri already builds with (in Cargo.lock), nothing new downloaded.
+sha2 = "0.10"
 
 # The built-in browser (src/browser.rs) drives a bare WebView2 controller in
 # Apaki's own WebView2 environment. These are the same crates and versions

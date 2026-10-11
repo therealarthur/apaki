@@ -15,11 +15,16 @@
 
 import { esc, md } from './markdown.js';
 import { EFFORTS, effortGrid, menu } from './menu.js';
+import { pickVerb } from './verbs.js';
 import { SHOW_TOOL, artifactCard, kindGlyph, kindLabel, linkCard, parseOpened, parseRef, updateCard } from './artifacts.js';
 
 // Images go in at most this many pixels on the long edge (the API's sweet
 // spot, and under the 2000 px limit that breaks a session).
 const IMAGE_MAX_EDGE = 1568;
+// History pages (engine history.js): how many messages each earlier page asks for, and how close to the
+// top of the loaded part the reader gets before the next page loads on its own.
+const HISTORY_PAGE = 300;
+const NEAR_TOP_PX = 600;
 
 const LOCAL = [
   { name: 'new', description: 'Start a new conversation in this pane' },
@@ -132,7 +137,8 @@ export class Pane {
       statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
       pin: q('.prompt-pin'), artReopen: q('.art-reopen'), tasksBtn: q('.tasks-btn'),
     };
-    this.$.ground.addEventListener('scroll', () => { this.schedulePin(); this.host.dirty?.(); }, { passive: true });
+    // Scrolled near the top of a long conversation: its earlier messages load (see loadEarlier).
+    this.$.ground.addEventListener('scroll', () => { this.schedulePin(); this.host.dirty?.(); this.maybeLoadEarlier(); }, { passive: true });
     // The composer floats over the conversation (frosted); keep the last
     // message clear of it as it grows and shrinks.
     new ResizeObserver(() => {
@@ -384,6 +390,8 @@ export class Pane {
   /* ---------- transcript ---------- */
 
   scrollDown(force = false) {
+    // Earlier messages drawn off-screen to go on top (prependHistory) keep the reader where they are.
+    if (this._prepending) return;
     const g = this.$.ground;
     if (force || g.scrollHeight - g.scrollTop - g.clientHeight < 160) g.scrollTop = g.scrollHeight;
     this.schedulePin();
@@ -460,7 +468,8 @@ export class Pane {
     if (steered) u.append(el('span', 'steer-tag', 'Steered in'));
     if (images.length) {
       const box = el('div', 'imgs');
-      for (const im of images) { if (im.url) { const i = el('img'); i.src = im.url; box.append(i); } else box.append(el('span', 'img-marker', '[image]')); }
+      // From history, an image is a placeholder that loads it on demand (ref); never all of them up front.
+      for (const im of images) { if (im.url) { const i = el('img'); i.src = im.url; box.append(i); } else if (im.ref) box.append(this.imagePlaceholder(im)); else box.append(el('span', 'img-marker', '[image]')); }
       u.append(box);
     }
     u.append(document.createTextNode(text));
@@ -709,7 +718,8 @@ export class Pane {
     this.placeLink({ url: e.url, title: e.title, reason: e.reason, toolUseId: e.toolUseId }, null, tool);
   }
 
-  toolResult(id, content, isError) {
+  /** A tool's result into its tool line. `block` (from history) says when the output was cut and which images it had. */
+  toolResult(id, content, isError, block = null) {
     const d = this.tools.get(id);
     if (!d) return;
     const text = Array.isArray(content) ? content.filter((c) => c.type === 'text').map((c) => c.text).join('\n') : String(content ?? '');
@@ -741,6 +751,10 @@ export class Pane {
     const pre = el('pre');
     pre.textContent = text.slice(0, 20000);
     d.append(pre);
+    // From history: the output was cut for speed; the whole of it comes from the transcript on request.
+    if (block?.truncated && block.ref) d.append(this.showAllButton(block, pre));
+    // Pictures in the result (screenshots, images Claude read): placeholders that load one at a time.
+    for (const im of block?.images || []) if (im.ref) d.append(this.imagePlaceholder(im, 'tool-shot'));
     // What Claude saw (browser_screenshot): the picture, small, inside the tool line.
     const shot = Array.isArray(content) ? content.find((c) => c.type === 'image' && (c.source?.data || c.data)) : null;
     if (shot) {
@@ -751,38 +765,52 @@ export class Pane {
     }
   }
 
-  renderBlocks(role, content, { images } = {}) {
-    if (typeof content === 'string') { if (role === 'user') this.addUser(content, images); else this.addAssistant(content); return; }
+  renderBlocks(role, content, { images, steered = false } = {}) {
+    if (typeof content === 'string') { if (role === 'user') this.addUser(content, images, { steered }); else this.addAssistant(content); return; }
     if (!Array.isArray(content)) return;
     if (role === 'user') {
       const texts = content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
       const imgs = content.filter((b) => b.type === 'image' || b.type === 'image_marker');
-      if ((texts && !/^<(command-|local-command-|task-notification)/.test(texts)) || imgs.length) this.addUser(texts, imgs.map(() => ({})));
-      for (const b of content) if (b.type === 'tool_result') this.toolResult(b.tool_use_id, b.content, b.is_error);
+      if ((texts && !/^<(command-|local-command-|task-notification)/.test(texts)) || imgs.length) this.addUser(texts, imgs.map((b) => (b.ref ? { ref: b.ref, media_type: b.media_type, bytes: b.bytes } : {})), { steered });
+      for (const b of content) if (b.type === 'tool_result') this.toolResult(b.tool_use_id, b.content, b.is_error, b);
       return;
     }
     for (const b of content) {
       if (b.type === 'text') this.addAssistant(b.text);
       else if (b.type === 'tool_use') this.addTool(b);
+      else if (b.type === 'thinking' && b.thinking) this.addThinking(b);
     }
   }
 
-  renderHistory(messages, total) {
-    // Ctrl+F says when it can only search the messages loaded here.
-    this.historyCut = total > messages.length ? { shown: messages.length, total } : null;
-    this.$.T.innerHTML = '';
-    this.tools.clear();
-    this.cardKeys.clear();
-    if (total > messages.length) this.note(`Showing the latest ${messages.length} of ${total} messages. The whole conversation is in the session.`);
+  /** Messages from the engine's history, drawn in order (the first page, or an earlier page off-screen). */
+  renderMessages(messages) {
     for (const m of messages) {
+      if (m.type === 'compact') { this.addCompactMarker(m); continue; }
       if (m.parent_tool_use_id) continue; // subagent traffic
       if (m.type !== 'user' && m.type !== 'assistant') continue;
       const c = m.message?.content;
       if (m.type === 'user' && typeof c === 'string' && (/^\s*<(command-|local-command-|system-reminder)/.test(c))) continue;
       this._at = m.at ? Date.parse(m.at) : null;
-      this.renderBlocks(m.type, c);
+      // queued: typed while Claude worked and taken into the running turn, as "Steered in" shows live.
+      this.renderBlocks(m.type, c, { steered: Boolean(m.queued) });
     }
     this._at = null;
+  }
+
+  renderHistory(messages, total, e = {}) {
+    // From the transcript (engine history.js): the newest page of the whole conversation, the rest on request.
+    const paged = e.source === 'transcript' && e.first !== undefined;
+    for (const r of this.history?.waits || []) r(false);
+    clearTimeout(this.history?.timer);
+    this.history = paged ? { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total, loaded: messages.length, loading: false, waits: [] } : null;
+    // Ctrl+F says when it can only search the messages loaded here.
+    this.historyCut = paged ? (e.hasMore ? { shown: messages.length, total, paged: true } : null) : total > messages.length ? { shown: messages.length, total } : null;
+    this.$.T.innerHTML = '';
+    this.tools.clear();
+    this.cardKeys.clear();
+    if (paged) this.renderLoader();
+    else if (total > messages.length) this.note(`Showing the latest ${messages.length} of ${total} messages. The whole conversation is in the session.`);
+    this.renderMessages(messages);
     this.flushOpenNotes();
     this.scrollDown(true);
     // Back where you were reading when the workspace was saved (crash recovery).
@@ -790,6 +818,208 @@ export class Pane {
     this.restoreScroll = null;
     this.renderArtifactsButton();
     this.renderTasksButton();
+    if (paged) requestAnimationFrame(() => this.maybeLoadEarlier());
+  }
+
+  /* ---------- the rest of a long conversation (2026-10-10) ---------- */
+
+  // Arthur: "im not entirely sure if we;re really pulling the FULL transcript of sessions". The engine
+  // now sends the whole conversation across compactions, newest page first; earlier pages come with
+  // historyBefore (the button at the top, or on their own when scrolled near the top), cut tool output,
+  // long thinking and compaction summaries in full and images one at a time with historyBlock.
+
+  /** "Load earlier messages" at the top while there is more; gone once everything is here. */
+  renderLoader() {
+    const h = this.history;
+    let box = this.$.T.querySelector(':scope > .hist-more');
+    if (!h?.hasMore) { box?.remove(); return; }
+    if (!box) {
+      box = el('div', 'hist-more');
+      box.addEventListener('click', (ev) => {
+        if (ev.target.closest('.hm-load')) this.loadEarlier();
+        else if (ev.target.closest('.hm-all')) this.loadAllHistory();
+      });
+      this.$.T.prepend(box);
+    }
+    box.classList.toggle('loading', Boolean(h.loading));
+    box.innerHTML = `<button class="hm-load"${h.loading ? ' disabled' : ''}>${h.loading ? 'Loading earlier messages…' : 'Load earlier messages'}</button>`
+      + `<span class="hm-n">${h.earlier.toLocaleString()} earlier · ${h.total.toLocaleString()} in all</span>`
+      + `<button class="hm-all link-btn"${h.loading ? ' disabled' : ''} title="Load the whole conversation (Ctrl+F can then search all of it)">Load all</button>`;
+  }
+
+  /** Near the top of the loaded part: the page before it comes (once at a time). */
+  maybeLoadEarlier() {
+    const h = this.history;
+    const g = this.$.ground;
+    if (!h?.hasMore || h.loading || !g.clientHeight) return;
+    if (g.scrollTop < NEAR_TOP_PX) this.loadEarlier();
+  }
+
+  /** Asks for the page before the oldest loaded message (all: everything before it). Resolves true once it is drawn. */
+  loadEarlier({ all = false } = {}) {
+    const h = this.history;
+    if (!h?.hasMore) return Promise.resolve(false);
+    const done = new Promise((resolve) => h.waits.push(resolve));
+    if (h.loading) return done;
+    h.loading = true;
+    this.renderLoader();
+    this.send('historyBefore', { sessionId: this.sessionId, before: h.first, ...(all ? { all: true } : { limit: HISTORY_PAGE }) });
+    // No answer (the engine restarted): the button works again.
+    h.timer = setTimeout(() => { if (this.history !== h || !h.loading) return; h.loading = false; this.renderLoader(); for (const r of h.waits.splice(0)) r(false); }, 30000);
+    return done;
+  }
+
+  /** Loads everything still missing (Ctrl+F's Search all, the Load all button). True when it is all here. */
+  async loadAllHistory() {
+    for (let i = 0; i < 20 && this.history?.hasMore; i++) if (!(await this.loadEarlier({ all: true }))) break;
+    return !this.history?.hasMore;
+  }
+
+  /**
+   * An earlier page arrived (ev historyPage): drawn off-screen, put on top,
+   * and the scroll position kept on what you were reading.
+   */
+  prependHistory(e) {
+    const h = this.history;
+    if (!h || e.before !== h.first) return; // another session's, or a page already drawn
+    clearTimeout(h.timer);
+    h.loading = false;
+    const waits = h.waits.splice(0);
+    if (e.error || e.gone) {
+      if (e.gone) h.hasMore = false;
+      this.renderLoader();
+      // One notice at a time: a retry that fails again must not stack a second copy above the first.
+      for (const old of this.$.T.querySelectorAll(':scope > .hist-err')) old.remove();
+      const n = el('div', 'note warn hist-err');
+      n.textContent = e.error || 'This conversation changed on disk since it opened; reopen it to load the rest.';
+      this.$.T.prepend(n);
+      for (const r of waits) r(false);
+      return;
+    }
+    const g = this.$.ground;
+    const real = this.$.T;
+    // A page that arrives after an earlier failure clears that notice (it no longer applies).
+    for (const old of real.querySelectorAll(':scope > .hist-err')) old.remove();
+    const loader = real.querySelector(':scope > .hist-more');
+    const anchor = loader ? loader.nextElementSibling : real.firstElementChild;
+    const y0 = anchor ? anchor.getBoundingClientRect().top : 0;
+    const box = document.createElement('div');
+    this.$.T = box;
+    this._prepending = true;
+    try { this.renderMessages(e.messages || []); } finally { this.$.T = real; this._prepending = false; }
+    const frag = document.createDocumentFragment();
+    while (box.firstChild) frag.append(box.firstChild);
+    if (anchor) real.insertBefore(frag, anchor); else real.append(frag);
+    // Whatever the browser's own scroll anchoring did, the message you were reading stays put.
+    if (anchor) g.scrollTop += anchor.getBoundingClientRect().top - y0;
+    Object.assign(h, { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total: e.total ?? h.total, loaded: h.loaded + (e.messages || []).length });
+    this.historyCut = h.hasMore ? { shown: h.loaded, total: h.total, paged: true } : null;
+    this.renderLoader();
+    this.renderArtifactsButton();
+    for (const r of waits) r(true);
+    requestAnimationFrame(() => this.maybeLoadEarlier());
+  }
+
+  /** One block in full from the transcript (historyBlock), shared by everything waiting for the same one. */
+  fetchBlock(ref) {
+    this.blockWaits ||= new Map();
+    return new Promise((resolve) => {
+      const list = this.blockWaits.get(ref) || [];
+      list.push(resolve);
+      this.blockWaits.set(ref, list);
+      if (list.length === 1) this.send('historyBlock', { sessionId: this.sessionId, ref });
+      setTimeout(() => {
+        const l = this.blockWaits.get(ref);
+        const i = l ? l.indexOf(resolve) : -1;
+        if (i < 0) return;
+        l.splice(i, 1);
+        if (!l.length) this.blockWaits.delete(ref);
+        resolve({ error: 'No answer from the PC. Try again.' });
+      }, 30000);
+    });
+  }
+
+  onHistoryBlock(e) {
+    const l = this.blockWaits?.get(e.ref);
+    if (!l) return;
+    this.blockWaits.delete(e.ref);
+    for (const r of l) r(e);
+  }
+
+  /** "Show all N characters" under something cut for speed; the full text replaces the cut one in `target`. */
+  showAllButton(block, target, { markdown = false } = {}) {
+    const b = el('button', 'show-all');
+    const label = `Show all ${Number(block.length || 0).toLocaleString()} characters`;
+    b.type = 'button';
+    b.textContent = label;
+    b.onclick = async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      b.disabled = true;
+      b.textContent = 'Loading…';
+      const r = await this.fetchBlock(block.ref);
+      if (r?.kind !== 'text') { b.disabled = false; b.textContent = label; b.title = r?.error || 'Could not load it'; return; }
+      const tail = r.cut ? `\n… (the first ${r.text.length.toLocaleString()} of ${r.length.toLocaleString()} characters)` : '';
+      if (markdown) target.innerHTML = md(r.text + tail); else target.textContent = r.text + tail;
+      b.remove();
+    };
+    return b;
+  }
+
+  /** A picture from history, not loaded yet: its size and Show, which fetches that one image. */
+  imagePlaceholder(im, loadedClass = '') {
+    const b = el('button', 'img-ph');
+    b.type = 'button';
+    const size = im.bytes ? (im.bytes >= 1048576 ? `${(im.bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(im.bytes / 1024))} KB`) : '';
+    b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.6"/><circle cx="6" cy="6.8" r="1.2"/><path d="m3 12 3.6-3.4 2.4 2.2 1.8-1.6L14 12"/></svg><span class="ip-t">Image${size ? ` · ${esc(size)}` : ''}</span><span class="ip-go">Show</span>`;
+    b.title = 'Load this image from the transcript';
+    b.onclick = async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      b.disabled = true;
+      b.querySelector('.ip-go').textContent = 'Loading…';
+      const r = await this.fetchBlock(im.ref);
+      const type = /^image\/(png|jpeg|gif|webp)$/.test(r?.media_type || '') ? r.media_type : 'image/png';
+      if (r?.kind === 'image' && typeof r.data === 'string' && /^[A-Za-z0-9+/=]+$/.test(r.data)) {
+        const img = el('img', loadedClass || 'hist-img');
+        img.alt = 'Image from this conversation';
+        img.src = `data:${type};base64,${r.data}`;
+        b.replaceWith(img);
+        return;
+      }
+      b.disabled = false;
+      b.querySelector('.ip-go').textContent = 'Retry';
+      b.title = r?.error || 'Could not load it';
+    };
+    return b;
+  }
+
+  /** Claude's thinking, from history: collapsed under "Thinking", its first words beside it. */
+  addThinking(block) {
+    const d = el('details', 'thinking');
+    const first = String(block.thinking).replace(/\s+/g, ' ').trim().slice(0, 120);
+    d.innerHTML = `<summary><span class="th-mark">Thinking</span><span class="th-peek">${esc(first)}</span></summary>`;
+    const body = el('div', 'th-body');
+    body.textContent = block.thinking;
+    d.append(body);
+    if (block.truncated && block.ref) d.append(this.showAllButton(block, body));
+    this.$.T.append(d);
+  }
+
+  /** Where Claude Code compacted the conversation: a divider, with the summary it kept folded inside. */
+  addCompactMarker(m) {
+    const d = el('details', 'compact-mark');
+    const k = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+    const tokens = m.preTokens ? `${k(m.preTokens)}${m.postTokens ? ` to ${k(m.postTokens)}` : ''} tokens` : '';
+    const how = m.trigger === 'manual' ? 'with /compact' : m.trigger === 'auto' ? 'automatically' : '';
+    const meta = [tokens, m.at ? stamp(m.at) : ''].filter(Boolean).join(' · ');
+    d.innerHTML = `<summary><span class="cm-rule" aria-hidden="true"></span><span class="cm-label">Conversation compacted${how ? ` ${how}` : ''}</span>${meta ? `<span class="cm-meta">${esc(meta)}</span>` : ''}${m.summary?.text ? '<span class="cm-open">Summary</span>' : ''}<span class="cm-rule" aria-hidden="true"></span></summary>`;
+    if (m.summary?.text) {
+      const body = el('div', 'cm-body', md(m.summary.text));
+      d.append(body);
+      if (m.summary.truncated && m.summary.ref) d.append(this.showAllButton(m.summary, body, { markdown: true }));
+    } else d.querySelector('summary').style.cursor = 'default';
+    this.$.T.append(d);
   }
 
   flushOpenNotes() {
@@ -824,7 +1054,10 @@ export class Pane {
       }
       if (ev.type === 'content_block_start') {
         const b = ev.content_block || {};
-        const next = b.type === 'thinking' || b.type === 'redacted_thinking' ? 'Thinking' : b.type === 'text' ? 'Writing' : b.type === 'tool_use' ? `Running ${String(b.name || 'a tool').replace(/^mcp__\w+__/, '')}` : this.phase;
+        // Thinking reads as Claude Code's own playful words (verbs.js), a fresh one for each stretch of thinking.
+        const thinking = b.type === 'thinking' || b.type === 'redacted_thinking';
+        if (thinking && this.phase !== this.verb) this.verb = pickVerb(this.verb);
+        const next = thinking ? this.verb : b.type === 'text' ? 'Writing' : b.type === 'tool_use' ? `Running ${String(b.name || 'a tool').replace(/^mcp__\w+__/, '')}` : this.phase;
         if (next !== this.phase) { this.phase = next; if (this.busy) this.showWorking(); }
       }
       if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
@@ -890,7 +1123,7 @@ export class Pane {
       this._working = true;
       this.statusOn(true);
     }
-    st.querySelector('.ph').textContent = this.phase || 'Working';
+    st.querySelector('.ph').textContent = this.phase || this.verb || 'Working';
     st.querySelector('.st-rest').textContent = ` · ${Math.round((Date.now() - this.turnStart) / 1000)}s · esc to stop`;
   }
 
@@ -905,7 +1138,9 @@ export class Pane {
     this.$.egridSlot.innerHTML = on ? effortGrid('max', { live: true }) : '';
     if (on) {
       this.turnStart = Date.now();
-      this.phase = 'Working';
+      // Until Claude writes or runs something, the line shows a random thinking word, as Claude Code does.
+      this.verb = pickVerb(this.verb);
+      this.phase = this.verb;
       this.tick = setInterval(() => this.showWorking(), 500);
       this.showWorking();
     }
@@ -1154,6 +1389,9 @@ export class Pane {
         else this.showEmpty();
         // Re-attached after a reconnect (the phone client): busy says whether a turn is still running.
         if (e.attached) this.setBusy(Boolean(e.busy));
+        // Lost the engine mid-turn: re-attached means the background host kept it going; otherwise it stopped.
+        if (this.lostBusy && !e.attached) this.turnStoppedNote = true;
+        this.lostBusy = false;
         // Notes about how this session opened go below its history, which
         // arrives next and redraws the transcript (they were wiped before).
         this.openNotes = [];
@@ -1162,13 +1400,17 @@ export class Pane {
         // Re-attached (the background host kept this Claude Code process running): nothing was cut off.
         if (this.crashNote && e.attached) this.crashNote = false;
         if (this.crashNote) { this.openNotes.push(['Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
+        if (this.turnStoppedNote) { this.openNotes.push(['The engine restarted while Claude was working here, and that turn stopped. Everything until then is above; send a message to carry on.', 'warn']); this.turnStoppedNote = false; }
         if (e.sessionId !== this.sessionId || e.reset) this.liveTasks.clear();
         this.renderTasksButton();
         if (!e.sessionId) this.flushOpenNotes();
         this.send('commands');
         this.host.changed(this);
         break;
-      case 'history': if (e.sessionId === this.sessionId) this.renderHistory(e.messages, e.total); break;
+      case 'history': if (e.sessionId === this.sessionId) this.renderHistory(e.messages, e.total, e); break;
+      // Earlier messages of this conversation (Load earlier, scrolling up, Ctrl+F's Search all), and one cut block in full.
+      case 'historyPage': if (e.sessionId === this.sessionId) this.prependHistory(e); break;
+      case 'historyBlock': if (!e.sessionId || e.sessionId === this.sessionId) this.onHistoryBlock(e); break;
       case 'session_id':
         this.sessionId = e.sessionId; this.setCwdLine(); this.host.changed(this);
         if (this.pendingName) { this.send('rename', { sessionId: e.sessionId, title: this.pendingName }); this.pendingName = null; }
@@ -1214,9 +1456,15 @@ export class Pane {
     }
   }
 
-  /** Called when the engine restarted: every Claude Code process is gone. */
+  /**
+   * Called when the window lost the engine. Since 2026-10-10 the engine is a
+   * background host that may still be running this pane's turn: say nothing
+   * yet, and let the re-attach decide (see 'opened': attached means it kept
+   * going; otherwise the turn stopped and the pane says so then).
+   */
   engineLost() {
-    if (this.busy) { this.setBusy(false); this.note('The engine stopped and is restarting; send your message again.', 'warn'); }
+    this.lostBusy = this.busy || this.lostBusy;
+    if (this.busy) this.setBusy(false);
     this.setStatus('');
   }
 

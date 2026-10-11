@@ -3,7 +3,9 @@
 The relay that lets a phone reach Myrlin Apaki on a PC from anywhere. It is a
 Cloudflare Worker plus one Durable Object per room, and it only forwards
 opaque, end-to-end encrypted frames between the PC socket and the phone
-sockets of a room. It holds no keys, parses no payloads and stores nothing.
+sockets of a room. It holds no keys, parses no payloads and stores nothing
+about what passes through; it keeps cost counters for the current UTC day
+(see Cost, with anyone able to use it).
 (Since 2026-10-10 it also keeps optional Apaki accounts: a name, passkey
 public keys and one vault it cannot open per account; see Accounts below.
 None of that is a key to any room.)
@@ -24,6 +26,7 @@ Apaki at a copy you run yourself (see the end).
 GET /                          the front page (site/index.html): what this is, and every published phone page
 GET /v/<version>/              a published phone page; each version is its own folder and never changes
 GET /health                    one line saying what this is
+GET /.well-known/security.txt  where to report a security problem (RFC 9116; site/.well-known/)
 GET /v1/rooms/<roomId>/pc      WebSocket for the PC; subprotocols "apaki.v1" and "apaki-token.<token>"
 GET /v1/rooms/<roomId>/phone   WebSocket for a phone; subprotocol "apaki.v1"
 GET /v1/rooms/<roomId>/presence  { pc: true/false }: is that room's PC connected now (JSON, see Accounts)
@@ -69,6 +72,24 @@ matters: workerd (1.20261006, seen locally) does not finish a server-side
 close on a hibernated socket that has never sent a message, so without it the
 close frame can arrive minutes late.
 
+Close codes in `bye` (and on the close frame), from `CLOSE` in `src/lib.js`:
+
+| Code | Meaning | Suggested reaction |
+|---|---|---|
+| 4000 | replaced by a newer PC connection | PC: wait a few minutes (Apaki waits 5) |
+| 4003 | the PC dropped this phone connection | do not reconnect at once |
+| 4008 / 4009 | too many frames or bytes per second / frame too large | slow down, reconnect |
+| 4029 | room full | retry later |
+| 4404 | no PC in this room (since 2026-10-10): after `NO_PC_MS` without one, or a frame sent while there is none | reconnect and wait for the PC as before |
+| 4408 | idle | reconnect |
+| 4503 | the relay used today's budget | wait; retry every 30 minutes until 00:00 UTC |
+| 4504 | this address used its share of the day (since 2026-10-10) | same as 4503 |
+| 4505 | this room used its share of the day (since 2026-10-10) | same as 4503 |
+
+4404, 4504 and 4505 are not yet in `apaki/remote/protocol.js` `RELAY_CLOSE`;
+today's clients treat them as an ordinary close and reconnect with their usual
+backoff, which the Worker refuses with HTTP 429 until 00:00 UTC.
+
 ## Limits
 
 Defaults in `src/lib.js` (`DEFAULT_LIMITS`); each can be overridden with a
@@ -82,6 +103,17 @@ Worker var of the same name.
 | `PHONE_FPS` / `PC_FPS` frames per second per socket | 60 / 600, burst 2 s | close 4008 |
 | `PHONE_BPS` / `PC_BPS` bytes per second per socket | 2 MiB / 8 MiB, burst 2 s | close 4008 |
 | `IDLE_MS` with no frame and no ping | 10 minutes | close 4408 |
+| `NO_PC_MS` a phone in a room without its PC | 1 minute; at once if it sends a frame | close 4404 |
+| `MAX_SOCKETS_PER_IP` open WebSockets per address, over all rooms | 32 | HTTP 429 |
+| `IP_SHARE_USD` what one address may cost per UTC day | $0.30 | HTTP 429 until 00:00 UTC; its open sockets close 4504 |
+| `ROOM_SHARE_USD` what one room may cost per UTC day | $0.50 | HTTP 429 until 00:00 UTC; the room's sockets close 4505 |
+| `DAILY_BUDGET_USD` what the whole relay may cost per UTC day | $3 | HTTP 503 until 00:00 UTC; every room closes 4503 |
+| `LEASE_MS` how long an open socket counts without its room renewing it | 30 minutes | (housekeeping) |
+
+"Address" means an IPv4 address, or an IPv6 /64 (one home network or one
+phone gets a whole /64 and can use any address in it); `clientKey` in
+`src/lib.js`. The per-minute connection limit (the `CONNECTS` binding, 20 a
+minute) uses the same key since 2026-10-10.
 
 Rate counters live in memory and reset when a room hibernates, which only
 happens when it is quiet anyway.
@@ -92,8 +124,13 @@ happens when it is quiet anyway.
   evicted from memory; pings are answered by the runtime and do not wake it.
 - One alarm per room every `IDLE_MS` while it has sockets (the idle check);
   rooms with nobody connected cost nothing.
+- A phone waiting in a room without its PC is closed after a minute (or at
+  once if it sends a frame) and reconnects to wait again, so a room with no PC
+  cannot be kept awake.
 - The DO class is SQLite backed (`new_sqlite_classes` in the migration), which
-  is what the Workers free plan supports. It stores nothing but its alarm.
+  is what the Workers free plan supports. It stores its alarm and, since
+  2026-10-10, its cost for the current UTC day, which it deletes at 00:00 UTC
+  once the room is empty.
 
 ## Threat model
 
@@ -203,10 +240,18 @@ to `MAX_PHONES` phone sockets in that room and send junk to the PC. The PC
 rejects it (no valid handshake) and can `kick` such connections, and the
 per-room connection rate and per-socket frame and byte rates bound the load.
 Cloudflare's own DDoS protection sits in front. New connections are also
-limited per IP address (20 a minute, the `CONNECTS` rate limit binding).
+limited per IP address (20 a minute, the `CONNECTS` rate limit binding), and
+since 2026-10-10 one address holds at most 32 open sockets over all rooms.
 `ALLOWED_ORIGINS` is set to the phone page's own origin, so other websites
 cannot use their visitors' browsers against rooms (it adds nothing against a
 script outside a browser).
+
+Such a stranger also spends from the room's share of the day (below), but the
+usage it causes is charged to its own address first, and an address's share
+($0.30) is smaller than a room's ($0.50): one address cannot use up a room's
+share on its own. Two or more addresses together can, and then that room is
+refused until 00:00 UTC. That is a denial of service on one known room,
+which crowding the room already allowed while the stranger stayed connected.
 
 ### Cost, with anyone able to use it
 
@@ -216,7 +261,8 @@ and the time its object stays awake, and about every 1000 frames or minute
 awake reports them to one `Budget` object, which prices them at Cloudflare's
 overage rates (`PRICES` in `src/lib.js`: $0.15 per million Durable Object
 requests with 20 WebSocket messages per request, $12.50 per million GB-s at
-128 MB, $0.30 per million Worker requests) for the current UTC day. Past
+128 MB, $0.30 per million Worker requests, $1.00 per million rows written)
+for the current UTC day. Past
 `DAILY_BUDGET_USD` ($3) rooms close their sockets with code 4503 and new
 connections get HTTP 503 until 00:00 UTC; the PC then tries again every 30
 minutes. The count ignores the plan's included amounts, so it overcounts.
@@ -225,6 +271,61 @@ phone) is about 14k requests and 900 GB-s, inside what the plan includes;
 twenty such people would be about $3 a month over it. The worst case is
 about $3 a day. The account's budget alert (Cloudflare Notifications)
 emails at $10 of monthly spend.
+
+**Budget fairness (2026-10-10).** Before this, one client on one address
+could open a few hundred rooms, keep them awake with small frames and use up
+the $3 in about three hours, which switched phone access off for everyone
+until 00:00 UTC (apaki/SECURITY.md, section 1.7 and hardening item 5). Now:
+
+- **Per address** (an IPv4 address or an IPv6 /64), one small `Gate` object
+  counts what that address cost today and how many sockets it holds open. At
+  most 32 open sockets over all rooms (HTTP 429), and at most $0.30 a day,
+  a tenth of the budget: past it, that address alone is refused until
+  00:00 UTC (HTTP 429, account and presence requests `429 share`) and its
+  open sockets close with 4504. Every other address goes on.
+- **Per room**, the room keeps its own cost for the day: at most $0.50. Past
+  it, that room alone is closed (4505) and refused (HTTP 429) until 00:00 UTC.
+- **Who pays.** Frames, and the awake time since the room's previous event,
+  are charged to the address of the socket that sent them; the idle check is
+  charged to the room's PC. Each address's part goes to its own Gate, the
+  whole to the room's share and to the `Budget`.
+- **Only rooms with their PC are metered.** A phone in a room without its PC
+  is closed after a minute, or at once when it sends a frame (4404), so a room
+  with no PC cannot be kept awake and costs only its connections. A PC alone
+  costs its idle check every `IDLE_MS` (its pings are answered by the
+  runtime), which is counted as before, and any frames it sends.
+- **Every connection is priced in full**, before it reaches the room: a
+  Worker request, four Durable Object requests (the Budget, the address's
+  Gate when it opens and again when it closes, the room), four rows written
+  and three wakes of the room (when it opens, when it closes, and the room's
+  cleanup at 00:00 UTC): about $0.000053, $53 per million. A presence
+  question is about $0.000019 (it wakes the room), an account request about
+  $0.0000048. A refused attempt is counted too: it cost.
+- **The global guard stays** as the last line for everyone together.
+- **No request per frame.** Usage waits on each socket's attachment (it
+  survives hibernation) and goes out with the room's reports and with each
+  socket's close.
+
+What this buys, plainly: one address can now spend at most a tenth of the
+day. Ten addresses acting together (ten IPv4 addresses or ten IPv6 /64s, a
+few VPN exits) can still use up the $3 and switch the relay off until
+00:00 UTC; the global guard still caps the spend at $3 a day. On legitimate
+use: a heavy day for one person is about $0.016 (including some fifty
+connections), a room awake all day with steady traffic about $0.15, and a
+phone left open on "waiting for your PC" while the PC is off reconnects every
+minute or so (it is closed after a minute, then waits out its retry delay),
+about $0.05 a day. An always-connected PC costs about $0.0023
+a day in idle checks, so some 1,300 connected PCs would use the whole $3 on
+their own: raise `DAILY_BUDGET_USD` (and the shares) as users grow.
+
+What the relay keeps for this, only for the current UTC day: per address, a
+dollar count and a random id per open socket (the Gate is named by the
+address key and stores no address and no room id; a minute after 00:00 UTC
+it deletes itself if no socket is open); per room, its dollar count (deleted
+at 00:00 UTC once the room is empty). Two small wakes are not counted: a
+Gate's day-end cleanup (about $16 per million addresses a day) and the
+lease renewals from the idle check (one Gate request per address about every
+20 minutes per room).
 
 ## Accounts
 
@@ -302,7 +403,9 @@ the vault, 413 above), an `Origin` header other than `ACCOUNT_ORIGIN` is
 refused (403), every answer is `cache-control: no-store`, errors are
 `{ error, code }`. Account requests count toward the daily budget (503
 `budget`) and the per-IP limit under their own key, `acct:<ip>`, and presence
-under `pres:<ip>`, so neither eats the socket budget (429 `rate`).
+under `pres:<ip>`, so neither eats the socket budget (429 `rate`). Since
+2026-10-10 both also count toward their address's share of the day (429
+`share`, see Cost), and an IPv6 client is keyed by its /64.
 
 **Set up:** the token key is a Worker secret, 32 random bytes in base64url:
 
@@ -317,6 +420,39 @@ working). `ACCOUNT_ORIGIN` (a var in `wrangler.jsonc`, default
 orphans every passkey made for the old one. Someone running their own copy
 sets it to `https://<your hostname>`.
 
+## Private relay
+
+apaki/SECURITY.md (section 4, hardening item 12) proposes a Private mode:
+QR pairing only, no account, and a relay that serves no code and holds no
+accounts. The same Worker does that with `RELAY_ONLY` set, deployed as a
+second Worker from the `private` environment in `wrangler.jsonc`:
+
+- `RELAY_ONLY=1`: the Worker answers rooms (`/v1/rooms/<id>/pc|phone`),
+  presence, and `/` and `/health` as one line. Every `/v1/account` route is
+  404 (the code never reaches the account handler). Any value other than
+  empty, `0`, `false`, `off` or `no` turns it on.
+- No static assets: the environment's assets folder is `private-no-assets/`,
+  which uploads nothing (its `.assetsignore` ignores everything). So there is
+  no front page, no phone page of any version and no security.txt on that
+  hostname; every request reaches the Worker. (Environments inherit `assets`
+  and `routes` from the top level, which is why both are set there.)
+- Its own Worker (`apaki-relay-private`), so its own rooms, `Budget` (its own
+  $3 a day, on top of the public relay's), Gates and per-minute limit
+  (namespace 4504). No `ACCOUNTS` binding and no `Account` class migration:
+  wrangler warns that `ACCOUNTS` and `ACCOUNT_ORIGIN` are missing there,
+  which is the point.
+- `ALLOWED_ORIGINS` is `(none)`: phone sockets are accepted only without an
+  `Origin` header. Native apps send none and every browser sends one, so no
+  web page (the hosted one included) can open sockets there. That fits the
+  Private tier: until the native app ships, nothing uses it.
+- Not deployed, no hostname yet. Suggested: `private.apaki.myrlin.io`, as a
+  custom domain (the commented route in `wrangler.jsonc`).
+
+Then "the private relay serves no code and holds no accounts" is true of that
+hostname by construction: there is nothing to serve and no account route.
+It still sees the same metadata as any relay (addresses, room ids, timing,
+sizes).
+
 ## Develop and test
 
 ```
@@ -325,7 +461,14 @@ npm install
 npm test          # starts the Worker locally (workerd via wrangler) and runs tests/relay.spec.mjs and tests/accounts.spec.mjs
 npm run dev       # wrangler dev on http://127.0.0.1:8787
 npm run check     # bundle only (wrangler deploy --dry-run), no upload
+npx wrangler deploy --dry-run --env private --outdir .wrangler/dry-run-private   # the same for the Private relay
 ```
+
+The tests include the budget fairness rules (sockets per address, the shares
+per address and per room, phones without a PC, the global guard), the
+Private relay (started from the `private` environment) and security.txt. They
+pick client addresses by sending `CF-Connecting-IP`, which local workerd
+passes through; Cloudflare overwrites it with the real address.
 
 The tests also run a full pairing and a reconnect with `protocol.js` on both
 sides of the local relay. They need no Cloudflare account and no network.
@@ -343,7 +486,18 @@ that Apaki refuses to pair until the site has it.
 
 ```
 node apaki/scripts/build-web.mjs --release      # adds relay/site/v/<version>/ (commit it)
-cd relay && npx wrangler deploy                 # uploads only the new files
+cd relay && npx wrangler deploy --env=""        # uploads only the new files
+```
+
+`--env=""` picks the top-level configuration (the public relay) explicitly:
+since `wrangler.jsonc` has a `private` environment, a plain
+`npx wrangler deploy` still deploys the public relay but warns. The first
+deploy after 2026-10-10 also applies migration v4 (the `Gate` class).
+
+The Private relay, once it has a hostname (uncomment its route first):
+
+```
+cd relay && npx wrangler deploy --env private   # Worker apaki-relay-private: relay only, no assets, no accounts
 ```
 
 `package-apaki.ps1` warns when the build it packages has no published page.
@@ -354,7 +508,8 @@ Running your own (anyone, on any Cloudflare account):
 cd relay
 # wrangler.jsonc: set "routes" to your hostname and ALLOWED_ORIGINS to https://<your hostname>
 node ../apaki/scripts/build-web.mjs --release --relay wss://<your hostname>
-npx wrangler deploy
+npx wrangler deploy --env=""
+# a relay without pages or accounts instead: set the route in env "private" and npx wrangler deploy --env private
 # then start Apaki with APAKI_RELAY_URL=wss://<your hostname> and APAKI_WEB_URL=https://<your hostname>/
 ```
 

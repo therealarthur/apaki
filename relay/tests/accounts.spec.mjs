@@ -30,7 +30,7 @@ import {
   cleanName, signToken, readToken, readSessionToken, readChallengeToken, loadKey, checkVault, checkCredential, accountConfig,
   sessionClaims, challengeClaims, LIMITS, RP_NAME,
 } from '../src/account-lib.js';
-import { costOf } from '../src/lib.js';
+import { costOf, PRICES } from '../src/lib.js';
 
 process.env.WRANGLER_SEND_METRICS = 'false';
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -316,7 +316,10 @@ test('lib: CBOR decoder refusals, DER, authenticator data, counters', async () =
   assert.equal(counterOk(5, 6), true);
   assert.equal(counterOk(5, 5), false);
   assert.equal(counterOk(5, 0), false);
-  assert.equal(costOf({ accountOps: 1 }) > costOf({ connects: 1 }), true);
+  // An account request counts its rows written on top of its requests. Until 2026-10-10 it also cost
+  // more than a new socket; since then a socket is priced with the wakes of its room (lib.js costOf).
+  assert.equal(costOf({ accountOps: 1 }) > PRICES.WORKER_REQUEST + 3 * PRICES.DO_REQUEST, true);
+  assert.equal(costOf({ connects: 1 }) > costOf({ accountOps: 1 }), true);
 });
 
 test('lib: tokens, names, vault and credential shapes, ACCOUNT_ORIGIN', async () => {
@@ -701,8 +704,9 @@ test('one at a time: the same sign-in raced four times succeeds once; three PUTs
 });
 
 test('budget: account requests and presence count toward the daily budget and are refused past it', async () => {
-  // One account request is about $0.0000026 (lib.js costOf accountOps): the first fits, the second crosses $0.000005.
-  const broke = await startRelay({ DAILY_BUDGET_USD: '0.000005' });
+  // One account request is about $0.0000048 since 2026-10-10 (lib.js costOf accountOps, now with the
+  // per-address Gate): with room for one and a half, the first fits and the second crosses.
+  const broke = await startRelay({ DAILY_BUDGET_USD: String(costOf({ accountOps: 1 }) * 1.5) });
   try {
     assert.equal((await challengeFor(broke, 'signin')).status, 200);
     const over = await challengeFor(broke, 'signin');
@@ -711,6 +715,28 @@ test('budget: account requests and presence count toward the daily budget and ar
     const { roomId } = await createRoom();
     expectError(await api(broke, 'GET', `/v1/rooms/${roomId}/presence`), 503, 'budget');
   } finally { await broke.worker.stop(); }
+});
+
+test('share: account requests and presence count toward their address\'s share of the day (429 share); other addresses go on', async () => {
+  // Room for one and a half account requests per address (budget fairness, 2026-10-10).
+  const capped = await startRelay({ IP_SHARE_USD: String(costOf({ accountOps: 1 }) * 1.5) });
+  try {
+    // A client-sent CF-Connecting-IP passes through local workerd (Cloudflare overwrites it).
+    const from = (ip) => ({ 'CF-Connecting-IP': ip });
+    const ask = (ip) => api(capped, 'POST', '/v1/account/challenge', { body: { purpose: 'signin' }, headers: from(ip) });
+    assert.equal((await ask('198.51.100.50')).status, 200);
+    const over = await ask('198.51.100.50');
+    expectError(over, 429, 'share', 'second request from the same address');
+    assert.match(over.json.error, /This address has used its share of today's Apaki relay budget/);
+    assert.ok(Number(over.headers.get('retry-after')) >= 60);
+    const { roomId } = await createRoom();
+    expectError(await api(capped, 'GET', `/v1/rooms/${roomId}/presence`, { headers: from('198.51.100.50') }), 429, 'share', 'presence from it');
+    // Another address, including another IPv6 /64, is not affected.
+    assert.equal((await ask('198.51.100.51')).status, 200);
+    assert.equal((await ask('2001:db8:9:1::1')).status, 200);
+    expectError(await ask('2001:db8:9:1::2'), 429, 'share', 'the same /64');
+    assert.equal((await ask('2001:db8:9:2::1')).status, 200);
+  } finally { await capped.worker.stop(); }
 });
 
 /** A PC socket on a room (sends ping right after open, like the real PC); resolves once the relay says ready. */

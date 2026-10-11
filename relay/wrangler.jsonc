@@ -21,16 +21,21 @@
       { "name": "ROOMS", "class_name": "Room" },
       { "name": "BUDGET", "class_name": "Budget" },
       // One object per Apaki account (src/account.js): name, passkey public keys, one encrypted vault.
-      { "name": "ACCOUNTS", "class_name": "Account" }
+      { "name": "ACCOUNTS", "class_name": "Account" },
+      // One object per client address (an IPv4 address or an IPv6 /64, src/index.js Gate): its open
+      // sockets and what it cost today, for budget fairness. Holds no address and no room id.
+      { "name": "GATES", "class_name": "Gate" }
     ]
   },
   // SQLite-backed Durable Objects work on the Workers free plan.
   // v2 (2026-10-10): the daily budget guard (src/index.js Budget).
   // v3 (2026-10-10): Apaki accounts (src/account.js Account).
+  // v4 (2026-10-10): budget fairness per address (src/index.js Gate).
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Room"] },
     { "tag": "v2", "new_sqlite_classes": ["Budget"] },
-    { "tag": "v3", "new_sqlite_classes": ["Account"] }
+    { "tag": "v3", "new_sqlite_classes": ["Account"] },
+    { "tag": "v4", "new_sqlite_classes": ["Gate"] }
   ],
   // New relay connections per IP address: 20 a minute (a PC and a few phones reconnecting fit easily).
   "ratelimits": [{ "name": "CONNECTS", "namespace_id": "4503", "simple": { "limit": 20, "period": 60 } }],
@@ -47,5 +52,48 @@
     // (32 random bytes, base64url); without it the account routes answer 503 no-key.
     "ACCOUNT_ORIGIN": "https://apaki.myrlin.io"
     // Limits (see src/lib.js DEFAULT_LIMITS) can be overridden here, for example "MAX_PHONES": "8".
+  },
+
+  "env": {
+    // The Private relay (2026-10-10, apaki/SECURITY.md hardening item 12): the same code as a second
+    // Worker, relay only. RELAY_ONLY turns the account routes off (404) and the page off (/ is one
+    // line); this environment uploads no static assets, so it serves no code and holds no accounts.
+    // Not deployed yet. Deploy: npx wrangler deploy --env private (README, Private relay).
+    // Environments inherit "assets" and "routes" from the top level, so both are overridden here:
+    // without that this Worker would carry the phone pages and claim apaki.myrlin.io.
+    "private": {
+      "name": "apaki-relay-private",
+      "workers_dev": false,
+      // No address yet. Suggested: its own hostname, so Private QRs can name it, for example
+      // "routes": [{ "pattern": "private.apaki.myrlin.io", "custom_domain": true }],
+      "routes": [],
+      // An assets folder with nothing to upload in it (its .assetsignore ignores everything):
+      // no phone page, no front page, no security.txt. Every request reaches the Worker.
+      "assets": { "directory": "./private-no-assets", "html_handling": "none", "not_found_handling": "none" },
+      // Not inherited: rooms, the budget and the per-address gates; no ACCOUNTS binding at all.
+      "durable_objects": {
+        "bindings": [
+          { "name": "ROOMS", "class_name": "Room" },
+          { "name": "BUDGET", "class_name": "Budget" },
+          { "name": "GATES", "class_name": "Gate" }
+        ]
+      },
+      // A new Worker has its own Durable Object history; it never gets the Account class.
+      "migrations": [
+        { "tag": "p1", "new_sqlite_classes": ["Room", "Budget", "Gate"] }
+      ],
+      // Its own counters (namespace 4504), separate from the public relay's (4503).
+      "ratelimits": [{ "name": "CONNECTS", "namespace_id": "4504", "simple": { "limit": 20, "period": 60 } }],
+      "observability": { "enabled": false },
+      "vars": {
+        "ABOUT": "Myrlin Apaki private relay (relay only, no hostname yet; suggested private.apaki.myrlin.io): forwards opaque end-to-end encrypted frames between a PC running Myrlin Apaki and its paired phones. It serves no pages and keeps no accounts (RELAY_ONLY, no static assets); stores a daily cost counter, a per-address counter for the day, and each room's cost for the day. Made 2026-10-10 by Claude Code (Opus 5.5) for Arthur. Source: github.com/therealarthur/claude-latch relay/ (wrangler.jsonc env private). Safe to delete: phones paired through it stop reaching their PCs until Apaki points at another relay.",
+        "RELAY_ONLY": "1",
+        // Native apps send no Origin header; every browser does. "(none)" admits the first and refuses
+        // every web page, so no website can make its visitors' browsers open sockets here.
+        "ALLOWED_ORIGINS": "(none)"
+        // Its own daily budget (DAILY_BUDGET_USD, $3 by default) is separate from the public relay's,
+        // so together the two can reach $6 a day at worst. Set a lower one here if wanted, e.g. "1".
+      }
+    }
   }
 }
