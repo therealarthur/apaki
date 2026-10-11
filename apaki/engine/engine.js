@@ -118,6 +118,8 @@ import { COMPACT_CHOICES, COMPACT_DEFAULT, compactSettings, loadPrefs, normalize
 import { estimateEvent, lastUsage } from './context-estimate.js';
 // The session list's times: the last message, not the file's modified time (2026-10-11).
 import { LastActive } from './last-active.js';
+// What a phone shows of the desktop's tabs (2026-10-11).
+import { desktopTabs } from './desktop-tabs.js';
 import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
 // Signing in on a fresh install (2026-10-10, see "signing in to Claude" below).
 import { liveLogin } from '../../src/auth.js';
@@ -1018,7 +1020,7 @@ const handlers = {
   unwatch: (c) => unwatchViewer(String(c.paneId)),
 
   /* ---------- the workspace, saved to disk as well (crash recovery) ---------- */
-  saveState: (c) => saveWorkspace(c.state),
+  saveState: (c) => { saveWorkspace(c.state); sendDesktopTabs(c.state); },
   loadState: (c) => emit({ ev: 'state', reqId: c.reqId, state: loadWorkspace() }),
 
   // A name for a session, saved the way Claude Code's /rename saves it (a
@@ -1438,6 +1440,18 @@ function saveWorkspace(st) {
     } catch (e) { process.stderr.write(`apaki: workspace not saved (${e.message})\n`); }
   }, 1000);
 }
+// The desktop's tabs as phones see them (desktop-tabs.js, 2026-10-11): sent when they change, and once at start
+// from the saved workspace, so a phone sees them even while the window is closed (remote.js caches the last one).
+let lastDesktopTabs = '';
+function sendDesktopTabs(st) {
+  if (!st || typeof st !== 'object') return;
+  const tabs = desktopTabs(st);
+  const key = JSON.stringify(tabs);
+  if (key === lastDesktopTabs) return;
+  lastDesktopTabs = key;
+  emit({ ev: 'desktopTabs', tabs, at: Date.now() });
+}
+
 function loadWorkspace() {
   try { return JSON.parse(fs.readFileSync(WORKSPACE_FILE, 'utf8')); } catch { return null; }
 }
@@ -1707,6 +1721,8 @@ fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => {
 setTimeout(() => { authStatus(null).catch(() => {}); }, 1500).unref();
 
 emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer) });
+// The desktop's tabs from the saved workspace, so a phone sees them before the window sends any (or with it closed).
+sendDesktopTabs(loadWorkspace());
 // Keep the conversation indexes current in the background. The index server
 // (latch-index serve) holds the keyword index, the meaning index and the
 // embedding model open for searches, and updates both: keyword first (under a

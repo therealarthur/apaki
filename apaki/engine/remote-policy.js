@@ -68,7 +68,8 @@ const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effor
 export const MAX_PHONE_PANES = 6;
 
 /** Events every connected phone gets, besides those for its own panes and requests. */
-export const BROADCAST_EVENTS = new Set(['folders', 'glass', 'index', 'meaning']);
+// desktopTabs (2026-10-11): the desktop's tabs and their panes, so a phone shows them (engine desktop-tabs.js).
+export const BROADCAST_EVENTS = new Set(['folders', 'glass', 'index', 'meaning', 'desktopTabs']);
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const MODES = ['bypassPermissions', 'acceptEdits', 'plan', 'default'];
