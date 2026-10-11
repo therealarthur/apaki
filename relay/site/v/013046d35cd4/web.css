@@ -1,0 +1,433 @@
+/* Apaki on a phone (Track B part 2, 2026-10-09). Loaded after Apaki's own
+   app.css, so the tokens, both themes, the pearl ground and every component
+   are the desktop's; this file only re-lays them out for a phone:
+   - one pane at a time (tabs stay to switch conversations; splits show the
+     focused pane only),
+   - the sidebar becomes a drawer from the left, over a scrim,
+   - tap targets of 40 to 48 px, 16 px text in fields (no zoom on focus),
+   - safe-area insets for notches and home indicators,
+   - things the phone cannot do here are hidden: window buttons, panes'
+     drag grips and gutters, the PC's dictation, folders editing, Ask Claude
+     and Dig deeper (they run from the PC), the Phone button itself.
+   Motion: the drawer slides on transform in 200 ms, nothing else is added. */
+
+html, body.web { height: 100%; }
+body.web {
+  grid-template-columns: 1fr; height: var(--vvh, 100dvh); min-height: 0; overflow: hidden;
+  -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+}
+body.web .main {
+  grid-column: 1; min-width: 0;
+  grid-template-rows: calc(var(--top) + env(safe-area-inset-top)) 1fr;
+  padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
+}
+body.web .topbar { height: calc(var(--top) + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); align-items: center; }
+body.web .tabs { height: var(--top); padding: 0 6px 0 0; gap: 4px; }
+body.web .tab { height: 36px; min-width: 84px; max-width: 52vw; padding: 0 4px 0 12px; font-size: 14px; }
+body.web .tab-x { opacity: 1; width: 30px; height: 30px; }
+body.web .tab-plus { width: 40px; height: 40px; }
+
+.drawer-btn {
+  flex: none; display: none; place-items: center; width: 46px; height: 46px; margin: 0 2px 0 6px;
+  border: 0; border-radius: 12px; background: none; cursor: pointer; color: var(--ink);
+}
+body.web .drawer-btn { display: grid; }
+.drawer-btn:active { background: hsla(var(--w), .7); }
+.drawer-btn svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+
+/* The sessions drawer. */
+body.web .rail {
+  position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: min(88vw, 380px);
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left);
+  transform: translate3d(-104%, 0, 0); transition: transform 200ms var(--ease-out); will-change: transform;
+  box-shadow: none; border-right: 1px solid var(--sec-line);
+}
+body.web.drawer-open .rail { transform: none; box-shadow: 16px 0 44px -24px rgba(var(--shadow-rgb), .55); }
+.drawer-scrim { position: fixed; inset: 0; z-index: 35; background: rgba(var(--shadow-rgb), .26); opacity: 0; pointer-events: none; transition: opacity 180ms var(--ease-hover); }
+body.drawer-open .drawer-scrim { opacity: 1; pointer-events: auto; }
+:root[data-theme="dark"] .drawer-scrim { background: rgba(0, 0, 0, .55); }
+body.web .brand { height: 52px; }
+
+body.web .winctl, body.web .tabs-tools, body.web .grip, body.web .gutter, body.web .mic, body.web .ask,
+body.web .dig-row, body.web .folder-add, body.web .folder-x, body.web .folder-chip, body.web #phone { display: none !important; }
+
+/* One pane: with a split, only the focused pane shows. */
+body.web .stage { inset: 0; border-radius: 0; border-width: 1px 0 0; box-shadow: none; }
+body.web .stage.multi .split > :not(.pane):not(.split) { display: none; }
+body.web .stage.multi .pane:not(.focused) { display: none; }
+body.web .pane-bar { min-height: 54px; padding: 6px 4px 6px 14px; }
+body.web .pane-bar .title { font-size: 16.5px; }
+body.web .pane-bar .close { width: 44px; height: 44px; }
+body.web .transcript { padding: 14px 14px 20px; font-size: 15px; }
+body.web .turn-user { margin-top: 16px; }
+body.web .composer-wrap { padding: 0 8px calc(8px + env(safe-area-inset-bottom)); }
+body.web .composer { border-radius: 18px; padding: 8px 8px 6px 12px; }
+body.web textarea { font-size: 16px; }
+body.web .icon-btn { width: 42px; height: 42px; }
+body.web .chip-btn { height: 38px; padding: 0 10px; font-size: 13px; }
+body.web .send { min-height: 42px; min-width: 72px; padding: 9px 16px; font-size: 15px; border-radius: 12px; }
+body.web .status-line.on { height: 28px; }
+/* Settings stay on one line beside the attach and send buttons, and scroll sideways. */
+body.web .composer-row { flex-wrap: nowrap; }
+body.web .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
+body.web .chips::-webkit-scrollbar { display: none; }
+body.web .chip-btn { max-width: none; flex: none; }
+/* Until the PC answers, only the pairing card shows on the pearl ground. */
+body.web:not(.linked) .rail, body.web:not(.linked) .main, body.web:not(.linked) .link-bar { visibility: hidden; }
+/* Folders are made on the PC: an empty folder list is not worth a section here. */
+body.web .rail-folders:has(.folder-empty) { display: none; }
+
+/* Bigger targets in the drawer, sheets and menus. */
+body.web .search { height: 46px; }
+body.web .search input { font-size: 16px; }
+body.web .rail-find .new { padding: 12px 14px; font-size: 15px; }
+body.web .sessions li { padding: 13px 12px; }
+body.web .rail-sessions .views button { padding: 8px 11px; }
+body.web .folder-row { height: 42px; }
+body.web .theme-btn, body.web .sound { padding: 8px 12px; font-size: 13px; }
+body.web .sheet { width: calc(100vw - 20px); max-height: calc(var(--vvh, 100dvh) - 40px); padding: 18px 16px; }
+body.web .sheet .opt { padding: 13px 14px; }
+body.web .sheet .row button { padding: 12px 18px; }
+body.web .sheet input[type=text] { font-size: 16px; padding: 11px 12px; }
+body.web .menu-item { padding: 12px 12px; font-size: 15px; }
+body.web .takeover { margin-top: 6vh; padding: 20px 18px; }
+body.web .tk-row button { padding: 12px 16px; }
+body.web .stage-empty .new { padding: 12px 16px; }
+
+/* The PC this phone talks to, at the top of the drawer's footer. */
+.pc-line { display: none; }
+body.web .pc-line { display: flex; align-items: center; gap: 8px; padding: 12px 14px 0 18px; font-size: 13px; min-width: 0; }
+.pc-line:empty { display: none !important; }
+.pc-k { font: 900 10px/1 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--brand-strong); }
+.pc-n { font-weight: 800; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-s { font-size: 12px; color: var(--action-strong); font-weight: 650; white-space: nowrap; }
+.pc-s.ok { color: var(--good); }
+.pc-line button { margin-left: auto; flex: none; padding: 7px 12px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); background: var(--ground); font-weight: 700; font-size: 13px; color: var(--brand-deep); cursor: pointer; }
+
+/* Lost the PC for a moment: one quiet line under the top bar, words only. */
+.link-bar {
+  position: fixed; z-index: 45; left: 50%; top: calc(env(safe-area-inset-top) + var(--top) + 8px); transform: translateX(-50%);
+  display: flex; align-items: baseline; gap: 9px; max-width: calc(100vw - 24px); padding: 9px 14px; border-radius: 12px;
+  background: hsla(var(--w), .92); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+  border: 1px solid var(--hairline-strong); box-shadow: 0 12px 30px -18px rgba(var(--shadow-rgb), .5);
+  font-size: 13px; font-weight: 600; color: var(--soft); animation: rise var(--dur-fast) var(--ease-out); cursor: pointer;
+}
+.link-bar[hidden] { display: none; }
+.lb-k { flex: none; font: 900 10px/1 var(--font-display); font-stretch: 125%; letter-spacing: .12em; text-transform: uppercase; color: var(--action-strong); }
+.lb-t { min-width: 0; }
+
+/* ---------- pairing and connecting ---------- */
+.pair-screen {
+  position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: calc(20px + env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom)); overflow-y: auto;
+  background: hsla(var(--w), .35);
+}
+.pair-screen[hidden] { display: none; }
+body.linked .pair-screen { display: none; }
+.pair-card {
+  width: min(430px, 100%); padding: 24px 22px 22px; border-radius: 22px;
+  background: hsla(var(--w), .8); -webkit-backdrop-filter: blur(26px) saturate(1.5); backdrop-filter: blur(26px) saturate(1.5);
+  border: 1px solid var(--hairline-strong); box-shadow: 0 30px 80px -42px rgba(var(--shadow-rgb), .65);
+  animation: rise 220ms var(--ease-out);
+}
+.pair-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+.pair-brand .m-mark { width: 42px; height: 20px; flex: none; }
+.pair-brand .wordmark { font-weight: 900; font-stretch: 125%; font-size: 17px; letter-spacing: -.015em; }
+.pair-kicker { font: 900 10.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .14em; text-transform: uppercase; color: var(--brand-strong); }
+.pair-card h1 { margin: 9px 0 6px; font: 900 28px/1.1 var(--font-display); font-stretch: 125%; letter-spacing: -.022em; color: var(--ink); overflow-wrap: anywhere; }
+.pair-card p { margin: 10px 0 0; font-size: 15px; line-height: 1.5; color: var(--soft); }
+.pair-card b { color: var(--ink); font-weight: 800; }
+.pair-note { font-size: 13px !important; color: var(--faint) !important; }
+.pair-err { color: var(--action-strong) !important; font-weight: 650; }
+.pair-steps { list-style: none; counter-reset: step; margin: 18px 0 6px; padding: 0; }
+.pair-steps li { counter-increment: step; display: flex; gap: 12px; padding: 11px 0; border-top: 1px solid var(--hairline); font-size: 15px; line-height: 1.45; color: var(--soft); }
+.pair-steps li::before { content: counter(step); flex: none; width: 18px; font: 900 14px/1.45 var(--font-display); font-stretch: 125%; color: var(--brand-strong); }
+.pair-btn {
+  display: block; width: 100%; min-height: 50px; margin-top: 14px; border: 1px solid var(--fill); border-radius: 14px; cursor: pointer;
+  background: var(--fill); color: #fff; font: 820 16px/1 var(--font-body); font-stretch: 112%;
+  transition: background var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-out);
+}
+.pair-btn:active { transform: scale(.985); }
+.pair-btn.quiet { background: hsla(var(--w), .85); color: var(--ink); border-color: var(--hairline-strong); }
+.pair-paste { margin-top: 14px; font-size: 14px; color: var(--soft); }
+.pair-paste summary { cursor: pointer; padding: 8px 0; font-weight: 650; }
+.pp-row { display: flex; gap: 8px; margin-top: 6px; }
+.pp-row input { flex: 1; min-width: 0; height: 46px; padding: 0 12px; border: 1px solid var(--hairline-strong); border-radius: 12px; background: var(--ground); font-size: 16px; }
+.pp-row button, .pair-pcs button { flex: none; min-height: 44px; padding: 0 14px; border: 1px solid var(--hairline-strong); border-radius: 12px; background: var(--ground); font-weight: 760; cursor: pointer; color: var(--ink); }
+.pair-pcs button.quiet { color: var(--faint); background: none; }
+.pair-sec { margin-top: 20px; padding-bottom: 8px; border-bottom: 1px solid var(--hairline); font: 900 10.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-deep); }
+.pair-pcs { list-style: none; margin: 0; padding: 0; }
+.pair-pcs li { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.pp-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pp-t b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-t small { font-size: 12px; color: var(--faint); }
+.pair-code { display: flex; gap: 16px; margin: 20px 0 4px; font: 900 54px/1 var(--font-display); font-stretch: 125%; letter-spacing: .05em; color: var(--ink); font-variant-numeric: tabular-nums; animation: rise 220ms var(--ease-out); }
+.pair-code span:last-child { color: var(--brand-deep); }
+.pair-wait { margin: 18px 0 4px; }
+.pair-wait .egrid { grid-template-columns: repeat(5, 5px); grid-template-rows: repeat(3, 5px); gap: 4px; }
+.pair-wait .egrid i { width: 5px; height: 5px; border-radius: 1.5px; }
+.pair-video { display: block; width: 100%; aspect-ratio: 1; margin-top: 14px; border-radius: 16px; object-fit: cover; background: #0C0B16; }
+.pair-fine { max-width: 430px; margin: 14px 8px 0; text-align: center; font-size: 12.5px; line-height: 1.5; color: var(--faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  body.web .rail, .drawer-scrim { transition: none !important; }
+}
+/* 2026-10-10: the pairing button uses the app's button gradient (app.css --btn-a/--btn-b). */
+
+/* =====================================================================
+   The phone app (native.js, 2026-10-10). Arthur: "make the phone
+   experience feel incredibly native like an app". A Messages-style stack
+   on top of the layout above (every rule here needs body.native, which
+   native.js sets once Apaki's window code runs):
+   - home: the sessions list, with a compact bar (the PC, compose) and a
+     large title that scrolls up under it,
+   - a conversation slides in from the right over the list, which moves a
+     little left and dims; Back or a swipe from the left edge returns,
+   - menus, sheets and the Glass and Tasks panels rise from the bottom,
+     with a grabber, and close with a swipe down,
+   - the composer is a rounded field with a round send button, on a
+     frosted bar above the home indicator.
+   Motion: the iOS curve (.32, .72, 0, 1), transforms and opacity only;
+   off under reduced motion.
+   ===================================================================== */
+:root { --ios-ease: cubic-bezier(.32, .72, 0, 1); --nav-h: 44px; --stack-ms: 380ms; }
+
+body.web.native .drawer-btn, body.web.native .drawer-scrim, body.web.native .topbar,
+body.web.native #pcLine, body.web.native .brand, body.web.native #new, body.web.native .sec-refresh,
+body.web.native .pane-bar .grip { display: none !important; }
+body.web.native button, body.web.native .sessions li, body.web.native .ios-nav { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
+
+/* The two screens. */
+body.web.native .rail, body.web.native .main {
+  position: fixed; top: 0; left: 0; width: 100%; height: var(--vvh, 100dvh); min-height: 0;
+  transition: transform var(--stack-ms) var(--ios-ease), visibility 0s linear 0s; will-change: transform;
+}
+body.web.native .rail { z-index: 1; display: flex; flex-direction: column; padding: 0; transform: none; border: 0; box-shadow: none; }
+body.web.native.at-chat .rail { transform: translate3d(-28%, 0, 0); }
+body.web.native .main {
+  z-index: 3; display: block; padding: 0; transform: translate3d(100%, 0, 0); visibility: hidden;
+  transition: transform var(--stack-ms) var(--ios-ease), visibility 0s linear var(--stack-ms);
+  box-shadow: -16px 0 36px -20px rgba(var(--shadow-rgb), .5);
+}
+body.web.native.at-chat .main { transform: none; visibility: visible; transition: transform var(--stack-ms) var(--ios-ease), visibility 0s linear 0s; }
+/* The conversation is its own opaque sheet over the list, on the same pearl as the desktop's stage. */
+body.web.native .main { background: hsl(var(--w)); isolation: isolate; overflow: hidden; }
+body.web.native .main::before { content: ""; position: absolute; inset: 0 -60%; z-index: -2; pointer-events: none; background: var(--pearl-gradient); animation: pearl-drift 60s var(--ease-hover) infinite alternate; }
+body.web.native .main::after { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--halftone), var(--pearl-overlay); }
+body.web.native.swiping .rail, body.web.native.swiping .main { transition: none; }
+body.web.native .stages { position: absolute; inset: 0; }
+.stack-dim { position: fixed; inset: 0; z-index: 2; pointer-events: none; background: rgba(16, 14, 38, .16); opacity: 0; transition: opacity var(--stack-ms) var(--ios-ease); }
+body.at-chat .stack-dim { opacity: calc(1 - var(--back-p, 0)); }
+body.swiping .stack-dim { transition: none; }
+:root[data-theme="dark"] .stack-dim { background: rgba(0, 0, 0, .42); }
+
+/* ---------- home: the sessions list ---------- */
+.ios-nav {
+  flex: none; position: relative; z-index: 3; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px;
+  height: calc(var(--nav-h) + env(safe-area-inset-top)); padding: env(safe-area-inset-top) max(6px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left));
+  border-bottom: 1px solid transparent; transition: background-color 180ms var(--ease-hover), border-color 180ms var(--ease-hover);
+}
+body.list-scrolled .ios-nav { background: hsla(var(--w), .8); -webkit-backdrop-filter: blur(22px) saturate(1.7); backdrop-filter: blur(22px) saturate(1.7); border-bottom-color: var(--hairline); }
+.ios-pc {
+  justify-self: start; min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; column-gap: 4px; align-items: center;
+  padding: 3px 8px; border: 0; border-radius: 10px; background: none; text-align: left; color: var(--ink); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-hover);
+}
+.ios-pc:active, .ios-compose:active, .nav-back:active { background: hsla(232, 60%, 62%, .12); }
+.ios-pc-n { min-width: 0; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 760 15px/1.2 var(--font-body); font-stretch: 104%; }
+.ios-pc svg { width: 11px; height: 11px; fill: none; stroke: var(--soft); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ios-pc-s { flex-basis: 100%; font: 650 11px/1.25 var(--font-body); color: var(--action-strong); }
+.ios-pc-s.ok { color: var(--good); }
+.ios-pc-s.bad { color: var(--action-strong); }
+.ios-nav-t { max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 16px/1 var(--font-body); color: var(--ink-deep); opacity: 0; transform: translate3d(0, 5px, 0); transition: opacity 160ms var(--ease-hover), transform 200ms var(--ios-ease); }
+body.list-scrolled .ios-nav-t { opacity: 1; transform: none; }
+.ios-compose { justify-self: end; display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 12px; background: none; color: var(--brand-strong); cursor: pointer; }
+.ios-compose svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.ios-scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; padding: 0 env(safe-area-inset-right) 14px env(safe-area-inset-left); scrollbar-width: none; }
+.ios-scroll::-webkit-scrollbar { display: none; }
+.ios-large { margin: 0; padding: 0 18px 10px; font: 900 34px/1.08 var(--font-display); font-stretch: 125%; letter-spacing: -.026em; color: var(--ink-deep); overflow-wrap: anywhere; }
+body.web.native .rail-find { padding: 0 0 6px; }
+body.web.native .search { margin: 0 16px; height: 38px; padding: 0 11px; border: 0; border-radius: 11px; background: hsla(238, 26%, 52%, .11); }
+body.web.native .search:focus-within { box-shadow: 0 0 0 2px hsla(var(--pearl-stop-blue), .35); }
+body.web.native .search input { font-size: 16px; }
+body.web.native .rail-sessions { display: block; min-height: 0; }
+body.web.native .rail-sessions .sec-head { padding: 8px 16px 4px; }
+body.web.native .rail-sessions .sec-t { display: none; }
+body.web.native .rail-sessions .sec-n { margin-right: auto; font-size: 12px; }
+body.web.native .rail-sessions .views { margin-left: 0; font-size: 13px; }
+body.web.native .rail-sessions .views button { padding: 6px 11px; }
+/* Rows: full width, inset hairlines, a chevron, a pressed state. */
+body.web.native .sessions { overflow: visible; flex: none; padding: 4px 0 8px; }
+body.web.native .sessions li {
+  position: relative; margin: 0; padding: 12px 40px 12px 18px; border: 0; border-radius: 0; box-shadow: none; background: none;
+  transition: background 120ms var(--ease-hover);
+}
+body.web.native .sessions li[data-id]::after {
+  content: ''; position: absolute; right: 18px; top: 50%; width: 8px; height: 8px; margin-top: -4px;
+  border-right: 2px solid var(--faint); border-bottom: 2px solid var(--faint); transform: rotate(-45deg); opacity: .55;
+}
+body.web.native .sessions li[data-id]::before { content: ''; position: absolute; left: 18px; right: 0; bottom: 0; height: 1px; background: var(--hairline); }
+body.web.native .sessions li:active { background: hsla(232, 60%, 62%, .1); }
+body.web.native .sessions li.on, body.web.native .sessions li.shown { background: none; }
+body.web.native .sessions li.on .t::after, body.web.native .sessions li.shown .t::after {
+  content: 'Open'; margin-left: 8px; font: 800 9.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .1em; text-transform: uppercase; color: var(--brand-strong); vertical-align: 2px;
+}
+body.web.native .sessions .t { font-size: 16px; line-height: 1.3; font-weight: 680; }
+body.web.native .sessions .m { font-size: 12.5px; margin-top: 4px; }
+body.web.native .sessions .snip, body.web.native .sessions .why { font-size: 14px; }
+body.web.native .sessions .subs-n { margin-top: 8px; }
+/* Glass and Settings: a frosted bar over the home indicator. */
+body.web.native .rail-foot { position: relative; z-index: 3; padding-bottom: env(safe-area-inset-bottom); background: hsla(var(--w), .82); -webkit-backdrop-filter: blur(22px) saturate(1.7); backdrop-filter: blur(22px) saturate(1.7); }
+
+/* Pull to refresh. */
+.ptr { display: flex; align-items: center; justify-content: center; gap: 8px; height: 0; overflow: visible; opacity: 0; transform: translate3d(0, calc(var(--pull, 0) * 28px - 8px), 0); font: 650 12px var(--font-body); color: var(--faint); pointer-events: none; }
+.ptr.on { opacity: var(--pull, 0); }
+.ptr.busy { opacity: 1; }
+.ptr-dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--hairline-strong); border-top-color: var(--brand-strong); transform: rotate(calc(var(--pull, 0) * 300deg)); }
+.ptr.busy .ptr-dot { animation: ptr-spin .7s linear infinite; }
+@keyframes ptr-spin { to { transform: rotate(360deg); } }
+
+/* Add to Home Screen, once. */
+.install-hint { display: flex; align-items: center; gap: 10px; margin: 14px 16px 4px; padding: 12px 12px 12px 14px; border-radius: 14px; background: hsla(var(--w), .85); border: 1px solid var(--hairline-strong); }
+.ih-t { flex: 1; min-width: 0; display: grid; gap: 2px; font-size: 13px; line-height: 1.4; color: var(--soft); }
+.ih-t b { color: var(--ink); font-size: 14px; }
+.install-hint button { flex: none; min-height: 36px; padding: 0 12px; border-radius: 10px; font-weight: 750; font-size: 13px; cursor: pointer; }
+.install-hint .ih-x { border: 0; background: none; color: var(--faint); }
+.install-hint .ih-go { border: 0; color: #fff; background: linear-gradient(135deg, var(--btn-a), var(--btn-b)); }
+
+/* ---------- a conversation ---------- */
+.nav-back { display: none; }
+body.web.native .nav-back {
+  position: absolute; z-index: 6; top: env(safe-area-inset-top); left: max(2px, env(safe-area-inset-left)); display: flex; align-items: center; gap: 3px;
+  height: var(--nav-h); padding: 0 10px 0 8px; border: 0; border-radius: 12px; background: none; color: var(--brand-strong); font: 650 16px/1 var(--font-body); cursor: pointer;
+}
+.nav-back svg { width: 11px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+body.web.native .stage { inset: 0; border: 0; border-radius: 0; }
+body.web.native .pane-bar {
+  min-height: calc(var(--nav-h) + env(safe-area-inset-top)); padding: env(safe-area-inset-top) max(4px, env(safe-area-inset-right)) 0 98px; align-items: center; gap: 2px;
+  background: hsla(var(--w), .82); -webkit-backdrop-filter: blur(22px) saturate(1.7); backdrop-filter: blur(22px) saturate(1.7);
+}
+body.web.native .pane-bar .title-block { min-width: 0; text-align: center; padding-right: 8px; }
+body.web.native .pane-bar .title { font: 720 16px/1.2 var(--font-body); font-stretch: 104%; letter-spacing: -.005em; }
+body.web.native .pane-bar .meta-line { justify-content: center; margin-top: 1px; }
+body.web.native .pane-bar .meta-line .cwd { flex: 0 1 auto; font-size: 11px; }
+body.web.native .pane-bar .close { width: 40px; height: 40px; }
+body.web.native .transcript { font-size: 16px; line-height: 1.5; }
+/* The composer: a rounded field and a round send button on a frosted bar. */
+body.web.native .composer-wrap { padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); background: hsla(var(--w), .84); -webkit-backdrop-filter: blur(22px) saturate(1.7); backdrop-filter: blur(22px) saturate(1.7); border-top: 1px solid var(--hairline); }
+body.web.native .composer { border-radius: 22px; padding: 6px 6px 4px 12px; box-shadow: none; }
+body.web.native .composer textarea { font-size: 16px; line-height: 1.4; }
+body.web.native .send:not(.queue):not(.stop) { display: grid; place-items: center; width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; border-radius: 50%; font-size: 0; }
+body.web.native .send:not(.queue):not(.stop)::before {
+  content: ''; width: 17px; height: 17px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 13.5V3M3.5 7.5 8 3l4.5 4.5' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 13.5V3M3.5 7.5 8 3l4.5 4.5' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+body.web.native .send.queue, body.web.native .send.stop { min-height: 36px; border-radius: 18px; padding: 0 14px; font-size: 14px; }
+body.web.native .send:active { transform: scale(.94); }
+
+/* ---------- menus and sheets rise from the bottom ---------- */
+body.web.native .menu, body.web.native .glass-panel, body.web.native .task-panel {
+  left: 8px !important; right: 8px !important; top: auto !important; bottom: calc(8px + env(safe-area-inset-bottom)) !important;
+  width: auto !important; min-width: 0 !important; max-width: none !important; max-height: min(74vh, calc(var(--vvh, 100dvh) - 60px)) !important;
+  padding-top: 18px; border-radius: 20px; transform-origin: bottom center; animation: sheet-up 300ms var(--ios-ease);
+  box-shadow: 0 0 0 100vmax rgba(16, 14, 38, .22), 0 -8px 40px -16px rgba(var(--shadow-rgb), .45);
+}
+body.web.native .menu { overflow-y: auto; padding: 18px 6px 6px; }
+body.web.native .menu-item { min-height: 48px; font-size: 16px; padding: 12px 14px; border-radius: 12px; }
+body.web.native .menu-head { padding: 10px 14px 4px; }
+body.web.native .menu::before, body.web.native .glass-panel::before, body.web.native .task-panel::before, body.web.native .sheet::before {
+  content: ''; position: absolute; top: 7px; left: 50%; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: hsla(238, 14%, 50%, .32);
+}
+body.web.native .menu.out, body.web.native .glass-panel.out, body.web.native .task-panel.out { animation: sheet-down 200ms var(--ease-hover) forwards; }
+:root[data-theme="dark"] body.web.native .menu, :root[data-theme="dark"] body.web.native .glass-panel, :root[data-theme="dark"] body.web.native .task-panel { box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .5), 0 -8px 40px -16px rgba(0, 0, 0, .8); }
+body.web.native .sheet-scrim { place-items: end stretch; background: rgba(16, 14, 38, .24); }
+body.web.native .sheet {
+  position: relative; width: 100%; max-width: none; max-height: calc(var(--vvh, 100dvh) - env(safe-area-inset-top) - 24px); margin: 0;
+  padding: 26px 18px calc(18px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; border-width: 1px 0 0; animation: sheet-up 320ms var(--ios-ease);
+}
+@keyframes sheet-up { from { transform: translate3d(0, 104%, 0); } to { transform: none; } }
+@keyframes sheet-down { to { transform: translate3d(0, 104%, 0); } }
+/* The Glass panel's rows get the room a phone has. */
+body.web.native .gp-row { padding: 11px 8px 11px 12px; }
+body.web.native .gp-btn { min-height: 34px; padding: 0 14px; }
+body.web.native .gp-icon { min-width: 36px; height: 36px; }
+body.web.native .gp-menu { right: 8px; }
+body.web.native .gp-menu button { padding: 11px 12px; font-size: 15px; }
+
+/* ---------- the PC screen over a running app: a full sheet ---------- */
+body.web.native .pair-screen.sheet-mode { justify-content: flex-end; padding: env(safe-area-inset-top) 0 0; background: rgba(16, 14, 38, .24); }
+body.web.native .pair-screen.sheet-mode .pair-card { width: 100%; max-height: calc(var(--vvh, 100dvh) - env(safe-area-inset-top) - 12px); overflow-y: auto; padding: 26px 20px calc(20px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; animation: sheet-up 320ms var(--ios-ease); }
+body.web.native .pair-screen.sheet-mode .pair-fine { display: none; }
+body.web.native .pair-screen.sheet-mode .pair-card { position: relative; }
+body.web.native .pair-screen.sheet-mode .pair-card::before { content: ''; position: absolute; top: 8px; left: 50%; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: hsla(238, 14%, 50%, .32); }
+.pair-steps li > span { min-width: 0; }
+.pp-on { color: var(--good); font-weight: 700; }
+.pp-off { color: var(--faint); font-weight: 650; }
+.acct-row { display: flex; align-items: center; gap: 10px; padding: 12px 0 4px; }
+.acct-more summary { list-style: none; }
+.acct-acts { display: grid; gap: 6px; margin-top: 8px; }
+.acct-acts button { min-height: 46px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--btn2-line, var(--hairline-strong)); background: linear-gradient(180deg, var(--btn2-a, hsl(var(--w))), var(--btn2-b, hsl(232, 45%, 95%))); font-weight: 720; font-size: 15px; text-align: left; color: var(--ink); cursor: pointer; }
+.acct-acts button.danger { color: var(--action-strong); }
+.pair-card .pp-row input#acctName { font-size: 16px; }
+.pair-card .pp-row button[data-k=create-go] { border: 0; color: #fff; background: linear-gradient(135deg, var(--btn-a), var(--btn-b)); }
+.acct-more summary::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 8px; border-right: 1.8px solid currentColor; border-bottom: 1.8px solid currentColor; transform: translateY(-2px) rotate(45deg); transition: transform 160ms var(--ease-hover); }
+.acct-more[open] summary::after { transform: translateY(1px) rotate(-135deg); }
+
+/* A short note at the top that leaves by itself. */
+.toast {
+  position: fixed; z-index: 80; top: calc(env(safe-area-inset-top) + 8px); left: 50%; max-width: calc(100vw - 24px); transform: translateX(-50%);
+  padding: 11px 16px; border-radius: 14px; background: hsla(var(--w), .94); -webkit-backdrop-filter: blur(22px) saturate(1.6); backdrop-filter: blur(22px) saturate(1.6);
+  border: 1px solid var(--hairline-strong); box-shadow: 0 14px 36px -18px rgba(var(--shadow-rgb), .55);
+  font: 650 14px/1.35 var(--font-body); color: var(--ink); animation: toast-in 260ms var(--ios-ease);
+}
+.toast.bad { color: var(--action-strong); }
+.toast.out { opacity: 0; transform: translate(-50%, -8px); transition: opacity 180ms var(--ease-hover), transform 180ms var(--ease-hover); }
+.toast[hidden] { display: none; }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* Before Apaki runs (first visit, connecting): the PC screen is the whole phone screen, not a card on it. */
+@media (max-width: 560px) {
+  .pair-screen:not(.sheet-mode) { justify-content: flex-start; padding: calc(10px + env(safe-area-inset-top)) 0 calc(16px + env(safe-area-inset-bottom)); background: hsla(var(--w), .55); }
+  .pair-screen:not(.sheet-mode) .pair-card { width: 100%; padding: 8px 20px 18px; border: 0; border-radius: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; animation: none; }
+  .pair-screen:not(.sheet-mode) .pair-card h1 { font-size: 34px; letter-spacing: -.026em; }
+  .pair-screen:not(.sheet-mode) .pair-brand { margin-bottom: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.web.native .rail, body.web.native .main, .stack-dim, .ios-nav-t { transition: none !important; }
+  body.web.native .menu, body.web.native .glass-panel, body.web.native .task-panel, body.web.native .sheet, .pair-screen.sheet-mode .pair-card, .toast { animation: none !important; }
+}
+
+/* =====================================================================
+   Phone buttons in the app's button system (2026-10-10; app.css "Button
+   system"). The rules above gave the PC screen's buttons a flat ground
+   fill and its Forget and Remove a faint grey that read as disabled; here
+   they take the shared looks: secondary = quiet gradient with an even
+   hairline, ghost = no fill until pressed, primary = the brand gradient
+   (already set in app.css). Bigger targets for the queue's buttons.
+   ===================================================================== */
+.pair-btn.quiet, .pp-row button:not([data-k="create-go"]), .pair-pcs button:not(.quiet), .pc-line button {
+  background: linear-gradient(180deg, var(--btn2-a), var(--btn2-b)); border: 1px solid var(--btn2-line); color: var(--ink-deep);
+  box-shadow: 0 1px 2px rgba(var(--shadow-rgb), .06);
+  transition: border-color var(--dur-fast) var(--ease-hover), background var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-hover);
+}
+.pp-row button:not([data-k="create-go"]):hover, .pair-pcs button:not(.quiet):hover, .pc-line button:hover, .acct-acts button:hover {
+  background: linear-gradient(180deg, var(--btn2-hover-a), var(--btn2-hover-b)); border-color: var(--brand);
+}
+.pp-row button:active, .pair-pcs button:active, .pc-line button:active, .acct-acts button:active, .pair-btn.quiet:active { transform: scale(.97); }
+.acct-acts button.danger:hover { background: var(--action-tint); border-color: var(--action); }
+.pair-pcs button.quiet, .install-hint .ih-x {
+  border: 1px solid transparent; background: none; box-shadow: none; color: var(--soft);
+  transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.pair-pcs button.quiet:hover, .install-hint .ih-x:hover { background: var(--ghost-hover); color: var(--ink-deep); }
+.pair-pcs button.quiet:active, .install-hint .ih-x:active { background: var(--ghost-press); }
+.pp-row button, .pair-pcs button { border-radius: 12px; }
+.install-hint button { border-radius: 10px; }
+body.web .q-act, body.web .q-edit { height: 34px; padding: 0 14px; border-radius: 10px; }
+body.web .q-x { width: 34px; height: 34px; border-radius: 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .pp-row button:active, .pair-pcs button:active, .pc-line button:active, .acct-acts button:active, .pair-btn.quiet:active { transform: none; }
+}
