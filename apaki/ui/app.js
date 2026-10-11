@@ -126,6 +126,9 @@ const paneBySession = (id) => (id ? [...S.panes.values()].find((p) => p.sessionI
 const host = {
   defaults: S.defaults,
   send,
+  // The desktop window tells the engine each pane's queued messages (pane.js syncQueue), so they go out even with the window
+  // closed (queue-hold.js). The phone page does not: a phone's queue stays in its own pane.
+  engineQueue: !WEB,
   // Double-click a pane's title: name its session (beginRename, below).
   renameSession: (p, anchor) => beginRename(p.sessionId, anchor, { pane: p }),
   focus: (p) => focusPane(p, { scroll: false }),
@@ -1610,6 +1613,8 @@ if ($('theme')) $('theme').onclick = () => window.apakiTheme.set(THEME_UI[window
 const glassCard = initGlassCard({ root: $('glassState'), send, menu, readOnly: WEB, note: (text, tone) => focusedPane()?.note(text, tone) });
 const settings = initSettings({
   button: $('settings'), sheet, send, theme: window.apakiTheme, themeUi: THEME_UI, indexText, warm: !WEB,
+  // Auto-compact is the PC's: it applies to every Claude Code Apaki starts, and a phone cannot send that op (remote-policy.js).
+  compact: !WEB,
   sound: { on: soundOn, set: (on) => { setSoundOn(on); if (on) ding('done'); } },
 });
 // The Phone button is phone.js's (initPhone below fills it in); the glyph shows until that module loads.
@@ -1843,7 +1848,7 @@ function snapshot() {
       const g = p?.$?.ground;
       return {
         type: 'leaf', pane: lf.pane, s: p?.sessionId || null, cwd: p?.cwd || '', title: p?.title || '', model: p?.model, effort: p?.effort, mode: p?.mode,
-        draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ text: q.text })),
+        draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ id: q.id, text: q.text })),
         scroll: g ? { atEnd: g.scrollHeight - g.scrollTop - g.clientHeight < 40, top: Math.round(g.scrollTop) } : null,
         busy: Boolean(p?.busy), pendingName: p?.pendingName || null,
       };
@@ -1903,7 +1908,8 @@ function restore(saved = readLocal()) {
       const p = createPane({ id: lf.pane, sessionId: sid, cwd: lf.cwd, title: lf.title, model: lf.model, effort: lf.effort, mode: lf.mode });
       // What you were typing, what was queued, where you were reading, a name waiting for its session.
       if (lf.draft) { p.$.input.value = lf.draft; p.autosize(); p.renderSendButton?.(); }
-      if (Array.isArray(lf.queue) && lf.queue.length) { p.queue = lf.queue.map((q, i) => ({ id: `r${i}${Date.now().toString(36)}`, text: q.text, attachments: [] })); p.renderQueue(); }
+      // The saved id is kept: the engine may hold the same item (it sends it itself when the turn ends with no window), and matches by id (pane.js adoptQueue).
+      if (Array.isArray(lf.queue) && lf.queue.length) { p.queue = lf.queue.map((q, i) => ({ id: typeof q.id === 'string' && q.id ? q.id : `r${i}${Date.now().toString(36)}`, text: q.text, attachments: [] })); p.renderQueue(); }
       if (lf.scroll) p.restoreScroll = lf.scroll;
       if (lf.pendingName) p.pendingName = lf.pendingName;
       if (lf.busy) p.crashNote = true;
@@ -2108,6 +2114,7 @@ await listen('engine', ({ payload: e }) => {
       glassCard.handle(e);
       break;
     case 'warmState': settings.handle(e); break;
+    case 'autoCompact': settings.handle(e); break;
     case 'closed': break;
     case 'remote': phone?.handle(e); break;
     case 'note': focusedPane()?.note(e.text, e.tone || ''); break;

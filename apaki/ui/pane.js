@@ -10,7 +10,8 @@
  *
  * The pane talks to the app through `host`:
  *   send(op, args), focus(pane), close(pane), voice(pane), folder(pane, value),
- *   changed(pane), dragPane(pane, event), defaults, folders(), sessions().
+ *   changed(pane), dragPane(pane, event), defaults, folders(), sessions(),
+ *   engineQueue (true in the desktop window: the pane tells the engine its queue, see syncQueue).
  */
 
 import { esc, md } from './markdown.js';
@@ -1192,6 +1193,46 @@ export class Pane {
   enqueue(text, attachments) {
     this.queue.push({ id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, text, attachments });
     this.renderQueue();
+    this.syncQueue();
+  }
+
+  /**
+   * Tells the engine what is queued (op queueSet), every time the queue changes
+   * (not on a redraw, and not on a restore: the engine's copy may be newer, see
+   * adoptQueue). The engine keeps the copy so it can send the queue itself
+   * when a turn ends while no window is connected (the window was closed);
+   * while this window is connected it never sends, and this pane flushes as
+   * before. Not on the phone page: phone queues stay in the phone's pane
+   * (remote-policy.js does not allow queueSet from a phone). apaki/engine/queue-hold.js has the rule.
+   */
+  syncQueue() {
+    if (!this.host.engineQueue) return;
+    this.send('queueSet', {
+      items: this.queue.map(({ id, text, attachments }) => ({ id, text, images: attachments.map(({ media_type, data, w, h }) => ({ media_type, data, w, h })) })),
+    });
+  }
+
+  /**
+   * Re-attached to the engine (opened with attached: true): its copy of the
+   * queue is what is still unsent. `held` is what it still has, `sent` the ids it
+   * sent while no window was here (the pane shows the first and drops the
+   * second). An item only this pane has (typed while the link was down, or
+   * restored from an older save) stays and goes to the engine; an item only
+   * the engine has (images included) is added.
+   */
+  adoptQueue(held, sent) {
+    const gone = new Set(sent);
+    const heldIds = new Set(held.map((it) => it.id));
+    const mine = new Map(this.queue.map((it) => [it.id, it]));
+    const next = held.map((it) => mine.get(it.id) || {
+      id: it.id,
+      text: it.text,
+      attachments: (it.images || []).map((im) => ({ media_type: im.media_type, data: im.data, url: `data:${im.media_type};base64,${im.data}`, w: im.w || 0, h: im.h || 0 })),
+    });
+    const extra = this.queue.filter((it) => !heldIds.has(it.id) && !gone.has(it.id));
+    this.queue = [...next, ...extra];
+    this.renderQueue();
+    if (extra.length) this.syncQueue();
   }
 
   renderQueue() {
@@ -1226,11 +1267,13 @@ export class Pane {
     }
   }
 
-  takeItem(id) {
+  /** Takes one item out. `sync: false` when a send or steer follows that names it (the engine then drops its copy in the same step). */
+  takeItem(id, { sync = true } = {}) {
     const i = this.queue.findIndex((x) => x.id === id);
     if (i < 0) return null;
     const [it] = this.queue.splice(i, 1);
     this.renderQueue();
+    if (sync) this.syncQueue();
     return it;
   }
 
@@ -1252,32 +1295,42 @@ export class Pane {
 
   /** Steer: hand a queued message to the running turn; it is shown once Claude Code took it. */
   steerItem(id) {
-    const it = this.takeItem(id);
+    // The steer op names this item (qid), so the engine drops its copy with it.
+    const it = this.takeItem(id, { sync: false });
     if (!it) return;
     this.steering.set(id, it);
     this.send('steer', { qid: id, text: it.text, images: it.attachments.map(({ media_type, data }) => ({ media_type, data })) });
   }
 
   sendItem(id) {
-    const it = this.takeItem(id);
-    if (it) this.sendNow(it.text, it.attachments);
+    const it = this.takeItem(id, { sync: false });
+    if (it) this.sendNow(it.text, it.attachments, [it.id]);
   }
 
-  /** Starts a turn with this message. */
-  sendNow(text, attachments = []) {
+  /**
+   * Starts a turn with this message. `queued`: ids of queued items this message
+   * carries, so the engine drops its copy of them in the same step as it
+   * receives the send (a window that closes right after leaves nothing for the
+   * engine to send again).
+   */
+  sendNow(text, attachments = [], queued = []) {
     const images = attachments.map(({ media_type, data }) => ({ media_type, data }));
     this.stoppedByUser = false;
     this.addUser(text, attachments);
     this.setBusy(true);
-    this.send('send', { text, images });
+    this.send('send', { text, images, ...(queued.length && this.host.engineQueue ? { queued } : {}) });
   }
 
-  /** After a turn ends on its own, everything queued goes out together as the next message. */
+  /**
+   * After a turn ends on its own, everything queued goes out together as the next message.
+   * This window owns the queue while it is connected; the engine only sends a queue itself when
+   * no window is connected (queue-hold.js), and the send names the ids so it never sends them again.
+   */
   flushQueue() {
     if (this.busy || this.stoppedByUser || !this.queue.length) return;
     const items = this.queue.splice(0);
     this.renderQueue();
-    this.sendNow(items.map((it) => it.text).filter(Boolean).join('\n\n'), items.flatMap((it) => it.attachments));
+    this.sendNow(items.map((it) => it.text).filter(Boolean).join('\n\n'), items.flatMap((it) => it.attachments), items.map((it) => it.id));
   }
 
   /** Sends the box. While Claude works it queues, or with { steer: true } (Ctrl+Enter) goes into the running turn now. */
@@ -1376,6 +1429,7 @@ export class Pane {
       case 'taken_over': this.showLocked(e, { lost: true }); break;
       case 'opened':
         this.lockedBy = null;
+        // (The engine clears its copy of the queue itself when a pane opens another conversation: queue-hold.js resetHeld.)
         if (e.sessionId !== this.sessionId) { this.queue = []; this.steering.clear(); this.stoppedByUser = false; this.renderQueue(); this.closedArts.clear(); }
         this.sessionId = e.sessionId; this.cwd = e.cwd; this.billing = e.billing;
         this.streams.clear(); this.tools.clear(); this.cardKeys.clear();
@@ -1389,6 +1443,12 @@ export class Pane {
         else this.showEmpty();
         // Re-attached after a reconnect (the phone client): busy says whether a turn is still running.
         if (e.attached) this.setBusy(Boolean(e.busy));
+        // The queue: re-attached, the engine's copy says what is still unsent and what it sent while no window was here;
+        // opened fresh (the engine did not have this pane), this pane's own queue, restored or kept, goes to the engine.
+        if (this.host.engineQueue) {
+          if (e.attached && Array.isArray(e.queue)) this.adoptQueue(e.queue, Array.isArray(e.queueSent) ? e.queueSent : []);
+          else if (this.queue.length) this.syncQueue();
+        }
         // Lost the engine mid-turn: re-attached means the background host kept it going; otherwise it stopped.
         if (this.lostBusy && !e.attached) this.turnStoppedNote = true;
         this.lostBusy = false;
@@ -1442,7 +1502,7 @@ export class Pane {
         const it = this.steering.get(e.qid);
         this.steering.delete(e.qid);
         if (!it) break;
-        if (this.busy) { this.queue.unshift(it); this.renderQueue(); } else this.sendNow(it.text, it.attachments);
+        if (this.busy) { this.queue.unshift(it); this.renderQueue(); this.syncQueue(); } else this.sendNow(it.text, it.attachments);
         break;
       }
       case 'error': this.setBusy(false); this.setStatus(''); this.note(e.message, 'error'); break;

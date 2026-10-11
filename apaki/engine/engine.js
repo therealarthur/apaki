@@ -17,7 +17,9 @@
  *     and the deep index (src/deepindex.js, latch-index).
  *
  * Commands (op): sessions, search, open, send, interrupt, answer, model,
- * effort, mode, billing, commands, folder, close, askSearch, digPrompt. Events (ev): ready, index,
+ * effort, mode, billing, commands, folder, close, askSearch, digPrompt, queueSet
+ * (a pane's queued messages, kept for a window-less host: queue-hold.js),
+ * autoCompact ("Auto-compact at": prefs.js). Events (ev): ready, index,
  * sessions, search, opened, history, sdk, result, ask, billing, commands, note,
  * error, open_elsewhere, closed, settings (a pane's model, effort and mode,
  * shown in its message box instead of as notes in the conversation).
@@ -107,6 +109,10 @@ import {
   patchWorkspaceLeaves, restoreAsAttach, taskReplay,
 } from './host.js';
 import { startOpenServer } from './open-server.js';
+// A pane's queued messages, held here so they go out with no window connected (queue-hold.js has the ownership rule).
+import { dropHeld, heldView, resetHeld, setHeld, takeForAutoSend } from './queue-hold.js';
+// "Auto-compact at" (Settings) and the other few settings the engine keeps (prefs.js).
+import { COMPACT_CHOICES, COMPACT_DEFAULT, compactSettings, loadPrefs, normalizeCompact, prefsFile, savePrefs } from './prefs.js';
 import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
 // Signing in on a fresh install (2026-10-10, see "signing in to Claude" below).
 import { liveLogin } from '../../src/auth.js';
@@ -194,8 +200,12 @@ const state = {
 // New panes start from these; the window can pass its own per pane.
 const defaults = { credential: glassCredential(), model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, mode: 'bypassPermissions' };
 
-/** paneId -> { id, runner, sessionId, credential, model, effort, mode, tools } */
+/** paneId -> { id, runner, sessionId, credential, model, effort, mode, tools, held (queued messages), heldSent, userStopped } */
 const panes = new Map();
+
+// Apaki's own settings (prefs.js). autoCompact reaches every Claude Code process started from now on (runner.flagSettings below).
+const PREFS_FILE = prefsFile();
+let prefs = loadPrefs(PREFS_FILE);
 
 /* ---------- artifacts and "open this" (apaki-tools.js) ---------- */
 
@@ -541,6 +551,8 @@ async function takeFrom(other, taker) {
   const r = other.runner;
   other.runner = null;
   other.busy = false;
+  // Interrupted for the takeover: what it had queued stays unsent, like after a Stop.
+  other.userStopped = true;
   if (r) {
     if (r.running) await r.interrupt();
     await r.stop();
@@ -630,6 +642,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     }
     info = await getSessionInfo(sessionId).catch(() => null);
   }
+  // Another conversation in this pane: what was queued for the old one, and a Stop on it, no longer apply.
+  if ((p.sessionId || null) !== (sessionId || null)) resetHeld(p);
   p.sessionId = sessionId || null;
   // Set once this pane's new conversation gets its session id (host.js restoreAsAttach).
   p.createdHere = false;
@@ -648,6 +662,9 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     disallowedTools: capOpts?.disallowedTools,
     allowedTools: capOpts?.allowedTools,
     envExtra: browserEnv(p),
+    // "Auto-compact at": passed to this process as its own setting (the SDK's `settings`, like claude --settings),
+    // read on every start so a change in Settings applies to conversations as they next start; no settings file is written.
+    flagSettings: () => compactSettings(prefs.autoCompact),
     model: p.model,
     effort: p.effort,
     permissionMode: p.mode,
@@ -755,7 +772,9 @@ async function attach(reqId, paneId, sessionId, cwd) {
   // busy: a message sent here is still running (its result event follows, which clears it in the window);
   // turn: any turn is running, also one Claude started by itself (the window picks that up from its next
   // message_start); running: its Claude Code process is up (a restored pane not started yet attaches too).
-  emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: paneTurnBusy(p), running: Boolean(p.runner.running), reqId, paneId: p.id, sessionId: p.sessionId, cwd: p.runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [] });
+  emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: paneTurnBusy(p), running: Boolean(p.runner.running), reqId, paneId: p.id, sessionId: p.sessionId, cwd: p.runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [],
+    // The queue as this engine holds it (queue-hold.js): what is still queued, and the ids it sent while no window was here.
+    ...heldView(p) });
   if (p.sessionId) await sendHistory(p, p.sessionId);
   for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: p.id, toolName: a.toolName, input: a.input });
   // Subagents and background tasks still running in this process, so the window's Tasks button and panel show them again.
@@ -827,7 +846,14 @@ const handlers = {
   attach: (c) => attach(c.reqId, c.paneId, c.sessionId || null, c.cwd || null),
   send: (c) => send(c.reqId, c.paneId, String(c.text || ''), Array.isArray(c.images) ? c.images : []),
   close: (c) => closePane(c.reqId, c.paneId),
-  interrupt: (c) => getPane(c.paneId).runner?.interrupt(),
+  // A Stop: the queue stays unsent after it (queue-hold.js), until the next message is sent.
+  interrupt: (c) => { const p = getPane(c.paneId); p.userStopped = true; return p.runner?.interrupt(); },
+  // The window's queued messages, kept here so they can go out with no window connected (queue-hold.js).
+  // Never for a phone pane: remote-policy.js does not let a phone send it, and phone queues stay window-side.
+  queueSet: (c) => {
+    const p = panes.get(String(c.paneId || ''));
+    if (p && !parsePhoneId(p.id)) setHeld(p, c.items);
+  },
   // The context meter on demand (the window asks when a pane comes into view or its meter is clicked).
   contextUsage: async (c) => {
     const p = panes.get(String(c.paneId || ''));
@@ -922,6 +948,15 @@ const handlers = {
     if (c.on === true || c.on === false) setWarm(c.on);
     emit({ ev: 'warmState', reqId: c.reqId, ...warmSummary() });
     refreshWarm();
+  },
+  // The Settings sheet's "Auto-compact at": the choice (read, or set with value), kept in ~/.claude/latch/apaki-settings.json.
+  // It reaches Claude Code processes as they next start; a conversation already running keeps what it began with.
+  autoCompact: (c) => {
+    if (c.value !== undefined) {
+      prefs = { ...prefs, autoCompact: normalizeCompact(c.value) };
+      savePrefs(PREFS_FILE, prefs);
+    }
+    emit({ ev: 'autoCompact', reqId: c.reqId, value: prefs.autoCompact, choices: COMPACT_CHOICES, standard: COMPACT_DEFAULT });
   },
   /* ---------- subagents, shells, monitors (tasks.js; the window's tasks panel and viewers) ---------- */
 
@@ -1090,6 +1125,7 @@ const handlers = {
     let n = 0;
     for (const p of panes.values()) {
       if (p.sessionId !== c.sessionId || !(p.runner?.turnRunning || p.runner?.turnActive)) continue;
+      p.userStopped = true;
       p.runner.interrupt();
       n += 1;
     }
@@ -1155,6 +1191,17 @@ const SERIAL_OPS = new Set(['open', 'attach', 'send', 'close', 'model', 'mode', 
 async function dispatch(c) {
   const h = handlers[c.op];
   if (!h) { emit({ ev: 'error', reqId: c.reqId, message: `unknown op ${c.op}` }); return; }
+  // A send or steer takes its queued messages out of this engine's copy at once, before it waits its turn in the
+  // pane's chain below: the copy must never still hold what a window is sending (queue-hold.js, no double send).
+  // `queued` only comes from the desktop window; remote-policy.js strips it from a phone's send.
+  if ((c.op === 'send' || c.op === 'steer') && c.paneId != null) {
+    const hp = panes.get(String(c.paneId));
+    if (hp) {
+      dropHeld(hp, c.op === 'steer' ? [c.qid] : c.queued);
+      // A new message after a Stop: the queue goes out after this turn again.
+      if (c.op === 'send') hp.userStopped = false;
+    }
+  }
   const run = async () => { try { await h(c); } catch (e) { emit({ ev: 'error', reqId: c.reqId, paneId: c.paneId, message: e.message || String(e) }); } };
   // A pane's opens, sends, closes and setting changes run one after another.
   // Without this, a message sent while the pane was still switching
@@ -1684,6 +1731,24 @@ function paneActivity(p, runner, msg) {
   if (p.runner && p.runner !== runner) return; // a runner this pane already replaced
   noteSdkMessage(p, msg, { q: runner.q || null });
   if (msg?.type === 'result') markAway(p, { busy: false, s: p.sessionId || null, away: { at: new Date().toISOString(), sessionId: p.sessionId || null } });
+  if (msg?.type === 'result' && !msg.parent_tool_use_id) turnEnded(p);
+}
+
+/**
+ * A pane's turn ended on its own (a result; a Stop is skipped inside
+ * takeForAutoSend). With NO window connected the engine owns the queue: it
+ * sends what the window had queued as the next message, joined as pane.js
+ * flushQueue joins it. With a window connected the window flushes and this
+ * does nothing (see queue-hold.js for the rule). The send goes through
+ * dispatch, so it waits in the pane's chain behind the send that just ended
+ * (its result event and p.busy = false come first) and emits the usual events.
+ */
+function turnEnded(p) {
+  const plan = takeForAutoSend(p, { windowConnected: !HOST_MODE || Boolean(host?.window), phone: Boolean(parsePhoneId(p.id)) });
+  if (!plan) return;
+  // The saved workspace: working again, and what was queued has gone out (a later window must not restore it).
+  markAway(p, { busy: true, queue: [] });
+  dispatch({ op: 'send', reqId: null, paneId: p.id, text: plan.text, images: plan.images, queued: plan.ids }).catch(() => {});
 }
 
 /** Patches a desktop pane's leaves in the saved workspace while no window is connected (host mode only). */

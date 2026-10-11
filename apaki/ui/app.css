@@ -1232,6 +1232,9 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .set-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 13px 0; border-top: 1px solid var(--hairline); }
 .set-row:first-of-type { border-top: 0; }
 .set-row.set-info { grid-template-columns: 1fr; }
+/* A row whose choice has long labels (Auto-compact at): the control sits under the text instead of squeezing it. */
+.set-row.set-stack { grid-template-columns: 1fr; gap: 10px; align-items: start; }
+.set-row.set-stack .seg { justify-self: start; }
 .set-t b { display: block; font: 760 13.5px/1.3 var(--font-display); font-stretch: 110%; color: var(--ink-deep); }
 .set-t small { display: block; margin-top: 3px; font-size: 12px; line-height: 1.45; color: var(--soft); }
 .set-index { font-family: var(--font-mono); font-size: 11.5px !important; }

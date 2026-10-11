@@ -9,9 +9,11 @@
  * dot. The search index line moved here too, with the footer keeping its
  * short form.
  *
- * initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm })
- * returns { handle(e), refresh() }; handle takes the engine's warmState event.
+ * initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm, compact })
+ * returns { handle(e), refresh() }; handle takes the engine's warmState and autoCompact events.
  * warm: false (the phone client) leaves keep-warm out: it is billing.
+ * compact: false (the phone client) leaves "Auto-compact at" out: it is the PC's, kept by
+ * the engine (apaki/engine/prefs.js) and passed to every Claude Code it starts.
  */
 
 import { esc } from './markdown.js';
@@ -22,8 +24,13 @@ function seg(name, options, value) {
   return `<div class="seg" role="radiogroup" data-seg="${name}">${options.map((o) => `<button role="radio" aria-checked="${o.value === value}" class="${o.value === value ? 'on' : ''}" data-v="${o.value}">${o.icon ? `<svg viewBox="0 0 16 16" aria-hidden="true">${o.icon}</svg>` : ''}${esc(o.label)}</button>`).join('')}</div>`;
 }
 
-export function initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm: showWarm = true }) {
+/** The choices of "Auto-compact at", in the order shown (the engine's COMPACT_CHOICES; 'default' leaves it to Claude Code). */
+const COMPACT_LABELS = [{ value: 200000, label: '200k' }, { value: 300000, label: '300k' }, { value: 500000, label: '500k' }, { value: 'default', label: 'Claude Code default' }];
+
+export function initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm: showWarm = true, compact: showCompact = true }) {
   let warm = null;
+  // The engine's answer to autoCompact: { value, choices, standard }; null until it arrives.
+  let compact = null;
   let root = null;
 
   function warmLine() {
@@ -52,6 +59,10 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
         <div class="set-t"><b>Keep cache warm</b><small>On API keys: a one-word request every 52 minutes keeps a conversation's prompt cache, so coming back reads it from cache instead of paying to write it again. ${esc(warmLine())}.</small>${ttl}${verdict}</div>
         ${seg('warm', [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }], warm?.on ? 'on' : 'off')}
       </section>` : ''}
+      ${showCompact ? `<section class="set-row set-stack">
+        <div class="set-t"><b>Auto-compact at</b><small>Claude Code summarizes a conversation once its context reaches this size. Left to Claude Code, a 1M-token window such as Opus's only compacts near 967k, and every call re-reads that whole history; a lower size costs less. Applies to conversations as they next start.</small></div>
+        ${seg('compact', COMPACT_LABELS, compact?.value ?? null)}
+      </section>` : ''}
       <section class="set-row set-info">
         <div class="set-t"><b>Search index</b><small class="set-index">${esc(indexText())}</small></div>
       </section>
@@ -73,6 +84,7 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
         if (which === 'theme') theme?.set?.(v);
         if (which === 'ding') sound.set(v === 'on');
         if (which === 'warm') { warm = { ...(warm || {}), on: v === 'on' }; send('warmState', { on: v === 'on' }); }
+        if (which === 'compact') { const value = v === 'default' ? 'default' : Number(v); compact = { ...(compact || {}), value }; send('autoCompact', { value }); }
         paint();
       };
     });
@@ -82,6 +94,7 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
   let close = null;
   function open() {
     if (showWarm) send('warmState');
+    if (showCompact) send('autoCompact');
     sheet('<div class="settings-host"></div>', (r, done) => {
       root = r.querySelector('.settings-host');
       close = () => { root = null; close = null; window.removeEventListener('keydown', onKey, true); done(); };
@@ -95,7 +108,10 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
 
   return {
     open,
-    handle(e) { if (e.ev === 'warmState') { warm = e; paint(); } },
+    handle(e) {
+      if (e.ev === 'warmState') { warm = e; paint(); }
+      if (e.ev === 'autoCompact') { compact = e; paint(); }
+    },
     refresh: paint,
   };
 }

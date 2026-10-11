@@ -57,3 +57,28 @@ test('Apaki extras: fresh MCP servers per start, appended prompt, merged hooks, 
   r.env = { B: '2' };
   assert.deepEqual(r.buildOptions().env, { B: '2', BROWSER: 'x.cmd' });
 });
+
+// "Auto-compact at" (Apaki, 2026-10-10): the engine's choice reaches Claude Code as its own settings, through the SDK's
+// `settings` option (claude --settings), never a settings file. Latch's own runner passes none and starts as before.
+test('flagSettings: passed as the SDK settings option, read again on every start, absent when there is none', () => {
+  assert.equal(new SessionRunner(base).buildOptions().settings, undefined, 'latch: no settings option');
+  let window = 300000;
+  const r = new SessionRunner({ ...base, flagSettings: () => (window ? { autoCompactWindow: window } : null) });
+  const o1 = r.buildOptions();
+  assert.deepEqual(o1.settings, { autoCompactWindow: 300000 });
+  // A changed preference reaches the next process, not the running one.
+  window = 500000;
+  assert.deepEqual(r.buildOptions().settings, { autoCompactWindow: 500000 });
+  assert.deepEqual(o1.settings, { autoCompactWindow: 300000 });
+  // Claude Code's default: the function returns null and no option is set.
+  window = 0;
+  assert.equal('settings' in r.buildOptions(), false);
+  // A plain object works too, and the runner's own copy is not handed out.
+  const fixed = { autoCompactWindow: 200000 };
+  const r2 = new SessionRunner({ ...base, flagSettings: fixed });
+  const o2 = r2.buildOptions();
+  assert.deepEqual(o2.settings, fixed);
+  assert.notEqual(o2.settings, fixed);
+  // The user, project and local settings still load as before: it is an extra layer, not a replacement.
+  assert.deepEqual(o2.settingSources, ['user', 'project', 'local']);
+});

@@ -117,6 +117,13 @@ export class SessionRunner {
    *                                   refused (Apaki's restricted phone panes, remote-policy.js)
    * @param {string[]} [o.allowedTools]     SDK allowedTools: tools allowed without asking (and, in
    *                                   a native build, Grep and Glob are only there when named)
+   * @param {object|Function} [o.flagSettings] Claude Code settings for the processes this runner
+   *                                   starts and nothing else: the SDK's `settings` option, the
+   *                                   same layer as `claude --settings`, so no settings file is
+   *                                   ever written. An object, or a function returning one (or
+   *                                   null) that is called on every start, so a changed
+   *                                   preference reaches the next process (Apaki's "Auto-compact
+   *                                   at", apaki/engine/prefs.js)
    */
   constructor(o) {
     Object.assign(this, { model: undefined, effort: undefined, permissionMode: undefined, onStderr: () => {} }, o);
@@ -164,6 +171,9 @@ export class SessionRunner {
       for (const [event, matchers] of Object.entries(this.hooks)) options.hooks[event] = [...matchers];
     }
     if (this.progressSummaries) options.agentProgressSummaries = true;
+    // Settings for this process only (see flagSettings above); user, project and local settings still load as before.
+    const flag = typeof this.flagSettings === 'function' ? this.flagSettings() : this.flagSettings;
+    if (flag && typeof flag === 'object' && Object.keys(flag).length) options.settings = { ...flag };
     if (this.sessionId) options.resume = this.sessionId;
     if (this.model) options.model = this.model;
     if (this.effort) options.effort = this.effort;

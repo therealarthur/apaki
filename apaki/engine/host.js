@@ -42,10 +42,13 @@
  *
  * What runs with no window connected:
  *   - Running turns finish naturally; their events go nowhere (phones still
- *     get their own panes' events). The engine has no message queue of its
- *     own (a pane's queue lives in the window), so nothing new is sent for a
- *     desktop pane until a window is back; ops the engine had already
- *     received run to the end as before.
+ *     get their own panes' events). Messages the window had queued behind a
+ *     turn go out on their own when it ends (2026-10-10): the window sends its
+ *     queue to the engine whenever it changes (queueSet), and with no window
+ *     connected the engine owns it and sends it as the next message, unless
+ *     the turn was stopped by the user. The ownership rule is in
+ *     queue-hold.js. Phone queues stay window-side. Ops the engine had
+ *     already received run to the end as before.
  *   - Questions (AskUserQuestion, plan approval) wait, as they always did, for
  *     up to a week; a window that comes back is asked again, and a phone gets
  *     the questions of its own panes.
@@ -539,8 +542,8 @@ export function restoreAsAttach(c, p) {
 /* ---------- the saved workspace, for turns that ended with no window ---------- */
 
 /**
- * The window's saved workspace with one pane's leaves patched (busy false, the
- * session id it made), and savedAt moved forward by 1 ms so this copy wins
+ * The window's saved workspace with one pane's leaves patched (busy, the
+ * session id it made, the queue still unsent), and savedAt moved forward by 1 ms so this copy wins
  * over the window's localStorage copy of the same save. Never replaces a
  * different session a leaf already holds. Null when no leaf matched.
  */
@@ -555,6 +558,8 @@ export function patchWorkspaceLeaves(ws, paneId, patch = {}) {
       if ('busy' in patch) next.busy = Boolean(patch.busy);
       if (patch.s && (!node.s || node.s === patch.s)) next.s = patch.s;
       if (patch.away) next.away = patch.away;
+      // The queued messages still unsent (the engine sent the rest while no window was connected: queue-hold.js).
+      if (Array.isArray(patch.queue)) next.queue = patch.queue.filter((q) => q && q.text).map((q) => ({ id: q.id, text: q.text }));
       hit = true;
       return next;
     }

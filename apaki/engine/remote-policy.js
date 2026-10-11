@@ -53,6 +53,9 @@ export const PHONE_OPS = Object.freeze([
   'artifactGet',
   // 2026-10-10: steering a queued message into the running turn (same power as send), and the context meter.
   'steer', 'contextUsage',
+  // Not here on purpose (2026-10-10): queueSet and autoCompact. A phone's queue stays in the phone's own pane, so the engine never
+  // sends one for a phone (queue-hold.js), and "Auto-compact at" is the PC's setting. A phone's send also never carries `queued`
+  // (the cases below keep only the fields each op uses).
   // 2026-10-10 (history.js): read only, the rest of a conversation open in one of this phone's panes:
   // earlier pages, and one cut tool result, thinking block, summary or image in full.
   'historyBefore', 'historyBlock',
