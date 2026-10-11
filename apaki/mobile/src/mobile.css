@@ -1,0 +1,35 @@
+/*
+ * mobile.css: the Apaki app's few additions over the phone web client's
+ * web.css (apaki/mobile, 2026-10-10). Loaded after web.css, only in the app
+ * (body.app, set by native-shell.js).
+ *
+ * - The shell does not rubber-band: the WebView itself does not scroll
+ *   (capacitor.config.json ios.scrollEnabled false) and nothing overscrolls
+ *   past the page; lists inside still scroll and bounce like native lists.
+ * - Chrome is not selectable and has no long-press callout; what people
+ *   read or write (messages, code, the message box, inputs) still is.
+ * - With the keyboard up the composer sits right on it: the home-indicator
+ *   padding below it goes (the WebView already ends at the keyboard).
+ */
+
+html, body.app { overscroll-behavior: none; }
+
+body.app {
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.app :is(.turn-user, .turn-assistant, .tool, pre, code, .diff, .note, .pair-code, textarea, input, [contenteditable="true"]) {
+  -webkit-user-select: text; user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Links and images in chrome do not open the system preview on a long press. */
+body.app :is(button, nav, .ios-nav, .rail, .sessions, .pane-bar, .tabs) :is(a, img, svg) { -webkit-touch-callout: none; }
+
+body.app.kb-open.web.native .composer-wrap { padding-bottom: 6px; }
+body.app.kb-open.web .composer-wrap { padding-bottom: 8px; }
+
+/* The page's own camera preview is never used in the app: the native scanner covers the screen. */
+body.app .pair-video[hidden] { display: none; }

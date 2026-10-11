@@ -1,0 +1,31 @@
+{
+  "name": "apaki-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Myrlin Apaki for iOS and Android: Apaki's own phone UI bundled into a Capacitor app, with pairings in the Keychain, the device key in the Secure Enclave, native QR scanning and passkeys.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-app.mjs",
+    "build:demo": "node scripts/build-app.mjs --demo",
+    "sync": "node scripts/build-app.mjs && cap sync",
+    "sync:demo": "node scripts/build-app.mjs --demo && cap sync",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/haptics": "8.0.2",
+    "@capacitor/ios": "8.5.3",
+    "@capacitor/keyboard": "8.0.6",
+    "@capacitor/network": "8.0.1",
+    "@capacitor/splash-screen": "8.0.2",
+    "@capacitor/status-bar": "8.0.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3"
+  }
+}

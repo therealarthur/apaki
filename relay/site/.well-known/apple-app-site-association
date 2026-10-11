@@ -1,0 +1,16 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMIDXXXX.io.myrlin.apaki"],
+        "components": [
+          { "/": "/v/*", "#": "p=*", "comment": "A pairing link from Apaki on a PC (the QR): opens the pairing in the app" },
+          { "/": "/", "#": "p=*", "comment": "Pairing links from before versioned pages" }
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": ["TEAMIDXXXX.io.myrlin.apaki"]
+  }
+}

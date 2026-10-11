@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Apaki keeps its pairings sealed with Android Keystore keys that never leave this phone
+     (ApakiKeysPlugin.java), so a backup or a transfer to another phone could not open them:
+     nothing of the app is backed up or transferred. Pair the new phone with a new code.
+     apaki/mobile, 2026-10-10. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Apaki app entitlements (apaki/mobile, 2026-10-10).
+  Associated Domains: webcredentials lets the app use passkeys for apaki.myrlin.io (the Apaki account),
+  applinks opens pairing links (https://apaki.myrlin.io/v/<version>/#p=...) in the app.
+  Both need the site to serve /.well-known/apple-app-site-association naming this app
+  (relay/site/.well-known/, see apaki/mobile/README.md) and the App ID to have Associated Domains on.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>webcredentials:apaki.myrlin.io</string>
+		<string>applinks:apaki.myrlin.io</string>
+	</array>
+</dict>
+</plist>

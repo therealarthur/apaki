@@ -232,6 +232,12 @@ Phone (IndexedDB): the device identity `{ privateKey, publicKey, pub }` as
 CryptoKey objects, and the pairing record
 `{ v, roomId, relay, pcPub, pcName, deviceId, psk, pairedAt }`.
 
+Phone, in the iOS app (apaki/mobile, since 2026-10-10): the same pairing
+record, in the Keychain (after first unlock, this device only), and the
+device identity as a Secure Enclave key the app only asks to sign:
+`PhoneSession` takes a device `{ pub, sign(bytes) }` whose `sign` returns the
+64-byte P1363 signature (protocol.js `deviceSign`). See apaki/mobile/README.md.
+
 ## Inside the channel (wire.js, since part 2)
 
 The records carry JSON messages that make the phone a remote window of the

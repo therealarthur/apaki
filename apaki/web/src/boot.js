@@ -579,7 +579,8 @@ async function pair(offer) {
   S.sas = null;
   S.pc = null;
   pairingScreen(offer.name || 'your PC');
-  const device = await createDeviceIdentity();
+  // In the iOS app (apaki/mobile) the store makes the device key in the Secure Enclave; a browser makes a WebCrypto one.
+  const device = await (store.newDevice ? store.newDevice() : createDeviceIdentity());
   S.link = new Link({ device, offer, name: await deviceName(), on: linkHandlers() });
   installShim(S.link);
   S.link.start();
@@ -615,7 +616,7 @@ async function deviceName() {
   const ua = navigator.userAgent || '';
   let model = '';
   try { model = String((await navigator.userAgentData?.getHighEntropyValues?.(['model']))?.model || '').trim(); } catch { /* not offered */ }
-  const browser = /EdgA?\//.test(ua) ? 'Edge' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'browser';
+  const browser = /ApakiApp\//.test(ua) ? 'Apaki app' : /EdgA?\//.test(ua) ? 'Edge' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'browser';
   const device = model || (/iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android phone' : 'Phone');
   return `${device} (${browser})`.slice(0, 60);
 }
@@ -742,7 +743,8 @@ async function main() {
 }
 
 // For apaki/scripts/cdp-remote.mjs: the connection's state, and a way to drop it (it reconnects by itself).
-window.__apakiLink = { state: () => S.link?.state || null, pcName: () => S.link?.pcName || null, drop: () => S.link?.restart() };
+// wake (2026-10-10): the iOS app (apaki/mobile) reconnects at once when it comes back to the foreground.
+window.__apakiLink = { state: () => S.link?.state || null, pcName: () => S.link?.pcName || null, drop: () => S.link?.restart(), wake: () => S.link?.wake() };
 
 main().catch(async (e) => {
   console.error(e);

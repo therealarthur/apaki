@@ -11,3 +11,13 @@
   Referrer-Policy: no-referrer
   X-Frame-Options: DENY
   Cross-Origin-Opener-Policy: same-origin
+
+# The iOS and Android apps' association files (apaki/mobile, 2026-10-10): JSON with no
+# extension for Apple, served as it is (no redirect), refreshed by Apple's CDN about daily.
+/.well-known/apple-app-site-association
+  Content-Type: application/json
+  Cache-Control: public, max-age=3600
+
+/.well-known/assetlinks.json
+  Content-Type: application/json
+  Cache-Control: public, max-age=3600

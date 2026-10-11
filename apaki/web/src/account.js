@@ -32,6 +32,11 @@ const subtle = globalThis.crypto.subtle;
 const utf8 = new TextEncoder();
 const API = '/v1/account';
 const CREATE_TIMEOUT_MS = 120_000;
+// In the iOS app (apaki/mobile) the Keychain keeps the account, so its keys must be exportable there; the
+// app's page is its own bundled copy, which no server can change. In a browser they stay non-extractable.
+const KEEP_KEYS = Boolean(globalThis.apakiApp?.keysInKeychain);
+// The site whose API this page uses: its own origin on the web, apaki.myrlin.io in the app.
+const SITE_HOST = globalThis.apakiApp?.siteHost || location.host;
 
 /** An account step that did not work: code is the server's, or a WebAuthn one (cancelled, no-prf, ...). */
 export class AccountError extends Error {
@@ -51,7 +56,7 @@ async function hkdf(ikm, salt, info, len = 32) {
   return new Uint8Array(await subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info: utf8.encode(info) }, key, len * 8));
 }
 
-const aesKey = (raw, usages = ['encrypt', 'decrypt']) => subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, usages);
+const aesKey = (raw, usages = ['encrypt', 'decrypt']) => subtle.importKey('raw', raw, { name: 'AES-GCM' }, KEEP_KEYS, usages);
 
 async function seal(key, aad, bytes) {
   const iv = randomBytes(12);
@@ -82,7 +87,7 @@ async function kekFor(prf, accountId) {
 /** The account device as non-extractable keys (what this phone keeps), from the vault's exported identity. */
 async function importDevice(saved) {
   const { kty, crv, x, y, d } = saved.jwk;
-  const privateKey = await subtle.importKey('jwk', { kty, crv, x, y, d }, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const privateKey = await subtle.importKey('jwk', { kty, crv, x, y, d }, { name: 'ECDSA', namedCurve: 'P-256' }, KEEP_KEYS, ['sign']);
   return { privateKey, pub: b64urlDecode(saved.pub) };
 }
 
@@ -407,7 +412,7 @@ export async function unlink(roomId, lnk = null) {
 /** Whether a PC is connected to the relay right now (only for a relay on this page's own address); null when unknown. */
 export async function presence(pc) {
   try {
-    if (new URL(pc.relay).host !== location.host) return null;
+    if (new URL(pc.relay).host !== SITE_HOST) return null;
     const res = await fetch(`/v1/rooms/${encodeURIComponent(pc.roomId)}/presence`, { cache: 'no-store', credentials: 'omit' });
     if (!res.ok) return null;
     return Boolean((await res.json()).pc);

@@ -270,6 +270,20 @@ async function sign(privateKey, label, th) {
   return new Uint8Array(await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, concat(label, th)));
 }
 
+/**
+ * A phone's device signature: with its WebCrypto key, or (since 2026-10-10)
+ * through the identity's own sign(bytes) when the key lives outside
+ * WebCrypto, as in the iOS app, where it is a non-exportable key in the
+ * Secure Enclave (apaki/mobile). Either way the result must be ECDSA P-256 /
+ * SHA-256 over label || th in P1363 form (64 bytes), like sign() above.
+ */
+async function deviceSign(device, label, th) {
+  if (typeof device.sign !== 'function') return sign(device.privateKey, label, th);
+  const sig = new Uint8Array(await device.sign(concat(label, th)));
+  if (sig.length !== SIG_LEN) throw new ProtocolError('internal', `the device key gave a ${sig.length}-byte signature, not ${SIG_LEN}`);
+  return sig;
+}
+
 async function verifySig(pubRaw, sig, label, th) {
   const key = await importVerifyKey(pubRaw);
   return subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, sig, concat(label, th));
@@ -1007,7 +1021,7 @@ export class PcSession extends BaseSession {
  * first frame; feed every frame from the PC to receive().
  *
  * @param {object} o
- * @param {{privateKey: CryptoKey, pub: Uint8Array}} o.device  this phone's device identity
+ * @param {{privateKey?: CryptoKey, sign?: (bytes: Uint8Array) => Promise<Uint8Array>, pub: Uint8Array}} o.device  this phone's device identity (a WebCrypto key, or a signer such as the iOS Secure Enclave)
  * @param {object} [o.offer]  from parsePairingUrl (pairing)
  * @param {object} [o.pairing]  the record saved after pairing (reconnect)
  * @param {string} [o.name]  this device's name, shown on the PC during pairing
@@ -1016,7 +1030,8 @@ export class PcSession extends BaseSession {
 export class PhoneSession extends BaseSession {
   constructor({ device, offer = null, pairing = null, name = '', now }) {
     super(now);
-    if (!device?.privateKey || !device?.pub) throw new Error('PhoneSession needs a device identity');
+    // A device signs with its WebCrypto privateKey, or through its own sign(bytes) (deviceSign).
+    if ((!device?.privateKey && typeof device?.sign !== 'function') || !device?.pub) throw new Error('PhoneSession needs a device identity');
     if (!offer === !pairing) throw new Error('PhoneSession needs either an offer (pairing) or a pairing (reconnect)');
     this.device = device;
     this.offer = offer;
@@ -1095,7 +1110,7 @@ export class PhoneSession extends BaseSession {
     if (!(await verifySig(this.pcPub, sigPc, L.pairSigPc, th2))) throw new ProtocolError('bad-signature', 'the PC signature is invalid (not the PC in the QR)');
     const sas = await computeSas(th2, hs.nPhone);
     const th3 = await sha256(th2, frame, hs.nPhone, this.device.pub, this.nameRaw);
-    const sigPhone = await sign(this.device.privateKey, L.pairSigPhone, th3);
+    const sigPhone = await deviceSign(this.device, L.pairSigPhone, th3);
     const pt3 = concat(hs.nPhone, this.device.pub, sigPhone, new Uint8Array([this.nameRaw.length]), this.nameRaw);
     const frame3 = concat(new Uint8Array([FRAME.PAIR3]), await hsSeal(khPhone, new Uint8Array([FRAME.PAIR3]), pt3));
     const thFinal = await sha256(th3, sigPhone);
@@ -1145,7 +1160,7 @@ export class PhoneSession extends BaseSession {
     const sigPc = await hsOpen(khPc, header, frame.subarray(header.length));
     if (!(await verifySig(this.pcPub, sigPc, L.helloSigPc, th2))) throw new ProtocolError('bad-signature', 'the PC signature is invalid');
     const th3 = await sha256(th2, frame);
-    const sigPhone = await sign(this.device.privateKey, L.helloSigPhone, th3);
+    const sigPhone = await deviceSign(this.device, L.helloSigPhone, th3);
     const frame3 = concat(new Uint8Array([FRAME.HELLO3]), await hsSeal(khPhone, new Uint8Array([FRAME.HELLO3]), sigPhone));
     this.channel = await deriveChannel(ikm, await sha256(th3, sigPhone), 'hello', 'phone');
     wipe(dh, ikm, khPc, khPhone, hs.psk);
