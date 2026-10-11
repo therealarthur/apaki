@@ -511,7 +511,8 @@ function closePane(p, { confirmBusy = true } = {}) {
   if (confirmBusy && p.busy && !window.confirm(`"${p.title}" is still working. Stop it and close the pane?`)) return;
   const t = tabOf(p);
   if (rec?.pane === p) stopVoice(true);
-  if (!p.isViewer) send('close', { paneId: p.id });
+  // A phone pane that follows a desktop pane (followDesktop, below) stops following; it never closes the desktop's.
+  if (!p.isViewer) send(p.following ? 'unfollow' : 'close', { paneId: p.id });
   S.panes.delete(p.id);
   p.destroy();
   if (p.isViewer) { viewerClosed(p); refreshArtifactButtons(); }
@@ -527,7 +528,7 @@ function closePane(p, { confirmBusy = true } = {}) {
 function closeTab(t, { confirmBusy = true } = {}) {
   const panes = L.ids(t.root).map((id) => S.panes.get(id)).filter(Boolean);
   if (confirmBusy && panes.some((p) => p.busy) && !window.confirm('A pane in this tab is still working. Stop it and close the tab?')) return;
-  for (const p of panes) { if (!p.isViewer) send('close', { paneId: p.id }); S.panes.delete(p.id); p.destroy(); }
+  for (const p of panes) { if (!p.isViewer) send(p.following ? 'unfollow' : 'close', { paneId: p.id }); S.panes.delete(p.id); p.destroy(); }
   for (const p of panes) if (p.isViewer) viewerClosed(p);
   refreshArtifactButtons();
   const i = S.tabs.indexOf(t);
@@ -537,6 +538,45 @@ function closeTab(t, { confirmBusy = true } = {}) {
   if (S.active === t.id) switchTab(S.tabs[Math.max(0, i - 1)]);
   renderTabs();
   save();
+}
+
+/**
+ * The phone follows a desktop pane (2026-10-11, apaki/web/src/desktop.js; the engine op follow, planned on the PC side,
+ * used only when the PC lists 'follow' in hello): a pane of the phone's own that shows that desktop pane's
+ * conversation live, without taking it over. Followed already: shown. Otherwise a new page next to the focused one in
+ * the tab in front (a new tab past six panes). viewOnly (the phone's access is No shell or Chat only): the composer
+ * gives way to a quiet "View only" line. Closing it sends unfollow (closePane). It is not saved as a session of its own
+ * (snapshot), so the phone never reopens, and so takes over, a followed conversation on its next start. Phone only.
+ */
+function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
+  if (!desktopPaneId) return null;
+  const have = [...S.panes.values()].find((x) => x.following === desktopPaneId);
+  if (have) { focusPane(have, { scroll: false }); return have; }
+  const t = activeTab();
+  const base = focusedPane();
+  const p = createPane({ cwd: '', model: base?.model, effort: base?.effort, mode: base?.mode });
+  p.following = desktopPaneId;
+  p.el.classList.add('following');
+  if (viewOnly) {
+    p.el.classList.add('view-only');
+    p.$.wrap?.append(el('div', 'view-only-note', '<b>View only</b><span>This phone follows the pane on the PC. Its access there lets it read, not send.</span>'));
+  }
+  if (title) p.setTitle(title);
+  if (!t || !t.root || L.count(t.root) >= L.MAX_PANES) {
+    const nt = createTab(L.leaf(p.id));
+    layout(nt);
+    switchTab(nt);
+  } else {
+    const anchor = t.focused && L.has(t.root, t.focused) ? t.focused : L.ids(t.root)[0];
+    t.root = L.insert(t.root, anchor, p.id, 'right');
+    t.focused = p.id;
+    layout(t);
+  }
+  send('follow', { paneId: p.id, desktopPaneId });
+  focusPane(p, { scroll: false });
+  renderTabs();
+  save();
+  return p;
 }
 
 function newConversation(p) {
@@ -1986,7 +2026,8 @@ function snapshot() {
       if (p?.isViewer) return { type: 'leaf', pane: lf.pane, view: p.saved() };
       const g = p?.$?.ground;
       return {
-        type: 'leaf', pane: lf.pane, s: p?.sessionId || null, cwd: p?.cwd || '', title: p?.title || '', model: p?.model, effort: p?.effort, mode: p?.mode,
+        // A pane following a desktop pane (followDesktop) is kept as an empty one: reopening its session would take it over.
+        type: 'leaf', pane: lf.pane, s: (!p?.following && p?.sessionId) || null, cwd: p?.cwd || '', title: p?.following ? '' : p?.title || '', model: p?.model, effort: p?.effort, mode: p?.mode,
         draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ id: q.id, text: q.text })),
         scroll: g ? { atEnd: g.scrollHeight - g.scrollTop - g.clientHeight < 40, top: Math.round(g.scrollTop) } : null,
         busy: Boolean(p?.busy), pendingName: p?.pendingName || null,
@@ -2381,5 +2422,6 @@ $('refreshSessions').onclick = () => {
 
 // For apaki/scripts/cdp-check.mjs: the live state, read only.
 // 2026-10-11: focusPane and openFromRail for the phone (apaki/web/src/pager.js focuses the pane a swipe settles on;
-// desktop.js opens a conversation from "On your desktop" the way a tap in the session list does). The window never calls them.
-window.__apaki = { S, L, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };
+// desktop.js opens a conversation from "On your desktop" the way a tap in the session list does, or follows the desktop
+// pane with followDesktop when the PC offers 'follow'). The window never calls them.
+window.__apaki = { S, L, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, followDesktop, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };

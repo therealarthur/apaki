@@ -10,6 +10,11 @@
  *   read or write (messages, code, the message box, inputs) still is.
  * - With the keyboard up the composer sits right on it: the home-indicator
  *   padding below it goes (the WebView already ends at the keyboard).
+ *   2026-10-11: on iOS the WebView no longer ends at the keyboard (Keyboard
+ *   resize "none", native-shell.js keyboard()); the page moves its layout up
+ *   by --kb less the home-indicator inset (web.css --kb-lift) and sets
+ *   kb-inset, so the composer keeps its padding there and these rules only
+ *   apply where the WebView itself shrinks (Android).
  */
 
 html, body.app { overscroll-behavior: none; }
@@ -28,8 +33,8 @@ body.app :is(.turn-user, .turn-assistant, .tool, pre, code, .diff, .note, .pair-
 /* Links and images in chrome do not open the system preview on a long press. */
 body.app :is(button, nav, .ios-nav, .rail, .sessions, .pane-bar, .tabs) :is(a, img, svg) { -webkit-touch-callout: none; }
 
-body.app.kb-open.web.native .composer-wrap { padding-bottom: 6px; }
-body.app.kb-open.web .composer-wrap { padding-bottom: 8px; }
+body.app.kb-open:not(.kb-inset).web.native .composer-wrap { padding-bottom: 6px; }
+body.app.kb-open:not(.kb-inset).web .composer-wrap { padding-bottom: 8px; }
 
 /* The page's own camera preview is never used in the app: the native scanner covers the screen. */
 body.app .pair-video[hidden] { display: none; }

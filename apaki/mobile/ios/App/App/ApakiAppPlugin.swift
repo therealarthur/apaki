@@ -11,6 +11,12 @@
 //   setBackground({ color: "#rrggbb" })
 //     the WebView and its window behind the page follow Apaki's theme, so
 //     no light edge shows under a dark page while the keyboard moves.
+//     2026-10-11: the UIWindow too. The bridge controller's view IS the
+//     WebView, so the old "view behind the page" was the page itself and the
+//     window behind it stayed black: that black showed beside the keyboard's
+//     rounded corners while Keyboard resize was "native" (Arthur's "black
+//     triangles"). Resize is "none" now (src/native-shell.js keyboard());
+//     this is the backstop for anything that ever shows behind the WebView.
 
 import Capacitor
 import CryptoKit
@@ -55,6 +61,7 @@ public class ApakiAppPlugin: CAPPlugin, CAPBridgedPlugin {
             self.bridge?.webView?.backgroundColor = color
             self.bridge?.webView?.scrollView.backgroundColor = color
             self.bridge?.viewController?.view.backgroundColor = color
+            self.bridge?.viewController?.view.window?.backgroundColor = color
             call.resolve()
         }
     }

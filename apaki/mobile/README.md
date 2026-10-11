@@ -39,7 +39,7 @@ apaki/mobile/
     scan-native.js     scan.js for the app: the native camera scanner (ApakiScanner)
     codec.js           pure helpers (records <-> JSON, links, allowlists), tested in Node
     cap.js             the Capacitor plugin handles
-    mobile.css         no rubber band, no selectable chrome, the composer on the keyboard
+    mobile.css         no rubber band, no selectable chrome, the composer on the keyboard (Android; iOS uses --kb, below)
     demo/              the pretend PC (debug demo builds only)
   scripts/
     build-app.mjs      builds www/ from apaki/scripts/build-web.mjs plus src/
@@ -327,9 +327,32 @@ in `apaki/engine/remote.js`. Android would use FCM data messages the same way.
 To check first: that a Worker's `fetch` reaches APNs over HTTP/2 (otherwise a
 tiny forwarder elsewhere sends the request).
 
+## The keyboard (2026-10-11)
+
+Arthur, on a real iPhone: "when the keypad opens up around the rounded corners
+of the keypad theres some black triangles before the apps background starts".
+With Keyboard `resize: "native"` the plugin cut the WebView off at the
+keyboard's top edge (a straight line, and only after the keyboard animation
+plus 0.2 s: `Keyboard.m _updateFrame`), so beside the keyboard's rounded top
+corners the UIWindow behind the WebView showed, and a UIWindow is black (the
+bridge controller's view is the WebView itself, so the old "view behind the
+page" colour moved with it).
+
+Now `resize` is `"none"` (iOS only; Android keeps its own resizing): the
+WebView stays full screen and the keyboard slides over the page. On
+keyboardWillShow `native-shell.js` sets `--kb` (the keyboard's height, less
+anything the visual viewport already gave up: `codec.js kbInset`) and the
+`kb-inset` class; web.css moves the conversation, the list's footer, menus,
+sheets and the PC screen up by it in 250 ms on the iOS curve, keeps the open
+conversation at its distance from the end, and scrolls a field in a sheet
+into view. The window behind the WebView takes the theme's ground too
+(`ApakiApp.setBackground` and `SceneDelegate`), and the keyboard follows
+Apaki's light or dark theme (`Keyboard.setStyle`). A rebuild of the app
+(`npm run sync`) is needed for the config and Swift changes.
+
 ## Not tested yet
 
-- **On a real iPhone**: the Secure Enclave path (the Simulator has none; the same code path with a Keychain key was tested end to end), the camera scanner (the Simulator has no camera), haptics, the keyboard pushing the composer.
+- **On a real iPhone**: the Secure Enclave path (the Simulator has none; the same code path with a Keychain key was tested end to end), the camera scanner (the Simulator has no camera), haptics, the keyboard (2026-10-11: resize none and `--kb` were checked in a desktop browser with the plugin's events fired by hand and a drawn keyboard, not on iOS: the 250 ms timing against iOS 26's keyboard and WebKit leaving the visual viewport alone are the two things to look at on the phone).
 - **Passkeys and Universal Links**: need the Team ID in the AASA file, the relay deployed and a signed build. The PRF salt is passed as WebAuthn's `eval.first`; Apple documents the native type as the WebAuthn values' counterpart, so a passkey made in Safari should open the same vault in the app. Check once on a device: sign in in Safari, then in the app, with the same passkey.
 - **Android**: the Apaki plugins are written and compile-checked but the app is not built or run; accounts are not in the Android app yet (above).
 

@@ -31,6 +31,19 @@ Track B part 2, 2026-10-09 (Claude Code, Opus 5.5, for Arthur).
   and Edge on Android); everywhere else the camera app opens the link.
 - `src/web.css`: the phone layout over Apaki's `app.css` (drawer, tap
   targets, safe areas, one pane).
+- `src/pager.js` (2026-10-11): the conversation screen as tabs and pages. One
+  bar says what the visible pane is (title, "2 of 3", its folder, its own
+  buttons mirrored), a strip under it holds this phone's tabs (named by each
+  tab's focused pane, the current one raised, a working one with Apaki's live
+  grid and a brand-coloured name), and the tab's panes sit side by side as
+  pages: native horizontal scrolling with snap, a thin segmented bar for the
+  position. Settling on a page focuses that pane in app.js; app.js focusing a
+  pane scrolls to it. The left screen edge (20 px) stays the swipe back to the
+  list. app.js stays the source of truth (its hidden tab bar is mirrored).
+- `src/desktop.js` (2026-10-11): "On your desktop" at the top of the list: the
+  desktop window's tabs and panes (the engine's `desktopTabs` event, which
+  `shim.js onDesktopTabs` keeps), the tab in front first; a conversation opens
+  here the way a tap in the session list does, other panes are quiet rows.
 - `src/shell.html`: the pairing card, the reconnect line and the drawer scrim,
   put into Apaki's `index.html` by the build.
 - `src/sw.js`, `src/manifest.webmanifest`, `icons/`: the installable PWA.
@@ -79,6 +92,23 @@ Contract: `apaki/remote/ENROLL.md` (version 2). Tests:
   (one visit, `sessionStorage`), or has the PC list open.
 - If the phone key cannot be made (storage failing), the page works as before:
   the older via, no enroll, nothing held.
+
+## The keyboard, the prompt card and the transcript (2026-10-11)
+
+Arthur tested the iOS app: black triangles beside the keyboard's rounded
+corners, the end of a conversation hidden behind the prompt card, and a
+frosted bar behind that card. Now:
+
+- The transcript ends above the prompt card (`--composer-h`, set by pane.js,
+  as on the desktop); web.css had a fixed 20 px there.
+- The card floats on the grid and pearl with no bar under it; the
+  conversation fades out just above it (a mask on its scroller).
+- In the iOS app the WebView stays full screen while the keyboard is up
+  (`apaki/mobile/capacitor.config.json` Keyboard resize `none`) and the page
+  moves its own layout up by the keyboard's height, `--kb`, set by
+  `apaki/mobile/src/native-shell.js` on keyboardWillShow, so the composer
+  rides up with the keyboard and the keyboard's corners show the page. In a
+  browser `--kb` stays 0 and `--vvh` (boot.js) does the job, as before.
 
 ## Build, try locally, deploy
 

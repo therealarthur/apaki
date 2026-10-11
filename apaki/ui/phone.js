@@ -37,6 +37,15 @@
  *
  * Connected is shown by the phone glyph's screen lighting up and by the
  * words "Connected now", never by a dot in a pill.
+ *
+ * Layout (2026-10-11 polish, Arthur: make the pairing view simpler): what
+ * needs an answer comes first (an account to add, a phone waiting in Private,
+ * a phone at the code), then the "New phone connected" lines, then the QR
+ * code; the options (Connected or Private, the access and lifetime new phones
+ * start with, the relay and the page check) fold into one line under it, and
+ * the access and lifetime of a phone at Allow fold into one line in its card.
+ * Under each Apaki account its phones are rows of their own, with Block,
+ * Allow and Forget sized by how often each is the right answer.
  */
 
 import qrcode from './vendor/qrcode.js';
@@ -114,6 +123,17 @@ function lifeSeg(on, k, id = '', days = LIFETIMES) {
   return `<div class="seg ph-life" role="radiogroup" aria-label="How long it stays paired">${opt('', 'Forever')}${days.map((d) => opt(String(d), `${d} day${d === 1 ? '' : 's'}`)).join('')}</div>`;
 }
 
+/** "Full access, paired for good" for a fold's one line (2026-10-11). */
+function choiceLine(cap, life) {
+  const access = cap === 'full' ? 'Full access' : `${CAP_LABEL[cap] || cap}`;
+  return `${access}, ${life ? `paired for ${life} day${String(life) === '1' ? '' : 's'}` : 'paired for good'}`;
+}
+
+/** A fold: one line that says what is chosen, the choices under it (Apaki's details, opened by a click). */
+function fold(k, open, line, body, cls = '') {
+  return `<details class="ph-fold${cls ? ` ${cls}` : ''}" data-fold="${k}"${open ? ' open' : ''}><summary><span class="ph-fold-t">${line}</span><span class="ph-fold-go">${open ? 'Done' : 'Change'}</span></summary><div class="ph-fold-b">${body}</div></details>`;
+}
+
 /** What each phone key's state says on its row (ENROLL.md). */
 const PHONE_STATE = { enrolled: 'Added in person', allowed: 'Allowed', auto: 'Let in by itself', pending: 'Waiting for you', blocked: 'Blocked' };
 
@@ -153,6 +173,10 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
   let linkCap = null;
   let linkLife = '';
   let toPrivate = false;
+  // 2026-10-11: which folds are open (they survive the re-render every status brings).
+  let optsOpen = false;
+  let reqOptsOpen = false;
+  let linkOptsOpen = false;
   const days = () => (Array.isArray(st?.lifetimes) && st.lifetimes.length ? st.lifetimes : LIFETIMES);
 
   function renderButton() {
@@ -191,8 +215,8 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
         <div class="ph-step"><b>${esc(st.request.name || 'A phone')}</b> wants to connect</div>
         <div class="ph-code" aria-label="Code ${esc(code.split('').join(' '))}"><span>${esc(code.slice(0, 3))}</span><span>${esc(code.slice(3))}</span></div>
         <p>Allow it only if your phone shows the same code. ${CAP_TEXT[cap] || CAP_TEXT.full}</p>
-        <div class="ph-life-row"><span>It may</span>${capSeg(cap, 'cap-pick')}</div>
-        <div class="ph-life-row"><span>Stays paired</span>${lifeSeg(life, 'life-pick', '', days())}</div>
+        ${fold('req', reqOptsOpen, esc(choiceLine(cap, life)), `<div class="ph-life-row"><span>It may</span>${capSeg(cap, 'cap-pick')}</div>
+        <div class="ph-life-row"><span>Stays paired</span>${lifeSeg(life, 'life-pick', '', days())}</div>`)}
         <div class="ph-actions"><button data-k="deny">Deny</button><button class="primary" data-k="allow">Allow</button></div>
       </div>`;
     }
@@ -203,7 +227,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
         <div class="ph-qr">${qrSvg(p.url)}</div>
         <div class="ph-qr-side">
           <div class="ph-step">Scan with your phone's camera</div>
-          <p>It opens Apaki in the phone's browser and asks this PC to connect. You confirm a code here next.</p>
+          <p>It opens Apaki on the phone and asks this PC to connect. Then you check a code here and allow it.</p>
           <div class="ph-count"><span class="mono">${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</span> left · works once</div>
           ${p.unchecked ? '<p class="ph-warn">Not checked: you chose to pair without checking the phone page.</p>' : ''}
           <div class="ph-actions"><button data-k="cancelpair">Cancel</button><button data-k="newcode">New code</button></div>
@@ -218,14 +242,15 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
   function phonesList(d) {
     const phones = d.phones || [];
     if (!phones.length) return '';
-    const btn = (k, label, p) => `<button type="button" data-k="${k}" data-acct="${esc(d.id)}" data-phone="${esc(p.id)}">${label}</button>`;
+    const btn = (k, label, p, cls = '') => `<button type="button" class="${cls}" data-k="${k}" data-acct="${esc(d.id)}" data-phone="${esc(p.id)}">${label}</button>`;
     const rows = phones.map((p) => {
       const seen = p.online ? '<span class="ph-live">Connected now</span>' : `Last seen ${esc(ago(p.lastSeen) || 'never')}`;
       const first = p.firstSeen ? ` · first seen ${esc(day(p.firstSeen))}` : '';
-      const acts = `${p.state === 'blocked' ? '' : btn('phone-block', 'Block', p)}${p.state === 'enrolled' || p.state === 'allowed' ? '' : btn('phone-allow', 'Allow', p)}${btn('phone-forget', 'Forget', p)}`;
-      return `<li class="ph-phone" data-state="${esc(p.state)}"><div class="ph-phone-t"><div class="ph-phone-n">${esc(p.name || 'Phone')}</div><div class="ph-dev-m">${esc(PHONE_STATE[p.state] || p.state)} · ${seen}${first}</div></div><div class="ph-phone-a">${acts}</div></li>`;
+      // 2026-10-11: Allow leads where the phone waits or is blocked, Block is the quiet red one, Forget plain text.
+      const acts = `${p.state === 'enrolled' || p.state === 'allowed' ? '' : btn('phone-allow', 'Allow', p, p.state === 'pending' ? 'ph-lead' : '')}${p.state === 'blocked' ? '' : btn('phone-block', 'Block', p, 'ph-block')}${btn('phone-forget', 'Forget', p, 'ph-ghost')}`;
+      return `<li class="ph-phone" data-state="${esc(p.state)}">${phoneGlyph(Boolean(p.online), 'ph-phone-g')}<div class="ph-phone-t"><div class="ph-phone-n">${esc(p.name || 'Phone')}</div><div class="ph-dev-m"><span class="ph-pstate">${esc(PHONE_STATE[p.state] || p.state)}</span> · ${seen}${first}</div></div><div class="ph-phone-a">${acts}</div></li>`;
     }).join('');
-    return `<ul class="ph-phones" aria-label="Phones that connected through this account">${rows}</ul>`;
+    return `<div class="ph-phones-h">Phones signed in to ${esc(d.account || 'this account')}</div><ul class="ph-phones" aria-label="Phones that connected through this account">${rows}</ul>`;
   }
 
   /** Private: a phone behind an Apaki account waits for this PC's OK (status phoneRequest). */
@@ -234,9 +259,9 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     if (!r) return '';
     const data = `data-acct="${esc(r.accountDeviceId)}" data-phone="${esc(r.phoneId)}"`;
     return `<div class="ph-sas ph-phone-ask">
-        <div class="ph-step"><b>${esc(r.name || 'A phone')}</b> wants to connect</div>
+        <div class="ph-ask-h">${phoneGlyph(true, 'ph-ask-g')}<div><div class="ph-ask-k">Private mode</div><div class="ph-step"><b>${esc(r.name || 'A phone')}</b> wants to connect</div></div></div>
         <p>It signed in to the Apaki account <b>${esc(r.account || 'Apaki account')}</b> and waits. In Private mode every new phone needs your OK here. Allow it only if it is yours.</p>
-        <div class="ph-actions"><button data-k="phone-block" ${data}>Block</button><button class="primary" data-k="phone-allow" ${data}>Allow</button></div>
+        <div class="ph-actions"><button class="ph-block" data-k="phone-block" ${data}>Block</button><button class="primary" data-k="phone-allow" ${data}>Allow</button></div>
       </div>`;
   }
 
@@ -244,7 +269,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
   function noticesBlock() {
     const list = st?.notices || [];
     if (!list.length) return '';
-    const rows = list.map((n) => `<div class="ph-notice"><div class="ph-notice-t">New phone connected: <b>${esc(n.name || 'Phone')}</b> <span>through ${esc(n.account || 'your Apaki account')}, ${esc(ago(n.at) || 'just now')}</span></div><div class="ph-actions"><button data-k="phone-block" data-acct="${esc(n.accountDeviceId)}" data-phone="${esc(n.phoneId)}">Block</button><button data-k="notice-dismiss" data-id="${esc(n.id)}">Dismiss</button></div></div>`).join('');
+    const rows = list.map((n) => `<div class="ph-notice">${phoneGlyph(true, 'ph-notice-g')}<div class="ph-notice-t"><span class="ph-notice-k">New phone connected</span><b>${esc(n.name || 'Phone')}</b><span class="ph-notice-m">through ${esc(n.account || 'your Apaki account')}, ${esc(ago(n.at) || 'just now')}</span></div><div class="ph-actions"><button class="ph-block" data-k="phone-block" data-acct="${esc(n.accountDeviceId)}" data-phone="${esc(n.phoneId)}">Block</button><button class="ph-ghost" data-k="notice-dismiss" data-id="${esc(n.id)}">Dismiss</button></div></div>`).join('');
     return `<div class="ph-notices">${rows}</div>`;
   }
 
@@ -303,8 +328,8 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     return `<div class="ph-sas ph-link">
         <div class="ph-step"><b>${esc(who)}</b> wants to add the Apaki account <b>${esc(r.account || 'Apaki account')}</b></div>
         <p>Every phone signed in to that account could then reach this PC, without a code. ${CAP_TEXT[c] || CAP_TEXT.full} Allow it only if you asked for this.</p>
-        <div class="ph-life-row"><span>It may</span>${capSeg(c, 'linkcap-pick')}</div>
-        <div class="ph-life-row"><span>Stays linked</span>${lifeSeg(linkLife, 'linklife-pick', '', days())}</div>
+        ${fold('link', linkOptsOpen, esc(choiceLine(c, linkLife).replace('paired', 'linked')), `<div class="ph-life-row"><span>It may</span>${capSeg(c, 'linkcap-pick')}</div>
+        <div class="ph-life-row"><span>Stays linked</span>${lifeSeg(linkLife, 'linklife-pick', '', days())}</div>`)}
         <div class="ph-actions"><button data-k="link-deny">Deny</button><button class="primary" data-k="link-allow">Allow</button></div>
       </div>`;
   }
@@ -319,20 +344,30 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     if (s.state === 'offline' && s.retryInMs != null) detail = `${s.error ? `${s.error} ` : `${s.relay || 'The relay'} is not answering. `}Trying again in ${Math.max(1, Math.round(s.retryInMs / 1000))} s.`;
     const toggle = s.relayConfigured === false && !s.enabled ? '' : `<button data-k="toggle"${s.enabled ? '' : ' class="primary"'}>${s.enabled ? 'Turn off' : 'Turn on'}</button>`;
     const keys = s.protection === 'dpapi' ? 'Keys on this PC are sealed with Windows DPAPI for your account.' : s.protection === 'file' ? 'Keys on this PC are in a file only your account can read.' : '';
+    // 2026-10-11 polish: the status shows on top only when something is not right (off, offline, a problem); while it
+    // is on, it lives in the options line under the QR with the mode and the page check.
+    const statusHtml = `<div class="ph-status" data-state="${esc(s.state)}"><div class="ph-status-t"><span class="ph-state">${esc(label)}</span><span class="ph-line">${esc(detail)}</span></div>${toggle}</div>`;
+    const healthy = s.enabled && s.state === 'online' && !s.keysProblem;
+    const pageHtml = s.page?.text ? `<div class="ph-page" data-state="${esc(s.page.state)}" title="${esc(s.page.url || '')}">${esc(s.page.text)}</div>` : '';
+    const pageBad = s.page && s.page.state && s.page.state !== 'ok';
+    const skipHtml = s.page?.canSkip && s.enabled && !s.pairing && !s.request ? `<div class="ph-skip"><button data-k="pair-unchecked">Pair without checking the page</button><span>Your phone would run whatever ${esc(hostIn(s.page.url || s.web, 'the site'))} serves now, unverified. If that page was changed, it could use this pairing to do anything this phone is allowed to do on this PC.</span></div>` : '';
+    const modeWord = s.mode === 'private' ? 'Private' : s.mode === 'connected' ? 'Connected' : '';
+    const optsLine = [modeWord, 'new phones start with Full access, paired for good', healthy && s.relay ? `on through ${esc(s.relay)}` : ''].filter(Boolean).join(' · ');
+    const optsBody = `${healthy ? statusHtml : ''}${modeBlock()}<p class="ph-opts-note">A phone at Allow starts with Full access and stays paired for good; change both in its card before you allow it, or later on its row below.</p>${pageBad ? '' : pageHtml}`;
     root.innerHTML = `<div class="phone-sheet">
       <div class="ph-head"><div class="ph-kicker">Phone</div><h2>Apaki on your phone</h2>
         <p>Pair a phone once with a code. After that it reaches this PC from anywhere, end to end encrypted: the relay only forwards sealed frames, and your Claude logins never leave this PC.</p></div>
-      <div class="ph-status" data-state="${esc(s.state)}"><div class="ph-status-t"><span class="ph-state">${esc(label)}</span><span class="ph-line">${esc(detail)}</span></div>${toggle}</div>
+      ${healthy ? '' : statusHtml}
       ${s.opError ? `<div class="ph-err">${esc(s.opError)}</div>` : ''}
       ${s.keysProblem ? `<div class="ph-actions"><button data-k="reset" class="${confirmReset ? 'ph-remove sure' : ''}" title="Sets the saved keys aside (renamed, kept) and makes new ones: every phone pairs again">${confirmReset ? 'Start over: every phone pairs again' : 'Start over'}</button></div>` : ''}
       ${s.pageAlarm ? `<div class="ph-page ph-alarm" data-state="differs">${esc(s.pageAlarm.text)}${s.pageAlarm.at ? ` (${esc(new Date(s.pageAlarm.at).toLocaleString())})` : ''}</div>` : ''}
-      ${modeBlock()}
-      ${s.page?.text ? `<div class="ph-page" data-state="${esc(s.page.state)}" title="${esc(s.page.url || '')}">${esc(s.page.text)}</div>` : ''}
-      ${s.page?.canSkip && s.enabled && !s.pairing && !s.request ? `<div class="ph-skip"><button data-k="pair-unchecked">Pair without checking the page</button><span>Your phone would run whatever ${esc(hostIn(s.page.url || s.web, 'the site'))} serves now, unverified. If that page was changed, it could use this pairing to do anything this phone is allowed to do on this PC.</span></div>` : ''}
+      ${pageBad ? pageHtml : ''}
+      ${skipHtml}
       ${linkBlock()}
       ${phoneAskBlock()}
       ${noticesBlock()}
       ${pairBlock()}
+      ${s.mode || healthy ? fold('opts', optsOpen || toPrivate, optsLine, optsBody, 'ph-opts') : ''}
       ${devicesBlock()}
       <div class="ph-foot"><span class="ph-keys">${esc(keys)}</span><button data-k="done">Done</button></div>
     </div>`;
@@ -342,6 +377,15 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
 
   function wire() {
     const on = (k, fn) => root.querySelectorAll(`[data-k="${k}"]`).forEach((b) => { b.onclick = () => fn(b); });
+    // 2026-10-11: remember which folds are open, so the next status does not close them under the person.
+    root.querySelectorAll('details[data-fold]').forEach((d) => {
+      d.ontoggle = () => {
+        const k = d.dataset.fold;
+        if (k === 'opts') optsOpen = d.open; else if (k === 'req') reqOptsOpen = d.open; else if (k === 'link') linkOptsOpen = d.open;
+        const go = d.querySelector('.ph-fold-go');
+        if (go) go.textContent = d.open ? 'Done' : 'Change';
+      };
+    });
     on('toggle', () => send(st?.enabled ? 'remoteDisable' : 'remoteEnable'));
     on('pair', () => send('remotePairStart'));
     on('newcode', () => send('remotePairStart'));
@@ -444,6 +488,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
       // A phone asks to add an Apaki account: like a pairing, it cannot wait for someone to open the sheet.
       linkCap = null;
       linkLife = '';
+      linkOptsOpen = false;
       ding('ask');
       open();
     }
@@ -453,6 +498,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
       // Every new request starts at Forever (Arthur, 2026-10-10: a paired phone is good to go for good), and at Full.
       life = '';
       cap = 'full';
+      reqOptsOpen = false;
       ding('ask');
       open();
     }

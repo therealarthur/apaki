@@ -32,7 +32,7 @@
       "androidScaleType": "CENTER_CROP"
     },
     "Keyboard": {
-      "resize": "native",
+      "resize": "none",
       "resizeOnFullScreen": true
     },
     "StatusBar": {

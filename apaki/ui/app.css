@@ -2366,3 +2366,62 @@ body.rail-collapsed .signin-card { left: 22px; }
   .pane::before { transition: opacity 400ms linear; transform: none; }
   .pane.busy::before { animation: none; transform: none; opacity: .45; }
 }
+
+/* ---------- the Phone sheet, simpler (2026-10-11 polish; phone.js fold, choiceLine) ----------
+   Arthur: make the pairing view simpler. What needs an answer comes first,
+   then the QR; the options fold into one line that says what is chosen
+   (.ph-fold: a details row with "Change"), as do the access and lifetime in
+   a phone's Allow card. Under an Apaki account its phones sit in their own
+   inset list; Allow leads where a phone waits, Block is the quiet red one,
+   Forget and Dismiss are plain text. Desktop only (phone.js is not in the
+   phone build). */
+.phone-sheet .ph-fold { margin-top: 12px; border: 1px solid var(--hairline); border-radius: 12px; background: hsla(var(--w), .55); }
+.phone-sheet .ph-fold > summary { display: flex; align-items: center; gap: 10px; padding: 10px 12px; list-style: none; cursor: pointer; font-size: 12.5px; line-height: 1.4; color: var(--soft); border-radius: 12px; transition: background-color var(--dur-fast) var(--ease-hover); }
+.phone-sheet .ph-fold > summary::-webkit-details-marker { display: none; }
+.phone-sheet .ph-fold > summary:hover { background: var(--ghost-hover); }
+.phone-sheet .ph-fold > summary:focus-visible { outline: 2px solid hsla(var(--pearl-stop-blue), .5); outline-offset: 1px; }
+.ph-fold-t { flex: 1; min-width: 0; }
+.ph-fold-go { flex: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 750; color: var(--brand-deep); }
+.ph-fold-go::after { content: ''; width: 6px; height: 6px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; transform: translateY(-2px) rotate(45deg); transition: transform 160ms var(--ease-hover); }
+.phone-sheet .ph-fold[open] > summary { border-radius: 12px 12px 0 0; border-bottom: 1px solid var(--hairline); }
+.phone-sheet .ph-fold[open] .ph-fold-go::after { transform: translateY(1px) rotate(-135deg); }
+.ph-fold-b { padding: 2px 12px 12px; }
+.ph-fold-b .ph-status { margin-top: 10px; }
+.ph-fold-b .ph-mode { margin-top: 12px; }
+.ph-sas .ph-fold { margin-top: 14px; background: hsla(var(--w), .65); }
+.ph-sas .ph-fold-b .ph-life-row:first-child { margin-top: 10px; }
+.ph-opts-note { margin: 10px 0 0; font-size: 12px; line-height: 1.45; color: var(--faint); }
+.phone-sheet .ph-opts { margin-top: 14px; }
+
+/* Paired phones and accounts: the glyph and Remove sit at the top of a tall account row, not in its middle. */
+.phone-sheet .ph-dev { align-items: flex-start; }
+.phone-sheet .ph-dev > .ph-glyph { margin-top: 1px; }
+.ph-phones-h { margin: 12px 0 0; font: 800 9.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.phone-sheet .ph-devices .ph-phones { margin: 6px 0 2px; overflow: hidden; border: 1px solid var(--hairline); border-radius: 10px; background: hsla(var(--w), .5); }
+.phone-sheet .ph-phone { gap: 10px; padding: 8px 8px 8px 10px; border-top: 1px solid var(--hairline); }
+.phone-sheet .ph-phone:first-child { border-top: 0; }
+.ph-phone-g { width: 15px; height: 15px; color: var(--faint); }
+.ph-phone-g.lit { color: var(--brand-strong); }
+.ph-phone[data-state="pending"] .ph-pstate { color: var(--brand-strong); font-weight: 700; }
+.ph-phone[data-state="blocked"] .ph-pstate { color: var(--action-strong); font-weight: 700; }
+.phone-sheet .ph-phone-a { gap: 4px; }
+.phone-sheet .ph-phone-a button { min-height: 26px; padding: 3px 10px; font-size: 12px; }
+.phone-sheet button.ph-ghost { border-color: transparent !important; background: none !important; box-shadow: none !important; color: var(--soft); }
+.phone-sheet button.ph-ghost:hover { background: var(--ghost-hover) !important; color: var(--ink-deep); }
+.phone-sheet button.ph-block { color: var(--action-strong); }
+.phone-sheet button.ph-lead { border-color: transparent !important; background: linear-gradient(135deg, var(--btn-a), var(--btn-b)) !important; color: #fff !important; }
+
+/* Private: a phone behind an account waits for an OK here. */
+.ph-ask-h { display: flex; align-items: center; gap: 12px; }
+.ph-ask-g { flex: none; width: 30px; height: 30px; color: var(--brand-strong); }
+.ph-ask-k { margin-bottom: 5px; font: 900 10px/1 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--brand-strong); }
+.phone-sheet .ph-phone-ask { border-color: hsla(var(--pearl-stop-blue), .45); }
+
+/* Connected: "New phone connected" lines. */
+.phone-sheet .ph-notice { gap: 12px; padding: 10px 10px 10px 12px; border-radius: 12px; background: hsla(var(--w), .6); }
+.ph-notice-g { flex: none; width: 20px; height: 20px; color: var(--good); }
+.phone-sheet .ph-notice-t { display: flex; flex-direction: column; gap: 3px; }
+.ph-notice-k { font: 900 9.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .12em; text-transform: uppercase; color: var(--good); }
+.ph-notice-t b { font-size: 13.5px; font-weight: 800; color: var(--ink); }
+.phone-sheet .ph-notice-t .ph-notice-m { font-size: 12px; color: var(--faint); }
+@media (prefers-reduced-motion: reduce) { .ph-fold-go::after, .phone-sheet .ph-fold > summary { transition: none; } }

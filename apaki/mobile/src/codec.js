@@ -11,6 +11,7 @@
  *   siteRequestAllowed(url)         the one API the app may call
  *   hapticStyle(ms)                 navigator.vibrate(ms) -> a native impact style
  *   isDark(color)                   does a CSS colour want light status bar text?
+ *   kbInset(h, inner, viewport)     how far the page moves up for the keyboard (iOS, 2026-10-11)
  *   exportNames(source)             the names an ES module exports (build check)
  *
  * Why the records are encoded by hand: the web client keeps them in
@@ -186,6 +187,19 @@ export function isDark(color) {
   // Relative luminance (sRGB, WCAG); below the middle is dark.
   const lin = (c) => { const x = c / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b) < 0.2;
+}
+
+/**
+ * The part of the keyboard's height the page moves its layout up by (--kb,
+ * native-shell.js keyboard(), 2026-10-11): the keyboard's height less what
+ * the visual viewport already gave up for it (innerHeight - viewport height,
+ * which boot.js puts in --vvh), so nothing is moved twice. Whole pixels, never
+ * below zero; with no viewport height known, the whole keyboard.
+ */
+export function kbInset(height, innerHeight, viewportHeight) {
+  const h = Math.max(0, Number(height) || 0);
+  const taken = Number.isFinite(viewportHeight) && Number.isFinite(innerHeight) ? Math.max(0, innerHeight - viewportHeight) : 0;
+  return Math.max(0, Math.round(h - taken));
 }
 
 /**

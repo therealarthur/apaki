@@ -8,6 +8,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
+        // 2026-10-11: Apaki's ground behind the WebView from the first frame, not UIWindow's black
+        // (the page keeps it in step with its theme through ApakiApp.setBackground).
+        window?.backgroundColor = .apakiGround
         // Apaki's own bridge controller registers the Apaki plugins (ApakiViewController.swift).
         window?.rootViewController = ApakiViewController()
         window?.makeKeyAndVisible()

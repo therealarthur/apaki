@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 
 import {
   b64d, b64e, decodeAccount, decodeDevice, decodePc, encodeAccount, encodeDevice, encodePc,
-  exportNames, hapticStyle, isDark, pairingPayloadFrom, relaySocketAllowed, siteRequestAllowed,
+  exportNames, hapticStyle, isDark, kbInset, pairingPayloadFrom, relaySocketAllowed, siteRequestAllowed,
 } from '../src/codec.js';
 import { createDeviceIdentity, createPairingOffer, createPcIdentity, createRoom } from '../../remote/protocol.js';
 
@@ -127,6 +127,19 @@ test('status bar: Apaki grounds read as light or dark', () => {
   assert.equal(isDark('rgb(18, 17, 32)'), true);
   assert.equal(isDark('rgba(253, 253, 255, 1)'), false);
   assert.equal(isDark('teal'), false);
+});
+
+test('keyboard: the page moves up by what the visual viewport has not already given up (2026-10-11)', () => {
+  // iOS with resize none: WebKit keeps the viewport, the page moves by the whole keyboard.
+  assert.equal(kbInset(336, 844, 844), 336);
+  // A WebKit that shrinks the viewport for the keyboard too: nothing is moved twice.
+  assert.equal(kbInset(336, 844, 508), 0);
+  assert.equal(kbInset(336, 844, 600), 92);
+  // Closed, nonsense and unknown viewports.
+  assert.equal(kbInset(0, 844, 844), 0);
+  assert.equal(kbInset(-20, 844, 844), 0);
+  assert.equal(kbInset('x', 844, 844), 0);
+  assert.equal(kbInset(301.6, 844, NaN), 302);
 });
 
 test('exportNames reads declarations and export lists', () => {

@@ -138,11 +138,30 @@ export function createDemoEngine({ now = () => Date.now() } = {}) {
   /** What the PC sends right after the channel opens (apaki/engine/remote.js). */
   const ready = () => ({ ev: 'ready', billing: BILLING, model: MODEL, effort: 'xhigh', mode: 'bypassPermissions', pid: 0, voice: false });
 
-  /** The first events of a connection: ready, then the search indexes' state (broadcast to phones), which fills the list's footer. */
+  /**
+   * The desktop window's tabs and their panes (2026-10-11, engine desktop-tabs.js, broadcast to phones): four tabs, one
+   * conversation working, a browser, a task and a viewer, a conversation not started yet, so the list's "On your
+   * desktop" section shows every kind of row.
+   */
+  const desktopTabs = () => {
+    const id = (n) => `5f0c1b2a-000${n}-4c1e-9d3a-a1b2c3d4e5f6`;
+    const title = (n) => sessions.find((x) => x.id === id(n))?.title || 'Conversation';
+    // paneId: the desktop pane's own id (planned with the PC's op follow; a phone uses it only when hello lists 'follow').
+    const conv = (n, extra = {}) => ({ kind: 'session', sessionId: id(n), paneId: `dp${n}`, title: title(n), busy: false, focused: false, ...extra });
+    return [
+      { index: 0, active: false, panes: [conv(4, { focused: true }), { kind: 'task', title: 'Explore: how phones pair today', focused: false }] },
+      { index: 1, active: true, panes: [conv(1, { focused: true }), conv(2, { busy: true }), { kind: 'browser', title: 'Keyboard | Capacitor Documentation', focused: false }] },
+      { index: 2, active: false, panes: [conv(6, { focused: true }), { kind: 'viewer', title: 'Sword set preview', focused: false }] },
+      { index: 3, active: false, panes: [conv(8, { focused: true }), { kind: 'session', sessionId: null, title: 'New conversation', busy: false, focused: false }] },
+    ];
+  };
+
+  /** The first events of a connection: ready, then the search indexes' state (broadcast to phones), which fills the list's footer, then the desktop's tabs. */
   const opening = () => [
     { delay: 30, ev: ready() },
     { delay: 260, ev: { ev: 'index', ok: true, stats: { blocks_added: 14 }, ms: 640 } },
     { delay: 300, ev: { ev: 'meaning', stage: 'ready', result: { ok: true, passages: 48210 } } },
+    { delay: 340, ev: { ev: 'desktopTabs', tabs: desktopTabs(), at: now() } },
   ];
 
   return { handle, ready, opening, sessions };

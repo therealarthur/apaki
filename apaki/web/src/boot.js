@@ -54,6 +54,13 @@
  * PC, until a connection works). The home screen connects by itself when
  * signed in with exactly one PC online and nothing else to choose, unless the
  * person just disconnected or came back from a blocked close.
+ *
+ * Polish (2026-10-11): those screens share one look with the rest of the
+ * phone: a small state tile above the title (a passkey, a clock, a block),
+ * "Allow this phone on <PC>" with the phone, the live grid and the PC in one
+ * line and the name the PC shows for this phone, the enrollment sheet with one
+ * primary button and "Not now" as text, and the PC list as cards with a PC
+ * glyph that lights while that PC is online (web.css, "polished").
  */
 
 import { createDeviceIdentity, parsePairingUrl } from './protocol.js';
@@ -113,6 +120,23 @@ function hideScreen() {
 
 const grid = () => `<div class="pair-wait">${effortGrid('max', { live: true })}</div>`;
 
+/*
+ * Glyphs for the phone's state screens (2026-10-11 polish): a small tile above
+ * the title says at a glance what kind of screen this is (a passkey to make,
+ * a phone waiting on its PC, a request that ran out, a block), in the
+ * screen's colour, never as a dot. Decorative: the words carry the meaning.
+ */
+const GLYPHS = {
+  passkey: '<svg viewBox="0 0 24 24"><path d="M7.5 3.8H6A2.2 2.2 0 0 0 3.8 6v1.5M16.5 3.8H18A2.2 2.2 0 0 1 20.2 6v1.5M7.5 20.2H6A2.2 2.2 0 0 1 3.8 18v-1.5M16.5 20.2H18a2.2 2.2 0 0 0 2.2-2.2v-1.5"/><path d="M9 9.2v1.3M15 9.2v1.3M12 9.2v3.6h-1M9.4 15.6a4 4 0 0 0 5.2 0"/></svg>',
+  phone: '<svg viewBox="0 0 24 24"><rect x="6.6" y="2.8" width="10.8" height="18.4" rx="2.6"/><path d="M10.6 18h2.8"/></svg>',
+  pc: '<svg viewBox="0 0 24 24"><rect x="2.8" y="4" width="18.4" height="12.2" rx="2"/><path d="M9 20h6M12 16.2V20"/></svg>',
+  clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l3 2"/></svg>',
+  blocked: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4"/><path d="M6.1 6.1l11.8 11.8"/></svg>',
+};
+const mark = (kind, tone = '') => `<div class="state-mark${tone ? ` tone-${tone}` : ''}" aria-hidden="true">${GLYPHS[kind]}</div>`;
+/** The phone, Apaki's live grid and the PC in one line: this phone is waiting on that PC. */
+const waitLine = () => `<div class="wait-line" aria-hidden="true"><span class="wl-ic">${GLYPHS.phone}</span>${effortGrid('max', { live: true })}<span class="wl-ic">${GLYPHS.pc}</span></div>`;
+
 /** One PC row: its name, where it came from, whether it is online now, Connect and Forget. */
 function pcRow(pc) {
   const online = S.presence.get(pc.roomId);
@@ -125,7 +149,9 @@ function pcRow(pc) {
   // Private mode and this phone's access, as the PC said them (connected now, or the last time).
   const mode = (here ? S.link.hello?.mode : pc.mode) === 'private' ? ' · Private' : '';
   const capWord = here ? CAP_WORDS[S.link.hello?.cap] : '';
-  return `<li data-room="${esc(pc.roomId)}"><div class="pp-t"><b>${esc(pc.pcName || 'PC')}</b><small>${state}${state ? ' · ' : ''}${from}${saved}${mode}${capWord ? ` · ${esc(capWord)}` : ''}${expiryText(pc.expiresAt) ? ` · ${esc(expiryText(pc.expiresAt))}` : ''}</small></div>${here ? '<button data-k="back">Open</button><button class="quiet pp-disconnect" data-k="disconnect">Disconnect</button>' : `<button data-k="use" data-id="${esc(pc.roomId)}">Connect</button>`}<button class="quiet" data-k="forget" data-id="${esc(pc.roomId)}" aria-label="Forget ${esc(pc.pcName || 'this PC')}">${pc.via === 'account' ? 'Remove' : 'Forget'}</button></li>`;
+  // 2026-10-11: a PC glyph first, lit while the PC is online or connected (the words say which).
+  const lit = here || (online === true && !blocked);
+  return `<li data-room="${esc(pc.roomId)}" class="${here ? 'here' : blocked ? 'blocked' : online === true ? 'on' : online === false ? 'off' : ''}"><span class="pp-ic${lit ? ' lit' : ''}" aria-hidden="true">${GLYPHS.pc}</span><div class="pp-t"><b>${esc(pc.pcName || 'PC')}</b><small>${state}${state ? ' · ' : ''}${from}${saved}${mode}${capWord ? ` · ${esc(capWord)}` : ''}${expiryText(pc.expiresAt) ? ` · ${esc(expiryText(pc.expiresAt))}` : ''}</small></div>${here ? '<button data-k="back">Open</button><button class="quiet pp-disconnect" data-k="disconnect">Disconnect</button>' : `<button data-k="use" data-id="${esc(pc.roomId)}">Connect</button>`}<button class="quiet" data-k="forget" data-id="${esc(pc.roomId)}" aria-label="Forget ${esc(pc.pcName || 'this PC')}">${pc.via === 'account' ? 'Remove' : 'Forget'}</button></li>`;
 }
 
 /** The PC this phone is on now runs in Private mode (it said so in hello, or did the last time). */
@@ -174,7 +200,7 @@ function accountBlock() {
   // Not for a Private PC; a Connected one asks its person first (the button says so).
   const canSave = here && !priv && !S.acct.rooms?.includes(S.pc.roomId) && S.pc.via !== 'account';
   return `<div class="pair-sec">Apaki account</div>
-    <div class="acct-row"><div class="pp-t"><b>${esc(S.acct.name)}</b><small>Signed in with a passkey · ${S.acct.rooms?.length || 0} PC${S.acct.rooms?.length === 1 ? '' : 's'} saved</small></div></div>
+    <div class="acct-row"><span class="acct-ic" aria-hidden="true">${esc(String(S.acct.name || '?').trim().slice(0, 1).toUpperCase() || '?')}</span><div class="pp-t"><b>${esc(S.acct.name)}</b><small>Signed in with a passkey · ${S.acct.rooms?.length || 0} PC${S.acct.rooms?.length === 1 ? '' : 's'} saved</small></div></div>
     ${S.acct.sessionEnded ? `<p class="pair-note">Your sign-in ended (they last 30 days). The PCs on this phone still connect; sign in again to keep them in step with your account.</p><button class="pair-btn" data-k="signin"${busy}>${S.busy === 'signin' ? 'Signing in…' : 'Sign in again'}</button>` : ''}
     ${privNote}
     ${canSave ? `<button class="pair-btn" data-k="link"${busy}>${S.busy === 'link' ? `Waiting for ${esc(S.link.pcName)}…` : `Save ${esc(S.link.pcName)} to your account`}</button><p class="pair-note">${esc(S.link.pcName)} asks you on the PC before it takes the account.</p>` : ''}
@@ -190,10 +216,19 @@ function accountBlock() {
     </details>`;
 }
 
+/** "3 PCs · 2 online" (online only once the relay has said so for some), "Paired PCs" with no account. */
+function pcsSummary(pcs) {
+  if (!S.acct) return pcs.length === 1 ? 'Paired PC' : 'Paired PCs';
+  const known = pcs.filter((pc) => S.presence.has(pc.roomId));
+  const on = known.filter((pc) => S.presence.get(pc.roomId) === true).length;
+  return `${pcs.length} PC${pcs.length === 1 ? '' : 's'}${known.length ? ` · ${on} online` : ''}`;
+}
+
 function welcome(pcs, error = '') {
   S.homeError = Boolean(error);
+  // 2026-10-11: under the "Your PCs" title the section header counts them (and how many are online, once known).
   const list = pcs.length
-    ? `<div class="pair-sec">${S.acct ? 'Your PCs' : 'Paired PCs'}</div><ul class="pair-pcs">${pcs.map(pcRow).join('')}</ul>`
+    ? `<div class="pair-sec" id="pcsSec">${esc(pcsSummary(pcs))}</div><ul class="pair-pcs">${pcs.map(pcRow).join('')}</ul>`
     : '';
   S.lastPcs = pcs;
   show(`<div class="pair-kicker">${S.acct ? `Signed in as ${esc(S.acct.name)}` : 'Phone'}</div>
@@ -253,6 +288,8 @@ async function checkPresence(pcs) {
     if (li) li.outerHTML = pcRow(pc);
   }));
   $('pairBody').querySelectorAll('li[data-room] [data-k]').forEach((b) => { b.onclick = () => act(b.dataset.k, b.dataset.id, b); });
+  const sec = $('pcsSec');
+  if (sec && seq === S.presenceSeq) sec.textContent = pcsSummary(pcs);
   // 2026-10-11: one PC online and nothing else to choose connects by itself (only the newest check decides).
   if (seq === S.presenceSeq) maybeAutoConnect(pcs);
 }
@@ -418,10 +455,13 @@ function enrollSheet() {
   if (!link) return;
   const busy = S.busy ? ' disabled' : '';
   const note = S.note ? `<p class="${S.note.ok ? 'pair-note' : 'pair-err'}">${esc(S.note.text)}</p>` : '';
+  // 2026-10-11 polish: a passkey mark, then the promise, then what happens now on its own line.
   show(`<div class="enroll-sheet">
+    ${mark('passkey', 'brand')}
     <div class="pair-kicker">Paired with ${esc(link.pcName)}</div>
     <h1>Next time, sign in with Face ID</h1>
-    <p>Make an Apaki passkey on this phone. Any phone with that passkey then sees your PCs and connects without a code, and ${esc(link.pcName)} is added to the account now.</p>
+    <p>Make an Apaki passkey on this phone. Any phone with that passkey then sees your PCs and connects without a code.</p>
+    <p class="enroll-now"><b>${esc(link.pcName)}</b> joins the account now, with no second Allow on the PC.</p>
     <div class="pp-row"><input class="enroll-name" id="enrollName" maxlength="48" placeholder="Your name (optional)" value="${esc(S.enrollNameValue || '')}" autocomplete="nickname" spellcheck="false"></div>
     ${note}
     <button class="pair-btn enroll-create" data-k="enroll-create"${busy}>${S.busy === 'create' ? 'Making the passkey…' : 'Create a passkey'}</button>
@@ -489,8 +529,9 @@ const STATE_COPY = {
   connecting: (l) => `Reaching your PC through ${l.relayHost}…`,
   handshake: () => 'Checking it is really your PC…',
   // 2026-10-11 (ENROLL.md): the PC is deciding about this phone, or its person did not answer in time.
-  'phone-wait': (l) => `Allow this phone on ${l.pcName}. It shows a request with Allow and Block, and this page connects as soon as someone allows it.`,
-  'phone-timeout': (l, info) => info.reason || `Nobody allowed this phone on ${l.pcName} in time.`,
+  // 2026-10-11 polish: the title asks for the Allow; this line says where and what happens then.
+  'phone-wait': (l) => `${l.pcName} shows a request with Allow and Block in its Phone sheet. This page connects as soon as someone allows it.`,
+  'phone-timeout': (l, info) => `${info.reason || `Nobody allowed this phone on ${l.pcName} in time.`} Ask again, then allow it in the PC's Phone sheet.`,
   waiting: () => 'Apaki has to be open on the PC, with phone access on. This page connects as soon as it is.',
   // info.budget (link.js budgetReason): the relay's day is spent, for everyone or for this address or room.
   offline: (l, info) => (info.budget ? `${info.budget} This page tries again in about ${Math.max(1, Math.round((info.retryInMs || 0) / 60_000))} min.` : info.full ? 'This PC has the most phones connected at once. Trying again soon.' : `No connection to the relay. Trying again in ${Math.max(1, Math.round((info.retryInMs || 0) / 1000))} s.`),
@@ -500,9 +541,13 @@ function connectingScreen(link, state, info = {}) {
   const copy = STATE_COPY[state];
   if (!copy) return;
   const kicker = state === 'waiting' ? 'Waiting for your PC' : state === 'phone-wait' ? 'Waiting for permission' : state === 'phone-timeout' ? 'Not allowed yet' : 'Connecting';
-  show(`<div class="pair-kicker">${kicker}</div>
-    <h1>${esc(link.pcName)}</h1>${state === 'phone-timeout' ? '' : grid()}
-    <p>${esc(copy(link, info))}</p>
+  // 2026-10-11 polish: the two permission states get their own title and picture; the others keep the PC's name.
+  const title = state === 'phone-wait' ? `Allow this phone on ${link.pcName}` : state === 'phone-timeout' ? 'Not allowed in time' : link.pcName;
+  const picture = state === 'phone-wait' ? waitLine() : state === 'phone-timeout' ? '' : grid();
+  const name = state === 'phone-wait' && link.name ? `<p class="pair-note">It shows this phone as <b>${esc(link.name)}</b>.</p>` : '';
+  show(`${state === 'phone-timeout' ? mark('clock') : ''}<div class="pair-kicker">${kicker}</div>
+    <h1>${esc(title)}</h1>${picture}
+    <p>${esc(copy(link, info))}</p>${name}
     ${state === 'phone-timeout' ? '<button class="pair-btn" data-k="retry-link">Ask again</button>' : ''}
     <button class="pair-btn quiet" data-k="pcs">Other PCs</button>`);
 }
@@ -529,9 +574,11 @@ function failedScreen(code, message) {
   const removed = code === 'removed';
   // Reached through the account: the PC removed the account, not this phone.
   if (removed && S.pc?.via === 'account') [title, text] = ['This PC left your account', 'The PC removed your Apaki account, so no phone signed in to it reaches that PC now. Pair with its code to use it again.'];
-  show(`<div class="pair-kicker">Not connected</div><h1>${esc(title)}</h1>
+  // 2026-10-11 polish: a block shows its mark, and its only way on (Other PCs) is the quiet button, not a call to action.
+  const blockedPhone = code === 'phone-blocked';
+  show(`${blockedPhone ? mark('blocked', 'warn') : ''}<div class="pair-kicker">Not connected</div><h1>${esc(title)}</h1>
     <p>${esc(text || message || code)}</p>
-    ${(removed || code === 'lapsed') && S.pc ? `<button class="pair-btn" data-k="forget" data-id="${esc(S.pc.roomId)}">Forget this PC</button>` : `<button class="pair-btn" data-k="home">${code === 'phone-blocked' ? 'Other PCs' : 'Start over'}</button>`}`);
+    ${(removed || code === 'lapsed') && S.pc ? `<button class="pair-btn" data-k="forget" data-id="${esc(S.pc.roomId)}">Forget this PC</button>` : `<button class="pair-btn${blockedPhone ? ' quiet' : ''}" data-k="home">${blockedPhone ? 'Other PCs' : 'Start over'}</button>`}`);
 }
 
 /**
@@ -953,7 +1000,8 @@ async function main() {
 
 // For apaki/scripts/cdp-remote.mjs: the connection's state, and a way to drop it (it reconnects by itself).
 // wake (2026-10-10): the iOS app (apaki/mobile) reconnects at once when it comes back to the foreground.
-window.__apakiLink = { state: () => S.link?.state || null, pcName: () => S.link?.pcName || null, drop: () => S.link?.restart(), wake: () => S.link?.wake() };
+// supports and cap (2026-10-11): desktop.js asks whether the PC offers 'follow' and what this phone may do there.
+window.__apakiLink = { state: () => S.link?.state || null, pcName: () => S.link?.pcName || null, drop: () => S.link?.restart(), wake: () => S.link?.wake(), supports: (f) => Boolean(S.link?.supports?.(f)), cap: () => S.link?.hello?.cap || 'full' };
 
 main().catch(async (e) => {
   console.error(e);

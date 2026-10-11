@@ -26,7 +26,16 @@
  *
  * initNative({ onPcTap }) once Apaki's window code is loaded; then
  * setPc(name, state), showChat(), showList(), haptic().
+ *
+ * 2026-10-11: the conversation screen pages through the tab's panes sideways
+ * under a strip of tabs (pager.js), and the list shows what is open on the
+ * desktop (desktop.js). The left edge of the conversation stays the swipe
+ * back; with the pager on, only a swipe that starts on that edge (outside the
+ * pages) goes back, so a sideways swipe on a page turns the page.
  */
+
+import { initPager } from './pager.js';
+import { initDesktop } from './desktop.js';
 
 const $ = (id) => document.getElementById(id);
 const body = document.body;
@@ -88,6 +97,8 @@ function edgeSwipe() {
     if (N.screen !== 'chat' || e.touches.length !== 1) return;
     const t = e.touches[0];
     if (t.clientX > 26) return;
+    // 2026-10-11: the pages own sideways swipes; the back swipe starts on the edge strip (.edge-catch) or the bars.
+    if (body.classList.contains('paged') && e.target.closest?.('.stages')) return;
     s = { x0: t.clientX, y0: t.clientY, t0: performance.now(), dx: 0, axis: null };
   }, { passive: true });
   document.addEventListener('touchmove', (e) => {
@@ -353,6 +364,9 @@ export function initNative({ onPcTap, startInChat = false } = {}) {
   body.classList.add('native', 'at-list');
   listBars(onPcTap);
   chatBar();
+  // 2026-10-11: tabs and pages on the conversation screen, the desktop's tabs on the list.
+  try { initPager({ haptic }); } catch (e) { console.warn('apaki pager:', e); }
+  try { initDesktop({ haptic, showChat }); } catch (e) { console.warn('apaki desktop tabs:', e); }
   edgeSwipe();
   sheetSwipe();
   installHint();
@@ -364,8 +378,11 @@ export function initNative({ onPcTap, startInChat = false } = {}) {
   });
   // A subagent or shell opened from the list shows as a conversation too.
   document.querySelector('.rail')?.addEventListener('click', (e) => { if (e.target.closest('.sub-row:not(.note)')) showChat(); });
-  // Closing the conversation goes back to the list.
-  document.querySelector('.main')?.addEventListener('click', (e) => { if (e.target.closest('.pane-bar .close')) setTimeout(() => showList(), 0); });
+  // Closing the conversation goes back to the list; 2026-10-11: unless the tab (or the tab app.js switches to) still has a
+  // pane to show, which the pager then shows (closing one page of several stays on the next one).
+  document.querySelector('.main')?.addEventListener('click', (e) => {
+    if (e.target.closest('.pane-bar .close')) setTimeout(() => { if (!body.classList.contains('paged') || !document.querySelector('.stage.on .pane')) showList(); }, 0);
+  });
   // /resume in a conversation (app.js findSession): back to the list, where its search box is.
   window.addEventListener('apaki:list', () => showList());
   // The title follows the conversation.

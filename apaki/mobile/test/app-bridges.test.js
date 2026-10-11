@@ -182,5 +182,9 @@ test('demo engine: sessions, a conversation with history, a streamed reply that 
   assert.deepEqual(engine.handle(null), []);
   assert.equal(engine.handle({ op: 'search', reqId: 'r5', query: 'relay' })[0].ev.results.length, 1);
   assert.equal(engine.ready().ev, 'ready');
-  assert.deepEqual(engine.opening().map((x) => x.ev.ev), ['ready', 'index', 'meaning']);
+  // 2026-10-11: the demo PC also sends the desktop's tabs (desktopTabs), for the list's "On your desktop".
+  assert.deepEqual(engine.opening().map((x) => x.ev.ev), ['ready', 'index', 'meaning', 'desktopTabs']);
+  const desk = engine.opening().at(-1).ev.tabs;
+  assert.equal(desk.filter((t) => t.active).length, 1);
+  assert.ok(desk.every((t) => t.panes.length && t.panes.every((p) => ['session', 'browser', 'task', 'viewer'].includes(p.kind))));
 });

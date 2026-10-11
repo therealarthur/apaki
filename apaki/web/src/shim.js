@@ -12,7 +12,28 @@
  * It also remembers which panes this phone has open, so after a reconnect
  * it re-attaches each one (engine op attach: same pane, same Claude Code
  * process, history sent again) instead of restarting it.
+ *
+ * 2026-10-11: it keeps the last desktopTabs event (the desktop window's tabs
+ * and the panes in each, apaki/engine/desktop-tabs.js) for the phone's "On
+ * your desktop" list (desktop.js): onDesktopTabs(cb) hands it the last one at
+ * once and every later one. app.js still gets the event and ignores it.
  */
+
+let desk = null;
+const deskListeners = new Set();
+
+/** Calls cb with the last desktopTabs event (if one came) and each new one; returns a function that stops it. */
+export function onDesktopTabs(cb) {
+  deskListeners.add(cb);
+  if (desk) cb(desk);
+  return () => deskListeners.delete(cb);
+}
+
+function gotDesktopTabs(ev) {
+  if (!Array.isArray(ev?.tabs)) return;
+  desk = ev;
+  for (const cb of deskListeners) { try { cb(ev); } catch (e) { console.warn('apaki desktop tabs:', e); } }
+}
 
 export function installShim(link) {
   const listeners = new Set();
@@ -29,7 +50,9 @@ export function installShim(link) {
   const sent = (msg) => {
     if (!msg?.paneId) return;
     if (msg.op === 'open' || msg.op === 'attach') panes.set(msg.paneId, { sessionId: msg.sessionId || null, cwd: msg.cwd || null });
-    if (msg.op === 'close') panes.delete(msg.paneId);
+    // 2026-10-11: a pane that follows a desktop pane (op follow) follows it again after a reconnect.
+    if (msg.op === 'follow') panes.set(msg.paneId, { follow: msg.desktopPaneId });
+    if (msg.op === 'close' || msg.op === 'unfollow') panes.delete(msg.paneId);
   };
 
   const seen = (ev) => {
@@ -40,9 +63,12 @@ export function installShim(link) {
     if (ev.ev === 'closed') panes.delete(ev.paneId);
   };
 
-  link.onEvent = (ev) => { seen(ev); deliver(ev); };
+  link.onEvent = (ev) => { seen(ev); if (ev?.ev === 'desktopTabs') gotDesktopTabs(ev); deliver(ev); };
   link.onReopen = () => {
-    for (const [paneId, p] of panes) link.send({ op: 'attach', reqId: `re${++seq}`, paneId, sessionId: p.sessionId, cwd: p.cwd }).catch(() => {});
+    for (const [paneId, p] of panes) {
+      if (p.follow) link.send({ op: 'follow', reqId: `re${++seq}`, paneId, desktopPaneId: p.follow }).catch(() => {});
+      else link.send({ op: 'attach', reqId: `re${++seq}`, paneId, sessionId: p.sessionId, cwd: p.cwd }).catch(() => {});
+    }
     link.send({ op: 'sessions', reqId: `re${++seq}` }).catch(() => {});
   };
 
