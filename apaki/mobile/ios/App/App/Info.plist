@@ -79,5 +79,11 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- Export compliance (Arthur answered in App Store Connect for build 2, 2026-10-11: "None of the
+	     algorithms mentioned above"). The app only uses encryption inside Apple's operating system:
+	     WebCrypto in the web view and CryptoKit for the Secure Enclave key; it bundles no crypto library.
+	     Revisit if that changes. With this key later builds skip the question. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
