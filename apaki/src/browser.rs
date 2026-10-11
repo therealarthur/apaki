@@ -402,12 +402,14 @@ mod imp {
     }
 
     fn background() -> COREWEBVIEW2_COLOR {
-        // The app's ground in each theme, so a page never flashes the other colour while it loads.
-        if DARK.with(Cell::get) {
-            COREWEBVIEW2_COLOR { A: 255, R: 0x12, G: 0x11, B: 0x20 }
-        } else {
-            COREWEBVIEW2_COLOR { A: 255, R: 0xFD, G: 0xFD, B: 0xFF }
-        }
+        // White in both themes, like a real browser's canvas (2026-10-11). It used to be the app's
+        // ground (#121120 in dark), so a page that sets no background of its own, such as App Store
+        // Connect, drew its black text on our navy (Arthur: "weird dark mode in app store connect").
+        // Pages that support dark mode still turn dark: they get prefers-color-scheme: dark (scheme())
+        // and paint their own background. The cost is a white frame while a light page loads in
+        // dark mode, which is what Chrome and Edge show too.
+        let _dark_theme = DARK.with(Cell::get);
+        COREWEBVIEW2_COLOR { A: 255, R: 0xFF, G: 0xFF, B: 0xFF }
     }
 
     fn scheme() -> COREWEBVIEW2_PREFERRED_COLOR_SCHEME {

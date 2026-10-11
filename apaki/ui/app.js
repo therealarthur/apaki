@@ -63,6 +63,11 @@ const EDGE_ZONE = 0.28; // share of a pane's width or height that counts as its 
 const TAB_HOVER_SWITCH_MS = 450;
 const DRAG_SESSION = 'application/x-apaki-session';
 const DRAG_PANE = 'application/x-apaki-pane';
+// A tab dragged along the tab bar to a new place (2026-10-11).
+const DRAG_TAB = 'application/x-apaki-tab';
+// Most panes of any kind in one tab's layout: conversations count to L.MAX_PANES, viewers, browsers and tasks
+// come on top up to this many (Arthur, 2026-10-11: a tab's number of panes counts conversations, not viewers).
+const MAX_LEAVES = 10;
 
 const S = {
   warm: new Set(), // sessions keep-warm is looking after (engine 'warm' events)
@@ -115,6 +120,12 @@ let tabSeq = 0;
 const newTabId = () => `t${Date.now().toString(36)}${(++tabSeq).toString(36)}`;
 
 const activeTab = () => S.tabs.find((t) => t.id === S.active) || S.tabs[0] || null;
+/** A tab's conversation panes; viewers, browsers and tasks (isViewer) are not counted as its panes. */
+const conversationsIn = (t) => L.ids(t?.root).map((id) => S.panes.get(id)).filter((p) => p && !p.isViewer);
+/** No room for another conversation: L.MAX_PANES of them, or MAX_LEAVES panes of any kind. */
+const tabFull = (t) => Boolean(t?.root) && (conversationsIn(t).length >= L.MAX_PANES || L.count(t.root) >= MAX_LEAVES);
+/** No room for another viewer, browser or task: only the layout's overall limit applies to them. */
+const tabFullForViewer = (t) => Boolean(t?.root) && L.count(t.root) >= MAX_LEAVES;
 const tabOf = (pane) => S.tabs.find((t) => L.has(t.root, pane.id)) || null;
 function focusedPane() {
   const t = activeTab();
@@ -226,7 +237,7 @@ function openViewerIn(art, { focus = false, auto = false } = {}) {
     save();
     return v;
   }
-  if (!t || (t.root && L.count(t.root) >= L.MAX_PANES)) {
+  if (!t || tabFullForViewer(t)) {
     if (auto && t) return null;
     const nt = createTab(null);
     v = createViewer(art);
@@ -295,7 +306,7 @@ function placeBrowser(e) {
   const owner = S.panes.get(e.owner) || null;
   const t = (owner && tabOf(owner)) || activeTab();
   const keep = document.activeElement;
-  if (e.hint === 'tab' || !t || (t.root && L.count(t.root) >= L.MAX_PANES)) {
+  if (e.hint === 'tab' || !t || tabFull(t)) {
     const nt = createTab(L.leaf(b.id));
     nt.focused = b.id;
     layout(nt);
@@ -535,7 +546,7 @@ function newConversation(p) {
   if (p && !p.sessionId && !p.busy && !p.isViewer && !p.isBrowser) { focusPane(p); return; }
   const t = activeTab();
   if (!t || !t.root) { addTab(); return; }
-  if (L.count(t.root) >= L.MAX_PANES) {
+  if (tabFull(t)) {
     (S.panes.get(t.focused) || p)?.note?.(`${L.MAX_PANES} panes is the most per tab; opened in a new tab instead.`, 'warn');
     addTab();
     return;
@@ -658,6 +669,7 @@ function arrangeGrid() {
 
 function dragKind(e) {
   const types = [...(e.dataTransfer?.types || [])];
+  if (types.includes(DRAG_TAB)) return 'tab';
   if (types.includes(DRAG_PANE)) return 'pane';
   if (types.includes(DRAG_TASK)) return 'task';
   if (types.includes(DRAG_SESSION)) return 'session';
@@ -676,7 +688,7 @@ function dropZone(t, e, kind) {
   const movingId = kind === 'pane' ? S.drag?.paneId : null;
   if (movingId === pane.id) return null;
   const sameTab = movingId && L.has(t.root, movingId);
-  const full = L.count(t.root) >= L.MAX_PANES && !sameTab;
+  const full = (S.drag?.paneId && S.panes.get(S.drag.paneId)?.isViewer ? tabFullForViewer(t) : tabFull(t)) && !sameTab;
   const x = (e.clientX - r.left) / r.width;
   const y = (e.clientY - r.top) / r.height;
   const [edge, dist] = Object.entries({ left: x, right: 1 - x, top: y, bottom: 1 - y }).sort((p, q) => p[1] - q[1])[0];
@@ -822,7 +834,7 @@ function dropPane(t, z, moving) {
 function addToTab(t, s) {
   if (!t.root) { dropSession(t, { where: 'root' }, s); return; }
   const target = S.panes.get(t.focused) || S.panes.get(L.ids(t.root)[0]);
-  if (L.count(t.root) >= L.MAX_PANES) { target?.note(`${L.MAX_PANES} panes is the most per tab; opened in a new tab instead.`, 'warn'); addTab({ session: s }); return; }
+  if (tabFull(t)) { target?.note(`${L.MAX_PANES} panes is the most per tab; opened in a new tab instead.`, 'warn'); addTab({ session: s }); return; }
   dropSession(t, { where: 'edge', edge: 'right', pane: target }, s);
 }
 
@@ -835,13 +847,15 @@ function renderTabs() {
   bar.innerHTML = '';
   for (const t of S.tabs) {
     const panes = L.ids(t.root).map((id) => S.panes.get(id)).filter(Boolean);
+    // The number on a tab counts its conversations, not its viewers, browsers or tasks (2026-10-11).
+    const convs = panes.filter((p) => !p.isViewer).length;
     const f = S.panes.get(t.focused) || panes[0];
     const busy = panes.some((p) => p.busy);
     const unread = panes.some((p) => p.unread);
     const warm = panes.some((p) => p.sessionId && S.warm.has(p.sessionId));
     const tab = el('div', `tab${t.id === S.active ? ' on' : ''}${busy ? ' busy' : ''}${unread ? ' unread' : ''}${warm ? ' warm' : ''}`);
     tab.title = panes.map((p) => `${p.busy ? 'working: ' : p.unread ? 'finished: ' : ''}${p.title}`).join('\n') || 'Empty tab';
-    tab.innerHTML = `<span class="tab-t">${esc(f?.title || 'Empty tab')}</span>${panes.length > 1 ? `<span class="tab-n">${panes.length}</span>` : ''}${warm ? '<span class="warm-ring" aria-hidden="true"></span>' : ''}`;
+    tab.innerHTML = `<span class="tab-t">${esc(f?.title || 'Empty tab')}</span>${convs > 1 ? `<span class="tab-n">${convs}</span>` : ''}${warm ? '<span class="warm-ring" aria-hidden="true"></span>' : ''}`;
     // Double-click the name to rename its session (saved in the session, not only here).
     tab.querySelector('.tab-t').ondblclick = (e) => { e.stopPropagation(); if (f && !f.isViewer) beginRename(f.sessionId, tab.querySelector('.tab-t'), { pane: f }); };
     const x = el('button', 'tab-x', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>');
@@ -850,16 +864,42 @@ function renderTabs() {
     tab.append(x);
     tab.onclick = () => switchTab(t);
     tab.onauxclick = (e) => { if (e.button === 1) closeTab(t); };
+    // Drag a tab along the bar to put it somewhere else (Arthur, 2026-10-11: "reorganize tabs").
+    if (!WEB) {
+      tab.draggable = true;
+      tab.addEventListener('dragstart', (e) => {
+        if (e.target.closest('.tab-x')) { e.preventDefault(); return; }
+        e.dataTransfer.setData(DRAG_TAB, t.id);
+        e.dataTransfer.effectAllowed = 'move';
+        S.drag = { kind: 'tab', tabId: t.id };
+        tab.classList.add('dragging-tab');
+      });
+      tab.addEventListener('dragend', () => { tab.classList.remove('dragging-tab'); clearTabMarks(); if (S.drag?.kind === 'tab') S.drag = null; });
+    }
     tab.addEventListener('dragover', (e) => {
       const kind = dragKind(e);
+      if (kind === 'tab') {
+        e.preventDefault();
+        const r = tab.getBoundingClientRect();
+        const before = e.clientX < r.left + r.width / 2;
+        clearTabMarks();
+        tab.classList.add(before ? 'tab-before' : 'tab-after');
+        return;
+      }
       if (kind !== 'session' && kind !== 'pane' && kind !== 'task') return;
       e.preventDefault();
       tab.classList.add('drop');
       if (t.id !== S.active && !hoverTimer) hoverTimer = setTimeout(() => { hoverTimer = null; switchTab(t); }, TAB_HOVER_SWITCH_MS);
     });
-    tab.addEventListener('dragleave', () => { tab.classList.remove('drop'); clearTimeout(hoverTimer); hoverTimer = null; });
+    tab.addEventListener('dragleave', () => { tab.classList.remove('drop', 'tab-before', 'tab-after'); clearTimeout(hoverTimer); hoverTimer = null; });
     tab.addEventListener('drop', (e) => {
       const kind = dragKind(e);
+      if (kind === 'tab') {
+        e.preventDefault();
+        const r = tab.getBoundingClientRect();
+        moveTab(e.dataTransfer.getData(DRAG_TAB), t.id, e.clientX < r.left + r.width / 2);
+        return;
+      }
       if (kind !== 'session' && kind !== 'pane' && kind !== 'task') return;
       e.preventDefault();
       clearTimeout(hoverTimer); hoverTimer = null;
@@ -869,7 +909,7 @@ function renderTabs() {
       if (kind === 'session') { switchTab(t); addToTab(t, JSON.parse(data || 'null')); return; }
       const moving = S.panes.get(data);
       if (!moving || tabOf(moving) === t) return;
-      if (L.count(t.root) >= L.MAX_PANES) { moving.note(`That tab already has ${L.MAX_PANES} panes.`, 'warn'); return; }
+      if (moving.isViewer ? tabFullForViewer(t) : tabFull(t)) { moving.note(`That tab already has ${L.MAX_PANES} panes.`, 'warn'); return; }
       switchTab(t);
       dropPane(t, t.root ? { where: 'edge', edge: 'right', pane: S.panes.get(t.focused) || S.panes.get(L.ids(t.root)[0]) } : { where: 'root' }, moving);
     });
@@ -903,7 +943,7 @@ function renderTabs() {
   bar.append(plus);
   const tools = el('div', 'tabs-tools');
   const t = activeTab();
-  const n = L.count(t?.root);
+  const n = conversationsIn(t).length;
   const gridBtn = el('button', 'tab-tool', '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="5" height="4.5" rx="1"/><rect x="9" y="2.5" width="5" height="4.5" rx="1"/><rect x="2" y="9" width="5" height="4.5" rx="1"/><rect x="9" y="9" width="5" height="4.5" rx="1"/></svg><span>Even grid</span>');
   gridBtn.title = 'Arrange this tab\'s panes into an even grid';
   gridBtn.disabled = n < 2;
@@ -913,6 +953,71 @@ function renderTabs() {
   const unread = [...S.panes.values()].filter((p) => p.unread).length;
   const fp = focusedPane();
   document.title = `${unread ? `(${unread}) ` : ''}Myrlin Apaki${fp ? ` · ${fp.title}` : ''}`;
+  updateBadge();
+}
+
+/** Clears the before/after marks a tab drag leaves on the tab bar. */
+function clearTabMarks() {
+  for (const el2 of document.querySelectorAll('.tab.tab-before, .tab.tab-after')) el2.classList.remove('tab-before', 'tab-after');
+}
+
+/** Moves a tab before or after another one in the tab bar; the order is saved with the workspace. */
+function moveTab(fromId, toId, before) {
+  clearTabMarks();
+  if (!fromId || fromId === toId) return;
+  const from = S.tabs.findIndex((x) => x.id === fromId);
+  if (from < 0) return;
+  const [moving] = S.tabs.splice(from, 1);
+  let to = S.tabs.findIndex((x) => x.id === toId);
+  if (to < 0) { S.tabs.splice(from, 0, moving); return; }
+  if (!before) to += 1;
+  S.tabs.splice(to, 0, moving);
+  renderTabs();
+  save();
+}
+
+/*
+ * The taskbar and dock badge (Arthur, 2026-10-11: "any notifications to show a number of notifications (ready
+ * tabs) top right of the myrlin apaki app in the dock/task bar"): the number of tabs with a conversation that
+ * finished or asks something while you were not looking (unread). macOS shows it as the dock's own badge at the
+ * top right; Windows has no number badge for desktop apps, so it is an overlay icon drawn here (Windows puts
+ * overlays at the bottom right of the taskbar button).
+ */
+let badgeShown = -1;
+function readyTabs() {
+  return S.tabs.filter((t) => L.ids(t.root).some((id) => S.panes.get(id)?.unread)).length;
+}
+/** A 32 px round badge with the number (9+ above nine), as RGBA bytes for the taskbar overlay. */
+function badgePixels(n) {
+  const c = document.createElement('canvas');
+  c.width = 32; c.height = 32;
+  const g = c.getContext('2d');
+  g.fillStyle = '#D2643F';
+  g.beginPath(); g.arc(16, 16, 15, 0, Math.PI * 2); g.fill();
+  g.lineWidth = 2; g.strokeStyle = '#FFFFFF'; g.stroke();
+  g.fillStyle = '#FFFFFF';
+  const text = n > 9 ? '9+' : String(n);
+  g.font = `700 ${text.length > 1 ? 15 : 19}px 'Segoe UI', system-ui, sans-serif`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(text, 16, 17);
+  return new Uint8Array(g.getImageData(0, 0, 32, 32).data.buffer);
+}
+async function updateBadge() {
+  if (WEB || !window.__TAURI__?.window) return;
+  const n = readyTabs();
+  if (n === badgeShown) return;
+  badgeShown = n;
+  const T = window.__TAURI__;
+  const win = T.window.getCurrentWindow();
+  try {
+    if (/Mac/i.test(navigator.platform || navigator.userAgent)) { await win.setBadgeCount(n || undefined); return; }
+    if (!n) { await win.setOverlayIcon(undefined); return; }
+    const img = await T.image.Image.new(badgePixels(n), 32, 32);
+    await win.setOverlayIcon(img);
+  } catch (e) {
+    // An older shell without the permission or the API: the title keeps the count, as before.
+    console.warn('badge:', e?.message || e);
+  }
 }
 
 /* ---------- rail ---------- */
@@ -1084,7 +1189,7 @@ function openTask(spec, { tab = false, inTab = null, focus = true } = {}) {
   if (have) { const ht = tabOf(have); if (ht && ht.id !== S.active) switchTab(ht); focusPane(have); return have; }
   const src = S.panes.get(spec.ownerPane) || paneBySession(spec.sessionId) || null;
   const t = tab ? null : inTab || (src && tabOf(src)) || activeTab();
-  if (!t || (t.root && L.count(t.root) >= L.MAX_PANES)) {
+  if (!t || tabFullForViewer(t)) {
     const nt = createTab(null);
     const v = createTaskViewer(spec);
     nt.root = L.leaf(v.id);
@@ -1124,7 +1229,7 @@ function dragTask(spec, e) {
 /** A task dropped on a stage: split at an edge, take a viewer's place, or open beside a conversation. */
 function dropTask(t, z, spec) {
   if (!spec?.sessionId) return;
-  if (z.where === 'center' && !z.pane.isViewer && L.count(t.root) >= L.MAX_PANES) { z.pane.note(`${L.MAX_PANES} panes is the most per tab; drop it on + for a new tab.`, 'warn'); return; }
+  if (z.where === 'center' && !z.pane.isViewer && tabFull(t)) { z.pane.note(`${L.MAX_PANES} panes is the most per tab; drop it on + for a new tab.`, 'warn'); return; }
   const v = createTaskViewer(spec);
   if (z.where === 'root') t.root = L.leaf(v.id);
   else if (z.where === 'edge') t.root = L.insert(t.root, z.pane.id, v.id, z.edge);
@@ -2275,4 +2380,6 @@ $('refreshSessions').onclick = () => {
 };
 
 // For apaki/scripts/cdp-check.mjs: the live state, read only.
-window.__apaki = { S, L, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };
+// 2026-10-11: focusPane and openFromRail for the phone (apaki/web/src/pager.js focuses the pane a swipe settles on;
+// desktop.js opens a conversation from "On your desktop" the way a tap in the session list does). The window never calls them.
+window.__apaki = { S, L, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };

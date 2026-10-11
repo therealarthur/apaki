@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Myrlin Apaki main window: core events, the app's own commands (engine bridge), and its own window buttons and drag regions (no OS title bar since 2026-10-09); its own size and place, read and restored with the workspace (2026-10-10).",
+  "description": "Myrlin Apaki main window: core events, the app's own commands (engine bridge), and its own window buttons and drag regions (no OS title bar since 2026-10-09); its own size and place, read and restored with the workspace (2026-10-10); the taskbar overlay and dock badge with the number of tabs ready for you (2026-10-11).",
   "windows": [
     "main"
   ],
@@ -18,6 +18,9 @@
     "core:window:allow-set-size",
     "core:window:allow-set-position",
     "core:window:allow-maximize",
-    "core:window:allow-available-monitors"
+    "core:window:allow-available-monitors",
+    "core:window:allow-set-badge-count",
+    "core:window:allow-set-overlay-icon",
+    "core:image:default"
   ]
 }
