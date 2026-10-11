@@ -1,1 +1,4 @@
 CAPACITOR_DEBUG = true
+
+// Signing (team, bundle id, version, build number) lives in one place, shared with Release.
+#include "App/Signing.xcconfig"

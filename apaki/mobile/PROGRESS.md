@@ -3,6 +3,18 @@
 Branch `feat/apaki-mobile`. Newest first. 2026-10-10, Claude Code (Opus 5.5) for Arthur,
 driving the Mac Mini over SSH (the Mac's own Claude login was at its weekly limit).
 
+## 2026-10-10, evening: a repeatable pipeline to a phone (Claude Code, Sonnet 5.5)
+
+Arthur: "make sure that the ios branch is being built in such a way where it can get pushed and then pulled on mac to then load onto a dev iphone via testflight/etc - and or pushed to the cloud to allow for a user to download over testflight or over usbc".
+
+- **One signing config**: `ios/App/Signing.xcconfig` holds `DEVELOPMENT_TEAM` (empty until Arthur has one), the bundle id, version, build number and the entitlements file. The project reads it for Debug and Release; the target keeps none of those settings (they would override it). `Signing.local.xcconfig` (git-ignored) and `APAKI_TEAM_ID` override per machine. `AppPersonal.entitlements` leaves out Associated Domains, which a free personal team cannot sign.
+- **Scripts** (`apaki/mobile/scripts`, bash 3.2 safe): `mac-update.sh` (pull ff-only, npm ci when the lock changed, page build, cap sync), `ios-device.sh` (build and install on a USB iPhone, `--personal`, `--release`, `--ipa`, `--list`), `ios-testflight.sh` (build number + 1, archive, export with `ExportOptions-AppStore.plist`, upload with an API key from `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_PATH`; `--unsigned`, `--archive-only`, `--ipa`), `ci-ios.sh`, `lib-ios.sh`. Exit 2 = a prerequisite is missing, 1 = a step failed.
+- **Cloud**: `.github/workflows/ios-testflight.yml`, manual only: a Linux job checks the four secrets (`APPLE_TEAM_ID`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`) and names missing ones; then a `macos-26` job runs `ios-testflight.sh`. `actionlint` clean. Not run: GitHub only dispatches a workflow whose file is on the default branch, and this branch is not merged.
+- **Proved on the Mac** (Xcode 26.4): `mac-update.sh` (a real pull `16ef0d7 -> f377a07`, second run a no-op), `ios-sim.sh build` (Simulator Debug, bundle id and versions read from the xcconfig), an unsigned Debug device build, `ios-testflight.sh --unsigned` (Release archive for iOS, arm64, 24 s, 13 MB, page present and not a demo build), `-showBuildSettings` for Debug and Release with and without overrides, the exported plist options with a team id injected, `ci-ios.sh check` and `write-key`, and the "no team", "no phone", "no key" messages (`ios-device.sh`, `ios-testflight.sh`). `ios-device.sh` with a faked phone reached xcodebuild and the install step.
+- **Not run (no team id, no phone, no key)**: a signed archive, the export and upload, an install on a real iPhone, the cloud workflow, the `ipa` target. Nothing was uploaded.
+- **README**: new "Ship it (iOS)" section (one time, USB-C, TestFlight and the cloud with the cost, the apple-app-site-association team id).
+- Mac disk at the end: 10 GB free.
+
 ## 2026-10-10, later: merged master d077b7a
 
 - **Merge**: origin/master (d077b7a: durable sessions, Private mode and phone limits, storage robustness, pairing lifetimes, close codes 4404/4504/4505, account approval) merged into the branch. No textual conflicts; the branch's hooks in `protocol.js`, `boot.js`, `account.js`, `PROTOCOL.md` and `relay/site/_headers` are all still in place on top of master's code.

@@ -1,0 +1,120 @@
+# Apaki iOS: archive on a GitHub macOS runner and upload to TestFlight (apaki/mobile, 2026-10-10).
+#
+# Manual only (workflow_dispatch): nothing pushes or schedules this. It does what
+# apaki/mobile/scripts/ios-testflight.sh does on the Mac, because it runs that same script.
+#
+# Repository secrets it reads (Settings > Secrets and variables > Actions):
+#   APPLE_TEAM_ID   the 10 character Apple team id
+#   ASC_KEY_ID      the App Store Connect API key's Key ID
+#   ASC_ISSUER_ID   the Issuer ID shown above the key list
+#   ASC_KEY_P8      the full text of the downloaded AuthKey_<KEY_ID>.p8 (or that text in base64)
+# If any is missing the cheap Linux "preflight" job fails with a message naming it, and the macOS job
+# never starts, so no macOS minutes are spent. Cost and how to run it: apaki/mobile/README.md, "Ship it".
+#
+# Note: GitHub lists a manual workflow only when its file is on the default branch. Until this branch is
+# merged, add this one file to master (or merge the branch) before it appears under the Actions tab.
+
+name: Apaki iOS TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "testflight: upload the build to TestFlight. ipa: build an installable ad hoc .ipa as a download (paid team, iPhones registered in the team)."
+        type: choice
+        options:
+          - testflight
+          - ipa
+        default: testflight
+
+# One run at a time: two runs would both raise the build number.
+concurrency:
+  group: apaki-ios-testflight
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Check the secrets (Linux, seconds)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: apaki/mobile/scripts
+      - name: Check that the repository secrets exist
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: bash apaki/mobile/scripts/ci-ios.sh check
+
+  build:
+    name: Archive and upload (macOS)
+    needs: preflight
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: write   # to push the build number the upload raises
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apaki/mobile/package-lock.json
+
+      - name: Select the newest Xcode 26
+        run: |
+          xc="$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          echo "using $xc"
+          sudo xcode-select -s "$xc"
+          xcodebuild -version
+
+      - name: Write the App Store Connect API key to a private temp file
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: bash apaki/mobile/scripts/ci-ios.sh write-key
+
+      - name: Archive and upload
+        if: ${{ inputs.target == 'testflight' }}
+        env:
+          APAKI_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: bash apaki/mobile/scripts/ios-testflight.sh
+
+      - name: Archive and export an ad hoc .ipa
+        if: ${{ inputs.target == 'ipa' }}
+        env:
+          APAKI_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: bash apaki/mobile/scripts/ios-testflight.sh --ipa
+
+      - name: Keep the .ipa for download (14 days)
+        if: ${{ inputs.target == 'ipa' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Apaki-ipa
+          path: apaki/mobile/ios/build/export/*.ipa
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Keep the build logs when something failed
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-logs
+          path: apaki/mobile/ios/build-*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Delete the API key file
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8

@@ -46,7 +46,13 @@ apaki/mobile/
     ios-sim.sh         build, Simulator, demo, screenshots (on the Mac)
     relay-test-pc.mjs  a throwaway stand-in PC for tests against the real relay
     make-assets.py     icons and launch screens from apaki/icons/source
+    mac-update.sh      on the Mac after a push: pull, npm ci, page build, cap sync
+    ios-device.sh      build, sign and install on a USB-connected iPhone
+    ios-testflight.sh  archive and upload to TestFlight (also what the cloud workflow runs)
+    ci-ios.sh, lib-ios.sh   the workflow's secret check and key file step; helpers the scripts share
   ios/                 the Xcode project (Capacitor 8, Swift Package Manager)
+    App/Signing.xcconfig   the one signing config: team id, bundle id, version, build number
+    ExportOptions-AppStore.plist, ExportOptions-AdHoc.plist   xcodebuild -exportArchive options (no secrets)
     App/App/Apaki*.swift   the Apaki plugins and the view controller that registers them
   android/             the Android project (official plugins wired; see Android below)
   test/                node --test, also run by npm test at the repo root
@@ -153,18 +159,98 @@ that signs by itself pairing and reconnecting against the real PcSession
 (`device-signer.test.js`). The native side was tested in the Simulator as in
 the screenshots; see "Not tested yet" below.
 
+## Ship it (iOS)
+
+The route: push from the PC, then on the Mac Mini (`ssh macmini.myrlin.dev`, clone at
+`~/Projects/claude-latch-mobile`) run `scripts/mac-update.sh`, then either
+`scripts/ios-device.sh` (your iPhone over USB-C) or `scripts/ios-testflight.sh`
+(TestFlight). Or let a GitHub macOS runner do the TestFlight part (below). All
+scripts run from `apaki/mobile`, print what they do, and stop with a plain message when
+something is missing (exit 2: no team id, no phone, no API key; exit 1: a step failed).
+
+Checked on the Mac (Xcode 26.4, 2026-10-10): `mac-update.sh`, the Simulator build, the
+unsigned Release archive (`scripts/ios-testflight.sh --unsigned`: arm64, 24 seconds, 13 MB)
+and the "no team, no phone, no key" messages. **Not run, because there is no team id and
+no key yet:** a signed build, an install on a real iPhone, the export, the upload and the
+cloud workflow. Expect a first-run snag or two there and read the message.
+
+### a. One time
+
+1. **Apple Developer Program** (USD 99 a year), needed for TestFlight, passkeys and Universal Links. Not needed for step b alone: a free Apple ID works there. Your **Team ID** is under developer.apple.com, Account, Membership details.
+2. **Team id into one file**: `apaki/mobile/ios/App/Signing.xcconfig`, the line `DEVELOPMENT_TEAM = ABCDE12345`. Commit and push it. That is all signing needs: the project signs automatically, Debug and Release read this file, and the target keeps no signing setting of its own (do not pick a team in Xcode's Signing tab; that writes a second copy into the project file that overrides this one). For one Mac only, put the line in `ios/App/Signing.local.xcconfig` (git ignores it) or set `APAKI_TEAM_ID`.
+3. **App ID** `io.myrlin.apaki` with **Associated Domains** on: the first signed build creates it for you (Xcode registers the App ID and switches the capability on), or make it by hand under Certificates, Identifiers & Profiles.
+4. **App Store Connect app record**: My Apps, +, New App, platform iOS, bundle ID `io.myrlin.apaki` (the name may be taken; "Myrlin Apaki" is an option), a SKU of your choice.
+5. **App Store Connect API key** (this is what lets a script, not you in Xcode, sign and upload): App Store Connect, Users and Access, Integrations, App Store Connect API, Team Keys, +. Give it the Admin role (the key creates the signing certificates and profiles through `-allowProvisioningUpdates`; I could not confirm from Apple's pages that App Manager is enough, so Admin is the safe choice). **Download the .p8 at once: Apple shows it once.** Note the Key ID (in the table) and the Issuer ID (above the table). Keep the file outside the repo:
+   ```
+   mkdir -p ~/.appstoreconnect/private_keys && chmod 700 ~/.appstoreconnect/private_keys
+   # put AuthKey_<KEY_ID>.p8 there, chmod 600
+   export ASC_KEY_ID=<KEY_ID>
+   export ASC_ISSUER_ID=<the Issuer ID>
+   export ASC_KEY_PATH=$HOME/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8
+   ```
+   (put the three `export` lines in the Mac's `~/.zshenv` so SSH sessions see them). Nothing here is ever stored in the repo.
+6. **Export compliance**: see step 8 of the TestFlight list further down (the answer goes in Info.plist once).
+
+### b. USB-C to your own iPhone
+
+On the phone: plug it into the Mac with USB-C, unlock it, tap Trust and enter the passcode, then Settings, Privacy & Security, **Developer Mode** on (the phone restarts). On the Mac: Xcode, Settings, Accounts, signed in with the Apple ID of the team (or the `ASC_` variables set as above). Then:
+
+```
+ssh macmini.myrlin.dev
+cd ~/Projects/claude-latch-mobile/apaki/mobile
+scripts/mac-update.sh                 # pull, npm ci, page, cap sync
+scripts/ios-device.sh                 # Debug build, installed and launched on the phone
+scripts/ios-device.sh --release       # the Release build (what TestFlight ships)
+scripts/ios-device.sh --personal      # same, signed with a FREE personal team
+scripts/ios-device.sh --list          # which phones the Mac sees
+```
+
+With no phone or no team id it says what to do and stops. If the phone refuses the app on a free team: Settings, General, VPN & Device Management, your Apple ID, Trust.
+
+**A free personal team** (no paid membership) works for this USB route, with limits Apple sets, not this project: the app stops launching after **7 days** (run `ios-device.sh --personal` again to renew it), the team cannot use Associated Domains (so `--personal` leaves the entitlement out: **no passkeys and no Universal Links** in that build; scanning the PC's QR in the app still pairs), it cannot use TestFlight, and Apple caps how many App IDs a free team can register per week. These limits are from Apple's documentation of personal teams; I could not test them with no team id.
+
+A .ipa built in the cloud (workflow target `ipa`, below) installs the same way, with no build on the Mac: `scripts/ios-device.sh --ipa ~/Downloads/Apaki.ipa`.
+
+### c. TestFlight
+
+On the Mac, with the team id set and the three `ASC_` variables exported:
+
+```
+scripts/mac-update.sh && scripts/ios-testflight.sh
+```
+
+It raises the build number by one, archives Release for iOS, exports with `ios/ExportOptions-AppStore.plist` (method `app-store-connect`, destination `upload`) and `-allowProvisioningUpdates` with the API key, which uploads the build to App Store Connect in the same step. Then it writes the new build number into `Signing.xcconfig`, commits that one file and pushes it (`--no-commit` or `--no-push` skip that), so the Mac and the workflow never reuse a number. Apple processes the build for about 5 to 30 minutes. Then in App Store Connect, TestFlight: answer the export compliance question (step 8 below), add testers (people with an App Store Connect role are internal testers and get the build at once; anyone else is an external tester, which needs a first Beta App Review), and they install the TestFlight app and the build from it. To see that the project archives before you have any account: `scripts/ios-testflight.sh --unsigned`.
+
+**Or in the cloud**, with the Mac off: `.github/workflows/ios-testflight.yml`, manual only. Add four repository secrets (Settings, Secrets and variables, Actions): `APPLE_TEAM_ID`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_KEY_P8` (the full text of the .p8 file). Then Actions, "Apaki iOS TestFlight", Run workflow (or `gh workflow run ios-testflight.yml -f target=testflight`), and pick the branch. A Linux job checks the four secrets first and fails with a message naming the missing ones, so no macOS minutes are spent until they are all there. The macOS job (`macos-26`, newest Xcode 26) then runs the same `ios-testflight.sh`, writing the key to a private temp file and deleting it at the end. Target `ipa` builds an ad hoc .ipa instead of uploading and keeps it for download for 14 days (needs the paid team and your iPhone's UDID registered in it; not tested).
+
+GitHub only offers a manual workflow whose file is on the default branch: checked 2026-10-10, `gh workflow run ios-testflight.yml --ref feat/apaki-mobile` answers "workflow ios-testflight.yml not found on the default branch". So the workflow file needs to be on master before it can be run; it was not run (no secrets exist, and it was not merged). It passes `actionlint` 1.7.12 and parses as YAML.
+
+**Cost of the cloud route.** The repo `therealarthur/claude-latch` is private (checked with `gh`), so Actions minutes count. From GitHub's billing pages (fetched 2026-10-10): a standard macOS runner (3-core or 4-core, billing SKU `actions_macos`) costs **USD 0.062 per minute**; a 2-core Linux runner USD 0.006; the included minutes each month are 2,000 on Free, 3,000 on Pro, 3,000 on Team and 50,000 on Enterprise Cloud; standard runners are free on public repos; larger runners (the `-large` and `-xlarge` labels) are never covered by included minutes. **Not verified:** the "macOS minutes count 10x against the allowance" rule. The current GitHub pages I fetched list per-minute prices and no multiplier table; third-party guides still say 10x for macOS (1x Linux, 2x Windows), which fits the prices (0.062 against 0.006 is about 10). If 10x applies, 2,000 free minutes are about 200 macOS minutes a month. Also **not measured:** how long a run takes. Here the unsigned archive took 24 seconds on an M4 with warm caches; a cold runner (checkout, `npm ci`, Swift package fetch, signing, upload) is my guess at 10 to 20 minutes, which at USD 0.062 is roughly USD 0.60 to 1.25 a run once the allowance is gone. The Mac Mini route costs no minutes.
+
+### d. Associated Domains: the team id in the association file
+
+Passkeys (the Apaki account) and pairing links that open the app need Apple to find your app in `https://apaki.myrlin.io/.well-known/apple-app-site-association`. That file still holds the placeholder `TEAMIDXXXX`, twice. With the paid team id:
+
+```
+sed -i '' 's/TEAMIDXXXX/ABCDE12345/g' relay/site/.well-known/apple-app-site-association   # macOS; on Linux drop the ''
+```
+
+Deploy the relay as usual, then `curl -i https://apaki.myrlin.io/.well-known/apple-app-site-association` must answer 200 with `content-type: application/json` and no redirect. Apple copies the file within about a day (`https://app-site-association.cdn-apple.com/a/v1/apaki.myrlin.io`). Do this before the first TestFlight build is tested, or passkeys and links will not work in it. The app side is already in `ios/App/App/App.entitlements` (`webcredentials:` and `applinks:`) and the App ID needs Associated Domains on (step 3 above). A free personal team cannot do any of this (b above).
+
 ## Release: what Arthur does
 
 ### iOS (TestFlight, then the App Store)
 
+The short version is "Ship it" above; this is the same path with the App Store Connect details.
+
 1. **Apple Developer Program** membership (USD 99 a year) for the account that will own the app. Note the **Team ID** (developer.apple.com, Membership).
 2. **App ID** `io.myrlin.apaki` (Certificates, Identifiers & Profiles, Identifiers): enable **Associated Domains**. (Push Notifications later, see below.)
 3. **Associated Domains file**: in `relay/site/.well-known/apple-app-site-association` replace `TEAMIDXXXX` (twice) with the Team ID, then deploy the relay as usual. Check it: `curl -i https://apaki.myrlin.io/.well-known/apple-app-site-association` must answer 200, `content-type: application/json`, no redirect; Apple's copy follows within about a day: `https://app-site-association.cdn-apple.com/a/v1/apaki.myrlin.io`. While developing on a device you can skip Apple's cache: add `?mode=developer` to both entries in `ios/App/App/App.entitlements` and turn on Developer Mode on the phone (Settings, Privacy & Security); take it out before a release build.
-4. **Signing**: `npx cap open ios`, target App, Signing & Capabilities: pick the team, keep "Automatically manage signing". This writes `DEVELOPMENT_TEAM` into the project; commit it.
-5. **Version**: `MARKETING_VERSION` (1.0) and `CURRENT_PROJECT_VERSION` (raise for every upload) in the target's General tab.
+4. **Signing**: `DEVELOPMENT_TEAM` in `ios/App/Signing.xcconfig` (see "Ship it", a). Do not pick the team in Xcode's Signing tab: that writes a second copy into the project file that overrides the config file.
+5. **Version**: `MARKETING_VERSION` (1.0) in `ios/App/Signing.xcconfig`. `CURRENT_PROJECT_VERSION` is there too; `scripts/ios-testflight.sh` raises it for every upload.
 6. **App Store Connect**: My Apps, +, New App: platform iOS, name (for example "Myrlin Apaki"; "Apaki" may be taken), bundle ID `io.myrlin.apaki`, SKU of your choice.
-7. **Build and upload**: `npm run sync` (a normal build, never `sync:demo`), then in Xcode Product, Archive, Distribute App, App Store Connect, Upload. Or from the command line:
-   `xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -archivePath build/Apaki.xcarchive archive` then `xcodebuild -exportArchive -archivePath build/Apaki.xcarchive -exportOptionsPlist <plist with method app-store-connect> -exportPath build/`.
+7. **Build and upload**: `scripts/mac-update.sh && scripts/ios-testflight.sh` on the Mac (a normal build, never the demo; "Ship it", c), or the GitHub workflow. By hand in Xcode it is `npm run sync`, then Product, Archive, Distribute App, App Store Connect, Upload. The command-line form of what the script does:
+   `xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -destination generic/platform=iOS -archivePath build/Apaki.xcarchive -allowProvisioningUpdates archive` then `xcodebuild -exportArchive -archivePath build/Apaki.xcarchive -exportOptionsPlist ios/ExportOptions-AppStore.plist -exportPath build/export -allowProvisioningUpdates` (add `teamID` to a copy of the plist, and the `-authenticationKeyPath`, `-authenticationKeyID` and `-authenticationKeyIssuerID` flags; the script does both).
 8. **Export compliance**: the app implements standard cryptography (ECDH P-256, AES-256-GCM, ECDSA, HKDF) for end-to-end encryption. App Store Connect asks about it on the first upload; answer for your situation (this is usually the mass-market exemption) and then add `ITSAppUsesNonExemptEncryption` to Info.plist with the matching value so later builds skip the question.
 9. **App Privacy** (App Store Connect): the app itself collects nothing for tracking. With an Apaki account the server keeps the account's display name, its passkeys' public keys and an encrypted vault; the relay sees IP addresses and connection times. Declare what applies.
 10. **TestFlight**: once the build is processed, add yourself as an internal tester; install TestFlight on the iPhone and the build from there. Then check on the device: scan a QR from your PC, Allow on the PC, quit and reopen the app, lock and unlock the phone; sign in to the account with a passkey (needs step 3 deployed).

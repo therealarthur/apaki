@@ -1,0 +1,36 @@
+// Signing.xcconfig: the one place the Apaki iOS app's signing is set (apaki/mobile, 2026-10-10).
+//
+// The Xcode project reads this file for both Debug and Release (Release directly, Debug through
+// ../debug.xcconfig), and the target keeps none of these settings itself, so what is written here wins.
+//
+//   DEVELOPMENT_TEAM     your Apple team id (10 characters, for example ABCDE12345). Setting it once is all
+//                        signing needs: the project signs automatically.
+//                        A paid Apple Developer Program team and a free personal team both work for a build
+//                        on your own iPhone over USB; only the paid team can upload to TestFlight.
+//                        Where to find it: apaki/mobile/README.md, "Ship it".
+//   PRODUCT_BUNDLE_IDENTIFIER   io.myrlin.apaki. Must match the App ID, the App Store Connect app record,
+//                        and the apple-app-site-association file on apaki.myrlin.io.
+//   APAKI_ENTITLEMENTS   App.entitlements (Associated Domains: passkeys and pairing links). A free personal
+//                        team cannot sign Associated Domains, so for such a team the scripts pass
+//                        AppPersonal.entitlements instead (ios-device.sh --personal); the app then runs
+//                        without passkeys and Universal Links.
+//   MARKETING_VERSION    the version people see (1.0).
+//   CURRENT_PROJECT_VERSION   the build number. scripts/ios-testflight.sh raises it by one for every
+//                        TestFlight upload and commits the new number; App Store Connect refuses a number it
+//                        has seen for this version.
+//
+// Machine-only values (a different team on one Mac, the personal entitlements) go in
+// Signing.local.xcconfig next to this file; git ignores it and it overrides what is below.
+// The environment variable APAKI_TEAM_ID overrides the team for the scripts as well (the cloud workflow uses it).
+//
+// Nothing secret belongs here. A team id is not a secret; the App Store Connect API key never goes in the repo.
+
+DEVELOPMENT_TEAM =
+PRODUCT_BUNDLE_IDENTIFIER = io.myrlin.apaki
+CODE_SIGN_STYLE = Automatic
+APAKI_ENTITLEMENTS = App.entitlements
+CODE_SIGN_ENTITLEMENTS = App/$(APAKI_ENTITLEMENTS)
+MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 1
+
+#include? "Signing.local.xcconfig"

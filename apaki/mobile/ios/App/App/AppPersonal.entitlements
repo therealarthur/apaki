@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for a build signed with a FREE personal Apple team (apaki/mobile, 2026-10-10).
+  A personal team cannot sign Associated Domains, so this file is App.entitlements without it:
+  the app installs and runs on the owner's own iPhone, but passkeys (the Apaki account) and
+  Universal Links for pairing are off. Scanning the PC's QR in the app and the apaki:// link still pair.
+  Selected by scripts/ios-device.sh --personal (APAKI_ENTITLEMENTS in Signing.xcconfig).
+  A paid team and TestFlight use App.entitlements.
+-->
+<plist version="1.0">
+<dict/>
+</plist>
