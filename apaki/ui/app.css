@@ -2330,6 +2330,6 @@ body.rail-collapsed .signin-card { left: 22px; }
 /* Tab reordering (app.js moveTab, 2026-10-11): the tab being dragged fades, and the bar opens a gap where it
    would land, the way a browser's tab strip makes room. No line or stripe. */
 .tab.dragging-tab { opacity: .45; }
-.tab.tab-before { margin-left: 44px; transition: margin var(--dur-fast) var(--ease-out); }
-.tab.tab-after { margin-right: 44px; transition: margin var(--dur-fast) var(--ease-out); }
-@media (prefers-reduced-motion: reduce) { .tab.tab-before, .tab.tab-after { transition: none; } }
+/* The gap appears at once: animating margin would lay out the whole bar every frame (Impeccable layout-transition). */
+.tab.tab-before { margin-left: 44px; }
+.tab.tab-after { margin-right: 44px; }
