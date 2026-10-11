@@ -1438,6 +1438,8 @@ export class Pane {
 
   /** Sends the box. While Claude works it queues, or with { steer: true } (Ctrl+Enter) goes into the running turn now. */
   submit({ steer = false, checked = false } = {}) {
+    // The window is reconnecting to the engine: the message stays in the box until it is back (2026-10-11).
+    if (this.host.engineLost?.()) { this.setStatus('Reconnecting to the engine; your message is still here.'); return; }
     // Idle for a while: make sure the transcript here is the newest before adding to it (checkDrift, 2026-10-11).
     if (!checked && !this.busy && !this.lockedBy && this.sessionId && Date.now() - (this.lastLiveAt || 0) > 15000 && this.$.input.value.trim()) {
       this.checkDrift({ wait: true }).then(() => this.submit({ steer, checked: true }));

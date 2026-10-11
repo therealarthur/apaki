@@ -270,24 +270,29 @@ fn start_engine(app: &AppHandle, pending: Option<Receiver<String>>) -> Result<()
     Ok(())
 }
 
-/// Reconnects to (or starts) the engine after it went away, unless that happened 5 times in a minute.
+/// Reconnects to (or starts) the engine after it went away. It never gives up (2026-10-11: an update's old
+/// background engine exiting just as the new window started used up the old limit of 5 tries a minute and
+/// left the window with no engine): the wait grows with the recent tries, 0.4 s doubling to 10 s, and the
+/// window is told once per minute of trouble instead of on every try.
 fn restart_engine(app: &AppHandle) {
     let state: State<Engine> = app.state();
-    {
+    let wait = {
         let mut r = state.restarts.lock().unwrap();
         r.retain(|t| t.elapsed() < Duration::from_secs(60));
-        if r.len() >= 5 {
-            to_window(app, json!({ "ev": "error", "message": "The engine keeps stopping; see ~/.claude/latch/apaki-engine.log" }));
-            return;
+        if r.len() == 5 {
+            to_window(app, json!({ "ev": "note", "tone": "warn", "text": "Still reconnecting to the engine; Apaki keeps trying (details in ~/.claude/latch/apaki-engine.log)." }));
         }
         r.push(Instant::now());
-    }
-    std::thread::sleep(Duration::from_millis(400));
+        let tries = u32::try_from(r.len()).unwrap_or(u32::MAX).saturating_sub(1).min(5);
+        Duration::from_millis((400u64 << tries).min(10_000))
+    };
+    std::thread::sleep(wait);
     if state.closing.load(Ordering::SeqCst) {
         return;
     }
     if let Err(e) = start_engine(app, None) {
-        to_window(app, json!({ "ev": "error", "message": e }));
+        // Logged, not shown: the window already says it is reconnecting, and the next try follows.
+        eprintln!("apaki: reconnecting to the engine: {e}");
         restart_engine(app);
     }
 }

@@ -80,7 +80,16 @@ const S = {
 };
 
 function send(op, args = {}) {
-  return invoke('engine_send', { msg: { op, reqId: `r${++S.seq}`, ...args } }).catch((e) => focusedPane()?.note(String(e), 'error'));
+  return invoke('engine_send', { msg: { op, reqId: `r${++S.seq}`, ...args } }).catch((e) => {
+    // While the window reconnects every command is refused; one quiet line says so, not one per command
+    // (Arthur, 2026-10-11, saw "engine is not running" a dozen times while the engine switched over).
+    if (/engine is not running/i.test(String(e))) {
+      if (!S.offlineNoted) { S.offlineNoted = true; focusedPane()?.note('Not connected to the engine for a moment; reconnecting. Nothing you type is lost.', 'warn'); }
+      return false;
+    }
+    focusedPane()?.note(String(e), 'error');
+    return false;
+  });
 }
 
 /* ---------- formatting helpers ---------- */
@@ -148,6 +157,8 @@ const host = {
   folder: (p, value) => paneFolder(p, value),
   folderMenu: (p, anchor) => folderMenu(p.sessionId, anchor),
   newConversation: (p) => newConversation(p),
+  // Reconnecting to the engine (engine_exit until the next ready): a pane keeps a message in its box instead of sending it.
+  engineLost: () => Boolean(S.engineLost),
   // /resume and /continue (pane.js): Claude Code's own /resume is a terminal picker the SDK turns off ("isn't
   // available in this environment"), so Apaki opens its session search instead, with what followed the command.
   findSession: (query = '') => findSession(query),
@@ -2162,6 +2173,7 @@ await listen('engine', ({ payload: e }) => {
       // each one (without starting Claude Code until its next message).
       if (S.engineLost) {
         S.engineLost = false;
+        S.offlineNoted = false;
         for (const p of S.panes.values()) {
           // Viewers load again from the new engine's server address.
           if (p.isViewer) { p.engineBack(); continue; }

@@ -428,6 +428,9 @@ export class RemoteBridge {
     this.notices = [];
     this.viaGraceMs = o.viaGraceMs ?? VIA_GRACE_MS;
     this.enrollWindowMs = o.enrollWindowMs ?? ENROLL_WINDOW_MS;
+    // The page re-check's pause before its confirming fetch, and its retry for a version not fully published yet (2026-10-11).
+    this.recheckPauseMs = o.recheckPauseMs ?? 20000;
+    this.recheckRetryMs = o.recheckRetryMs ?? 60000;
     // Capability notes for phone panes that opened a session: sent after its history, which redraws the pane (route).
     this.capNotes = new Map();
     this.log = o.log || ((line) => process.stderr.write(`apaki remote: ${line}\n`));
@@ -2088,9 +2091,23 @@ export class RemoteBridge {
         const check = () => Promise.resolve().then(() => this.pageCheck({ ...t, headers, recheck: true, agent: agent.name })).catch((e) => ({ state: 'unreachable', error: e.message, at: Date.now() }));
         let r = await check();
         if (r?.state === 'differs') {
-          // Once more before acting: one odd answer is not a changed site.
+          // Once more before acting: one odd answer is not a changed site. 2026-10-11: after a pause, so a site
+          // that is still spreading a fresh deploy across its edge (a file briefly missing) can settle first.
+          await new Promise((res) => setTimeout(res, this.recheckPauseMs));
           const again = await check();
           if (again?.state === 'differs') {
+            // A version this PC never saw check out is not "changed": it is not fully published yet (the incident:
+            // phone access went off minutes after a deploy). Try again in a minute instead of turning access off.
+            // A version it verified before that now differs still turns phone access off: that is the real alarm.
+            const verified = Boolean(again.version) && store.loadPages(this.dir).some((p) => p.version === again.version);
+            if (!verified) {
+              this.log(`the phone page ${again.url || ''} is not fully available yet (${[...(again.differs || []), ...(again.missing || [])].slice(0, 5).join(', ')}); checking again in a minute`);
+              clearTimeout(this.pendingRecheck);
+              this.pendingRecheck = setTimeout(() => { this.pendingRecheck = null; this.recheckPages().catch(() => {}); }, this.recheckRetryMs);
+              this.pendingRecheck.unref?.();
+              results.push(again);
+              continue;
+            }
             results.push(again);
             await this.pageChanged(again, agent);
             break;
@@ -2260,6 +2277,7 @@ export class RemoteBridge {
   /** Stops everything (the engine is exiting). */
   stop() {
     this.closeSocket();
+    clearTimeout(this.pendingRecheck);
     clearTimeout(this.offerTimer);
     clearTimeout(this.panesTimer);
     clearTimeout(this.expiryTimer);

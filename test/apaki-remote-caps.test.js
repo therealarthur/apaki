@@ -167,6 +167,8 @@ function bridgeFor(relay, dir, extra = {}) {
     relay: 'ws://127.0.0.1:9',
     web: 'http://127.0.0.1:9/',
     pcName: 'Test PC',
+    // The re-check's pause before its confirming fetch (20 s in the app) kept short here.
+    recheckPauseMs: 10,
     log: () => {},
     pageCheck: false,
     recheckFirstMs: 3_600_000,
@@ -498,6 +500,32 @@ test('re-check: a verified version fetched like a phone browser; a changed file 
       answer = (a) => ({ ...base, state: 'ok', at: Date.now() });
       await b.op({ op: 'remoteEnable' });
       assert.equal(last().pageAlarm, null);
+    } finally { b.stop(); }
+  });
+});
+
+test('re-check: a version this PC never verified that does not match yet is waited for, not an alarm (a fresh deploy, 2026-10-11)', async () => {
+  await withDir(async (dir) => {
+    const relay = fakeRelay();
+    const base = { version: 'new000new000', url: 'http://127.0.0.1:9/v/new000new000/', files: 1, differs: [], missing: [], hashes: { 'index.html': 'a'.repeat(64) } };
+    let answer = () => ({ ...base, state: 'ok', at: Date.now() });
+    const br = bridgeFor(relay, dir, { pageCheck: async () => answer(), recheckRetryMs: 40 });
+    const { b, last } = br;
+    try {
+      await b.op({ op: 'remoteEnable' });
+      await until(() => b.status === 'online');
+      assert.deepEqual(store.loadPages(dir).map((x) => x.version), [], 'no version verified by this PC yet');
+      // Phone access went off minutes after a deploy (the page was still spreading, or an engine read a half-copied
+      // install): a mismatch on a version never seen whole is a "not yet", checked again shortly.
+      answer = () => ({ ...base, state: 'differs', differs: ['index.html'], at: Date.now() });
+      await b.recheckPages();
+      assert.equal(b.state.enabled, true, 'phone access stays on');
+      assert.equal(last().pageAlarm ?? null, null, 'no alarm');
+      assert.ok(b.pendingRecheck, 'checked again shortly');
+      answer = () => ({ ...base, state: 'ok', at: Date.now() });
+      await until(() => !b.pendingRecheck);
+      await until(() => !b.rechecking);
+      assert.equal(b.state.enabled, true);
     } finally { b.stop(); }
   });
 });
