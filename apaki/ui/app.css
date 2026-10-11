@@ -1986,6 +1986,9 @@ mark.find-hit.cur { background: var(--peach-glow); color: #1E1B33; box-shadow: 0
 .chip-btn.ctx.warm .ctx-bar i { background: linear-gradient(90deg, #E9A23B, #E0803A); }
 .chip-btn.ctx.warm .ctx-n { color: #B5651D; }
 .chip-btn.ctx.full .ctx-bar i { background: linear-gradient(90deg, var(--action), var(--action-strong)); }
+/* An estimate from the transcript (context-estimate.js), before Claude runs in the pane: quieter until the live number arrives. */
+.chip-btn.ctx.estimate .ctx-n { opacity: .62; }
+.chip-btn.ctx.estimate .ctx-bar i { opacity: .55; }
 .chip-btn.ctx.full .ctx-n { color: var(--action-strong); font-weight: 750; }
 :root[data-theme="dark"] .chip-btn.ctx.warm .ctx-n { color: #F0B062; }
 @media (prefers-reduced-motion: reduce) { .ctx-bar i { transition: none; } }

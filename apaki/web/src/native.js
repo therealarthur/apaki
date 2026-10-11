@@ -366,6 +366,8 @@ export function initNative({ onPcTap, startInChat = false } = {}) {
   document.querySelector('.rail')?.addEventListener('click', (e) => { if (e.target.closest('.sub-row:not(.note)')) showChat(); });
   // Closing the conversation goes back to the list.
   document.querySelector('.main')?.addEventListener('click', (e) => { if (e.target.closest('.pane-bar .close')) setTimeout(() => showList(), 0); });
+  // /resume in a conversation (app.js findSession): back to the list, where its search box is.
+  window.addEventListener('apaki:list', () => showList());
   // The title follows the conversation.
   const stages = $('stages');
   if (stages) new MutationObserver(() => { if (N.screen === 'chat') syncChatTitle(); }).observe(stages, { subtree: true, childList: true, characterData: true });

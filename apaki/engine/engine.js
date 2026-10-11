@@ -113,6 +113,8 @@ import { startOpenServer } from './open-server.js';
 import { dropHeld, heldView, resetHeld, setHeld, takeForAutoSend } from './queue-hold.js';
 // "Auto-compact at" (Settings) and the other few settings the engine keeps (prefs.js).
 import { COMPACT_CHOICES, COMPACT_DEFAULT, compactSettings, loadPrefs, normalizeCompact, prefsFile, savePrefs } from './prefs.js';
+// The context meter before a conversation runs: its last call's usage, from the transcript (2026-10-10 night).
+import { estimateEvent, lastUsage } from './context-estimate.js';
 import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
 // Signing in on a fresh install (2026-10-10, see "signing in to Claude" below).
 import { liveLogin } from '../../src/auth.js';
@@ -501,6 +503,7 @@ async function sendHistory(p, sessionId) {
   const page = await historyStore.firstPage(sessionId, { limit: HISTORY_PAGE }).catch((e) => { process.stderr.write(`history: ${e.message || e}\n`); return null; });
   if (page) {
     emit({ ev: 'history', paneId: p.id, sessionId, ...page, ms: Date.now() - t0 });
+    sendContextEstimate(p, sessionId);
     return;
   }
   const msgs = await getSessionMessages(sessionId).catch(() => []);
@@ -567,6 +570,16 @@ async function takeFrom(other, taker) {
  * window { ev: 'context' } with the percentage, the tokens, the window and
  * the biggest categories. Debounced per pane; quiet when no process runs.
  */
+// Window sizes measured by the live meter, per model: the estimate below uses them once known.
+const windowByModel = new Map();
+
+/** The meter for a conversation with no process yet: its last call's usage, read from the transcript (context-estimate.js). */
+async function sendContextEstimate(p, sessionId) {
+  if (p.runner) return;
+  const ev = estimateEvent(await lastUsage(historyFileOf(sessionId)), windowByModel);
+  if (ev && !p.runner && p.sessionId === sessionId) emit({ ev: 'context', paneId: p.id, sessionId, ...ev, autoCompact: null, used: [] });
+}
+
 function contextSoon(p, ms = 400) {
   clearTimeout(p.contextTimer);
   p.contextTimer = setTimeout(() => sendContext(p).catch(() => {}), ms);
@@ -578,6 +591,7 @@ async function sendContext(p, reqId = null) {
   const used = (u.categories || []).filter((c) => (c.kind ? c.kind === 'used' : !/free|buffer/i.test(c.name)) && !c.isDeferred && c.tokens > 0)
     .sort((a, b) => b.tokens - a.tokens).slice(0, 6).map((c) => ({ name: c.name, tokens: c.tokens }));
   const max = u.rawMaxTokens || u.maxTokens || null;
+  if (max && (u.model || p.model)) windowByModel.set(u.model || p.model, max);
   // autoCompactThreshold comes in tokens (967000 of a 1M window, measured 2026-10-10): the window shows a percentage.
   const thr = Number(u.autoCompactThreshold);
   const autoPct = Number.isFinite(thr) && thr > 0 ? (thr > 100 && max ? Math.round((100 * thr) / max) : Math.round(thr)) : null;

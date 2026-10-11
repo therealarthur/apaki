@@ -29,6 +29,7 @@ const NEAR_TOP_PX = 600;
 
 const LOCAL = [
   { name: 'new', description: 'Start a new conversation in this pane' },
+  { name: 'resume', description: 'Find a conversation to open (words to search for)' },
   { name: 'model', description: 'Switch model: opus, sonnet, haiku, fable or a full id' },
   { name: 'effort', description: 'Set effort: low, medium, high, xhigh, max' },
   { name: 'mode', description: 'Permission mode: bypassPermissions, acceptEdits, plan, default' },
@@ -294,7 +295,10 @@ export class Pane {
     b.classList.toggle('full', pct >= 88);
     const k = (n) => (n == null ? '?' : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
     const auto = typeof c.autoCompact === 'number' ? ` Claude Code compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off: Compact now (click) summarizes it when you choose.' : '';
-    b.title = `Context: ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens used (${pct}%).${auto} Click for the breakdown.`;
+    b.title = c.estimate
+      ? `Context: about ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens (${pct}%) at the last reply, from the transcript; exact once Claude runs here.`
+      : `Context: ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens used (${pct}%).${auto} Click for the breakdown.`;
+    b.classList.toggle('estimate', Boolean(c.estimate));
     b.setAttribute('aria-label', `Context ${pct}% used`);
   }
 
@@ -1155,6 +1159,8 @@ export class Pane {
     const arg = rest.join(' ').trim();
     switch (cmd) {
       case 'new': case 'clear': this.host.newConversation(this); return true;
+      // Claude Code's /resume picker is terminal-only (the SDK answers "isn't available in this environment"): Apaki's search instead.
+      case 'resume': case 'continue': this.host.findSession?.(arg); return true;
       case 'model': if (arg) this.setModel(MODELS[arg] || arg); else this.note(`Model: ${this.model}`); return true;
       case 'effort': if (arg) this.setEffort(arg); else this.note(`Effort: ${this.effort}`); return true;
       case 'mode': if (arg) this.setMode(arg); else this.note(`Mode: ${this.mode}`); return true;

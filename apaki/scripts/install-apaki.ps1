@@ -18,6 +18,12 @@
 #   -WaitForClose: instead of refusing while Apaki runs, wait (up to 12 hours)
 #   until it is closed, install, then open the new version. Lets an update be
 #   staged while Apaki is in use (2026-10-09).
+#   -Now: install while Apaki runs (2026-10-10 night). Files the open window or
+#   its engine still use (myrlin-apaki.exe, node.exe, claude.exe) are moved
+#   aside and the new ones go in next to them; nothing is stopped or closed,
+#   and the next time Apaki opens it runs the new version. Replaces the
+#   -WaitForClose dance for updates: a close and a quick reopen raced the copy
+#   and left the old window in place (the reopened exe was locked mid-copy).
 #   -NoGlass: never install the bundled Myrlin Glass.
 #   -NoSignIn: do not offer Claude's sign-in at the end.
 #   -TestProfile: a test seam (2026-10-10, no Windows Sandbox on Arthur's PC).
@@ -47,7 +53,7 @@
 # Never written: ~/.claude/settings.json, ~/.claude.json, Codex's config.toml
 # (registering Glass's MCP server there is printed as a command to run).
 
-param([switch]$DryRun, [switch]$NoPackage, [switch]$WaitForClose, [switch]$NoGlass, [switch]$NoSignIn, [switch]$TestProfile)
+param([switch]$DryRun, [switch]$NoPackage, [switch]$WaitForClose, [switch]$Now, [switch]$NoGlass, [switch]$NoSignIn, [switch]$TestProfile)
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -231,10 +237,13 @@ if ($WaitForClose) {
   # The engine releases its session locks as it shuts down.
   if ($waited) { Start-Sleep -Seconds 3 }
 }
-if (& $isRunning) { throw 'Myrlin Apaki is running from the install folder; close it first (or use -WaitForClose).' }
+if ((& $isRunning) -and -not $Now) { throw 'Myrlin Apaki is running from the install folder; close it first (or use -Now, or -WaitForClose).' }
+if ($Now -and (& $isRunning)) { 'Apaki is open: files it uses are moved aside, and it runs the new version the next time it opens' }
 
 # The background engine host (reserved spot above) stops before files change.
-$hostWasRunning = Stop-ApakiBackgroundHost
+# With -Now it stays: it may be serving the open window, and Move-LockedAside
+# lets the copy go around the files it holds.
+$hostWasRunning = if ($Now) { $false } else { Stop-ApakiBackgroundHost }
 
 # Mirror the package in, keeping voice\ (its files come from setup\voice below,
 # never over the user's). setup\ and the installer itself stay in the package.
@@ -245,7 +254,20 @@ $hostWasRunning = Stop-ApakiBackgroundHost
 New-Item -ItemType Directory -Force $dest | Out-Null
 Move-LockedAside
 robocopy $dist $dest /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP /XD (Join-Path $dest 'voice') (Join-Path $dist 'voice') (Join-Path $dist 'setup') /XF 'install-apaki.ps1' 'Install Myrlin Apaki.cmd' '*.old-*' | Out-Null
-if ($LASTEXITCODE -ge 8) { throw 'copy into the install folder failed' }
+# A file can be locked after the check above (2026-10-10 night: Arthur closed
+# and reopened Apaki within seconds, the reopened window locked
+# myrlin-apaki.exe mid-copy, and only the exe was left old). Move whatever is
+# locked now aside and copy again; robocopy only copies what still differs.
+for ($try = 1; $LASTEXITCODE -ge 8 -and $try -le 3; $try++) {
+  "copy: some files were locked, moving them aside and trying again ($try of 3)"
+  Start-Sleep -Seconds 2
+  Move-LockedAside
+  $failed = robocopy $dist $dest /MIR /R:2 /W:1 /NDL /NJH /NJS /NP /XD (Join-Path $dest 'voice') (Join-Path $dist 'voice') (Join-Path $dist 'setup') /XF 'install-apaki.ps1' 'Install Myrlin Apaki.cmd' '*.old-*'
+}
+if ($LASTEXITCODE -ge 8) {
+  $failed | Where-Object { $_ -match 'ERROR' } | Select-Object -First 10 | ForEach-Object { "copy failed: $($_.Trim())" }
+  throw 'copy into the install folder failed'
+}
 Remove-AsideLeftovers $dest
 
 # Voice (2026-10-10): add what is missing, never replace (/XC /XN /XO copy only new files).

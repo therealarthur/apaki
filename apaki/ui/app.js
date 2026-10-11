@@ -137,6 +137,9 @@ const host = {
   folder: (p, value) => paneFolder(p, value),
   folderMenu: (p, anchor) => folderMenu(p.sessionId, anchor),
   newConversation: (p) => newConversation(p),
+  // /resume and /continue (pane.js): Claude Code's own /resume is a terminal picker the SDK turns off ("isn't
+  // available in this environment"), so Apaki opens its session search instead, with what followed the command.
+  findSession: (query = '') => findSession(query),
   chooseFolder: (p) => { if (p && !p.sessionId && !p.busy) startUI = folderSheet(p, { sheet, send, esc, ago }); },
   changed: () => { renderTabs(); renderRailMarks(); save(); },
   // Something worth saving changed (a draft, the queue, where you scrolled); no redraw.
@@ -367,6 +370,18 @@ function setRailCollapsed(on) {
   S.railCollapsed = Boolean(on);
   applyRail();
   save();
+}
+
+/** Opens the session search (the sidebar's box) with a query: /resume [words]. On the phone, back to the list first. */
+function findSession(query) {
+  if (WEB) window.dispatchEvent(new CustomEvent('apaki:list'));
+  else if (S.railCollapsed) setRailCollapsed(false);
+  const q = $('q');
+  if (!q) return;
+  q.value = query;
+  q.dispatchEvent(new Event('input'));
+  q.focus();
+  if (query) q.select();
 }
 
 function wireRail() {
