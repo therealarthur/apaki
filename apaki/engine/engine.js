@@ -509,16 +509,39 @@ const historyFileOf = (id) => {
 const historyStore = new HistoryStore({ fileOf: historyFileOf, log: (line) => process.stderr.write(`${line}\n`) });
 
 /** Sends a pane its session's newest page of history ({ ev: 'history' }; earlier pages come with historyBefore). */
-async function sendHistory(p, sessionId) {
+async function sendHistory(p, sessionId, { refresh = false, reqId = null } = {}) {
   const t0 = Date.now();
+  // rev: the transcript's revision as sent, so a pane can later ask whether it drifted (historyCheck).
+  const rev = await historyRevOf(sessionId);
   const page = await historyStore.firstPage(sessionId, { limit: HISTORY_PAGE }).catch((e) => { process.stderr.write(`history: ${e.message || e}\n`); return null; });
   if (page) {
-    emit({ ev: 'history', paneId: p.id, sessionId, ...page, ms: Date.now() - t0 });
+    emit({ ev: 'history', reqId, paneId: p.id, sessionId, ...page, rev, ...(refresh ? { refresh: true } : {}), ms: Date.now() - t0 });
     sendContextEstimate(p, sessionId);
     return;
   }
   const msgs = await getSessionMessages(sessionId).catch(() => []);
-  emit({ ev: 'history', paneId: p.id, sessionId, messages: compactMessages(msgs, sessionId), total: msgs.length, source: 'sdk' });
+  emit({ ev: 'history', reqId, paneId: p.id, sessionId, messages: compactMessages(msgs, sessionId), total: msgs.length, source: 'sdk', rev, ...(refresh ? { refresh: true } : {}) });
+}
+
+/*
+ * No drift (Arthur, 2026-10-11: "when taking over session from another open tab, we need to make sure that when
+ * that tab takes over back or is reopened or reloaded that it automatically refreshes to make sure it has the
+ * most recent transcript/session data/etc - we need to make sure there is no drift always. Reliably.").
+ * Every history carries the transcript's revision (its size and modified time). A pane that is not the one
+ * writing the session (taken over, in use elsewhere, or idle while a terminal or a phone went on) asks with
+ * historyCheck whenever it comes back into view and before it sends; a different revision sends it the
+ * conversation again (history with refresh: true). The pane whose own Claude Code process holds the session
+ * is never refreshed this way: its live stream is the newest there is.
+ */
+async function historyRevOf(sessionId) {
+  const file = sessionId ? historyFileOf(sessionId) : null;
+  if (!file) return null;
+  try {
+    const st = await fs.promises.stat(file);
+    return `${st.size}:${Math.floor(st.mtimeMs)}`;
+  } catch {
+    return null;
+  }
 }
 
 /* ---------- the open conversations (one per pane) ---------- */
@@ -1111,6 +1134,21 @@ const handlers = {
     ev: 'artifacts', reqId: c.reqId, sessionId: c.sessionId || null,
     items: c.sessionId ? store.list(c.sessionId).map((r) => ({ id: r.id, title: r.title, kind: r.kind, rev: r.rev, ext: r.ext, size: r.size, updatedAt: r.updatedAt, src: srcOf(r) })) : [],
   }),
+  // Did this pane's conversation move on without it? historyCheck { paneId, sessionId, rev } -> history with
+  // refresh: true when the transcript changed, then historyChecked { fresh } either way (the pane may wait on it
+  // before a send). Read only; a phone may ask for its own panes (remote-policy.js).
+  historyCheck: async (c) => {
+    const p = panes.get(String(c.paneId || ''));
+    const base = { ev: 'historyChecked', reqId: c.reqId || null, paneId: c.paneId || null };
+    const sessionId = p?.sessionId || null;
+    if (!p || !sessionId || (c.sessionId && c.sessionId !== sessionId)) { emit({ ...base, sessionId: c.sessionId || null, fresh: true }); return; }
+    // The pane that holds the session writes it: its stream is the newest there is.
+    if (p.runner && p.runner.running) { emit({ ...base, sessionId, fresh: true }); return; }
+    const rev = await historyRevOf(sessionId);
+    if (!rev || rev === c.rev) { emit({ ...base, sessionId, fresh: true }); return; }
+    await sendHistory(p, sessionId, { refresh: true });
+    emit({ ...base, sessionId, fresh: false, rev });
+  },
   /* ---------- the rest of a conversation's history (history.js, 2026-10-10) ---------- */
   // Read only, and only the session open in that pane (whatever session the command names), so a
   // phone can page through its own conversations and nothing else (remote-policy.js allows both).

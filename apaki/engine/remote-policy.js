@@ -59,10 +59,12 @@ export const PHONE_OPS = Object.freeze([
   // 2026-10-10 (history.js): read only, the rest of a conversation open in one of this phone's panes:
   // earlier pages, and one cut tool result, thinking block, summary or image in full.
   'historyBefore', 'historyBlock',
+  // Whether its conversation moved on elsewhere, so the phone shows no stale transcript (2026-10-11).
+  'historyCheck',
 ]);
 
 /** Ops that act on one pane (paneId required). */
-const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock']);
+const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck']);
 
 /** Most panes one phone may have open at once (the desktop's limit per tab). */
 export const MAX_PHONE_PANES = 6;
@@ -408,6 +410,14 @@ export function checkPhoneCommand(cmd, ctx) {
         if (typeof cmd.ref !== 'string' || !HISTORY_REF_RE.test(cmd.ref)) return fail('Bad message part.', cmd);
         out.ref = cmd.ref;
       }
+      break;
+    }
+    case 'historyCheck': {
+      // Read only, like historyBefore: whether this phone's own pane shows the newest transcript (2026-10-11).
+      const sid = cmd.sessionId ?? null;
+      if (sid !== null && (typeof sid !== 'string' || !SESSION_RE.test(sid) || !(ctx.phoneSessions?.(deviceId) || []).includes(sid))) return fail('Open that conversation first.', cmd);
+      if (sid) out.sessionId = sid;
+      if (cmd.rev != null) { if (typeof cmd.rev !== 'string' || !/^\d{1,15}:\d{1,16}$/.test(cmd.rev)) return fail('Bad revision.', cmd); out.rev = cmd.rev; }
       break;
     }
     default:

@@ -483,15 +483,27 @@ function switchTab(t) {
   syncSoon();
   const p = S.panes.get(t.focused);
   if (p) { p.unread = false; p.el.classList.remove('unread'); }
+  // Back on this tab: any conversation here that moved on elsewhere is drawn again (pane.js checkDrift, 2026-10-11).
+  for (const id of L.ids(t.root)) S.panes.get(id)?.checkDrift?.();
   renderTabs();
   renderRailMarks();
   save();
 }
 
+/** The window came back into view: the panes on screen check their conversations (no drift, 2026-10-11). */
+function checkVisibleDrift() {
+  const t = activeTab();
+  if (!t || document.visibilityState !== 'visible') return;
+  for (const id of L.ids(t.root)) S.panes.get(id)?.checkDrift?.();
+}
+window.addEventListener('focus', checkVisibleDrift);
+document.addEventListener('visibilitychange', checkVisibleDrift);
+
 function focusPane(p, { scroll = true } = {}) {
   if (!p) return;
   const t = tabOf(p);
   if (!t) return;
+  p.checkDrift?.();
   if (t.id !== S.active) switchTab(t);
   if (t.focused !== p.id || !p.el.classList.contains('focused')) {
     t.focused = p.id;

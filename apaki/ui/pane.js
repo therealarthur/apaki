@@ -335,6 +335,8 @@ export class Pane {
     if (s?.title) this.setTitle(s.title);
     if (!sessionId) this.setTitle('New conversation');
     this.lockedBy = null;
+    this.lockLost = false;
+    this.stopDriftWatch();
     this.lastOpen = s ? { id: s.id, cwd: s.cwd, title: s.title } : null;
     this.send('open', { sessionId, cwd: s?.cwd || this.cwd || null, warm, force, model: this.model, effort: this.effort, mode: this.mode });
   }
@@ -350,6 +352,9 @@ export class Pane {
     const who = h.name || 'Another window';
     const when = h.at ? new Date(h.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
     this.lockedBy = h;
+    this.lockLost = lost;
+    // A pane that lost its session keeps its transcript and follows it while it stays on screen (checkDrift).
+    if (lost) this.startDriftWatch(); else this.stopDriftWatch();
     this.sessionId = e.sessionId || this.sessionId;
     if (e.title) this.setTitle(e.title);
     if (e.cwd) this.cwd = e.cwd;
@@ -829,6 +834,13 @@ export class Pane {
   renderHistory(messages, total, e = {}) {
     // From the transcript (engine history.js): the newest page of the whole conversation, the rest on request.
     const paged = e.source === 'transcript' && e.first !== undefined;
+    // The transcript's revision as drawn here, for checkDrift (2026-10-11).
+    this.historyRev = e.rev || null;
+    // A refresh (the conversation moved on elsewhere): keep the takeover card and, unless you were at the end, your place.
+    const card = e.refresh ? this.$.T.querySelector(':scope > .takeover') : null;
+    const g = this.$.ground;
+    const atEnd = !e.refresh || g.scrollHeight - g.scrollTop - g.clientHeight < 160;
+    const keepTop = g.scrollTop;
     for (const r of this.history?.waits || []) r(false);
     clearTimeout(this.history?.timer);
     this.history = paged ? { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total, loaded: messages.length, loading: false, waits: [] } : null;
@@ -848,6 +860,59 @@ export class Pane {
     this.renderArtifactsButton();
     this.renderTasksButton();
     if (paged) requestAnimationFrame(() => this.maybeLoadEarlier());
+    if (card) { this.$.T.append(card); this.scrollDown(atEnd); }
+    if (e.refresh && !atEnd) g.scrollTop = keepTop;
+  }
+
+  /* ---------- no drift (2026-10-11) ---------- */
+
+  // Arthur: "when taking over session from another open tab, we need to make sure that when that tab takes over
+  // back or is reopened or reloaded that it automatically refreshes to make sure it has the most recent
+  // transcript/session data/etc - we need to make sure there is no drift always. Reliably." Opening, taking back
+  // and re-attaching always load the transcript; checkDrift covers the rest: a pane that was not writing its
+  // conversation (taken over, or idle while a terminal or a phone went on) asks the engine whether the transcript
+  // moved on, when it comes back into view (app.js), every few seconds while it shows "Taken over", and before it
+  // sends. A newer transcript arrives as history with refresh: true (renderHistory); the draft, attachments and
+  // queue are never touched.
+
+  /** Asks whether this conversation moved on elsewhere. wait: resolves once the engine answered (at most 1.5 s). */
+  checkDrift({ wait = false } = {}) {
+    if (!this.sessionId || this.isViewer || this.busy) return Promise.resolve(true);
+    // In use in another app: the card replaces the transcript until you take it over, which loads it fresh.
+    if (this.lockedBy && !this.lockLost) return Promise.resolve(true);
+    const now = Date.now();
+    // Streaming now, or a moment ago: this pane holds the session and its stream is the newest there is.
+    if (now - (this.lastLiveAt || 0) < 15000) return Promise.resolve(true);
+    if (!wait && now - (this.driftAt || 0) < 1500) return Promise.resolve(true);
+    this.driftAt = now;
+    const reqId = `drift-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    this.send('historyCheck', { reqId, sessionId: this.sessionId, rev: this.historyRev || null });
+    if (!wait) return Promise.resolve(true);
+    if (!this.driftWaits) this.driftWaits = new Map();
+    return new Promise((resolve) => {
+      this.driftWaits.set(reqId, resolve);
+      setTimeout(() => { if (this.driftWaits?.delete(reqId)) resolve(true); }, 1500);
+    });
+  }
+
+  /** The engine answered a historyCheck (any newer history came just before this). */
+  onHistoryChecked(e) {
+    const done = this.driftWaits?.get(e.reqId);
+    if (done) { this.driftWaits.delete(e.reqId); done(Boolean(e.fresh)); }
+  }
+
+  /** While this pane shows "Taken over", follow its conversation every 5 s when it is on screen. */
+  startDriftWatch() {
+    this.stopDriftWatch();
+    this.driftTimer = setInterval(() => {
+      if (document.visibilityState !== 'visible' || !this.el.isConnected || !this.el.offsetParent) return;
+      this.checkDrift();
+    }, 5000);
+  }
+
+  stopDriftWatch() {
+    clearInterval(this.driftTimer);
+    this.driftTimer = null;
   }
 
   /* ---------- the rest of a long conversation (2026-10-10) ---------- */
@@ -1059,6 +1124,8 @@ export class Pane {
   /* ---------- live SDK messages ---------- */
 
   onSdk(msg) {
+    // Live traffic: this pane's own Claude Code process is writing the conversation (checkDrift skips then).
+    this.lastLiveAt = Date.now();
     if (msg.parent_tool_use_id) return;
     const T = this.$.T;
     if (msg.type === 'result' && this.autoTurn) {
@@ -1370,7 +1437,12 @@ export class Pane {
   }
 
   /** Sends the box. While Claude works it queues, or with { steer: true } (Ctrl+Enter) goes into the running turn now. */
-  submit({ steer = false } = {}) {
+  submit({ steer = false, checked = false } = {}) {
+    // Idle for a while: make sure the transcript here is the newest before adding to it (checkDrift, 2026-10-11).
+    if (!checked && !this.busy && !this.lockedBy && this.sessionId && Date.now() - (this.lastLiveAt || 0) > 15000 && this.$.input.value.trim()) {
+      this.checkDrift({ wait: true }).then(() => this.submit({ steer, checked: true }));
+      return;
+    }
     // Held elsewhere: the card's button is the way forward, not a message.
     if (this.lockedBy) { this.$.T.querySelector('.takeover')?.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }], { duration: 220, easing: 'ease-out' }); return; }
     const { input } = this.$;
@@ -1465,6 +1537,9 @@ export class Pane {
       case 'taken_over': this.showLocked(e, { lost: true }); break;
       case 'opened':
         this.lockedBy = null;
+        // It holds its conversation again (opened, taken back, re-attached): no more following from the outside.
+        this.lockLost = false;
+        this.stopDriftWatch();
         // (The engine clears its copy of the queue itself when a pane opens another conversation: queue-hold.js resetHeld.)
         if (e.sessionId !== this.sessionId) { this.queue = []; this.steering.clear(); this.stoppedByUser = false; this.renderQueue(); this.closedArts.clear(); }
         this.sessionId = e.sessionId; this.cwd = e.cwd; this.billing = e.billing;
@@ -1504,6 +1579,7 @@ export class Pane {
         this.host.changed(this);
         break;
       case 'history': if (e.sessionId === this.sessionId) this.renderHistory(e.messages, e.total, e); break;
+      case 'historyChecked': this.onHistoryChecked(e); break;
       // Earlier messages of this conversation (Load earlier, scrolling up, Ctrl+F's Search all), and one cut block in full.
       case 'historyPage': if (e.sessionId === this.sessionId) this.prependHistory(e); break;
       case 'historyBlock': if (!e.sessionId || e.sessionId === this.sessionId) this.onHistoryBlock(e); break;
@@ -1566,6 +1642,7 @@ export class Pane {
 
   destroy() {
     clearInterval(this.tick);
+    this.stopDriftWatch();
     this.el.remove();
   }
 }
