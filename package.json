@@ -9,7 +9,9 @@
   },
   "scripts": {
     "start": "node bin/latch.js",
-    "test": "node --test"
+    "test": "node --test",
+    "parity:extract": "node apaki/parity/extract.mjs",
+    "parity:diff": "node apaki/parity/diff.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "product": "claude-desktop",
+  "version": "2.31226.1.0",
+  "extractedAt": "2026-10-11",
+  "meta": {"arch":"x64","inventoryFile":"manual/claude-desktop.md","package":"Claude"},
+  "counts": {"feature":20},
+  "items": [
+    {"attrs":{"group":"Code tab: sessions and panes","title":"A browser pane beside the conversation."},"id":"claude-desktop:feature:browser-pane","kind":"feature"},
+    {"attrs":{"group":"Remote, phone and cloud","title":"A native messaging bridge to Chrome (Hacker News 2026-04-23 reported it installed undisclosed)."},"id":"claude-desktop:feature:claude-in-chrome","kind":"feature"},
+    {"attrs":{"group":"Remote, phone and cloud","title":"Claude Code on the web: cloud sessions on GitHub repos that keep running with the laptop off."},"id":"claude-desktop:feature:code-on-the-web","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"Sidebar of the app's own Code sessions; sessions started in a terminal come in through /resume in the prompt box, not automatically. Source: code.claude.com/docs/en/desktop, market.md 3.1."},"id":"claude-desktop:feature:code-tab-sidebar","kind":"feature"},
+    {"attrs":{"group":"Remote, phone and cloud","title":"Cowork, which runs a local VM (an open issue reports about 10 GB)."},"id":"claude-desktop:feature:cowork","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"A diff view of the session's changes."},"id":"claude-desktop:feature:diff-view","kind":"feature"},
+    {"attrs":{"group":"Remote, phone and cloud","title":"Message a task in the Claude app and Desktop spawns a Code session (Pro and Max only). Source: code.claude.com/docs/en/mobile."},"id":"claude-desktop:feature:dispatch","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"A file editor pane."},"id":"claude-desktop:feature:file-editor","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"An integrated terminal pane."},"id":"claude-desktop:feature:integrated-terminal","kind":"feature"},
+    {"attrs":{"group":"Remote, phone and cloud","title":"The Code tab in the Claude phone app (Remote Control client). Source: code.claude.com/docs/en/mobile."},"id":"claude-desktop:feature:mobile-code-tab","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"Model and effort menus with shortcuts (Ctrl+Shift+I, Ctrl+Shift+E)."},"id":"claude-desktop:feature:model-effort-menus","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"An OS notification when a session finishes or needs a decision."},"id":"claude-desktop:feature:os-notification-on-finish","kind":"feature"},
+    {"attrs":{"group":"Remote, phone and cloud","title":"Drive a local Claude Code session from claude.ai/code or the Claude app: QR pairing, images and files, push when a task finishes or needs a decision, reconnect after sleep. Needs the machine on and claude running; API keys are not supported; not end to end encrypted. Source: code.claude.com/docs/en/remote-control."},"id":"claude-desktop:feature:remote-control","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"Scheduled tasks."},"id":"claude-desktop:feature:scheduled-tasks","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"A keyboard shortcut cheat sheet (Ctrl+/)."},"id":"claude-desktop:feature:shortcut-cheat-sheet","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"Side chat (Ctrl+;) that can read the main thread."},"id":"claude-desktop:feature:side-chat","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"Split panes with drag and drop layout."},"id":"claude-desktop:feature:split-panes","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"Sessions on SSH hosts and in WSL."},"id":"claude-desktop:feature:ssh-and-wsl-sessions","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"A usage ring showing plan usage."},"id":"claude-desktop:feature:usage-ring","kind":"feature"},
+    {"attrs":{"group":"Code tab: sessions and panes","title":"Tasks can start in a git worktree (market.md cites Claude Desktop with Codex, Conductor and Emdash as doing this)."},"id":"claude-desktop:feature:worktrees","kind":"feature"}
+  ]
+}

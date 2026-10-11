@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "product": "chatgpt-desktop",
+  "version": "26.1002.7124.0",
+  "extractedAt": "2026-10-11",
+  "meta": {"arch":"x64","inventoryFile":"manual/chatgpt-desktop.md","package":"OpenAI.Codex"},
+  "counts": {"feature":20},
+  "items": [
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Approval and sandbox presets: read-only, auto (workspace write, ask on request), full access (danger-full-access, approvals never)."},"id":"chatgpt-desktop:feature:approval-presets","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Approve once, approve for the session, deny, for commands, file changes and extra permissions."},"id":"chatgpt-desktop:feature:approval-prompts","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Attach files and images to a message, paste and drag in."},"id":"chatgpt-desktop:feature:attach-files-and-images","kind":"feature"},
+    {"attrs":{"group":"Panels and surrounding features","title":"Automations (scheduled or triggered runs); described as Codex's most distinctive capability."},"id":"chatgpt-desktop:feature:automations","kind":"feature"},
+    {"attrs":{"group":"Panels and surrounding features","title":"A built in browser. Source: learn.chatgpt.com/docs/app."},"id":"chatgpt-desktop:feature:browser","kind":"feature"},
+    {"attrs":{"group":"Remote and accounts","title":"Codex cloud tasks (ChatGPT sign-in required)."},"id":"chatgpt-desktop:feature:cloud-tasks","kind":"feature"},
+    {"attrs":{"group":"Panels and surrounding features","title":"Computer use."},"id":"chatgpt-desktop:feature:computer-use","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Reasoning effort picker."},"id":"chatgpt-desktop:feature:effort-picker","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Each thread starts Local or in a git worktree. Source: market.md 2.1; Hacker News \"dictation and worktree support built in\"."},"id":"chatgpt-desktop:feature:local-or-worktree-per-thread","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Model picker (model/list, per model reasoning efforts)."},"id":"chatgpt-desktop:feature:model-picker","kind":"feature"},
+    {"attrs":{"group":"Panels and surrounding features","title":"Notifications when a thread finishes or needs a decision."},"id":"chatgpt-desktop:feature:notifications","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Projects and threads sidebar. Source: learn.chatgpt.com/docs/app (section names only)."},"id":"chatgpt-desktop:feature:projects-threads-sidebar","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Follow-up messages queued while a turn runs (app-server bugs #45019 and #44781 concern this)."},"id":"chatgpt-desktop:feature:queued-followups","kind":"feature"},
+    {"attrs":{"group":"Remote and accounts","title":"Codex remote from the ChatGPT phone app: QR pairing, steer, approve, review diffs and screenshots on a Mac or Windows host; the host must be awake and online; Windows cannot control another computer. Source: learn.chatgpt.com/docs/remote-connections, launch 2026-05-14."},"id":"chatgpt-desktop:feature:remote-connections","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Codex's own version of AskUserQuestion (item/tool/requestUserInput); questions can auto-resolve after a time (#28969 complains of 60 seconds)."},"id":"chatgpt-desktop:feature:request-user-input","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Review mode for a diff or branch (review/start)."},"id":"chatgpt-desktop:feature:review-mode","kind":"feature"},
+    {"attrs":{"group":"Panels and surrounding features","title":"A side panel that shows diffs, files, images, terminal output and web pages (CODEX.md asks Apaki for the same versatility)."},"id":"chatgpt-desktop:feature:side-panel","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Slash commands such as new, model, approvals, review, compact, diff, mention, status, init, mcp."},"id":"chatgpt-desktop:feature:slash-commands","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Fork a thread and revert to an earlier turn."},"id":"chatgpt-desktop:feature:thread-fork-and-revert","kind":"feature"},
+    {"attrs":{"group":"Threads, projects and the prompt box","title":"Voice dictation into the prompt box."},"id":"chatgpt-desktop:feature:voice-dictation","kind":"feature"}
+  ]
+}
