@@ -2296,3 +2296,17 @@ body.rail-collapsed .signin-card { left: 22px; }
 .signin-card .sc-act button.primary { border-color: transparent; color: #fff; background: linear-gradient(135deg, var(--btn-a), var(--btn-b)); }
 .signin-card .sc-act button:focus-visible { outline: 2px solid hsla(var(--pearl-stop-blue), .55); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .signin-card { animation: none; } }
+
+/* System lines (pane.js sysline, notices.js; Arthur, 2026-10-11): what Claude Code itself says, such as a prompt a
+   hook blocked, a hook error, an API retry or a usage warning. Monospace and colored like Claude Code's own yellow,
+   gray and red lines, with a small label, so they never read as Claude's reply. No capsule, no stripe. */
+.sysline { --sys: var(--soft); display: flex; gap: 9px; align-items: baseline; margin: 8px 0; padding: 7px 0 7px 2px;
+  font: 500 12.5px/1.55 var(--font-mono); color: var(--sys); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sysline .sys-label { flex: none; font: 700 10px/1.9 var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--sys); opacity: .85; }
+.sysline .sys-text { min-width: 0; }
+.sysline.warn { --sys: #93600A; }
+.sysline.error { --sys: var(--action-strong); }
+.sysline.info { --sys: var(--soft); }
+.sysline.dim { --sys: var(--faint); }
+.sysline.mono .sys-text { font-size: 12px; }
+:root[data-theme="dark"] .sysline.warn { --sys: #E7B85C; }

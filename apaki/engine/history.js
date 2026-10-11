@@ -91,6 +91,71 @@ function cutText(s, n) {
   return { text: `${t.slice(0, n)}\n… (${(t.length - n).toLocaleString('en-US')} more characters)`, truncated: true, length: t.length };
 }
 
+/*
+ * System lines from the transcript (2026-10-11, Arthur: "make sure that apaki shows ALL output that would
+ * normally be seen by claude code users (including the yellow text that happens when a prompt gets
+ * caught/etc)"). What Claude Code wrote down as its own words, not Claude's: a prompt a hook blocked (the
+ * prompt relay's replies arrive this way), hook errors and cancels, model refusals, recaps, a command typed.
+ * Each becomes { text, tone, label, mono } for the pane's system line (apaki/ui/notices.js draws live ones).
+ */
+const NOTE_CHARS = 8000;
+const HOOK_LINE = /\b(PreToolUse|PostToolUse|PostToolUseFailure|UserPromptSubmit|Stop|SubagentStop|SessionStart|SessionEnd|Notification|PreCompact|PermissionRequest)\b.*\bhook\b/i;
+const noteText = (s) => cutText(String(s ?? '').replace(/\r\n/g, '\n').trim(), NOTE_CHARS).text;
+
+/** A system line of the transcript as a note, or null. */
+export function systemNote(j) {
+  const content = typeof j.content === 'string' ? j.content.trim() : '';
+  switch (j.subtype) {
+    case 'informational':
+      return content ? { text: noteText(content), tone: j.level === 'warning' ? 'warn' : j.level === 'info' ? 'dim' : 'info', label: HOOK_LINE.test(content.split('\n')[0]) ? 'Hook' : '' } : null;
+    case 'model_refusal_fallback':
+    case 'model_refusal_no_fallback': {
+      const text = content || str(j.apiRefusalExplanation) || (j.fallbackModel ? `Switched from ${j.originalModel} to ${j.fallbackModel}.` : `${j.originalModel || 'The model'} declined this request.`);
+      return { text: noteText(text), tone: 'warn', label: 'Model' };
+    }
+    case 'away_summary':
+      return content ? { text: noteText(content), tone: 'dim', label: 'Recap' } : null;
+    case 'stop_hook_summary': {
+      const errs = (Array.isArray(j.hookErrors) ? j.hookErrors : []).map((x) => (typeof x === 'string' ? x : x?.error || x?.message || '')).filter(Boolean);
+      if (errs.length) return { text: noteText(`Stop hook error: ${errs.join('; ')}`), tone: 'error', label: 'Hook' };
+      if (j.preventedContinuation && str(j.stopReason)) return { text: noteText(j.stopReason), tone: 'warn', label: 'Hook' };
+      return null;
+    }
+    case 'api_error': {
+      const err = content || str(j.error?.message) || str(j.error?.error?.message) || str(typeof j.error === 'string' ? j.error : null);
+      return err ? { text: noteText(err), tone: 'warn', label: 'API' } : null;
+    }
+    case 'local_command':
+      return content ? { text: noteText(`> ${content}`), tone: 'dim', label: '', mono: true } : null;
+    default:
+      return null;
+  }
+}
+
+/** A hook attachment of the transcript as a note, or null (a quiet success stays out, as in Claude Code). */
+export function hookNote(a) {
+  const name = str(a.hookName) || str(a.hookEvent) || 'Hook';
+  const out = String(a.stderr || a.stdout || '').trim();
+  switch (a.type) {
+    case 'hook_non_blocking_error':
+      return { text: noteText(`${name} hook error${a.exitCode ? ` (exit ${a.exitCode})` : ''}${out ? `: ${out}` : ''}`), tone: 'error', label: 'Hook' };
+    case 'hook_blocking_error': {
+      const why = String(a.blockingError?.blockingError || (typeof a.blockingError === 'string' ? a.blockingError : '') || out || '').trim();
+      return { text: noteText(`${name} hook blocked this${why ? `: ${why}` : ''}`), tone: 'warn', label: 'Hook' };
+    }
+    case 'hook_cancelled':
+      return { text: `${name} hook was cancelled${a.timedOut ? ' (it timed out)' : ''}`, tone: 'dim', label: 'Hook' };
+    case 'hook_system_message':
+      return str(a.content) ? { text: noteText(a.content), tone: 'warn', label: 'Hook' } : null;
+    case 'hook_error_during_execution':
+      return { text: noteText(`${name} hook error${str(a.content) ? `: ${a.content}` : ''}`), tone: 'error', label: 'Hook' };
+    case 'hook_stopped_continuation':
+      return { text: noteText(str(a.message) || `${name} hook stopped Claude`), tone: 'warn', label: 'Hook' };
+    default:
+      return null;
+  }
+}
+
 /** A small FNV-1a hash, to tell copies of one queued command apart without keeping their text. */
 function fnv(s) {
   let h = 0x811c9dc5;
@@ -199,11 +264,18 @@ export function slimEntry(j, off = 0, len = 0) {
       const m = j.compactMetadata || {};
       e.cm = { trigger: str(m.trigger), preTokens: num(m.preTokens), postTokens: num(m.postTokens) };
     }
+    const note = systemNote(j);
+    if (note) e.note = note;
     return e;
   }
   if (type === 'attachment') {
     const a = j.attachment && typeof j.attachment === 'object' ? j.attachment : {};
-    if (a.type !== 'queued_command') { e.att = { type: a.type || null }; return e; }
+    if (a.type !== 'queued_command') {
+      e.att = { type: a.type || null };
+      const note = hookNote(a);
+      if (note) e.att.note = note;
+      return e;
+    }
     let sig = '';
     try { sig = fnv(JSON.stringify(a)); } catch { sig = `odd.${Math.random()}`; }
     e.att = {
@@ -548,6 +620,14 @@ export function buildHistory(entries, ops = []) {
   const mids = [];
   let compactions = 0;
   for (const e of seq) {
+    // A system line Claude Code showed (systemNote, hookNote): a notice item, drawn apart from Claude's words.
+    const note = e.type === 'system' ? e.note : e.type === 'attachment' ? e.att?.note : null;
+    if (note && !e.side && !e.team) {
+      index.set(e.uuid, items.length);
+      items.push({ type: 'notice', uuid: e.uuid, at: e.at || null, notice: note });
+      mids.push(null);
+      continue;
+    }
     if (e.type === 'system') {
       if (e.subtype !== 'compact_boundary') continue;
       compactions += 1;

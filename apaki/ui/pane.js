@@ -17,6 +17,8 @@
 import { esc, md } from './markdown.js';
 import { EFFORTS, effortGrid, menu } from './menu.js';
 import { pickVerb } from './verbs.js';
+// What Claude Code shows that is not Claude's reply: blocked prompts, hook errors, retries, limits (2026-10-11).
+import { noticeFor } from './notices.js';
 import { SHOW_TOOL, artifactCard, kindGlyph, kindLabel, linkCard, parseOpened, parseRef, updateCard } from './artifacts.js';
 
 // Images go in at most this many pixels on the long edge (the API's sweet
@@ -116,6 +118,8 @@ export class Pane {
     this.steering = new Map();
     this.stoppedByUser = false;
     this.commands = [];
+    // Usage warnings and notifications already shown (notices.js), so a repeat on every turn stays quiet.
+    this.noticeSeen = new Map();
     this.streams = new Map();
     this.tools = new Map();
     this.cardKeys = new Set(); // artifact and link cards already in the transcript
@@ -465,6 +469,22 @@ export class Pane {
     this.scrollDown();
   }
 
+  /**
+   * A system line (notices.js): something Claude Code itself says, such as
+   * a prompt a hook blocked, a hook error, an API retry or a usage warning.
+   * Drawn apart from Claude's words (a label, its own color, smaller type),
+   * the way Claude Code prints these in yellow or gray (Arthur, 2026-10-11).
+   */
+  sysline({ text, tone = 'info', label = '', mono = false }) {
+    this.clearEmpty();
+    const n = el('div', `sysline ${tone}${mono ? ' mono' : ''}`);
+    n.setAttribute('role', tone === 'error' || tone === 'warn' ? 'alert' : 'note');
+    if (label) n.append(el('span', 'sys-label', label));
+    n.append(el('span', 'sys-text', text));
+    this.$.T.append(n);
+    this.scrollDown();
+  }
+
   clearEmpty() { if (this.$.T.querySelector('.empty')) this.$.T.innerHTML = ''; }
 
   addUser(text, images = [], { steered = false } = {}) {
@@ -791,9 +811,13 @@ export class Pane {
   renderMessages(messages) {
     for (const m of messages) {
       if (m.type === 'compact') { this.addCompactMarker(m); continue; }
+      // What Claude Code said itself, from the transcript (engine history.js systemNote, hookNote): a system line.
+      if (m.type === 'notice') { if (m.notice?.text) this.sysline(m.notice); continue; }
       if (m.parent_tool_use_id) continue; // subagent traffic
       if (m.type !== 'user' && m.type !== 'assistant') continue;
       const c = m.message?.content;
+      // A slash command's output shows as the system line it was; its name and reminders stay hidden.
+      if (m.type === 'user' && typeof c === 'string' && /^\s*<local-command-(stdout|stderr)>/.test(c)) { const n = noticeFor({ type: 'user', isSynthetic: true, message: { content: c } }); if (n) this.sysline(n); continue; }
       if (m.type === 'user' && typeof c === 'string' && (/^\s*<(command-|local-command-|system-reminder)/.test(c))) continue;
       this._at = m.at ? Date.parse(m.at) : null;
       // queued: typed while Claude worked and taken into the running turn, as "Steered in" shows live.
@@ -1093,8 +1117,14 @@ export class Pane {
     if (msg.type === 'user') {
       const content = Array.isArray(msg.message?.content) ? msg.message.content : [];
       for (const b of content) if (b.type === 'tool_result') this.toolResult(b.tool_use_id, b.content, b.is_error);
+      // Text the harness adds (Stop hook feedback, a slash command's output) shows as a system line, never as you.
+      if (!content.some((b) => b.type === 'tool_result')) { const n = noticeFor(msg, this.noticeSeen); if (n) this.sysline(n); }
       return;
     }
+    // Everything else Claude Code shows its users (notices.js): drawn apart from Claude's reply.
+    const notice = noticeFor(msg, this.noticeSeen);
+    if (notice) this.sysline(notice);
+    if (msg.type === 'system' && msg.subtype === 'status' && msg.status === 'compacting' && this.busy) this.setStatus('Compacting the conversation…');
     if (msg.type === 'system' && msg.subtype === 'compact_boundary') this.note('Conversation compacted.');
     if (msg.type === 'system' && /^(task_|background_tasks_changed)/.test(msg.subtype || '')) this.onTaskMessage(msg);
   }

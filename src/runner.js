@@ -93,6 +93,21 @@ export function hasMessageBetween(file, from, to) {
   }
 }
 
+/**
+ * A hook event Claude Code would not show its user (includeHookEvents, 2026-10-11): a hook
+ * starting, its progress, or a success that printed nothing to stderr and no systemMessage.
+ * Errors, blocks (exit 2), stderr and systemMessage pass on, for apaki/ui/notices.js to show.
+ */
+export function quietHookEvent(msg) {
+  if (msg?.type !== 'system') return false;
+  if (msg.subtype === 'hook_started' || msg.subtype === 'hook_progress') return true;
+  if (msg.subtype !== 'hook_response') return false;
+  if (msg.outcome === 'error' || msg.outcome === 'cancelled') return false;
+  if (Number.isFinite(msg.exit_code) && msg.exit_code !== 0) return false;
+  if (String(msg.stderr || '').trim()) return false;
+  return !/"systemMessage"\s*:\s*"[^"]/.test(String(msg.stdout || msg.output || ''));
+}
+
 export class SessionRunner {
   /**
    * @param {object} o
@@ -158,6 +173,9 @@ export class SessionRunner {
       cwd: this.cwd,
       env: this.envExtra ? { ...this.env, ...this.envExtra } : this.env,
       includePartialMessages: true,
+      // Hook errors and hook warnings show in Apaki the way Claude Code prints them (2026-10-11, apaki/ui/notices.js);
+      // the quiet ones are dropped in pump (quietHookEvent) so they never cross to the window or a phone.
+      includeHookEvents: true,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
       canUseTool: this.canUseTool,
@@ -231,6 +249,7 @@ export class SessionRunner {
         // task finished) that no send() is waiting for: steer() needs to know.
         if (msg.type === 'result') this.turnActive = false;
         else if (msg.type === 'stream_event' || msg.type === 'assistant') this.turnActive = true;
+        if (quietHookEvent(msg)) continue;
         this.onMessage(msg);
       }
     } catch (error) {
