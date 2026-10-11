@@ -288,7 +288,8 @@ fn start_engine(app: &AppHandle, pending: Option<Receiver<String>>) -> Result<()
                         to_window(&handle, v);
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                // A timeout is not an ended connection: a quiet engine is still there (2026-10-11, see host::connect).
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::Interrupted | std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => continue,
                 Err(e) => break format!("reading from the engine failed: {e} ({:?})", e.kind()),
             }
         };

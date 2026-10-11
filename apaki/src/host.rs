@@ -186,6 +186,10 @@ pub fn connect(info: &HostInfo, app_id: &str) -> Result<Connected, String> {
         return Err("the host did not prove itself".into());
     }
     stream.set_read_timeout(None).map_err(|e| e.to_string())?;
+    // The reader's handle too (2026-10-11): on Windows try_clone makes a second socket handle and a read timeout
+    // belongs to each handle, so clearing it on `stream` left the reader with the handshake's 5 s. Every quiet
+    // moment then ended the connection (os error 10060, TimedOut) and the window reconnected over and over.
+    reader.get_ref().set_read_timeout(None).map_err(|e| e.to_string())?;
     Ok(Connected { stream, reader, ok })
 }
 
@@ -326,7 +330,34 @@ mod tests {
             assert!(Instant::now() < deadline, "the host did not start: {}", std::fs::read_to_string(dir.join("host.log")).unwrap_or_default());
         };
         assert_eq!(c.ok.get("pid").and_then(Value::as_u64), Some(u64::from(child.id())));
-        let mut w = c.stream.try_clone().unwrap();
+        // 2026-10-11: the reader's own handle must have no read timeout left from the handshake. It kept 5 s on
+        // Windows, so a quiet engine ended the window's connection (os error 10060) and the window reconnected
+        // over and over. Wait past the old limit with nothing to read, then read the engine's answer.
+        let Connected { stream, mut reader, .. } = c;
+        let mut w = stream.try_clone().unwrap();
+        w.write_all(b"{\"op\":\"shellHello\",\"version\":1,\"features\":[]}\n").unwrap();
+        let mut first = String::new();
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(4) {
+            first.clear();
+            assert!(reader.read_line(&mut first).expect("reads the engine's first events") > 0);
+            if first.contains("\"ready\"") { break; }
+        }
+        // Drain what the engine sends at connect, then block in a read for 7 s: the question goes out from another
+        // thread only then, so a read timeout left on the reader's handle would fail this read.
+        let mut w2 = stream.try_clone().unwrap();
+        let asker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(7));
+            w2.write_all(b"{\"op\":\"hostStatus\",\"reqId\":\"idle-check\"}\n").unwrap();
+        });
+        let mut got = String::new();
+        loop {
+            got.clear();
+            let n = reader.read_line(&mut got).expect("still connected after 7 s with nothing to read (no read timeout)");
+            assert!(n > 0, "the connection is still open");
+            if got.contains("idle-check") { break; }
+        }
+        asker.join().unwrap();
         w.write_all(b"{\"op\":\"hostQuit\",\"now\":true}\n").unwrap();
         let deadline = Instant::now() + Duration::from_secs(30);
         while !matches!(child.try_wait(), Ok(Some(_))) {
