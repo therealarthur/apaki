@@ -77,6 +77,8 @@ struct Engine {
     /// restarted) instead of reaching a host that never saw this window's panes.
     stdin: Mutex<Option<Sender<String>>>,
     restarts: Mutex<Vec<Instant>>,
+    /// Which connection is current: a reader that ends on an older one does nothing (2026-10-11).
+    gen: std::sync::atomic::AtomicU64,
     /// The window is closing: the connection ending is expected and nothing restarts.
     closing: AtomicBool,
     /// Signalled once the writer thread has sent everything and closed the connection.
@@ -110,7 +112,8 @@ fn engine_writer(mut stream: TcpStream, rx: Receiver<String>) -> Receiver<()> {
     let (done_tx, done_rx) = channel::<()>();
     std::thread::spawn(move || {
         for line in rx {
-            if stream.write_all(line.as_bytes()).and_then(|_| stream.flush()).is_err() {
+            if let Err(e) = stream.write_all(line.as_bytes()).and_then(|_| stream.flush()) {
+                wlog(&format!("writing to the engine failed: {e} ({:?})", e.kind()));
                 break;
             }
         }
@@ -160,6 +163,19 @@ fn log_path() -> PathBuf {
     let dir = home.join(".claude").join("latch");
     std::fs::create_dir_all(&dir).ok();
     dir.join("apaki-engine.log")
+}
+
+/// One line in ~/.claude/latch/apaki-window.log (2026-10-11): the window's own connection story (connected, ended
+/// and why, reconnecting), which a Windows GUI program cannot print anywhere else. Kept under about 1 MB.
+fn wlog(msg: &str) {
+    let path = log_path().with_file_name("apaki-window.log");
+    if std::fs::metadata(&path).map(|m| m.len() > 1_000_000).unwrap_or(false) {
+        let _ = std::fs::rename(&path, path.with_extension("log.1"));
+    }
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{secs} pid {} {msg}", std::process::id());
+    }
 }
 
 /// The running host of this app id, or a new one this window starts, connected and authenticated.
@@ -218,6 +234,8 @@ fn start_engine(app: &AppHandle, pending: Option<Receiver<String>>) -> Result<()
     let script = root.join("apaki").join("engine").join("engine.js");
     let host::Connected { stream, reader, ok } = connect_or_start(app, &root, &script)?;
     let state: State<Engine> = app.state();
+    let my_gen = state.gen.fetch_add(1, Ordering::SeqCst) + 1;
+    wlog(&format!("connection {my_gen}: connected to the engine (pid {}, stamp {})", ok.get("pid").and_then(Value::as_u64).unwrap_or(0), ok.get("stamp").and_then(Value::as_str).unwrap_or("?")));
     let rx = match pending {
         Some(rx) => rx,
         None => {
@@ -247,19 +265,41 @@ fn start_engine(app: &AppHandle, pending: Option<Receiver<String>>) -> Result<()
 
     let handle = app.clone();
     std::thread::spawn(move || {
-        for line in reader.lines() {
-            let Ok(line) = line else { break };
-            if let Ok(v) = serde_json::from_str::<Value>(&line) {
-                // A request for the shell itself (the browser), not an event for the window.
-                if v.get("ev").and_then(Value::as_str) == Some("shell") {
-                    browser::shell_request(&handle, v);
-                    continue;
+        // Lines read as bytes (2026-10-11): one line that is not valid UTF-8 no longer ends the connection, as
+        // BufRead::lines did; an interrupted read is retried. Why it ended goes to apaki-window.log.
+        let mut reader = reader;
+        let mut buf: Vec<u8> = Vec::new();
+        let why = loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => break "the engine closed the connection".to_string(),
+                Ok(_) => {
+                    let text = String::from_utf8_lossy(&buf);
+                    let line = text.trim_end_matches(['\r', '\n']);
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Ok(v) = serde_json::from_str::<Value>(line) {
+                        // A request for the shell itself (the browser), not an event for the window.
+                        if v.get("ev").and_then(Value::as_str) == Some("shell") {
+                            browser::shell_request(&handle, v);
+                            continue;
+                        }
+                        to_window(&handle, v);
+                    }
                 }
-                to_window(&handle, v);
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => break format!("reading from the engine failed: {e} ({:?})", e.kind()),
             }
-        }
+        };
+        wlog(&format!("connection {my_gen} ended: {why}"));
         let state: State<Engine> = handle.state();
         if state.closing.load(Ordering::SeqCst) {
+            return;
+        }
+        // A newer connection is already live (this one was replaced): nothing to restart.
+        if state.gen.load(Ordering::SeqCst) != my_gen {
+            wlog(&format!("connection {my_gen}: a newer connection is live; not reconnecting"));
             return;
         }
         // The engine went away: refuse messages until a new one answers.
@@ -286,13 +326,14 @@ fn restart_engine(app: &AppHandle) {
         let tries = u32::try_from(r.len()).unwrap_or(u32::MAX).saturating_sub(1).min(5);
         Duration::from_millis((400u64 << tries).min(10_000))
     };
+    wlog(&format!("reconnecting in {} ms", wait.as_millis()));
     std::thread::sleep(wait);
     if state.closing.load(Ordering::SeqCst) {
         return;
     }
     if let Err(e) = start_engine(app, None) {
         // Logged, not shown: the window already says it is reconnecting, and the next try follows.
-        eprintln!("apaki: reconnecting to the engine: {e}");
+        wlog(&format!("reconnecting to the engine failed: {e}"));
         restart_engine(app);
     }
 }
@@ -326,7 +367,7 @@ fn main() {
                 let _ = w.set_focus();
             }
         }))
-        .manage(Engine { stdin: Mutex::new(None), restarts: Mutex::new(Vec::new()), closing: AtomicBool::new(false), flushed: Mutex::new(None), early: Mutex::new(Some(Vec::new())) })
+        .manage(Engine { stdin: Mutex::new(None), restarts: Mutex::new(Vec::new()), gen: std::sync::atomic::AtomicU64::new(0), closing: AtomicBool::new(false), flushed: Mutex::new(None), early: Mutex::new(Some(Vec::new())) })
         .invoke_handler(tauri::generate_handler![engine_send, browser::browser])
         .setup(|app| {
             // The browser borrows the main webview's WebView2 environment; nothing starts until one opens.

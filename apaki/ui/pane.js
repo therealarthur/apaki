@@ -834,8 +834,11 @@ export class Pane {
   renderHistory(messages, total, e = {}) {
     // From the transcript (engine history.js): the newest page of the whole conversation, the rest on request.
     const paged = e.source === 'transcript' && e.first !== undefined;
+    // The same conversation at the same revision is already on screen (a reconnect): keep it, no redraw.
+    if (!e.refresh && e.rev && e.rev === this.historyRev && e.sessionId === this.historyShownFor && this.$.T.childElementCount > 0) return;
     // The transcript's revision as drawn here, for checkDrift (2026-10-11).
     this.historyRev = e.rev || null;
+    this.historyShownFor = e.sessionId || this.sessionId || null;
     // A refresh (the conversation moved on elsewhere): keep the takeover card and, unless you were at the end, your place.
     const card = e.refresh ? this.$.T.querySelector(':scope > .takeover') : null;
     const g = this.$.ground;
@@ -1554,8 +1557,10 @@ export class Pane {
         // The context meter belongs to the session: another one starts empty, then measures.
         if (this.ctx && this.ctx.sessionId !== e.sessionId) { this.ctx = null; this.renderContext(); }
         this.askContext(1500);
-        if (e.sessionId) this.$.T.innerHTML = '';
-        else this.showEmpty();
+        // Reopened on the same conversation it shows, idle (a reconnect to the engine): keep the transcript on screen;
+        // the history that follows redraws only if the conversation changed (renderHistory), so nothing flashes.
+        if (e.sessionId && !(e.sessionId === this.historyShownFor && !e.busy && this.$.T.childElementCount > 0)) this.$.T.innerHTML = '';
+        else if (!e.sessionId) this.showEmpty();
         // Re-attached after a reconnect (the phone client): busy says whether a turn is still running.
         if (e.attached) this.setBusy(Boolean(e.busy));
         // The queue: re-attached, the engine's copy says what is still unsent and what it sent while no window was here;

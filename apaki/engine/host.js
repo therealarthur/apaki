@@ -304,7 +304,8 @@ export class HostServer {
 
   accept(socket) {
     socket.setNoDelay?.(true);
-    socket.on('error', () => {}); // a reset connection is just a closed one
+    // A reset connection is just a closed one; its error is kept for the log line below (2026-10-11).
+    socket.on('error', (e) => { conn.error = e?.code || e?.message || 'error'; });
     const serverNonce = crypto.randomBytes(32).toString('hex');
     const conn = { id: ++this.seq, socket, role: null, at: Date.now(), send: (obj) => writeLine(socket, obj), close: () => socket.destroy() };
     this.authenticating += 1;
@@ -325,9 +326,10 @@ export class HostServer {
       }
       this.controlLine(conn, line);
     }, { maxBytes: () => (conn.role ? MAX_LINE_BYTES : PRE_AUTH_MAX_BYTES) });
-    socket.on('close', () => {
+    socket.on('close', (hadError) => {
       clearTimeout(timer);
       settle();
+      if (conn.role === 'window') this.log(`window connection ${conn.id} closed${hadError || conn.error ? ` (${conn.error || 'error'})` : ''}${this.window === conn ? '' : ' (already replaced)'}`);
       if (this.window === conn) {
         this.window = null;
         try { this.onGone(conn); } catch (e) { this.log(`onGone: ${e.message}`); }
@@ -352,6 +354,7 @@ export class HostServer {
       const old = this.window;
       this.window = conn;
       this.everConnected = true;
+      this.log(`window connection ${conn.id} opened${old ? `, replacing ${old.id}` : ''}`);
       if (old) {
         // A newer window replaces the old one (a window that crashed and came back before its socket closed).
         try { this.onGone(old); } catch (e) { this.log(`onGone: ${e.message}`); }
