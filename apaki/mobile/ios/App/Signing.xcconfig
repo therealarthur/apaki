@@ -25,7 +25,7 @@
 //
 // Nothing secret belongs here. A team id is not a secret; the App Store Connect API key never goes in the repo.
 
-DEVELOPMENT_TEAM =
+DEVELOPMENT_TEAM = F3772W8T7L
 PRODUCT_BUNDLE_IDENTIFIER = io.myrlin.apaki
 CODE_SIGN_STYLE = Automatic
 APAKI_ENTITLEMENTS = App.entitlements
