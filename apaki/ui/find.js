@@ -30,12 +30,14 @@ export function clearMarks(root) {
   for (const p of parents) p?.normalize?.();
 }
 
+// Not conversation text, so never a match: the Load earlier bar, Show all and image buttons, and the
+// preview beside a collapsed Thinking (its words are in the body, which would count them twice).
 /** Marks every match of `q` under `root`; returns the marks in document order. */
 export function markMatches(root, q, matchCase = false) {
   clearMarks(root);
   if (!q) return [];
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (n.parentElement?.closest('.find-bar, script, style, textarea') ? NodeFilter.FILTER_REJECT : n.nodeValue && n.nodeValue.length >= q.length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP),
+    acceptNode: (n) => (n.parentElement?.closest('.find-bar, script, style, textarea, .hist-more, .show-all, .img-ph, .th-peek') ? NodeFilter.FILTER_REJECT : n.nodeValue && n.nodeValue.length >= q.length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP),
   });
   const nodes = [];
   while (walker.nextNode()) nodes.push(walker.currentNode);
@@ -119,7 +121,10 @@ export function openFind(pane) {
     const cut = pane.historyCut;
     note.hidden = !cut;
     pane.el.classList.toggle('find-cut', Boolean(cut));
-    if (cut) note.textContent = `Searching the latest ${cut.shown.toLocaleString()} of ${cut.total.toLocaleString()} messages (the ones loaded here).`;
+    if (cut && cut.paged && pane.loadAllHistory) {
+      // The rest of the conversation can be loaded (engine history.js): offer to, then search all of it.
+      note.innerHTML = `<span>Searching the ${cut.shown.toLocaleString()} loaded of ${cut.total.toLocaleString()} messages.</span> <button class="fb-all" type="button">Search all</button>`;
+    } else if (cut) note.textContent = `Searching the latest ${cut.shown.toLocaleString()} of ${cut.total.toLocaleString()} messages (the ones loaded here).`;
     show(!keep);
   };
   const step = (d) => {
@@ -159,6 +164,15 @@ export function openFind(pane) {
   const caseBtn = bar.querySelector('.fb-case');
   caseBtn.onclick = () => { matchCase = !matchCase; caseBtn.classList.toggle('on', matchCase); caseBtn.setAttribute('aria-pressed', String(matchCase)); run(); input.focus(); };
   bar.addEventListener('pointerdown', (e) => e.stopPropagation());
+  // Search all: load the whole conversation first, then search it from the first match below.
+  note.addEventListener('click', async (e) => {
+    if (!e.target.closest('.fb-all')) return;
+    note.textContent = 'Loading the whole conversation…';
+    await pane.loadAllHistory();
+    if (!pane.find) return;
+    run();
+    input.focus();
+  });
 
   // Text already selected in the pane becomes the search.
   const sel = window.getSelection?.()?.toString().trim();

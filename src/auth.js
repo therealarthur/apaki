@@ -60,11 +60,24 @@ export function liveLogin(file = LIVE_LOGIN_FILE) {
   return API_KEY_PREFIXES.some((p) => token.startsWith(p)) ? { kind: 'key', key: token } : { kind: 'subscription', key: null };
 }
 
-/** "Anthropic API Key (...)" sections of credentials.md, admin keys excluded. */
+/**
+ * "Anthropic API Key (...)" sections of credentials.md, admin keys excluded.
+ * No credentials.md (every PC but Arthur's, 2026-10-10 fresh-install audit)
+ * means no vault keys, not an error: the billing menu, the latch picker and
+ * keep-warm all call this and used to fail with ENOENT on a new install.
+ * Any other read error still throws, so vaultKey reports it.
+ */
 export function keySections(file = CRED_FILE) {
   const sections = [];
   let current = null;
-  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return sections;
+    throw e;
+  }
+  for (const line of text.split(/\r?\n/)) {
     if (/^##\s/.test(line)) {
       current = { heading: line.replace(/^#+\s*/, '').trim(), body: [] };
       sections.push(current);
@@ -86,6 +99,10 @@ export function vaultKey(words, file = CRED_FILE) {
     candidates = keySections(file);
   } catch (e) {
     return { error: `cannot read credentials.md: ${e.message}` };
+  }
+  // A PC without the vault (a fresh install): say so plainly instead of "no heading matches".
+  if (!candidates.length && !fs.existsSync(file)) {
+    return { error: `There is no credentials.md on this PC, so there is no "${words}" key. Bill the live login (--sub), or add the key as API credits in Myrlin Glass and switch to it there.` };
   }
   const want = words.toLowerCase();
   const hits = candidates.filter((s) => s.heading.toLowerCase().includes(want));

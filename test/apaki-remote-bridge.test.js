@@ -569,7 +569,7 @@ test('bridge: no pairing code unless the phone page checks out, and the code ope
   }
 });
 
-test('bridge: a paired phone links an Apaki account; any phone with the account key connects as it; unlink removes it', async () => {
+test('bridge: a paired phone links an Apaki account (allowed on the PC); any phone with the account key connects as it; unlink removes it', async () => {
   const dir = tmp();
   process.env.APAKI_REMOTE_PROTECT = 'file';
   const relay = fakeRelay();
@@ -587,21 +587,32 @@ test('bridge: a paired phone links an Apaki account; any phone with the account 
     await b.op({ op: 'remotePairDecision', approve: true });
     await phone.pump(() => phone.pairing && phone.events.some((e) => e.ev === 'ready'));
     const hello = phone.events.find((e) => e.wire?.t === 'hello').wire;
-    assert.ok(hello.features.includes('account'), 'the PC says it understands accounts');
+    // 2026-10-10: Connected by default; account-link is held for an Allow on the PC ('account-ask'), never added at once.
+    assert.equal(hello.mode, 'connected');
+    assert.equal(hello.cap, 'full');
+    assert.ok(hello.features.includes('account-ask'), 'the PC says it asks before taking an account');
+    assert.ok(!hello.features.includes('account'), 'the old at-once link is not offered, so an older page does not try it');
     assert.equal(hello.asAccount, undefined);
 
     // Bad keys and the phone's own key are refused.
-    await phone.out.send({ t: 'account-link', reqId: 'q0', pub: 'not-a-key', name: 'Arthur' });
-    await phone.out.send({ t: 'account-link', reqId: 'q1', pub: b64urlEncode(device.pub), name: 'Arthur' });
+    await phone.out.send({ t: 'account-link', reqId: 'q0', pub: 'not-a-key', name: 'Arthur', wait: true });
+    await phone.out.send({ t: 'account-link', reqId: 'q1', pub: b64urlEncode(device.pub), name: 'Arthur', wait: true });
     await phone.pump(() => phone.events.filter((e) => e.wire?.t === 'account-linked').length === 2);
     const refused = phone.events.filter((e) => e.wire?.t === 'account-linked').map((e) => e.wire);
     assert.ok(refused.every((m) => m.error && !m.psk), JSON.stringify(refused));
 
     // The account's device key becomes one more paired device, with its own psk.
     const acct = await createDeviceIdentity({ extractable: true });
-    await phone.out.send({ t: 'account-link', reqId: 'q2', pub: b64urlEncode(acct.pub), name: '  Arthur\u0007  ' });
+    await phone.out.send({ t: 'account-link', reqId: 'q2', pub: b64urlEncode(acct.pub), name: '  Arthur\u0007  ', wait: true });
+    // Held: the phone hears pending, the PC shows who asks, and nothing is added before Allow.
+    await phone.pump(() => phone.events.some((e) => e.wire?.t === 'pending' && e.wire.reqId === 'q2'));
+    await until(() => last().linkRequest);
+    assert.equal(last().linkRequest.account, 'Arthur');
+    assert.equal(last().linkRequest.by, 'iPhone (Safari)');
+    assert.equal(last().devices.length, 1, 'nothing added yet');
+    await b.op({ op: 'remoteLinkDecision', approve: true, cap: 'noshell' });
     await phone.pump(() => phone.events.some((e) => e.wire?.t === 'account-linked' && e.wire.reqId === 'q2'));
-    const linked = phone.events.find((e) => e.wire?.reqId === 'q2').wire;
+    const linked = phone.events.find((e) => e.wire?.t === 'account-linked' && e.wire.reqId === 'q2').wire;
     assert.equal(linked.error, undefined);
     assert.equal(linked.deviceId, await deviceIdFor(acct.pub));
     assert.equal(linked.pcName, 'Test PC');
@@ -610,6 +621,8 @@ test('bridge: a paired phone links an Apaki account; any phone with the account 
     const rec = last().devices.find((d) => d.kind === 'account');
     assert.equal(rec.name, 'Apaki account (Arthur)');
     assert.equal(rec.by, 'iPhone (Safari)');
+    assert.equal(rec.cap, 'noshell', 'the access chosen at Allow');
+    assert.equal(last().linkRequest, null);
     const saved = fs.readFileSync(path.join(dir, 'state.json'), 'utf8');
     assert.ok(!saved.includes(linked.psk), 'the account psk stays out of the public state');
 

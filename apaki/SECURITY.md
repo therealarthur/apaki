@@ -66,6 +66,72 @@ Connected mode (passkey account, presence, sync, later push) that trusts our
 web page for web users and your passkey provider for everyone. The switch
 belongs on the PC. Recommended design in section 4.
 
+## Status after the PC-side hardening (2026-10-10, later the same day)
+
+Done since this review (Claude Code, Opus 5.5; code in apaki/engine/remote.js,
+remote-policy.js, remote-store.js, remote-page.js, engine.js, src/runner.js,
+apaki/ui/phone.js, apaki/web/src/boot.js, link.js, account.js; tests in
+test/apaki-remote-caps.test.js and test/apaki-remote-bridge.test.js). The
+rest of this document describes the code before these changes and stays as
+the record; where it says "today", read it with this list.
+
+- **Modes (4.4 items 1, 2, 5, 6).** state.json `mode`, 'connected' or
+  'private', switched in the Phone sheet (desktop op remoteMode). **The
+  default is Connected, by Arthur's decision (2026-10-10: "make sure users
+  can login on apaki to see their connected machines!"), for new and
+  existing installs; Private is opt-in.** Private refuses account-link
+  ("This PC only accepts phones paired with its code."), and on the switch
+  offers to remove linked account devices; kept ones are paused (the
+  handshake answers them like an unknown device). The mode is also in
+  secret.json, so a rebuilt state.json keeps a Private choice. hello
+  carries mode; connected phones hear changes.
+- **Account links need approval on the PC (5 item 2, 1.3 item 4).** In
+  Connected the PC holds account-link, answers `pending`, and shows a card
+  (who asks, the account name, the access it would get, Allow / Deny,
+  3 minutes). Nothing is added silently. A phone page from before this
+  cannot wait for the answer, so the PC refuses its request with a
+  message (it must pair again for the current page); the old `account`
+  hello feature is no longer offered, so such pages do not try.
+- **The page check fails closed (5 item 1).** No pairing code when the
+  site is unreachable or answers with an error. The Phone sheet offers
+  "Pair without checking the page" for that case only (never for a page
+  that differs), with what it risks, and marks such a code "Not checked".
+- **Per-phone capability (5 item 4).** Full, No shell or Chat only, chosen
+  at Allow (pairing and account cards) and changeable per phone. Devices
+  paired before keep Full; an unknown value reads as Chat only. Enforced on
+  the PC: remote-policy.js refuses mode changes the capability does not
+  allow and clamps the mode an open asks for; engine.js gives restricted
+  phone panes disallowedTools (Bash, PowerShell, Write, Edit, MultiEdit,
+  NotebookEdit, Apaki's browser tools), refuses those and every MCP tool
+  but Apaki's show in canUseTool and in a PreToolUse hook (hooks run in
+  bypassPermissions too), and answers ExitPlanMode with a refusal for Chat
+  only. Phone panes start in the capability's mode ('default' or 'plan'),
+  never the desktop's bypassPermissions default, and the phone is told the
+  mode and, when restricted, what it may do. Not verified against a live
+  Claude Code run: the Agent SDK documents that disallowedTools also blocks
+  the harness's own direct calls (for example `!` lines in custom slash
+  commands); that was not tested here.
+- **Approval text (5 item 3, phone.js only).** The Allow card says what the
+  chosen access lets the phone do ("It can then run Claude Code on this PC,
+  including commands and file edits, ..." for Full). FEATURES.md's phone
+  section was updated too. relay/README.md, build-web.mjs and the live
+  front page were not changed here (section 7 still applies to them).
+- **Hourly re-check (5 item 7).** While phone access is on, the PC fetches
+  every page version it verified (pages.json, with the hashes it verified)
+  and the one it builds, with an iPhone or Android browser's User-Agent and
+  headers, taking turns. A file that differs twice in a row turns phone
+  access off and keeps the reason (state.json pageAlarm), shown in the
+  Phone sheet until phone access is turned on again. It still runs from the
+  PC's network and TLS stack, so a site that tells PCs from phones by
+  either is not caught. A version that is not published (a dev build) or
+  an unreachable site changes nothing.
+- **Presence (5 item 13).** The phone page asks the relay about online
+  state only while signed in, only for the account's PCs, and never for a
+  PC it knows to be Private.
+
+Not done here: items 5, 6, 8 to 12 and 14 to 20 of section 5, the rest of
+section 7's wording outside FEATURES.md and phone.js, and the native app.
+
 ## 1. What our servers can and cannot do today
 
 ### 1.1 The pieces
@@ -598,7 +664,10 @@ Relay (optional, recommended):
 
 ### 4.5 Recommendation
 
-One product, two modes, switch on the PC, Private by default.
+One product, two modes, switch on the PC, Private by default. (Built 2026-10-10 with
+Connected as the default instead, by Arthur's decision: "make sure users can login
+on apaki to see their connected machines!" Private is the opt-in switch; every
+account link still needs an Allow on the PC. See the status section at the top.)
 
 - **Now (days):** items 1 to 7 in section 5. They make Connected honest and give
   Private its PC-side half.

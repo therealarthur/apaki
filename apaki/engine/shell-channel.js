@@ -16,6 +16,15 @@
  *
  * A request that gets no answer in time rejects with code TIMEOUT; one made
  * without a shell rejects with NO_SHELL at once.
+ *
+ * The engine as a background host (2026-10-10, host.js): the shell is the
+ * window that is connected right now, and it can come and go. goodbye() is
+ * called when it disconnects (requests in flight fail with CLOSED); the next
+ * window says hello again. A host is told what its shell can do before any
+ * window connects (expect(), from APAKI_SHELL_FEATURES), so Claude Code
+ * processes started while no window is connected still get the browser
+ * tools; a request made then fails at once with NO_WINDOW and a clear
+ * message, and works again once a window is back.
  */
 
 export class ShellError extends Error {
@@ -33,6 +42,8 @@ export class ShellError extends Error {
 export function createShell({ emit, timeoutMs = 20000 } = {}) {
   let seq = 0;
   let info = null;
+  // Features a shell has had, or is expected to have (a host before its window connects).
+  const expected = new Set();
   const pending = new Map(); // id -> { resolve, reject, timer }
   const hellos = [];
 
@@ -42,10 +53,23 @@ export function createShell({ emit, timeoutMs = 20000 } = {}) {
     get info() { return info; },
     has(feature) { return Boolean(info?.features?.includes(feature)); },
 
+    /** True when the shell has this feature now, had it, or is expected to (it may be away for a while). */
+    expects(feature) { return this.has(feature) || expected.has(feature); },
+
+    /** What the shell of this engine can do, before it connects (APAKI_SHELL_FEATURES). */
+    expect(features = []) { for (const f of features) if (f) expected.add(String(f)); },
+
     /** The shell's first line: { version, features }. */
     hello(msg = {}) {
       info = { version: msg.version ?? 1, features: Array.isArray(msg.features) ? msg.features : [] };
+      for (const f of info.features) expected.add(String(f));
       for (const r of hellos.splice(0)) r(true);
+    },
+
+    /** The shell went away (the window disconnected): fail what is in flight, wait for the next hello. */
+    goodbye(reason = 'The Apaki window closed.') {
+      info = null;
+      this.closeAll(reason);
     },
 
     /** Resolves true when the shell has said hello (at once if it has), false after ms. */
@@ -60,6 +84,8 @@ export function createShell({ emit, timeoutMs = 20000 } = {}) {
 
     /** Sends one request; resolves with the shell's result. */
     request(cmd, args = {}, { timeout = timeoutMs } = {}) {
+      // A shell that is only away (the window is closed, the engine keeps running in the background).
+      if (!info && expected.size) return Promise.reject(new ShellError('Apaki\'s window is closed, so its built-in browser is not available right now. It works again once Apaki is open.', 'NO_WINDOW'));
       if (!info) return Promise.reject(new ShellError('Apaki\'s browser is not available here (this engine is not running inside the Apaki window).', 'NO_SHELL'));
       const id = `s${++seq}`;
       return new Promise((resolve, reject) => {

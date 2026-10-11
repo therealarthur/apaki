@@ -10,6 +10,7 @@
  *   open, attach, send, interrupt, answer,   its own conversations
  *   model, effort, mode, commands, close
  *   artifactGet                              when the engine has it (artifacts track)
+ *   historyBefore, historyBlock              read only: more of a conversation it has open
  * Never billing, never the remote* ops (pairing, devices), never voice,
  * folders, Ask Claude or Dig deeper (they write files or spend outside a
  * conversation), and nothing that reaches the shell or the filesystem.
@@ -19,6 +20,28 @@
  * desktop pane or another phone's pane, and every event about a phone pane
  * goes to that phone only. Request ids get the same prefix so answers to a
  * phone's requests (sessions, search) go back to it and not to the desktop.
+ *
+ * Note (2026-10-10, apaki/SECURITY.md 1.5): "nothing that reaches the shell
+ * or the filesystem" above is about the ops a phone may send. The Claude
+ * Code a phone pane runs reaches both, like a desktop pane, unless the
+ * phone's capability says otherwise (below).
+ *
+ * Capabilities (2026-10-10, SECURITY.md 4.4 item 4; Arthur: "its important
+ * that we have that secure and private option"): the PC user picks, per
+ * phone, what that phone may make Claude do, and the PC enforces it
+ * whatever code the phone runs:
+ *   full     Claude can run commands and edit files (what every phone could
+ *            before; devices paired before this keep it).
+ *   noshell  no commands, no file edits, no browser, no tools other
+ *            programs added (MCP servers); reading, searching and answering
+ *            stay. bypassPermissions is refused.
+ *   chat     plan mode only (read-only), mode changes refused, plans cannot
+ *            be carried out from the phone.
+ * checkPhoneCommand clamps the mode an open asks for (phone pages always
+ * ask for one; an older page asks for bypassPermissions) and refuses a mode
+ * change the capability does not allow. engine.js applies capRunnerOptions,
+ * capCanUseTool and capPreToolUse to every phone pane, so the tools are
+ * also refused inside Claude Code, in every permission mode.
  */
 
 export const PHONE_PREFIX = 'phone:';
@@ -30,10 +53,13 @@ export const PHONE_OPS = Object.freeze([
   'artifactGet',
   // 2026-10-10: steering a queued message into the running turn (same power as send), and the context meter.
   'steer', 'contextUsage',
+  // 2026-10-10 (history.js): read only, the rest of a conversation open in one of this phone's panes:
+  // earlier pages, and one cut tool result, thinking block, summary or image in full.
+  'historyBefore', 'historyBlock',
 ]);
 
 /** Ops that act on one pane (paneId required). */
-const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage']);
+const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock']);
 
 /** Most panes one phone may have open at once (the desktop's limit per tab). */
 export const MAX_PHONE_PANES = 6;
@@ -45,6 +71,144 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const MODES = ['bypassPermissions', 'acceptEdits', 'plan', 'default'];
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
+/* ---------- capabilities (what a phone may make Claude do) ---------- */
+
+/** The capabilities, most power first. A device record without one is 'full' (paired before 2026-10-10). */
+export const CAPS = Object.freeze(['full', 'noshell', 'chat']);
+
+/** Words for each capability, for the Phone sheet and the notes a phone pane shows. */
+export const CAP_LABEL = Object.freeze({ full: 'Full', noshell: 'No shell', chat: 'Chat only' });
+
+/**
+ * The capability of a device record: missing means 'full' (older records);
+ * anything that is not a known value means 'chat' (fail closed); no record
+ * at all (a pane whose phone was removed) means 'chat' too.
+ */
+export function capOf(device) {
+  if (!device) return 'chat';
+  const c = device.cap;
+  if (c === undefined || c === null || c === '') return 'full';
+  return CAPS.includes(c) ? c : 'chat';
+}
+
+/** The permission modes a capability allows. */
+export function capModes(cap) {
+  if (cap === 'full') return [...MODES];
+  if (cap === 'noshell') return MODES.filter((m) => m !== 'bypassPermissions');
+  return ['plan'];
+}
+
+/**
+ * The mode a phone pane starts in when it does not ask for one. Never the
+ * desktop's default (which starts as bypassPermissions): a phone pane says
+ * what it runs in.
+ */
+export function capDefaultMode(cap) {
+  return cap === 'full' || cap === 'noshell' ? 'default' : 'plan';
+}
+
+/** `mode` when the capability allows it, else the capability's default mode. */
+export function clampMode(cap, mode) {
+  return capModes(cap).includes(mode) ? mode : capDefaultMode(cap);
+}
+
+/**
+ * Apaki's own browser tools (apaki/engine/browser-tools.js BROWSER_TOOLS, on
+ * the "apaki" MCP server). Listed here so this file stays free of imports;
+ * test/apaki-remote-caps.test.js checks the two lists agree.
+ */
+export const APAKI_BROWSER_TOOLS = Object.freeze(['browser_open', 'browser_read', 'browser_click', 'browser_type', 'browser_back', 'browser_screenshot'].map((t) => `mcp__apaki__${t}`));
+
+/** Tools a 'noshell' or 'chat' phone pane never gets: commands, file edits, Apaki's browser. */
+export const CAP_BLOCKED_TOOLS = Object.freeze(['Bash', 'PowerShell', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', ...APAKI_BROWSER_TOOLS]);
+
+/** The one MCP tool a restricted phone pane keeps: Apaki's show, which writes only Apaki's own store. */
+const CAP_KEPT_MCP = new Set(['mcp__apaki__show']);
+
+/**
+ * Search tools a restricted pane is given by name: a native Claude Code build
+ * may search through Bash instead of Grep and Glob (Agent SDK sdk.d.ts,
+ * `tools`), and Bash is gone there. Both only read.
+ */
+export const CAP_SEARCH_TOOLS = Object.freeze(['Grep', 'Glob']);
+
+/**
+ * True when a phone with this capability may not use the tool. For
+ * 'noshell' and 'chat': the blocked list, and every MCP tool but Apaki's
+ * show (an MCP server from the user's settings can do anything, a shell
+ * included).
+ */
+export function capBlocksTool(cap, name) {
+  if (cap === 'full') return false;
+  const n = String(name || '');
+  if (CAP_BLOCKED_TOOLS.includes(n)) return true;
+  return n.startsWith('mcp__') && !CAP_KEPT_MCP.has(n);
+}
+
+/** Why a tool was refused, for Claude (it reads this) and the person on the phone. */
+export function capDeniedText(cap, name) {
+  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, so Claude may not use ${String(name || 'that tool').slice(0, 80)} from it. Answer in text instead; the person can change the phone's access in Apaki's Phone sheet on the PC.`;
+}
+
+/** What a chat-only phone pane says when Claude asks to carry out a plan. */
+export const CAP_PLAN_TEXT = 'This phone is set to Chat only on the PC, so plans cannot be carried out from it. Keep planning, or present the plan as text; the person can carry it out on the PC.';
+
+/** Why a mode change was refused. */
+export function capModeText(cap, mode) {
+  if (cap === 'chat') return 'This phone is set to Chat only on the PC, so it stays in plan mode.';
+  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, so it cannot use ${mode === 'bypassPermissions' ? 'Bypass permissions' : String(mode).slice(0, 40)}.`;
+}
+
+/** The line a restricted phone pane shows when it opens (null for 'full', whose mode chip says enough). */
+export function capNote(cap) {
+  if (cap === 'noshell') return 'This phone is set to No shell on the PC: Claude can read, search and answer here, but cannot run commands, edit files, use the browser or use tools other programs added.';
+  if (cap === 'chat') return 'This phone is set to Chat only on the PC: plan mode, read-only. Claude cannot run commands or change anything from here.';
+  return null;
+}
+
+/**
+ * The SessionRunner options a phone pane gets for its capability (engine.js
+ * open): the mode it may use, the tools it may not (removed from Claude's
+ * context; per the Agent SDK this also blocks the harness's own direct
+ * calls), and the search tools it is given by name.
+ */
+export function capRunnerOptions(cap, mode) {
+  const out = { permissionMode: clampMode(cap, mode) };
+  if (cap !== 'full') {
+    out.disallowedTools = [...CAP_BLOCKED_TOOLS];
+    out.allowedTools = [...CAP_SEARCH_TOOLS];
+  }
+  return out;
+}
+
+/**
+ * A canUseTool for a phone pane: refuses what the capability blocks (and,
+ * for 'chat', carrying out a plan), otherwise answers like `base`.
+ * `getCap` is read on every call, so a change on the PC applies at once.
+ */
+export function capCanUseTool(getCap, base) {
+  return async (name, input, extra) => {
+    const cap = getCap();
+    if (capBlocksTool(cap, name) || (cap === 'chat' && name === 'ExitPlanMode')) return { behavior: 'deny', message: name === 'ExitPlanMode' ? CAP_PLAN_TEXT : capDeniedText(cap, name) };
+    return base(name, input, extra);
+  };
+}
+
+/**
+ * A PreToolUse hook matcher (every tool) that denies what the capability
+ * blocks. Hooks run in every permission mode, bypassPermissions included
+ * (src/runner.js), so this holds where canUseTool is never asked.
+ */
+export function capPreToolUse(getCap) {
+  return {
+    hooks: [async (input) => {
+      const cap = getCap();
+      if (!capBlocksTool(cap, input?.tool_name)) return {};
+      return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: capDeniedText(cap, input.tool_name) } };
+    }],
+  };
+}
+
 const LOCAL_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const REQ_ID_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const DEVICE_RE = /^[A-Za-z0-9_-]{22}$/;
@@ -54,6 +218,11 @@ const MAX_TEXT = 200_000;
 const MAX_QUERY = 500;
 const MAX_IMAGES = 8;
 const MAX_IMAGE_B64 = 8 * 1024 * 1024;
+// historyBefore and historyBlock (history.js): a message uuid, a block reference (the same form as
+// history.js REF_RE; kept here so this file stays free of imports) and the largest page.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const HISTORY_REF_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:(\d{1,5}|s)(?::\d{1,5})?$/i;
+const MAX_HISTORY_PAGE = 5000;
 
 /** The engine pane id of a phone's pane. */
 export function phonePaneId(deviceId, local) {
@@ -97,10 +266,12 @@ const fail = (error, cmd) => ({ ok: false, error, reqId: typeof cmd?.reqId === '
  * @param {(askId: string) => (string|null)} [ctx.askPane]  the pane a pending question belongs to
  * @param {(cwd: string) => boolean} [ctx.knownCwd]  a folder some listed session ran in
  * @param {(deviceId: string) => string[]} [ctx.phoneSessions]  sessions open in this phone's panes
+ * @param {string} [ctx.cap]  the phone's capability (CAPS); absent means 'full' (callers from before capabilities)
  * @returns {{ok: true, cmd: object} | {ok: false, error: string, reqId: string|null, paneId: string|null}}
  */
 export function checkPhoneCommand(cmd, ctx) {
   const { deviceId } = ctx;
+  const cap = ctx.cap === undefined ? 'full' : (CAPS.includes(ctx.cap) ? ctx.cap : 'chat');
   if (!isObj(cmd)) return fail('A command must be an object.', null);
   const op = cmd.op;
   if (typeof op !== 'string' || !PHONE_OPS.includes(op)) return fail(`"${String(op).slice(0, 40)}" is not available from a phone.`, cmd);
@@ -144,7 +315,9 @@ export function checkPhoneCommand(cmd, ctx) {
         if (cmd.force !== undefined) out.force = cmd.force === true;
         if (cmd.model != null) { if (!MODEL_RE.test(String(cmd.model))) return fail('Unknown model.', cmd); out.model = cmd.model; }
         if (cmd.effort != null) { if (!EFFORTS.includes(cmd.effort)) return fail('Unknown effort.', cmd); out.effort = cmd.effort; }
-        if (cmd.mode != null) { if (!MODES.includes(cmd.mode)) return fail('Unknown permission mode.', cmd); out.mode = cmd.mode; }
+        // Clamped, not refused: every phone page asks for a mode on open (an older one always for
+        // bypassPermissions), and refusing would leave a restricted phone unable to open anything.
+        if (cmd.mode != null) { if (!MODES.includes(cmd.mode)) return fail('Unknown permission mode.', cmd); out.mode = clampMode(cap, cmd.mode); }
       }
       break;
     }
@@ -200,6 +373,8 @@ export function checkPhoneCommand(cmd, ctx) {
       break;
     case 'mode':
       if (!MODES.includes(cmd.mode)) return fail('Unknown permission mode.', cmd);
+      // The capability decides (chat: plan only; noshell: no bypassPermissions).
+      if (!capModes(cap).includes(cmd.mode)) return fail(capModeText(cap, cmd.mode), cmd);
       out.mode = cmd.mode;
       break;
     case 'artifactGet': {
@@ -211,6 +386,24 @@ export function checkPhoneCommand(cmd, ctx) {
       out.sessionId = sid;
       if (Number.isInteger(cmd.rev)) out.rev = cmd.rev;
       if (cmd.content !== undefined) out.content = Boolean(cmd.content);
+      break;
+    }
+    case 'historyBefore':
+    case 'historyBlock': {
+      // Read only. The pane must be this phone's and open (checked above); the engine reads only the
+      // session open in that pane, and a session id, when sent, must be one this phone has open.
+      const sid = cmd.sessionId ?? null;
+      if (sid !== null && (typeof sid !== 'string' || !SESSION_RE.test(sid) || !(ctx.phoneSessions?.(deviceId) || []).includes(sid))) return fail('Open that conversation first.', cmd);
+      if (sid) out.sessionId = sid;
+      if (op === 'historyBefore') {
+        if (typeof cmd.before !== 'string' || !UUID_RE.test(cmd.before)) return fail('Bad message id.', cmd);
+        out.before = cmd.before;
+        if (cmd.limit != null) { if (!Number.isInteger(cmd.limit) || cmd.limit < 1 || cmd.limit > MAX_HISTORY_PAGE) return fail('Bad page size.', cmd); out.limit = cmd.limit; }
+        if (cmd.all !== undefined) out.all = cmd.all === true;
+      } else {
+        if (typeof cmd.ref !== 'string' || !HISTORY_REF_RE.test(cmd.ref)) return fail('Bad message part.', cmd);
+        out.ref = cmd.ref;
+      }
       break;
     }
     default:

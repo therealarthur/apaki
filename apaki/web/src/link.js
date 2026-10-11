@@ -21,6 +21,19 @@
  * kept, the page says what happened, and the link tries again every few
  * minutes and whenever the page comes back to the front. It is final only
  * when this phone's own expiry (hello's expiresAt) has passed.
+ *
+ * Relay closes (2026-10-10, relay budget fairness): NO_PC (4404, this
+ * room's PC is not connected; the relay drops the phone after 60 s) is the
+ * quiet "waiting for your PC" state, tried again after about a minute or at
+ * once when the page comes back to the front; BUDGET (4503), IP_SHARE (4504)
+ * and ROOM_SHARE (4505) wait about 30 minutes with a reason the page shows
+ * (info.budget).
+ *
+ * From the PC since 2026-10-10 (apaki/SECURITY.md 4.4): hello carries mode
+ * ('private' or 'connected') and cap (what this phone may make Claude do);
+ * { t: 'mode' } and { t: 'cap' } follow a change (on.mode, on.cap). A held
+ * account-link answers { t: 'pending', reqId, timeoutMs } first: request()
+ * then waits that long and tells its onPending.
  */
 
 import { PhoneSession, ProtocolError, RELAY_CLOSE, parseRelayControl, relaySubprotocols, roomUrl } from './protocol.js';
@@ -31,6 +44,20 @@ const HANDSHAKE_MS = 20_000;
 const BACKOFF_MS = [800, 2_000, 5_000, 10_000, 20_000, 30_000];
 /** After "unknown device": the next tries (slow; the page coming back to the front tries at once). */
 const UNKNOWN_RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000];
+/** The relay dropped this phone because its PC is not connected (NO_PC): look again after about this long. */
+const NO_PC_RETRY_MS = 60_000;
+/** The relay's day is spent, for everyone or for this address or room: look again after about this long. */
+const BUDGET_RETRY_MS = 30 * 60_000;
+/** A held request (account-link) may wait at most this long for the PC's person, whatever the PC says. */
+const MAX_PENDING_MS = 10 * 60_000;
+
+/** Why the relay closed for the rest of the day, by close code (null for any other code). */
+export function budgetReason(code) {
+  if (code === RELAY_CLOSE.BUDGET) return 'The Apaki relay has used today\'s budget. It takes connections again after 00:00 UTC.';
+  if (code === RELAY_CLOSE.IP_SHARE) return 'This phone\'s internet address has used its share of the Apaki relay for today. It works again after 00:00 UTC, or on another network.';
+  if (code === RELAY_CLOSE.ROOM_SHARE) return 'This PC\'s connections have used their share of the Apaki relay for today. They work again after 00:00 UTC.';
+  return null;
+}
 
 /** Alerts that end a pairing for good: the QR has to be shown again. */
 const PAIR_FATAL = new Set(['expired', 'used', 'no-offer', 'bad-mac', 'rejected', 'timeout', 'bad-signature', 'bad-commit', 'version']);
@@ -243,10 +270,30 @@ export class Link {
     }
     // The PC user changed how long this phone stays paired.
     if (m.t === 'lifetime') { this.setExpiry(m.expiresAt); return; }
+    // The PC switched between Private and Connected, or changed what this phone may do (2026-10-10).
+    if (m.t === 'mode') {
+      if (m.mode !== 'private' && m.mode !== 'connected') return;
+      this.hello = { ...(this.hello || {}), mode: m.mode, ...(Array.isArray(m.features) ? { features: m.features } : {}) };
+      this.on.mode?.(m.mode);
+      return;
+    }
+    if (m.t === 'cap') {
+      if (typeof m.cap !== 'string') return;
+      this.hello = { ...(this.hello || {}), cap: m.cap };
+      this.on.cap?.(m.cap);
+      return;
+    }
     if (m.t === 'evs' && Array.isArray(m.list)) for (const ev of m.list) this.onEvent?.(ev);
     if (typeof m.reqId === 'string' && this.replies?.has(m.reqId)) {
       const r = this.replies.get(m.reqId);
-      if (r.type === m.t) { this.replies.delete(m.reqId); clearTimeout(r.timer); r.resolve(m); }
+      if (r.type === m.t) { this.replies.delete(m.reqId); clearTimeout(r.timer); r.resolve(m); return; }
+      // The PC holds this request until its person answers (account-link): wait as long as it says, and say so.
+      if (m.t === 'pending') {
+        clearTimeout(r.timer);
+        const ms = Math.min(MAX_PENDING_MS, Math.max(10_000, Number(m.timeoutMs) || 0)) + 15_000;
+        r.timer = setTimeout(() => { this.replies.delete(m.reqId); r.reject(new Error(`Nobody answered on ${this.pcName}.`)); }, ms);
+        try { r.onPending?.(m); } catch { /* the page's note only */ }
+      }
     }
   }
 
@@ -258,17 +305,19 @@ export class Link {
   /**
    * Sends one message to the PC (not an engine command) and waits for its
    * answer of type `answer` with the same reqId, e.g. account-link ->
-   * account-linked. Rejects when not connected or after `timeoutMs`.
+   * account-linked. Rejects when not connected or after `timeoutMs`; a
+   * { t: 'pending' } from the PC extends the wait to what it says and calls
+   * onPending (the PC is asking its person).
    */
-  request(msg, answer, timeoutMs = 10_000) {
+  request(msg, answer, timeoutMs = 10_000, { onPending = null } = {}) {
     if (this.state !== 'open' || !this.outbox) return Promise.reject(new Error(`Not connected to ${this.pcName} right now.`));
     this.replies ||= new Map();
     this.reqSeq = (this.reqSeq || 0) + 1;
     const reqId = `q${this.reqSeq}`;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.replies.delete(reqId); reject(new Error(`${this.pcName} did not answer. Its Apaki may need an update.`)); }, timeoutMs);
-      this.replies.set(reqId, { type: answer, resolve, timer });
-      this.outbox.send({ ...msg, reqId }).catch((e) => { clearTimeout(timer); this.replies.delete(reqId); reject(e); });
+      this.replies.set(reqId, { type: answer, resolve, reject, timer, onPending });
+      this.outbox.send({ ...msg, reqId }).catch((e) => { clearTimeout(this.replies.get(reqId)?.timer ?? timer); this.replies.delete(reqId); reject(e); });
     });
   }
 
@@ -359,7 +408,29 @@ export class Link {
     this.dropSession();
     if (this.stopped) return;
     if (!this.pairing && this.pairSent) { this.fatal('interrupted'); return; }
+    // The PC is not there (the relay lets a phone wait 60 s): quietly wait for it, no "No connection".
+    if (code === RELAY_CLOSE.NO_PC) { this.waitForPc(code); return; }
+    // The relay's day is spent (for everyone, this address or this room): say why and wait long.
+    if (budgetReason(code)) { this.budgetWait(code); return; }
     this.retry(code);
+  }
+
+  /** NO_PC: the "waiting for your PC" state; look again in about a minute (wake, on coming back to the front, at once). */
+  waitForPc(code = RELAY_CLOSE.NO_PC) {
+    if (this.stopped) return;
+    clearTimeout(this.timers.retry);
+    const ms = Math.round(NO_PC_RETRY_MS * (0.8 + Math.random() * 0.4));
+    this.timers.retry = setTimeout(() => this.dial(), ms);
+    this.setState('waiting', { retryInMs: ms, code, quiet: true });
+  }
+
+  /** BUDGET, IP_SHARE, ROOM_SHARE: offline with the reason (info.budget), tried again after about 30 minutes. */
+  budgetWait(code) {
+    if (this.stopped) return;
+    clearTimeout(this.timers.retry);
+    const ms = Math.round(BUDGET_RETRY_MS * (0.9 + Math.random() * 0.2));
+    this.timers.retry = setTimeout(() => this.dial(), ms);
+    this.setState('offline', { retryInMs: ms, code, budget: budgetReason(code) });
   }
 
   retry(code = null) {

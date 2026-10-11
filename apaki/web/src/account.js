@@ -19,7 +19,7 @@
  *   create(name)               a new account with a new passkey
  *   signIn()                   a passkey this person already has
  *   refresh()                  fetch the vault, take in PCs other phones added
- *   link(link)                 save the PC behind an open Link to the account
+ *   link(link, { onPending })  save the PC behind an open Link to the account (the PC asks its person first)
  *   unlink(roomId, link?)      take a PC out of the account (and off the PC when connected)
  *   addPasskey(), removePasskey(id), rename(name), signOut(), signOutEverywhere(), remove()
  *   presence(pc)               is that PC connected to the relay right now?
@@ -355,16 +355,23 @@ export const current = () => store.getAccount();
 /**
  * Saves the PC behind an open Link to the account: the PC accepts the
  * account device (ACCOUNTS.md, account-link) and the vault gets its record.
+ *
+ * Since 2026-10-10 the PC asks its person first (SECURITY.md 4.4): the
+ * request says it can wait (wait: true), the PC answers { t: 'pending' }
+ * (onPending, so the page can say "allow it on the PC"), and the answer
+ * comes when the person allows or denies it there. A PC in Private mode
+ * refuses (code 'private'); a PC from before this never offers it.
  */
-export async function link(lnk) {
+export async function link(lnk, { onPending = null } = {}) {
   const acct = await store.getAccount();
   if (!acct) throw new AccountError('signed-out', 'Sign in to your Apaki account first.');
   if (!lnk || lnk.state !== 'open') throw new AccountError('offline', 'Connect to the PC first.');
-  if (!lnk.supports('account')) throw new AccountError('old-pc', `${lnk.pcName} runs an older Apaki. Update it there, then save it to your account.`);
+  if (lnk.hello?.mode === 'private') throw new AccountError('private', `${lnk.pcName} is in Private mode: it only accepts phones paired with its code.`);
+  if (!lnk.supports('account-ask')) throw new AccountError('old-pc', `${lnk.pcName} runs an older Apaki. Update it there, then save it to your account.`);
   if (lnk.hello?.asAccount) throw new AccountError('already', `${lnk.pcName} is already in your account.`);
   const pairing = lnk.pairing;
-  const answer = await lnk.request({ t: 'account-link', pub: acct.devicePub, name: acct.name }, 'account-linked');
-  if (answer.error) throw new AccountError('pc-refused', `${lnk.pcName} said: ${answer.error}`);
+  const answer = await lnk.request({ t: 'account-link', pub: acct.devicePub, name: acct.name, wait: true }, 'account-linked', 15_000, { onPending });
+  if (answer.error) throw new AccountError(answer.code === 'private' ? 'private' : 'pc-refused', `${lnk.pcName} said: ${answer.error}`);
   if (answer.deviceId !== (await deviceIdFor(acct.devicePub))) throw new AccountError('bad-pc', 'The PC answered for another device.');
   return updateVault(acct, (json) => {
     json.pcs = (json.pcs || []).filter((p) => p.roomId !== pairing.roomId);
@@ -388,7 +395,8 @@ export async function unlink(roomId, lnk = null) {
   const acct = await store.getAccount();
   if (!acct) throw new AccountError('signed-out', 'Not signed in.');
   let offPc = false;
-  if (lnk?.state === 'open' && lnk.roomId === roomId && lnk.supports('account')) {
+  // 'account-ask' since 2026-10-10 ('account' before): either PC takes account-unlink.
+  if (lnk?.state === 'open' && lnk.roomId === roomId && (lnk.supports('account-ask') || lnk.supports('account'))) {
     const r = await lnk.request({ t: 'account-unlink', deviceId: await deviceIdFor(acct.devicePub) }, 'account-unlinked').catch(() => null);
     offPc = Boolean(r?.ok);
   }

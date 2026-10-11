@@ -63,6 +63,31 @@ test('vaultKey finds one key by heading words and skips admin keys', () => {
   assert.match(vaultKey('nothing', f).error, /No API key heading/);
 });
 
+// Fresh-install audit (2026-10-10): a PC without credentials.md has no vault keys, which is not an error.
+test('a missing credentials.md means no vault keys, and vaultKey says so plainly', async () => {
+  const { keySections } = await import('../src/auth.js');
+  const missing = path.join(tmp, 'no-such-credentials.md');
+  assert.deepEqual(keySections(missing), []);
+  assert.match(vaultKey('anything', missing).error, /no credentials\.md on this PC/);
+});
+
+test('the Claude Code binary falls back to the one the Agent SDK ships', async () => {
+  const { bundledClaudeBinary, claudeBinary } = await import('../src/launch.js');
+  const bundled = bundledClaudeBinary();
+  // The SDK installs its native binary for this platform as an optional dependency.
+  if (bundled) assert.ok(fs.existsSync(bundled));
+  const saved = { LATCH_CLAUDE_BIN: process.env.LATCH_CLAUDE_BIN, APPDATA: process.env.APPDATA };
+  try {
+    delete process.env.LATCH_CLAUDE_BIN;
+    process.env.APPDATA = path.join(tmp, 'no-npm-here'); // no global npm Claude Code
+    assert.equal(claudeBinary(), bundled);
+    process.env.LATCH_CLAUDE_BIN = 'C:\\custom\\claude.exe';
+    assert.equal(claudeBinary(), 'C:\\custom\\claude.exe');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
 test('childEnv strips every inherited auth source and session identity', () => {
   const env = childEnv('sk-ant-usr-new', {
     PATH: '/bin', ANTHROPIC_API_KEY: 'corporate', anthropic_auth_token: 'x', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'abc', CLAUDE_EFFORT: 'xhigh',

@@ -2204,3 +2204,85 @@ body.rail-collapsed .rail, body.rail-collapsed .rail-resize { display: none; }
 .rail-show[hidden] { display: none; }
 /* The phone has its own layout (web.css): no handle, no toggles. */
 body.web .rail-resize, body.web .rail-toggle { display: none !important; }
+
+/* ---------- the whole history (pane.js, engine history.js; 2026-10-10) ----------
+   Load earlier messages at the top of a long conversation, compaction
+   markers (a divider with the summary folded in), Thinking folded under its
+   word, Show all on cut tool output, and image placeholders that load one
+   picture on request. Tokens only, so light and dark both follow. */
+.hist-more { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 18px; padding: 10px 12px; border: 1px dashed var(--hairline-strong); border-radius: var(--radius); background: hsla(232, 60%, 62%, .035); }
+.hist-more .hm-load { padding: 5px 12px; border: 1px solid var(--btn2-line, var(--hairline-strong)); border-radius: 8px; background: linear-gradient(180deg, var(--btn2-a, var(--card)), var(--btn2-b, var(--card))); cursor: pointer; font: 650 12.5px var(--font-body); color: var(--brand-deep); transition: border-color var(--dur-fast) var(--ease-hover), background var(--dur-fast) var(--ease-hover); }
+.hist-more .hm-load:hover:not(:disabled) { border-color: var(--brand); background: var(--brand-wash); }
+.hist-more .hm-n { font: 500 11px var(--font-mono); color: var(--faint); }
+.hist-more.loading { animation: hist-breathe 1.4s var(--ease-hover) infinite alternate; }
+@keyframes hist-breathe { from { background: hsla(232, 60%, 62%, .03); } to { background: hsla(232, 60%, 62%, .09); } }
+@media (prefers-reduced-motion: reduce) { .hist-more.loading { animation: none; } }
+
+.compact-mark { margin: 22px 0; }
+.compact-mark > summary { list-style: none; display: flex; align-items: center; gap: 10px; cursor: pointer; font: 600 11px var(--font-mono); letter-spacing: .03em; color: var(--soft); }
+.compact-mark > summary::-webkit-details-marker { display: none; }
+.compact-mark .cm-rule { flex: 1; height: 1px; background: var(--hairline-strong); }
+.compact-mark .cm-meta { font-weight: 500; color: var(--faint); }
+.compact-mark .cm-open { padding: 1px 7px; border: 1px solid var(--hairline-strong); border-radius: 6px; font: 650 10.5px var(--font-body); color: var(--brand-deep); }
+.compact-mark > summary:hover .cm-open { border-color: var(--brand); background: var(--brand-wash); }
+.compact-mark[open] .cm-open { background: var(--tint); }
+.compact-mark .cm-body { margin: 12px 0 6px; padding: 12px 16px; max-height: 420px; overflow: auto; border: 1px solid var(--hairline); border-radius: var(--radius); background: var(--card); font-size: 13.5px; color: var(--soft); }
+.compact-mark .cm-body > :first-child { margin-top: 0; }
+
+.thinking { margin: 6px 0 6px 18px; font-size: 13px; }
+.thinking > summary { list-style: none; display: flex; gap: 8px; align-items: baseline; cursor: pointer; color: var(--faint); white-space: nowrap; overflow: hidden; }
+.thinking > summary::-webkit-details-marker { display: none; }
+.thinking .th-mark { flex: none; font: italic 600 12px var(--font-body); color: var(--soft); }
+.thinking .th-mark::before { content: '∴ '; font-style: normal; color: var(--faint); }
+.thinking .th-peek { overflow: hidden; text-overflow: ellipsis; font-style: italic; }
+.thinking[open] .th-peek { display: none; }
+.thinking .th-body { margin: 6px 0 2px 14px; padding: 8px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--tint); white-space: pre-wrap; font-style: italic; color: var(--soft); max-height: 360px; overflow: auto; }
+
+.show-all { display: inline-block; margin: 2px 0 6px 18px; padding: 3px 9px; border: 1px solid var(--hairline-strong); border-radius: 7px; background: hsl(var(--w)); cursor: pointer; font: 650 11.5px var(--font-body); color: var(--brand-deep); transition: border-color var(--dur-fast) var(--ease-hover), background var(--dur-fast) var(--ease-hover); }
+.show-all:hover:not(:disabled) { border-color: var(--brand); background: var(--brand-wash); }
+.thinking .show-all { margin-left: 14px; }
+.compact-mark .show-all { margin-left: 0; }
+
+.img-ph { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border: 1px dashed var(--hairline-strong); border-radius: var(--radius-sm); background: var(--tint); cursor: pointer; font: 500 11.5px var(--font-mono); color: var(--faint); white-space: nowrap; }
+.img-ph svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
+.img-ph .ip-go { font: 650 11.5px var(--font-body); color: var(--brand-deep); }
+.img-ph:hover:not(:disabled) { border-color: var(--brand); background: var(--brand-wash); }
+.tool > .img-ph { margin: 4px 0 6px 18px; }
+.hist-img { max-width: min(100%, 520px); border-radius: var(--radius-sm); border: 1px solid var(--hairline); }
+.find-bar .fb-note .fb-all { display: inline-grid; vertical-align: middle; margin-left: 4px; padding: 1px 7px; border: 1px solid var(--hairline-strong); border-radius: 6px; background: hsl(var(--w)); cursor: pointer; font: 650 11px var(--font-body); color: var(--brand-deep); }
+.find-bar .fb-note .fb-all:hover { border-color: var(--brand); background: var(--brand-wash); }
+
+/* ---------- Phone sheet: Connected or Private, each phone's access, the
+   account card, the unchecked-pairing choice and the page alarm (2026-10-10,
+   phone.js modeBlock, capSeg, linkBlock; apaki/SECURITY.md 4.4). Reuses the
+   sheet's .seg, .ph-sas and .ph-page; only spacing and quiet text here. ---------- */
+.ph-mode { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.ph-mode-t { flex: 1; min-width: 220px; margin: 2px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--soft); }
+.ph-dev .ph-cap { margin-top: 8px; }
+.ph-hint { margin: 10px 2px 0; font-size: 12.5px; color: var(--soft); }
+.ph-warn { margin: 8px 0 0; font-size: 12.5px; font-weight: 650; color: var(--action-strong); }
+.ph-paused { font-weight: 700; color: var(--action-strong); }
+.ph-skip { display: flex; align-items: flex-start; gap: 12px; margin-top: 10px; }
+.ph-skip span { flex: 1; font-size: 12px; line-height: 1.45; color: var(--faint); }
+.phone-sheet .ph-alarm { margin-top: 12px; font-weight: 650; }
+
+/* ---------- the sign-in card (app.js renderSignIn, 2026-10-10) ----------
+   On a PC where Claude Code has no login yet: a card floating over the top of
+   the stage until the engine reports a login. Full border, no edge accent. */
+.signin-card {
+  position: fixed; z-index: 24; top: calc(var(--top) + 14px); left: calc(var(--rail) + 22px); right: 22px; max-width: 760px; margin: 0 auto;
+  display: flex; align-items: center; gap: 16px; padding: 14px 16px 14px 18px; border-radius: 14px;
+  background: hsla(var(--w), .94); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+  border: 1px solid var(--hairline-strong); box-shadow: 0 18px 44px -24px rgba(var(--shadow-rgb), .55);
+  animation: rise var(--dur-fast) var(--ease-out);
+}
+body.rail-collapsed .signin-card { left: 22px; }
+.signin-card .sc-t { flex: 1; min-width: 0; display: grid; gap: 3px; font-size: 13px; line-height: 1.45; color: var(--soft); }
+.signin-card .sc-t b { font-size: 14.5px; color: var(--ink); }
+.signin-card .sc-note { color: var(--brand-deep); font-weight: 600; }
+.signin-card .sc-note.bad { color: var(--action-strong); }
+.signin-card .sc-act { display: flex; gap: 8px; flex: none; }
+.signin-card .sc-act button { height: 36px; padding: 0 14px; border-radius: 10px; font-weight: 750; font-size: 13px; cursor: pointer; border: 1px solid var(--btn2-line, var(--hairline-strong)); background: linear-gradient(180deg, var(--btn2-a, hsl(var(--w))), var(--btn2-b, hsl(232, 45%, 95%))); color: var(--ink); }
+.signin-card .sc-act button.primary { border-color: transparent; color: #fff; background: linear-gradient(135deg, var(--btn-a), var(--btn-b)); }
+.signin-card .sc-act button:focus-visible { outline: 2px solid hsla(var(--pearl-stop-blue), .55); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .signin-card { animation: none; } }

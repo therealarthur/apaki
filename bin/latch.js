@@ -22,6 +22,9 @@
  *   latch warm [on|off|status]  keep prompt caches of sessions used on an API
  *                         key warm between messages (--hours N, --cap USD;
  *                         `latch warm off <id>` stops one session)
+ *   latch login           sign in to Claude Code on this PC (`claude auth login`,
+ *                         with Claude Code's own options such as --console or
+ *                         --email); `latch login status` shows who is signed in
  * Options:
  *   --key <words>   bill a credentials.md key whose heading has these words
  *   --sub           use the live Claude Code login (subscription) instead of a key
@@ -47,9 +50,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CLAUDE_DIR, DEFAULT_KEY_WORDS, chooseCredential, childEnv, keySections } from '../src/auth.js';
-import { claudeArgs, launchClaude } from '../src/launch.js';
+import { claudeArgs, claudeBinary, launchClaude } from '../src/launch.js';
 import { styler, useColor } from '../src/render.js';
 import { SessionRunner } from '../src/runner.js';
 import {
@@ -103,6 +107,44 @@ function windowEnv(keyWords) {
   return env;
 }
 
+/**
+ * The prompt-relay hook for one latch-opened window, as a Claude Code
+ * `--settings` value, or null when it is not needed or not available.
+ *
+ * WHY (fresh-install audit, 2026-10-10): `--relay` depends on the hook, which
+ * only Arthur's ~/.claude/settings.json registers. Writing a user's Claude
+ * settings is off limits without their consent, so the window gets the hook
+ * for itself through `--settings` (verified: a UserPromptSubmit hook passed
+ * this way runs and can block, Claude Code 2.1.295). Null when the user's own
+ * settings already run a prompt-relay hook, so it never runs twice, and when
+ * the package carries no copy (hooks/prompt-relay.js).
+ */
+function relayHookSettings() {
+  const hook = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'prompt-relay.js');
+  if (!fs.existsSync(hook)) return null;
+  try {
+    if (/prompt-relay/.test(fs.readFileSync(path.join(CLAUDE_DIR, 'settings.json'), 'utf8'))) return null;
+  } catch { /* no user settings, so nothing registers it */ }
+  // Same shape as the hand-registered hook: `node "<script>"`. A bare `node`
+  // runs in bash, cmd and PowerShell alike; the window's PATH starts with the
+  // folder of the Node running latch (windowRelayEnv), so it is this Node.
+  const command = `node "${hook.replace(/\\/g, '/')}"`;
+  return JSON.stringify({
+    hooks: {
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command, timeout: 3600 }] }],
+      SessionStart: [{ matcher: 'resume', hooks: [{ type: 'command', command, timeout: 10 }] }],
+    },
+  });
+}
+
+/** Lets a relayed window's hook find this Node and this Claude Code binary (see relayHookSettings). */
+function windowRelayEnv(env, bin) {
+  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+  env[pathKey] = `${path.dirname(process.execPath)}${path.delimiter}${env[pathKey] || ''}`;
+  if (bin) env.PROMPT_RELAY_CLAUDE_BIN = bin;
+  return env;
+}
+
 function prompt(question) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -133,9 +175,31 @@ async function pickSession() {
   return answer; // treat as an id prefix
 }
 
+/**
+ * `latch login [options]` and `latch login status`: Claude Code's own sign-in,
+ * run in this terminal. WHY (fresh-install audit, 2026-10-10): a PC that only
+ * has Myrlin Apaki has no `claude` command, and neither the Agent SDK nor
+ * latch's app can run /login, so a new user had no way to sign in. Claude
+ * Code writes its login files itself; latch only starts it (the Apaki package
+ * carries the binary, see src/launch.js claudeBinary).
+ */
+function login(args) {
+  const bin = claudeBinary();
+  if (!bin) fail('Claude Code was not found (no global install and no Agent SDK binary).');
+  const sub = args[0] === 'status' ? ['auth', 'status', '--text'] : ['auth', 'login', ...args];
+  const env = childEnv(null);
+  delete env.PROMPT_RELAY_CHILD;
+  delete env.CLAUDE_AGENT_SDK_CLIENT_APP;
+  launchClaude({ args: sub, cwd: process.cwd(), env, onExit: (code, error) => {
+    if (error) fail(`could not start Claude Code: ${error.message}`);
+    process.exit(code);
+  } });
+}
+
 async function main() {
   // `latch warm [status|on|off|ping|run]`: keep prompt caches warm (src/warm.js).
   if (process.argv[2] === 'warm') { await warmCli(process.argv.slice(3)); return; }
+  if (process.argv[2] === 'login') { login(process.argv.slice(3)); return; }
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -280,6 +344,12 @@ async function main() {
     // The lock names this as a terminal window, so a blocked writer can say so.
     if (sessionId && !values['dry-run']) takeLock(sessionId, { force: true, app: 'latch-relay' });
     const env = windowEnv(relayed ? (credential.source === 'glass' ? '' : (values.key || DEFAULT_KEY_WORDS)) : null);
+    // 2026-10-10: a relayed window brings its own copy of the hook when the user's settings lack it.
+    const hookSettings = relayed && claudeBinary() ? relayHookSettings() : null;
+    if (hookSettings) {
+      args.push('--settings', hookSettings);
+      windowRelayEnv(env, claudeBinary());
+    }
     process.stdout.write(`${st.bold('latch')} ${st.dim('→ Claude Code')}  ${sessionId || 'new session'}  ${st.dim('·')}  ${relayed ? `relays on ${credential.name}` : 'live login'}${st.dim(` (${credential.source})`)}\n`);
     if (recentlyActive) {
       process.stdout.write(st.yellow('  This session changed under 2 minutes ago. If another window has it open, close it there first.\n'));
@@ -287,6 +357,7 @@ async function main() {
     if (values['dry-run']) {
       if (sessionId) releaseLock(sessionId);
       process.stdout.write(`  would run: claude ${args.join(' ')}\n  in:        ${cwd}\n  window:    live Claude Code login\n  messages:  ${relayed ? `relayed headless on ${credential.name} (PROMPT_RELAY_FORCE=1, key words "${env.PROMPT_RELAY_KEY_WORDS}")` : 'answered by the window itself'}\n`);
+      if (relayed) process.stdout.write(`  relay hook: ${hookSettings ? 'latch\'s packaged copy, for this window only (--settings)' : 'from your Claude Code settings'}\n`);
       return;
     }
     launchClaude({

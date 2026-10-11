@@ -1296,6 +1296,30 @@ function sessionMenu(s, e) {
   });
 }
 
+/**
+ * The sign-in card (2026-10-10, for a PC where Claude Code has never been
+ * signed in): it sits at the top of the window until the engine reports a
+ * login. Sign in opens Claude Code's own sign-in (engine op signIn); with an
+ * API key in Myrlin Glass the card never shows (the engine counts that as
+ * signed in). Desktop only: a phone never runs this.
+ */
+function renderSignIn(e) {
+  if (WEB) return;
+  S.auth = e;
+  let card = $('signInCard');
+  if (e.loggedIn || e.method === 'unknown') { card?.remove(); return; }
+  if (!card) {
+    card = el('div', 'signin-card');
+    card.id = 'signInCard';
+    card.setAttribute('role', 'status');
+    document.querySelector('.main')?.prepend(card);
+  }
+  card.innerHTML = `<div class="sc-t"><b>Sign in to Claude to start</b><span>Claude Code on this PC has no login yet. Sign in with your Claude account (or a Console account for API billing); Apaki picks it up as soon as you finish.</span>${e.note ? `<span class="sc-note${e.noteOk === false ? ' bad' : ''}">${esc(e.note)}</span>` : ''}</div>
+    <div class="sc-act"><button class="primary" data-k="claude">Sign in</button><button data-k="console" title="Bill an Anthropic Console account (API credits) instead of a subscription">Console account</button></div>`;
+  card.querySelector('[data-k=claude]').onclick = () => send('signIn', {});
+  card.querySelector('[data-k=console]').onclick = () => send('signIn', { console: true });
+}
+
 /** Copies text, and says so in the focused pane (a textarea fallback where the clipboard API is refused). */
 function copyText(text, said) {
   const done = () => focusedPane()?.note(said, '');
@@ -1898,7 +1922,7 @@ function restore(saved = readLocal()) {
 
 /* ---------- engine events ---------- */
 
-const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context']);
+const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context', 'historyPage', 'historyBlock']);
 
 /** Phone access (phone.js), set up at start; null in the phone web client. */
 let phone = null;
@@ -2087,6 +2111,9 @@ await listen('engine', ({ payload: e }) => {
     case 'closed': break;
     case 'remote': phone?.handle(e); break;
     case 'note': focusedPane()?.note(e.text, e.tone || ''); break;
+    // Fresh installs (2026-10-10): Claude Code has no login yet, so the first message would fail.
+    case 'auth': renderSignIn(e); break;
+    case 'auth_signin': renderSignIn({ ...(S.auth || {}), note: e.message, noteOk: e.ok }); break;
     // A fork from the session menu: open it next to the original.
     case 'forked': addTab({ session: { id: e.sessionId, title: 'Fork', cwd: S.sessions.find((x) => x.id === e.from)?.cwd || '' } }); break;
     case 'error': focusedPane()?.note(e.message, 'error'); break;
