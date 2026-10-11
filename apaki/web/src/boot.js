@@ -42,6 +42,18 @@
  * Forget (the person) deletes a PC. On an iPhone, Safari first suggests the
  * Home Screen app (it keeps its own storage, so pair from there), and the
  * Home Screen app with nothing paired says why and offers the account.
+ *
+ * Phone keys and enrollment (2026-10-11, apaki/remote/ENROLL.md, version 2):
+ * this phone has one key of its own (store.getPhoneKey, phonekey.js) that every
+ * account connection signs, so each PC can ask, allow or block this phone and
+ * not the whole account. Right after a scan, a PC that offers 'enroll' takes
+ * the account at once: signed in, quietly (a toast says so); not signed in, a
+ * sheet offers "Next time, sign in with Face ID" and then does the same. A
+ * connection a PC is still deciding about shows "Waiting for permission"; a
+ * blocked one says so and is not tried again through the account (a flag per
+ * PC, until a connection works). The home screen connects by itself when
+ * signed in with exactly one PC online and nothing else to choose, unless the
+ * person just disconnected or came back from a blocked close.
  */
 
 import { createDeviceIdentity, parsePairingUrl } from './protocol.js';
@@ -53,6 +65,7 @@ import { canScan, scanCode } from './scan.js';
 import { MARK_SVG } from './mark.js';
 import { effortGrid } from './menu.js';
 import { haptic, initNative, isIos, isIosSafari, isStandalone, setPc, showChat, showList } from './native.js';
+import { autoConnectChoice, clearBlocked, enrollPlan, isBlocked, markBlocked, markHome, rememberNotNow, takeHome, wasNotNow } from './phonekey.js';
 
 window.apakiShell = 'web';
 
@@ -66,7 +79,11 @@ const linkAskedKey = (roomId) => `apaki.linkAsked@${roomId}`;
 /** What this phone may make Claude do on the PC (hello cap), in the PC list; Full says nothing. */
 const CAP_WORDS = { noshell: 'No shell', chat: 'Chat only' };
 
-const S = { link: null, pc: null, appStarted: false, scanAbort: null, sas: null, overlay: false, acct: null, creating: false, busy: '', note: null, presence: new Map() };
+const S = { link: null, pc: null, appStarted: false, scanAbort: null, sas: null, overlay: false, acct: null, creating: false, busy: '', note: null, presence: new Map(), noAuto: false, enrollOffer: false, appReady: false, afterApp: [], homeError: false };
+
+/** localStorage and sessionStorage, or null where this browser will not hand them out (phonekey.js then remembers nothing). */
+const lstore = () => { try { return window.localStorage; } catch { return null; } };
+const sstore = () => { try { return window.sessionStorage; } catch { return null; } };
 
 /** When a pairing runs out, in words for the PC list: "expires in 6 days", "expired"; '' for never. */
 function expiryText(iso) {
@@ -101,12 +118,14 @@ function pcRow(pc) {
   const online = S.presence.get(pc.roomId);
   const here = S.pc?.roomId === pc.roomId && S.link?.state === 'open';
   const from = pc.via === 'account' ? 'from your account' : `paired ${esc(day(pc.pairedAt))}`;
-  const state = here ? '<span class="pp-on">Connected</span>' : online === true ? '<span class="pp-on">Online</span>' : online === false ? '<span class="pp-off">Offline</span>' : '';
+  // 2026-10-11: a PC that blocked this phone says so here until a connection to it works again (Connect tries once more).
+  const blocked = !here && isBlocked(lstore(), pc.roomId);
+  const state = here ? '<span class="pp-on">Connected</span>' : blocked ? '<span class="pp-off pp-blocked">Blocked on this PC</span>' : online === true ? '<span class="pp-on">Online</span>' : online === false ? '<span class="pp-off">Offline</span>' : '';
   const saved = S.acct?.rooms?.includes(pc.roomId) && pc.via !== 'account' ? ' · in your account' : '';
   // Private mode and this phone's access, as the PC said them (connected now, or the last time).
   const mode = (here ? S.link.hello?.mode : pc.mode) === 'private' ? ' · Private' : '';
   const capWord = here ? CAP_WORDS[S.link.hello?.cap] : '';
-  return `<li data-room="${esc(pc.roomId)}"><div class="pp-t"><b>${esc(pc.pcName || 'PC')}</b><small>${state}${state ? ' · ' : ''}${from}${saved}${mode}${capWord ? ` · ${esc(capWord)}` : ''}${expiryText(pc.expiresAt) ? ` · ${esc(expiryText(pc.expiresAt))}` : ''}</small></div>${here ? '<button data-k="back">Open</button>' : `<button data-k="use" data-id="${esc(pc.roomId)}">Connect</button>`}<button class="quiet" data-k="forget" data-id="${esc(pc.roomId)}" aria-label="Forget ${esc(pc.pcName || 'this PC')}">${pc.via === 'account' ? 'Remove' : 'Forget'}</button></li>`;
+  return `<li data-room="${esc(pc.roomId)}"><div class="pp-t"><b>${esc(pc.pcName || 'PC')}</b><small>${state}${state ? ' · ' : ''}${from}${saved}${mode}${capWord ? ` · ${esc(capWord)}` : ''}${expiryText(pc.expiresAt) ? ` · ${esc(expiryText(pc.expiresAt))}` : ''}</small></div>${here ? '<button data-k="back">Open</button><button class="quiet pp-disconnect" data-k="disconnect">Disconnect</button>' : `<button data-k="use" data-id="${esc(pc.roomId)}">Connect</button>`}<button class="quiet" data-k="forget" data-id="${esc(pc.roomId)}" aria-label="Forget ${esc(pc.pcName || 'this PC')}">${pc.via === 'account' ? 'Remove' : 'Forget'}</button></li>`;
 }
 
 /** The PC this phone is on now runs in Private mode (it said so in hello, or did the last time). */
@@ -115,14 +134,23 @@ function currentPcPrivate() {
   return S.pc?.mode === 'private';
 }
 
+/** The PC this phone is on has phone keys (2026-10-11): it said so in hello, or did the last time. */
+function currentPcPhoneKeys() {
+  return Boolean(S.link?.supports('phone-key') || S.pc?.phoneKeys);
+}
+
 /** The Apaki account part of the PC screen: sign in or create, or who is signed in and what to do. */
 function accountBlock() {
   const note = S.note ? `<p class="${S.note.ok ? 'pair-note' : 'pair-err'}">${esc(S.note.text)}</p>` : '';
   const busy = S.busy ? ' disabled' : '';
   // The PC this phone is on is in Private mode: accounts are not offered for it; signing in stays reachable (for other PCs).
   const priv = currentPcPrivate() && (S.link || S.pc);
-  const privNote = priv ? `<p class="pair-note">${esc(S.link?.pcName || S.pc?.pcName || 'This PC')} is in Private mode: it only accepts phones paired with its code, so an Apaki account cannot reach it, and this phone does not tell our servers about it. That is chosen on the PC, in its Phone sheet.</p>` : '';
-  if (!S.acct && priv && !S.creating) {
+  // 2026-10-11 (ENROLL.md): a PC with phone keys in Private mode does take an account, with an OK on the PC for each phone.
+  const legacyPriv = priv && !currentPcPhoneKeys();
+  const privNote = legacyPriv
+    ? `<p class="pair-note">${esc(S.link?.pcName || S.pc?.pcName || 'This PC')} is in Private mode: it only accepts phones paired with its code, so an Apaki account cannot reach it, and this phone does not tell our servers about it. That is chosen on the PC, in its Phone sheet.</p>`
+    : priv ? `<p class="pair-note">${esc(S.link?.pcName || S.pc?.pcName || 'This PC')} is in Private mode: it asks on the PC about each phone before it lets it in. It joins an account only right after you scan its code with this phone.</p>` : '';
+  if (!S.acct && legacyPriv && !S.creating) {
     return `<div class="pair-sec">Apaki account</div>
       ${privNote}
       <details class="pair-paste acct-more"><summary>Sign in anyway, for PCs in Connected mode</summary>
@@ -163,6 +191,7 @@ function accountBlock() {
 }
 
 function welcome(pcs, error = '') {
+  S.homeError = Boolean(error);
   const list = pcs.length
     ? `<div class="pair-sec">${S.acct ? 'Your PCs' : 'Paired PCs'}</div><ul class="pair-pcs">${pcs.map(pcRow).join('')}</ul>`
     : '';
@@ -209,7 +238,8 @@ function homeScreenBlock(pcs) {
 async function checkPresence(pcs) {
   const seq = (S.presenceSeq = (S.presenceSeq || 0) + 1);
   if (!S.acct) return;
-  const ask = pcs.filter((pc) => (pc.via === 'account' || S.acct.rooms?.includes(pc.roomId)) && pc.mode !== 'private');
+  // A Private PC with phone keys (version 2, ENROLL.md) takes an account too, so it is asked like any other.
+  const ask = pcs.filter((pc) => (pc.via === 'account' || S.acct.rooms?.includes(pc.roomId)) && (pc.mode !== 'private' || pc.phoneKeys));
   // The relay counts these toward a per-minute limit: ask about each PC at most every 30 s.
   S.presenceAt ||= new Map();
   await Promise.all(ask.map(async (pc) => {
@@ -223,6 +253,29 @@ async function checkPresence(pcs) {
     if (li) li.outerHTML = pcRow(pc);
   }));
   $('pairBody').querySelectorAll('li[data-room] [data-k]').forEach((b) => { b.onclick = () => act(b.dataset.k, b.dataset.id, b); });
+  // 2026-10-11: one PC online and nothing else to choose connects by itself (only the newest check decides).
+  if (seq === S.presenceSeq) maybeAutoConnect(pcs);
+}
+
+/**
+ * The home screen, signed in, one PC online and every other PC known to be
+ * offline: connect to it (ENROLL.md, "Home, signed in"). Not while the person
+ * is choosing (the PC list opened over the app, a sign-in or a new account in
+ * progress, a message on screen), is connected or connecting already, just
+ * disconnected, or came back from a blocked close: S.noAuto. phonekey.js
+ * autoConnectChoice is the rule; this only supplies the facts.
+ */
+function maybeAutoConnect(pcs) {
+  if (S.busy || S.creating || S.homeError) return;
+  const roomId = autoConnectChoice({
+    signedIn: Boolean(S.acct), pcs, presence: S.presence, isBlocked: (id) => isBlocked(lstore(), id),
+    noAuto: S.noAuto, overlay: S.overlay, linked: Boolean(S.link) || S.appStarted,
+  });
+  const pc = roomId && pcs.find((p) => p.roomId === roomId);
+  if (!pc) return;
+  // Once per visit: if it does not work out (the PC went offline meanwhile) the person chooses.
+  S.noAuto = true;
+  connect(pc);
 }
 
 /** A short line at the top of the screen that goes away by itself (saved to the account, signed in, ...). */
@@ -288,30 +341,136 @@ async function accountAct(k) {
  * answer and says so. Quiet (by itself, after hello or sign-in): only for a
  * PC that asks first, at most once per PC on this phone, and without a word
  * when it cannot be done now.
+ *
+ * enroll (2026-10-11, ENROLL.md): right after a scan, a PC that offers 'enroll'
+ * takes the account with no asking and in Private mode too, so none of the
+ * Private, account-ask or once-per-PC rules below apply to it.
  */
-async function linkCurrent({ quiet }) {
+async function linkCurrent({ quiet, enroll = false }) {
   const acct = await store.getAccount().catch(() => null);
   // A sign-in that ran out cannot update the vault: link nothing until the person signs in again.
   if (acct?.sessionEnded) { if (!quiet) toast('Your sign-in ended. Sign in again first.', false); return; }
   if (!acct || !S.link || S.link.state !== 'open' || !S.pc) { if (!quiet && acct) toast('Connect to a PC, then save it to your account.', false); return; }
   if (S.pc.via === 'account' || S.link.hello?.asAccount || acct.rooms?.includes(S.pc.roomId)) return;
-  if (S.link.hello?.mode === 'private') { if (!quiet) toast(`${S.link.pcName} is in Private mode: it only accepts phones paired with its code.`, false); return; }
-  if (!S.link.supports('account-ask')) { if (!quiet) toast(`${S.link.pcName} runs an older Apaki. Update it there first.`, false); return; }
+  const enrolling = enroll && S.link.supports('enroll') && Boolean(S.link.phone);
+  if (!enrolling && S.link.hello?.mode === 'private') { if (!quiet) toast(`${S.link.pcName} is in Private mode: it only accepts phones paired with its code.`, false); return; }
+  if (!enrolling && !S.link.supports('account-ask')) { if (!quiet) toast(`${S.link.pcName} runs an older Apaki. Update it there first.`, false); return; }
   const roomId = S.pc.roomId;
-  if (quiet) {
+  if (quiet && !enrolling) {
     // By itself only once per PC: after a Deny (or nobody at the PC) the button below asks again.
     try { if (localStorage.getItem(linkAskedKey(roomId))) return; localStorage.setItem(linkAskedKey(roomId), new Date().toISOString()); } catch { return; }
   }
   const pcName = S.link.pcName;
   try {
-    await account.link(S.link, { onPending: () => toast(`Allow it on ${pcName}: it asks before it takes your account.`) });
-    toast(`${pcName} is saved to your account.`);
+    await account.link(S.link, { enroll: enrolling, onPending: () => toast(`Allow it on ${pcName}: it asks before it takes your account.`) });
+    toast(enrolling ? `${pcName} was added to your account.` : `${pcName} is saved to your account.`);
   } catch (e) {
     if (!quiet || e.code !== 'already') toast(e.message, false);
   }
   S.acct = await store.getAccount().catch(() => null);
   // The PC screen, when it is up, shows the account as it is now.
   if (S.overlay) goHome().catch(() => {});
+}
+
+/* enrollment after a scan (2026-10-11, ENROLL.md) */
+
+/** Runs fn once the app's own code has started (the sheet must not be hidden by it). */
+function afterApp(fn) {
+  if (S.appReady) fn();
+  else S.afterApp.push(fn);
+}
+
+/**
+ * Right after a pairing completed and the PC's hello offered 'enroll':
+ * signed in already, add the PC to the account at once (quiet, a toast says
+ * so); not signed in, offer the sheet unless the person said "Not now" for
+ * this PC. A PC that does not offer it, or a page with no phone key, keeps
+ * the older way: a Connected PC is asked once by itself (linkCurrent).
+ */
+async function offerEnroll() {
+  const link = S.link;
+  if (!link || !S.pc) return;
+  const acct = await store.getAccount().catch(() => null);
+  const plan = enrollPlan({
+    offered: link.supports('enroll'),
+    hasPhoneKey: Boolean(link.phone),
+    asAccount: Boolean(link.hello?.asAccount),
+    signedIn: Boolean(acct && !acct.sessionEnded),
+    inAccount: Boolean(acct?.rooms?.includes(S.pc.roomId)),
+    notNow: wasNotNow(lstore(), S.pc.roomId),
+  });
+  if (plan === 'quiet') await linkCurrent({ quiet: true, enroll: true });
+  else if (plan === 'sheet') {
+    S.enrollName = (await deviceName()).slice(0, 48);
+    afterApp(() => { if (S.link?.state === 'open' && !S.overlay) enrollSheet(); });
+  } else if (link.hello?.mode === 'connected') linkCurrent({ quiet: true }).catch(() => {});
+}
+
+/**
+ * "Next time, sign in with Face ID": offered once, right after a scan, to a
+ * phone with no account signed in. The primary button makes the passkey (the
+ * account.create path, PRF vault), the second signs in with a passkey the
+ * person already has; either way the PC is then added to the account at
+ * once. WebAuthn needs a tap: the buttons are it.
+ */
+function enrollSheet() {
+  const link = S.link;
+  if (!link) return;
+  const busy = S.busy ? ' disabled' : '';
+  const note = S.note ? `<p class="${S.note.ok ? 'pair-note' : 'pair-err'}">${esc(S.note.text)}</p>` : '';
+  show(`<div class="enroll-sheet">
+    <div class="pair-kicker">Paired with ${esc(link.pcName)}</div>
+    <h1>Next time, sign in with Face ID</h1>
+    <p>Make an Apaki passkey on this phone. Any phone with that passkey then sees your PCs and connects without a code, and ${esc(link.pcName)} is added to the account now.</p>
+    <div class="pp-row"><input class="enroll-name" id="enrollName" maxlength="48" placeholder="Your name (optional)" value="${esc(S.enrollNameValue || '')}" autocomplete="nickname" spellcheck="false"></div>
+    ${note}
+    <button class="pair-btn enroll-create" data-k="enroll-create"${busy}>${S.busy === 'create' ? 'Making the passkey…' : 'Create a passkey'}</button>
+    <button class="pair-btn quiet enroll-signin" data-k="enroll-signin"${busy}>${S.busy === 'signin' ? 'Signing in…' : 'I already have an Apaki passkey'}</button>
+    <button class="pair-btn quiet enroll-later" data-k="enroll-later"${busy}>Not now</button>
+  </div>`);
+  $('pairScreen').classList.add('sheet-mode');
+}
+
+async function enrollAct(k) {
+  if (S.busy) return;
+  if (k === 'enroll-later') {
+    if (S.pc) rememberNotNow(lstore(), S.pc.roomId);
+    S.note = null;
+    hideScreen();
+    return;
+  }
+  const way = k === 'enroll-create' ? 'create' : 'signin';
+  S.enrollNameValue = $('enrollName')?.value || S.enrollNameValue || '';
+  S.busy = way;
+  S.note = null;
+  enrollSheet();
+  try {
+    if (way === 'create') await account.create(S.enrollNameValue.trim() || S.enrollName || 'Phone');
+    else await account.signIn();
+    haptic('medium');
+    S.busy = '';
+    S.acct = await store.getAccount().catch(() => null);
+    // The PC adds this phone's account with no second Allow; linkCurrent says so, or says why not.
+    await linkCurrent({ quiet: false, enroll: true });
+    hideScreen();
+  } catch (e) {
+    S.busy = '';
+    S.note = { text: e.message || String(e), ok: false };
+    haptic('medium');
+    enrollSheet();
+  }
+}
+
+/** Drops the connection to this PC and shows the PC list, without connecting by itself (a fresh page when the app had started). */
+function disconnect() {
+  keepWorkspace();
+  markHome(sstore());
+  S.noAuto = true;
+  S.link?.stop();
+  if (S.appStarted) { location.replace(location.pathname); return; }
+  S.link = null;
+  S.pc = null;
+  return goHome();
 }
 
 function pairingScreen(pcName) {
@@ -329,6 +488,9 @@ function pairingScreen(pcName) {
 const STATE_COPY = {
   connecting: (l) => `Reaching your PC through ${l.relayHost}…`,
   handshake: () => 'Checking it is really your PC…',
+  // 2026-10-11 (ENROLL.md): the PC is deciding about this phone, or its person did not answer in time.
+  'phone-wait': (l) => `Allow this phone on ${l.pcName}. It shows a request with Allow and Block, and this page connects as soon as someone allows it.`,
+  'phone-timeout': (l, info) => info.reason || `Nobody allowed this phone on ${l.pcName} in time.`,
   waiting: () => 'Apaki has to be open on the PC, with phone access on. This page connects as soon as it is.',
   // info.budget (link.js budgetReason): the relay's day is spent, for everyone or for this address or room.
   offline: (l, info) => (info.budget ? `${info.budget} This page tries again in about ${Math.max(1, Math.round((info.retryInMs || 0) / 60_000))} min.` : info.full ? 'This PC has the most phones connected at once. Trying again soon.' : `No connection to the relay. Trying again in ${Math.max(1, Math.round((info.retryInMs || 0) / 1000))} s.`),
@@ -337,9 +499,11 @@ const STATE_COPY = {
 function connectingScreen(link, state, info = {}) {
   const copy = STATE_COPY[state];
   if (!copy) return;
-  show(`<div class="pair-kicker">${state === 'waiting' ? 'Waiting for your PC' : 'Connecting'}</div>
-    <h1>${esc(link.pcName)}</h1>${grid()}
+  const kicker = state === 'waiting' ? 'Waiting for your PC' : state === 'phone-wait' ? 'Waiting for permission' : state === 'phone-timeout' ? 'Not allowed yet' : 'Connecting';
+  show(`<div class="pair-kicker">${kicker}</div>
+    <h1>${esc(link.pcName)}</h1>${state === 'phone-timeout' ? '' : grid()}
     <p>${esc(copy(link, info))}</p>
+    ${state === 'phone-timeout' ? '<button class="pair-btn" data-k="retry-link">Ask again</button>' : ''}
     <button class="pair-btn quiet" data-k="pcs">Other PCs</button>`);
 }
 
@@ -356,6 +520,8 @@ const FAILED = {
   blocked: ['This page cannot reach that relay', ''],
   // The lifetime chosen on the PC at Allow ran out (the PC said so, encrypted; or this phone's own expiry passed).
   lapsed: ['This pairing expired', 'This phone was allowed for a limited time on the PC, and that time is up. To use it again, pair with a new code.'],
+  // The PC blocked this phone (ENROLL.md): its own words say who to ask; the text is the PC's close reason.
+  'phone-blocked': ['This phone was blocked', ''],
 };
 
 function failedScreen(code, message) {
@@ -365,7 +531,7 @@ function failedScreen(code, message) {
   if (removed && S.pc?.via === 'account') [title, text] = ['This PC left your account', 'The PC removed your Apaki account, so no phone signed in to it reaches that PC now. Pair with its code to use it again.'];
   show(`<div class="pair-kicker">Not connected</div><h1>${esc(title)}</h1>
     <p>${esc(text || message || code)}</p>
-    ${(removed || code === 'lapsed') && S.pc ? `<button class="pair-btn" data-k="forget" data-id="${esc(S.pc.roomId)}">Forget this PC</button>` : '<button class="pair-btn" data-k="home">Start over</button>'}`);
+    ${(removed || code === 'lapsed') && S.pc ? `<button class="pair-btn" data-k="forget" data-id="${esc(S.pc.roomId)}">Forget this PC</button>` : `<button class="pair-btn" data-k="home">${code === 'phone-blocked' ? 'Other PCs' : 'Start over'}</button>`}`);
 }
 
 /**
@@ -415,6 +581,8 @@ async function act(k, id, el) {
   }
   if (k === 'use') { haptic(); return switchTo(id); }
   if (['create', 'create-cancel', 'create-go', 'signin', 'link', 'passkey', 'signout', 'signout-all', 'delete'].includes(k)) return accountAct(k);
+  if (['enroll-create', 'enroll-signin', 'enroll-later'].includes(k)) return enrollAct(k);
+  if (k === 'disconnect') return disconnect();
   if (k === 'forget') {
     el.disabled = true;
     const rec = await store.getPc(id).catch(() => null);
@@ -427,13 +595,14 @@ async function act(k, id, el) {
     }
     await store.forgetPc(id).catch(() => {});
     localStorage.removeItem(workspaceKey(id));
+    clearBlocked(lstore(), id);
     if (S.pc?.roomId === id) { S.link?.stop(); S.link = null; S.pc = null; if (S.appStarted) { location.replace(location.pathname); return; } }
     return goHome();
   }
   if (k === 'pcs') { S.overlay = true; return goHome(); }
   if (k === 'back') return hideScreen();
   if (k === 'reload') { location.reload(); return; }
-  if (k === 'retry-link') { haptic(); S.link?.wake(); return; }
+  if (k === 'retry-link') { haptic(); if (S.link?.state === 'phone-timeout') S.link.retryNow(); else S.link?.wake(); return; }
   if (k === 'home') { if (S.appStarted) { location.replace(location.pathname); return; } return goHome(); }
 }
 
@@ -495,6 +664,8 @@ function linkHandlers() {
       const rec = { roomId: pairing.roomId, pcName: pairing.pcName, relay: pairing.relay, pairing, device: S.link.device, pairedAt: pairing.pairedAt, lastUsed: new Date().toISOString() };
       S.pc = rec;
       S.sas = null;
+      // A pairing just completed: the PC's hello decides whether to enroll the account (offerEnroll), once.
+      S.enrollOffer = true;
       // Saved before the channel opens; a storage hiccup is retried, and never stops the pairing itself.
       S.unsaved = !(await savePairing(rec));
       // Paired: ask the browser to keep this site's storage (no eviction when space runs low).
@@ -502,6 +673,8 @@ function linkHandlers() {
     },
     open: () => {
       if (S.pc) {
+        // A connection that works: the PC does not hold this phone blocked (any more).
+        clearBlocked(lstore(), S.pc.roomId);
         if (S.unsaved) savePairing(S.pc, { quiet: true }).then((ok) => { S.unsaved = !ok; });
         else store.touchPc(S.pc.roomId).catch(() => {});
       }
@@ -516,7 +689,22 @@ function linkHandlers() {
         S.pc = { ...S.pc, mode: m.mode };
         store.updatePc(S.pc.roomId, { mode: m.mode }).catch(() => {});
       }
+      // 2026-10-11: remember the PC has phone keys (a Private one is then a PC the account can reach, and presence asks about it).
+      if (S.pc && S.link?.supports('phone-key') && !S.pc.phoneKeys) {
+        S.pc = { ...S.pc, phoneKeys: true };
+        store.updatePc(S.pc.roomId, { phoneKeys: true }).catch(() => {});
+      }
+      // Right after a scan, a PC that offers it takes the account at once (once per pairing); otherwise the older way.
+      if (S.enrollOffer) {
+        S.enrollOffer = false;
+        if (S.link?.supports('enroll')) { offerEnroll().catch(() => {}); return; }
+      }
       if (m?.mode === 'connected') linkCurrent({ quiet: true }).catch(() => {});
+    },
+    // The PC deciding about this phone (link.js phone): "Waiting for permission" is the link state; a toast when it lets us in.
+    phone: (info) => {
+      if (info.kind === 'wait') S.phoneWaited = true;
+      else if (info.kind === 'ok' && S.phoneWaited) { S.phoneWaited = false; toast(`${S.link?.pcName || 'The PC'} let this phone in.`); }
     },
     // The PC switched between Private and Connected while this phone is connected.
     mode: (mode) => {
@@ -536,7 +724,15 @@ function linkHandlers() {
     },
     // "Unknown device" (link.js keeps the pairing and retries): explain, unless the app or the PC list is up.
     unknown: (info) => { if (!S.appStarted && !S.overlay) unknownScreen(info); },
-    fatal: (code, message) => failedScreen(code, message),
+    fatal: (code, message) => {
+      // This PC blocked this phone: remember it (no reconnecting through the account on later starts, nothing connects by itself), and say so.
+      if (code === 'phone-blocked') {
+        if (S.pc) markBlocked(lstore(), S.pc.roomId);
+        markHome(sstore());
+        S.noAuto = true;
+      }
+      failedScreen(code, message);
+    },
   };
 }
 
@@ -581,7 +777,9 @@ async function pair(offer) {
   pairingScreen(offer.name || 'your PC');
   // In the iOS app (apaki/mobile) the store makes the device key in the Secure Enclave; a browser makes a WebCrypto one.
   const device = await (store.newDevice ? store.newDevice() : createDeviceIdentity());
-  S.link = new Link({ device, offer, name: await deviceName(), on: linkHandlers() });
+  // This phone's own key (ENROLL.md): signs the enroll proof after the scan; none if storage fails (the older ways then apply).
+  const phone = await store.getPhoneKey().catch((e) => { console.warn('apaki: no phone key:', e?.message || e); return null; });
+  S.link = new Link({ device, offer, name: await deviceName(), phone, on: linkHandlers() });
   installShim(S.link);
   S.link.start();
 }
@@ -589,7 +787,9 @@ async function pair(offer) {
 async function connect(pc) {
   S.pc = pc;
   // The name goes with an account connection (link.js sends it as { t: 'via' }), so the PC shows which phone it is.
-  S.link = new Link({ device: pc.device, pairing: pc.pairing, name: pc.via === 'account' ? await deviceName() : '', expiresAt: pc.expiresAt || null, on: linkHandlers() });
+  // An account connection signs its via with this phone's own key (ENROLL.md) and waits for the PC to decide about this phone.
+  const phone = await store.getPhoneKey().catch((e) => { console.warn('apaki: no phone key:', e?.message || e); return null; });
+  S.link = new Link({ device: pc.device, pairing: pc.pairing, name: pc.via === 'account' ? await deviceName() : '', expiresAt: pc.expiresAt || null, phone, viaAccount: pc.via === 'account', on: linkHandlers() });
   installShim(S.link);
   S.link.start();
 }
@@ -609,6 +809,9 @@ async function startApp() {
   renderPcLine();
   // First visit to this PC: show the sessions straight away.
   if (!restored) setDrawer(true);
+  // Things that wait for the app to be up (the enroll sheet, which the app's start must not hide).
+  S.appReady = true;
+  for (const fn of S.afterApp.splice(0)) { try { fn(); } catch (e) { console.warn('apaki:', e); } }
 }
 
 /** This phone's name as the PC shows it: the model when the browser tells it, and the browser. */
@@ -654,6 +857,8 @@ const BAR_COPY = {
   waiting: (l) => ['Offline', `${l.pcName} is not reachable. Apaki has to be open there.`],
   offline: (l, info) => (info.budget ? ['Relay resting', `${info.budget} Tap to try now.`] : ['No connection', `Trying again in ${Math.max(1, Math.round((info.retryInMs || 0) / 1000))} s. Tap to retry now.`]),
   unknown: (l) => ['Not recognized', `${l.pcName} does not know this phone right now. This phone keeps its pairing; tap to try again.`],
+  'phone-wait': (l) => ['Waiting for permission', `Allow this phone on ${l.pcName}.`],
+  'phone-timeout': (l) => ['Not allowed in time', `Nobody allowed this phone on ${l.pcName}. Tap to ask again.`],
 };
 
 function renderLinkBar(state, info = {}) {
@@ -708,7 +913,7 @@ async function main() {
   syncThemeColor();
   window.addEventListener('apaki-theme', () => requestAnimationFrame(syncThemeColor));
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => requestAnimationFrame(syncThemeColor));
-  $('linkBar')?.addEventListener('click', () => S.link?.wake());
+  $('linkBar')?.addEventListener('click', () => { if (S.link?.state === 'phone-timeout') S.link.retryNow(); else S.link?.wake(); });
 
   // The QR link: its secret is in the fragment; take it out of the address bar and history at once.
   let offer = null;
@@ -723,6 +928,9 @@ async function main() {
     if (S.link || S.appStarted) toast('Close the other Apaki tab: it is holding this phone\'s storage.', false);
     else waitScreen();
   });
+  // One-shot (2026-10-11): the person disconnected, or came back from a blocked close. Show the PCs; connect to none by itself.
+  const home = takeHome(sstore());
+  if (home) S.noAuto = true;
   // Signed in: take in PCs other phones saved to the account (quietly; offline is fine).
   const synced = account.refresh().catch(() => null);
   if (offer) { await pair(offer); return; }
@@ -736,8 +944,9 @@ async function main() {
   }
   if (!pcs.length && (await store.getAccount().catch(() => null))) { await synced; pcs = await store.listPcs().catch(() => pcs); }
   const want = new URLSearchParams(location.search).get('pc');
-  const pc = pcs.find((p) => p.roomId === want) || pcs[0];
-  if (pc && !error) { connect(pc); return; }
+  // A PC that blocked this phone is not the default (the person can still choose it); a PC asked for by address always is tried.
+  const pc = pcs.find((p) => p.roomId === want) || pcs.find((p) => !isBlocked(lstore(), p.roomId));
+  if (pc && !error && !home) { connect(pc); return; }
   S.acct = await store.getAccount().catch(() => null);
   welcome(pcs, error);
 }

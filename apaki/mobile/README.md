@@ -32,7 +32,7 @@ apaki/mobile/
   src/                 the app's own page modules (copied to www/app/ by the build)
     entry.js           first script: installs the native shell, then imports boot.js
     native-shell.js    network, passkeys, haptics, status bar, keyboard, lifecycle, links, splash
-    native-store.js    store.js for the app: Keychain records, Secure Enclave device keys
+    native-store.js    store.js for the app: Keychain records, Secure Enclave device keys and the phone key
     native-socket.js   the WebSocket link.js uses, opened natively (ApakiNet)
     native-http.js     fetch for the account API, natively (ApakiNet)
     passkeys.js        navigator.credentials answered by ASAuthorization (ApakiPasskeys)

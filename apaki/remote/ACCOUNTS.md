@@ -1,5 +1,10 @@
 # Apaki accounts, version 1 (2026-10-10)
 
+Version 2 (2026-10-11, ENROLL.md) adds a key per phone, so a PC can tell the
+phones of one account apart and ask about a new one, and adds enrollment: the
+phone that scans a PC's pairing code adds its account in the same step.
+Nothing here goes away; where version 2 changes a rule it is said below.
+
 Arthur: "if a user has a login with us they can login to their account to see
 connections and just connect that way". An Apaki account lets a phone (or any
 browser) that was never paired sign in with a passkey, see the user's PCs and
@@ -112,8 +117,26 @@ phone -> PC   { t: 'account-unlink', reqId, deviceId }     removes that account 
 phone -> PC   { t: 'via', name }                           which phone is behind the connection (shown on the PC)
 ```
 
+Version 2 (ENROLL.md): `via` also carries the phone's own key and a signature
+over this connection's nonce (`{ t: 'via', name, pub, sig }`), an account
+connection is held after hello until the PC has checked it and its rule for
+that phone lets it in, and `account-link` may carry `enroll: true` with a phone
+key signature, which adds the account at once when the phone has just paired
+on this PC (no card, in Private as well).
+
 The PC adds a device `{ id: deviceIdFor(pub), pub, name: 'Apaki account (<name>)', kind: 'account' }`
 with a fresh random psk, shows it in its Phone sheet (who linked it, and
 which phone each account connection comes from), and can remove it. A PC at
 most keeps 8 account devices. An older Apaki ignores these messages; the
 phone then says the PC needs an update.
+
+## Private mode, as of version 2
+
+Version 1 Private refused account-link and shut a linked account device out
+(the handshake answered it like an unknown device). Version 2 Private lets an
+account device connect, but every phone behind it needs an OK on the PC: a
+phone scanned in person (enrolled) or allowed with a click. Phones that
+Connected let in by themselves are asked again after the switch to Private,
+and a page that sends no phone key is closed after a few seconds. An account
+is still only added in person in Private: through enrollment, right after a
+scan. ENROLL.md has the rules and the table.

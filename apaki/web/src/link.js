@@ -11,8 +11,10 @@
  *
  * States (on.state): connecting, waiting (the relay is up, the PC is not),
  * pairing, sas, handshake, open, offline (retrying), unknown (the PC said it
- * does not know this phone; retrying slowly), failed (needs the person: a
- * new QR, or this phone was removed or its pairing expired).
+ * does not know this phone; retrying slowly), phone-wait (the PC is asking
+ * its person whether this phone may connect), phone-timeout (nobody did, in
+ * time), failed (needs the person: a new QR, or this phone was removed, was
+ * blocked or its pairing expired).
  *
  * Staying paired (2026-10-10): only the PC's encrypted close ends a pairing
  * for sure (removed, or expired: the lifetime chosen at Allow ran out). Its
@@ -34,9 +36,24 @@
  * { t: 'mode' } and { t: 'cap' } follow a change (on.mode, on.cap). A held
  * account-link answers { t: 'pending', reqId, timeoutMs } first: request()
  * then waits that long and tells its onPending.
+ *
+ * Phone keys (2026-10-11, apaki/remote/ENROLL.md, version 2): on an account
+ * connection to a PC whose hello lists 'phone-key', the page answers hello
+ * with { t: 'via', name, pub, sig }, signed with this phone's key (phonekey.js
+ * signVia) over the hello's nonce. The PC holds such a connection until it
+ * has decided about this phone, so Link holds its 'open' state too: it stays
+ * in 'handshake' until { t: 'phone-ok' }, which is when on.open fires and the
+ * app starts. { t: 'phone-wait', timeoutMs } (a PC in Private mode asking its
+ * person) is the state 'phone-wait' until phone-ok or a close. A close whose
+ * reason starts "This phone was blocked on" ends this Link for good (fatal
+ * 'phone-blocked': no reconnecting through the account); "Nobody allowed this
+ * phone on ..." is the state 'phone-timeout' (retryNow asks again). A PC
+ * without 'phone-key' gets the older { t: 'via', name } and nothing is held.
+ * on.phone({ kind: 'wait' | 'ok' | 'timeout' }) tells the page each step.
  */
 
-import { PhoneSession, ProtocolError, RELAY_CLOSE, parseRelayControl, relaySubprotocols, roomUrl } from './protocol.js';
+import { PhoneSession, ProtocolError, RELAY_CLOSE, b64urlDecode, parseRelayControl, relaySubprotocols, roomUrl } from './protocol.js';
+import { isBlockedClose, isNotAllowedClose, signVia } from './phonekey.js';
 import { Inbox, Outbox } from './wire.js';
 
 const PING_MS = 25_000;
@@ -50,6 +67,8 @@ const NO_PC_RETRY_MS = 60_000;
 const BUDGET_RETRY_MS = 30 * 60_000;
 /** A held request (account-link) may wait at most this long for the PC's person, whatever the PC says. */
 const MAX_PENDING_MS = 10 * 60_000;
+/** After this phone's signed via, the PC answers phone-ok or phone-wait at once; if neither comes in this long, connect again. */
+const PHONE_CHECK_MS = 20_000;
 
 /** Why the relay closed for the rest of the day, by close code (null for any other code). */
 export function budgetReason(code) {
@@ -70,12 +89,20 @@ export class Link {
    * @param {object} [o.pairing]  a saved pairing (to reconnect)
    * @param {string} [o.name]  this phone's name, shown on the PC while pairing
    * @param {string|null} [o.expiresAt]  when the PC said this pairing runs out (saved from an earlier hello)
+   * @param {{pub: Uint8Array, sign: Function}|null} [o.phone]  this phone's key (store.getPhoneKey): signs the via and the enroll proof; none: the older via
+   * @param {boolean} [o.viaAccount]  this PC came from the account: hold 'open' until the PC has decided about this phone (needs `phone`)
    * @param {object} o.on  callbacks: state(state, info), sas(code), paired(pairing) (may be async),
    *                       open(first), hello(msg), fatal(code, message), unknown({ retryInMs }),
-   *                       lifetime(expiresAt) (the PC told this phone its expiry, or a new one)
+   *                       lifetime(expiresAt) (the PC told this phone its expiry, or a new one),
+   *                       phone({ kind: 'wait' | 'ok' | 'timeout', ... }) (the PC deciding about this phone, 2026-10-11)
    */
-  constructor({ device, offer = null, pairing = null, name = '', expiresAt = null, on = {} }) {
+  constructor({ device, offer = null, pairing = null, name = '', expiresAt = null, phone = null, viaAccount = false, on = {} }) {
     this.device = device;
+    this.phone = phone;
+    // Held open only with a phone key to sign with; without one the PC (older, or this page's storage failed) is not waited for.
+    this.viaAccount = Boolean(viaAccount && phone);
+    /** null, 'check' (via sent or about to be) or 'wait' (the PC is asking its person): 'open' is not announced yet. */
+    this.phoneGate = null;
     this.offer = offer;
     this.pairing = pairing;
     this.name = name;
@@ -243,11 +270,27 @@ export class Link {
     this.outbox = new Outbox({ session, write: (f) => this.sendBinary(f), onError: (e) => console.warn('apaki link:', e) });
     this.attempt = 0;
     this.unknownAttempt = 0;
+    // An account connection to a PC with phone keys is held by the PC until it has decided about this phone: wait for phone-ok.
+    if (this.viaAccount) { this.holdForPhone(session); return; }
+    this.announceOpen();
+  }
+
+  /** The channel is usable: state 'open', the page's open handler, and a re-attach of what was open after a reconnect. */
+  announceOpen() {
+    clearTimeout(this.timers.gate);
+    this.phoneGate = null;
     const first = !this.everOpen;
     this.everOpen = true;
     this.setState('open');
     this.on.open?.(first);
     if (!first) this.onReopen?.();
+  }
+
+  /** Keeps 'open' back until phone-ok (see the header); connects again if the PC says nothing for PHONE_CHECK_MS. */
+  holdForPhone(session = this.session) {
+    this.phoneGate = 'check';
+    clearTimeout(this.timers.gate);
+    this.timers.gate = setTimeout(() => { if (this.phoneGate === 'check' && this.session === session) this.restart(); }, PHONE_CHECK_MS);
   }
 
   message(read) {
@@ -263,9 +306,27 @@ export class Link {
       this.hello = m;
       // When this pairing runs out (null: never); an older PC does not say, and then nothing changes.
       if (Object.hasOwn(m, 'expiresAt')) this.setExpiry(m.expiresAt);
-      // Connected as an Apaki account's device: tell the PC which phone this is (ACCOUNTS.md).
-      if (m.asAccount && this.name) this.outbox?.send({ t: 'via', name: this.name }).catch(() => {});
+      // Connected as an Apaki account's device: tell the PC which phone this is (ACCOUNTS.md; signed with the phone key, ENROLL.md).
+      if (m.asAccount) this.sendVia(m);
+      else if (this.phoneGate) this.announceOpen();
       this.on.hello?.(m);
+      return;
+    }
+    // The PC decided about this phone (an account connection, ENROLL.md): in, or asking its person first.
+    if (m.t === 'phone-ok') {
+      if (this.phoneGate) this.announceOpen();
+      this.on.phone?.({ kind: 'ok' });
+      return;
+    }
+    if (m.t === 'phone-wait') {
+      const ms = Math.min(MAX_PENDING_MS, Math.max(10_000, Number(m.timeoutMs) || 0));
+      const session = this.session;
+      this.phoneGate = 'wait';
+      clearTimeout(this.timers.gate);
+      // The PC closes by itself when nobody answers; this only covers a PC that went quiet.
+      this.timers.gate = setTimeout(() => { if (this.phoneGate === 'wait' && this.session === session) this.restart(); }, ms + 15_000);
+      this.setState('phone-wait', { timeoutMs: ms });
+      this.on.phone?.({ kind: 'wait', timeoutMs: ms });
       return;
     }
     // The PC user changed how long this phone stays paired.
@@ -300,6 +361,41 @@ export class Link {
   /** True when the PC said it understands `feature` (an older Apaki lists none). */
   supports(feature) {
     return Array.isArray(this.hello?.features) && this.hello.features.includes(feature);
+  }
+
+  /**
+   * Tells the PC which phone is behind an account connection. With a phone key
+   * and a PC that lists 'phone-key' (and a nonce in its hello) it is version 2,
+   * { t: 'via', name, pub, sig }, and the connection is held until phone-ok;
+   * anything else (an older PC, no key, a key that cannot sign) is the version 1
+   * { t: 'via', name } as before, and nothing is held.
+   */
+  sendVia(hello) {
+    const outbox = this.outbox;
+    const session = this.session;
+    const name = this.name || '';
+    const v1 = () => {
+      if (name) outbox?.send({ t: 'via', name }).catch(() => {});
+      if (this.phoneGate && this.session === session) this.announceOpen();
+    };
+    if (!(this.phone && this.supports('phone-key') && typeof hello.nonce === 'string')) { v1(); return; }
+    if (!this.phoneGate) {
+      this.holdForPhone(session);
+      // Already announced open (a Link made without viaAccount): hold it again until the PC decides.
+      if (this.state === 'open') this.setState('handshake');
+    }
+    (async () => {
+      let via;
+      try {
+        via = await signVia(this.phone, b64urlDecode(hello.nonce), name || 'Phone');
+      } catch (e) {
+        console.warn('apaki link: the phone key could not sign, sending the older via:', e?.message || e);
+        v1();
+        return;
+      }
+      if (this.session !== session || this.outbox !== outbox) return;
+      await outbox.send({ t: 'via', name: via.name, pub: via.pub, sig: via.sig });
+    })().catch((e) => console.warn('apaki link:', e));
   }
 
   /**
@@ -338,7 +434,10 @@ export class Link {
   /** The PC closed the channel (authenticated): removed, its pairing expired, or phone access turned off. */
   closedByPc(reason) {
     this.dropSession();
-    if (/expired/i.test(reason || '')) this.fatal('lapsed', reason);
+    // Phone keys (ENROLL.md): blocked here, final for this Link; or nobody at the PC answered in time (the person can ask again).
+    if (isBlockedClose(reason)) this.fatal('phone-blocked', reason);
+    else if (isNotAllowedClose(reason)) { this.setState('phone-timeout', { reason }); this.on.phone?.({ kind: 'timeout', reason }); }
+    else if (/expired/i.test(reason || '')) this.fatal('lapsed', reason);
     else if (/removed/i.test(reason || '')) this.fatal('removed', reason);
     else this.setState('waiting', { reason });
   }
@@ -400,6 +499,12 @@ export class Link {
     }
   }
 
+  /** Asks again after phone-timeout (the person tapped Try again): connects anew, and the PC asks its person again. */
+  retryNow() {
+    if (this.stopped) return;
+    this.restart();
+  }
+
   gone(ws, code) {
     if (!ws || this.ws !== ws) return;
     this.ws = null;
@@ -443,6 +548,8 @@ export class Link {
   }
 
   dropSession() {
+    this.phoneGate = null;
+    clearTimeout(this.timers.gate);
     this.session = null;
     this.outbox?.close();
     this.outbox = null;

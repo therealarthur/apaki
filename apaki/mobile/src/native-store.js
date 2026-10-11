@@ -14,9 +14,16 @@
  * with master d077b7a: StorageError, onWait, updatePc, persist), plus
  * newDevice(), which boot.js uses for a new pairing when the store has it.
  *
- * Keychain items (service io.myrlin.apaki.store): "pc:<roomId>" per paired PC
- * and "account" for the signed-in Apaki account, each a JSON record from
- * codec.js. Device keys live under their own service (io.myrlin.apaki.keys).
+ * Keychain items (service io.myrlin.apaki.store): "pc:<roomId>" per paired PC,
+ * "account" for the signed-in Apaki account, and "phone" for the phone key
+ * (2026-10-11), each a JSON record. Device keys live under their own service
+ * (io.myrlin.apaki.keys).
+ *
+ * The phone key (apaki/remote/ENROLL.md, version 2) is one more Secure
+ * Enclave key made with the same ApakiKeys.createKey as a pairing's device
+ * key, so its private half cannot leave the chip: non-extractable, as the
+ * contract asks, with no new Swift. Only its key id and public key are kept
+ * in the Keychain record "phone"; pruneKeys below keeps that key.
  */
 
 import { Keys } from './cap.js';
@@ -24,6 +31,7 @@ import { b64d, b64e, decodeAccount, decodePc, encodeAccount, encodePc } from './
 
 const PC = 'pc:';
 const ACCOUNT = 'account';
+const PHONE = 'phone';
 
 /**
  * Storage that could not be read or written, as opposed to "nothing saved"
@@ -142,6 +150,9 @@ export async function newDevice() {
 export async function pruneKeys() {
   const { items = [] } = await Keys.vaultList({ prefix: PC });
   const keep = [];
+  // The phone key is no PC's device key but must outlive every start (2026-10-11): it is what PCs know this phone by.
+  const phone = await readJson(PHONE).catch(() => null);
+  if (phone?.keyId) keep.push(phone.keyId);
   for (const it of items) {
     try { const d = JSON.parse(it.value)?.device; if (d?.kind === 'native') keep.push(d.keyId); } catch { /* unreadable: keep nothing for it */ }
   }
@@ -163,4 +174,27 @@ export async function saveAccount(rec) {
 export async function forgetAccount() {
   await keychain(() => Keys.vaultRemove({ key: ACCOUNT }));
   for (const pc of await listPcs()) if (pc.via === 'account') await forgetPc(pc.roomId);
+}
+
+/* the phone key (2026-10-11) */
+
+let phoneKeyP = null;
+
+/**
+ * This phone's key as { pub, sign(bytes) } (apaki/remote/ENROLL.md): a
+ * Secure Enclave key made the first time it is asked for and kept for good
+ * (its id and public key in the Keychain record "phone"). Same shape as the
+ * web store.js getPhoneKey; sign gives the 64-byte r||s ECDSA / SHA-256
+ * signature, like a pairing's device key.
+ */
+export function getPhoneKey() {
+  phoneKeyP ||= (async () => {
+    const saved = await readJson(PHONE);
+    if (saved?.keyId && saved?.pub) return { keyId: saved.keyId, pub: b64d(saved.pub), secureEnclave: Boolean(saved.se), sign: signerFor(saved.keyId) };
+    const { keyId, pub, secureEnclave } = await Keys.createKey();
+    await writeJson(PHONE, { v: 1, keyId, pub, se: Boolean(secureEnclave), created: new Date().toISOString() });
+    return { keyId, pub: b64d(pub), secureEnclave: Boolean(secureEnclave), sign: signerFor(keyId) };
+  })();
+  phoneKeyP.catch(() => { phoneKeyP = null; });
+  return phoneKeyP;
 }

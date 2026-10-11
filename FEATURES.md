@@ -60,11 +60,16 @@ Written 2026-10-10 from what is built and tested.
   "Sign in at apaki.myrlin.io on your phone to reach this PC from any
   device".
 - Connected or Private, chosen on the PC. Connected is the default: Apaki
-  accounts work as above. Private is a switch in the Phone sheet: only
-  phones paired with the PC's code reach it, account links are refused,
-  accounts already linked are removed or paused, and the phone page stops
-  asking the relay which of its PCs are online. Phones still run the page
-  from apaki.myrlin.io in both modes until the native app ships.
+  accounts work as above. Private is a switch in the Phone sheet: every
+  phone needs an OK on the PC (one you scan a code with is added at once, any
+  other waits for Allow or Block, accounts included), an account is only
+  added right after you pair a phone, accounts already linked are removed
+  or kept (their phones are asked again), and the phone page stops asking
+  the relay which of its PCs are online. Phones still run the page from
+  apaki.myrlin.io in both modes until the native app ships. Under each
+  account the Phone sheet lists the phones that connected through it, each
+  with Block, Allow and Forget; in Connected a new phone gets in and the PC
+  shows "New phone connected" with Block.
 - It feels like an app on the phone. The sessions list is home with a large
   title, a conversation slides in from the right and a swipe from the left
   edge goes back, menus and sheets rise from the bottom and close with a

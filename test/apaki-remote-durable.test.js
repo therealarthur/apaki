@@ -31,7 +31,7 @@ import {
 import { Inbox, Outbox } from '../apaki/remote/wire.js';
 import { parsePhoneId } from '../apaki/engine/remote-policy.js';
 import * as store from '../apaki/engine/remote-store.js';
-import { RemoteBridge, expiryFor, mergeState, LIFETIME_DAYS } from '../apaki/engine/remote.js';
+import { RemoteBridge, expiryFor, mergeState, mergePhoneLists, LIFETIME_DAYS } from '../apaki/engine/remote.js';
 import { build } from '../apaki/scripts/build-web.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -249,6 +249,48 @@ test('store (durable): a damaged secret.json falls back to secret.json.bak; with
     await assert.rejects(store.loadSecret(dir), (e) => e instanceof store.SecretError && e.code === 'unreadable');
     fs.writeFileSync(path.join(dir, 'secret.json'), '{"v":1,"scheme":"rot13","data":"x"}');
     await assert.rejects(store.loadSecret(dir), (e) => e.code === 'unreadable');
+  });
+});
+
+test('store (phones): the phone keys behind an account device are saved and read back, in both files; pending and damaged records are never kept', async () => {
+  await withDir(async (dir) => {
+    const acct = {
+      id: 'acct-1', pub: 'ap', name: 'Apaki account (Arthur)', pairedAt: 'x', kind: 'account', account: 'Arthur', by: 'iPhone',
+      phones: [
+        { id: 'p1', pub: 'k1', name: 'One', state: 'enrolled', firstSeen: '2026-10-01T00:00:00.000Z', lastSeen: '2026-10-02T00:00:00.000Z', decidedAt: '2026-10-01T00:00:00.000Z', extra: 'dropped' },
+        { id: 'p2', pub: 'k2', name: 'Two', state: 'pending', firstSeen: 't', lastSeen: 't', prev: 'auto' },
+        { id: 'p3', pub: 'k3', name: 'Three', state: 'blocked', firstSeen: 't', lastSeen: null },
+        { id: 'p4', pub: 'k4', name: 'Four', state: 'not-a-state' },
+        { id: 'p1', pub: 'k1', name: 'One again', state: 'auto' },
+        { nope: true },
+      ],
+      phonesForgot: [{ id: 'gone', at: '2026-10-03T00:00:00.000Z' }, { at: 'no id' }],
+    };
+    store.saveState({ v: 1, enabled: true, roomId: 'r', pcPub: 'p', createdAt: 'then', devices: [acct, { id: 'dev-2', pub: 'p2', name: 'Plain phone', pairedAt: 'y' }] }, dir);
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8'));
+    assert.deepEqual(raw.devices[0].phones.map((x) => x.id), ['p1', 'p3'], 'pending, damaged and repeated records are not written');
+    assert.deepEqual(Object.keys(raw.devices[0].phones[0]).sort(), ['decidedAt', 'firstSeen', 'id', 'lastSeen', 'name', 'pub', 'state'], 'known fields only');
+    assert.equal(raw.devices[0].phones[0].name, 'One', 'the first record of an id wins');
+    assert.deepEqual(raw.devices[0].phonesForgot, [{ id: 'gone', at: '2026-10-03T00:00:00.000Z' }]);
+    assert.equal(raw.devices[1].phones, undefined, 'a device with no phone keys carries none');
+    assert.equal(raw.devices[1].phonesForgot, undefined);
+    const back = store.readState(dir).state.devices[0];
+    assert.deepEqual(back.phones.map((x) => [x.id, x.state]), [['p1', 'enrolled'], ['p3', 'blocked']]);
+    assert.equal(back.phones[1].lastSeen, null);
+    // A state.json an older Apaki wrote has none; a hand-damaged list is cleaned on the way in.
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ v: 1, enabled: true, roomId: 'r', devices: [{ id: 'a', pub: 'p', name: 'n', phones: 'garbage', phonesForgot: [1, null] }, { id: 'b', pub: 'p', name: 'm', phones: [{ id: 'z', pub: 'k', state: 'pending' }, { id: 'y', pub: 'k', state: 'auto' }] }] }));
+    const cleaned = store.readState(dir).state.devices;
+    assert.equal(cleaned[0].phones, undefined);
+    assert.equal(cleaned[0].phonesForgot, undefined);
+    assert.deepEqual(cleaned[1].phones.map((x) => x.id), ['y']);
+
+    // secret.json carries the same list (so a rebuilt state.json keeps a Block), without the device's own lastSeen.
+    await store.saveSecret({ identity: { pub: 'P', jwk: { d: 'D1' } }, token: 'T1', psks: { 'acct-1': 'psk' }, devices: [acct] }, dir);
+    const sec = await store.loadSecret(dir);
+    assert.deepEqual(sec.devices[0].phones.map((x) => [x.id, x.state, x.lastSeen]), [['p1', 'enrolled', '2026-10-02T00:00:00.000Z'], ['p3', 'blocked', null]]);
+    assert.deepEqual(sec.devices[0].phonesForgot.map((r) => r.id), ['gone']);
+    assert.equal(sec.devices[0].lastSeen, undefined);
+    assert.match(fs.readFileSync(path.join(dir, '_WHY_THIS_IS_HERE.md'), 'utf8'), /phone keys/);
   });
 });
 
@@ -530,6 +572,65 @@ test('mergeState: phones either engine knows stay, removals win over older pairi
   // Paired again after the removal (an account linked again): it stays.
   const re = mergeState({ ...mine, devices: [{ id: 'b', pairedAt: '2026-10-08' }] }, disk);
   assert.ok(re.devices.some((d) => d.id === 'b'));
+});
+
+test('mergePhoneLists: by id; a Block wins (unless a later explicit Allow), else the newer lastSeen; a forgotten phone stays forgotten unless seen again after', () => {
+  const ph = (id, state, lastSeen, extra = {}) => ({ id, pub: `pub-${id}`, name: id, state, firstSeen: '2026-10-01T00:00:00.000Z', lastSeen, ...extra });
+  const mine = {
+    phones: [
+      ph('block-vs-newer', 'auto', '2026-10-09T00:00:00.000Z'),
+      ph('allow-after-block', 'allowed', '2026-10-08T00:00:00.000Z', { decidedAt: '2026-10-08T00:00:00.000Z' }),
+      ph('allow-no-stamp', 'allowed', '2026-10-09T00:00:00.000Z'),
+      ph('newer-mine', 'allowed', '2026-10-09T00:00:00.000Z'),
+      ph('newer-disk', 'auto', '2026-10-02T00:00:00.000Z'),
+      ph('only-mine', 'enrolled', '2026-10-03T00:00:00.000Z'),
+      ph('forgotten-old', 'auto', '2026-10-04T00:00:00.000Z'),
+      ph('forgotten-then-back', 'auto', '2026-10-09T00:00:00.000Z', { firstSeen: '2026-10-07T00:00:00.000Z' }),
+    ],
+  };
+  const disk = {
+    phones: [
+      ph('block-vs-newer', 'blocked', '2026-10-01T00:00:00.000Z'),
+      ph('allow-after-block', 'blocked', '2026-10-09T00:00:00.000Z', { decidedAt: '2026-10-05T00:00:00.000Z' }),
+      ph('allow-no-stamp', 'blocked', '2026-10-01T00:00:00.000Z'),
+      ph('newer-mine', 'auto', '2026-10-03T00:00:00.000Z'),
+      ph('newer-disk', 'allowed', '2026-10-06T00:00:00.000Z'),
+      ph('only-disk', 'auto', '2026-10-03T00:00:00.000Z'),
+    ],
+    phonesForgot: [{ id: 'forgotten-old', at: '2026-10-06T00:00:00.000Z' }, { id: 'forgotten-then-back', at: '2026-10-06T00:00:00.000Z' }],
+  };
+  const m = mergePhoneLists(mine, disk);
+  const by = Object.fromEntries(m.phones.map((p) => [p.id, p]));
+  assert.equal(by['block-vs-newer'].state, 'blocked', 'a Block wins even over a record seen later');
+  assert.equal(by['block-vs-newer'].lastSeen, '2026-10-09T00:00:00.000Z', 'lastSeen is still the later one');
+  assert.equal(by['allow-after-block'].state, 'allowed', 'an Allow decided after the Block beats it');
+  assert.equal(by['allow-no-stamp'].state, 'blocked', 'an Allow with no decision stamp does not undo a Block');
+  assert.equal(by['newer-mine'].state, 'allowed');
+  assert.equal(by['newer-disk'].state, 'allowed');
+  assert.equal(by['only-mine'].state, 'enrolled');
+  assert.equal(by['only-disk'].state, 'auto');
+  assert.equal(by['forgotten-old'], undefined, 'forgotten after it was last decided: gone');
+  assert.equal(by['forgotten-then-back'].state, 'auto', 'first seen again after it was forgotten: stays');
+  assert.deepEqual(m.phonesForgot.map((r) => r.id).sort(), ['forgotten-old', 'forgotten-then-back']);
+  // Either side alone, or neither, merges to itself.
+  assert.deepEqual(mergePhoneLists({}, {}), { phones: [], phonesForgot: [] });
+  assert.equal(mergePhoneLists({ phones: mine.phones.slice(0, 1) }, {}).phones[0].state, 'auto');
+});
+
+test('mergeState: the phone keys behind an account device merge by id instead of one list replacing the other', () => {
+  const ph = (id, state, lastSeen) => ({ id, pub: `pub-${id}`, name: id, state, firstSeen: '2026-10-01T00:00:00.000Z', lastSeen });
+  const mine = { v: 1, roomId: 'r', devices: [{ id: 'acct', kind: 'account', pairedAt: '2026-10-01', phones: [ph('a', 'auto', '2026-10-05T00:00:00.000Z'), ph('b', 'auto', '2026-10-05T00:00:00.000Z')] }, { id: 'plain', pairedAt: '2026-10-01' }], removed: [] };
+  const disk = { v: 1, roomId: 'r', devices: [{ id: 'acct', kind: 'account', pairedAt: '2026-10-01', phones: [ph('a', 'blocked', '2026-10-02T00:00:00.000Z'), ph('c', 'allowed', '2026-10-06T00:00:00.000Z')], phonesForgot: [{ id: 'b', at: '2026-10-06T00:00:00.000Z' }] }, { id: 'plain', pairedAt: '2026-10-01' }], removed: [] };
+  const m = mergeState(mine, disk);
+  const acct = m.devices.find((d) => d.id === 'acct');
+  assert.deepEqual(acct.phones.map((p) => [p.id, p.state]).sort(), [['a', 'blocked'], ['c', 'allowed']], 'a was blocked in the file, b was forgotten there, c is new there');
+  assert.deepEqual(acct.phonesForgot, [{ id: 'b', at: '2026-10-06T00:00:00.000Z' }]);
+  const plain = m.devices.find((d) => d.id === 'plain');
+  assert.equal('phones' in plain, false, 'a device without phone keys gets no empty list');
+  assert.equal('phonesForgot' in plain, false);
+  // A file written by an Apaki from before phone keys has none: mine stand.
+  const old = mergeState(mine, { v: 1, roomId: 'r', devices: [{ id: 'acct', kind: 'account', pairedAt: '2026-10-01' }], removed: [] });
+  assert.deepEqual(old.devices.find((d) => d.id === 'acct').phones.map((p) => p.id), ['a', 'b']);
 });
 
 test('bridge (two engines): a phone paired in one is let in by the other; an older write cannot drop it; a removal sticks', async () => {

@@ -41,6 +41,9 @@ export async function updatePc(roomId, fields) {
   return pcs.get(roomId);
 }
 
+/** The phone key (apaki/remote/ENROLL.md): the demo has no PC to prove it to, so a fake like the device key above. */
+export const getPhoneKey = async () => ({ ...fakeDevice(), keyId: 'demo-phone' });
+
 export const getAccount = async () => account;
 
 export async function saveAccount(rec) { account = { ...rec, key: 'me' }; }

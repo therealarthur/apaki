@@ -23,7 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { PhoneSession, RELAY_CLOSE, createDeviceIdentity, decodePcFrame, encodePcFrame, parsePairingUrl, b64urlEncode, randomBytes } from '../apaki/remote/protocol.js';
+import { PhoneSession, RELAY_CLOSE, createDeviceIdentity, decodePcFrame, encodePcFrame, parsePairingUrl, b64urlDecode, b64urlEncode, randomBytes } from '../apaki/remote/protocol.js';
 import { Inbox, Outbox } from '../apaki/remote/wire.js';
 import {
   APAKI_BROWSER_TOOLS, CAPS, CAP_BLOCKED_TOOLS, capBlocksTool, capCanUseTool, capDefaultMode, capModes, capOf, capPreToolUse, capRunnerOptions,
@@ -188,11 +188,28 @@ async function pairPhone({ b, last }, relay, { name = 'Phone', cap } = {}) {
   return { ph, device, phone, pairing: JSON.parse(JSON.stringify(phone.pairing)), hello: phone.wire('hello')[0] };
 }
 
-async function reconnect(b, relay, device, pairing) {
+/**
+ * The version 2 via of ENROLL.md: the phone's own key signs "apaki/v1 via" || the connection's nonce || its public key || its name.
+ * An account connection is held after hello until this arrives and the PC lets the phone in.
+ */
+async function viaMessage(key, nonce, name = 'Phone') {
+  const bytes = (b64) => b64urlDecode(b64);
+  const data = new Uint8Array([...new TextEncoder().encode('apaki/v1 via'), ...bytes(nonce), ...key.pub, ...new TextEncoder().encode(name)]);
+  const sig = new Uint8Array(await globalThis.crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key.privateKey, data));
+  return { t: 'via', name, pub: b64urlEncode(key.pub), sig: b64urlEncode(sig) };
+}
+
+/** A saved phone connecting again. via: { key, name } sends a version 2 via once hello arrives (an account connection needs one); it ends on ready, phone-wait or an alert. */
+async function reconnect(b, relay, device, pairing, via = null) {
   const ph = relay.phone();
   await until(() => b.conns.has(ph.conn));
   const c = await phoneClient(ph, new PhoneSession({ device, pairing }));
-  await c.pump(() => c.events.some((e) => e.ev === 'ready') || c.alerts.length);
+  if (via) {
+    await c.pump(() => c.wire('hello').length || c.alerts.length);
+    const hello = c.wire('hello')[0];
+    if (hello) await c.out.send(await viaMessage(via.key, hello.nonce, via.name || 'Phone'));
+  }
+  await c.pump(() => c.events.some((e) => e.ev === 'ready') || c.wire('phone-wait').length || c.alerts.length);
   return { ph, c };
 }
 
@@ -377,7 +394,9 @@ test('bridge: Private refuses account links and pauses linked accounts (or remov
       assert.ok(linked.psk);
       assert.equal(last().devices.find((d) => d.kind === 'account').cap, 'full', 'the asking phone\'s access, offered first');
       const pairing = { ...p.pairing, deviceId: linked.deviceId, psk: linked.psk };
-      const viaAcct = await reconnect(b, relay, acct, pairing);
+      // 2026-10-11: an account connection is held until the phone behind it proves its own key (a new phone in Connected is let in).
+      const phoneKey = await createDeviceIdentity();
+      const viaAcct = await reconnect(b, relay, acct, pairing, { key: phoneKey, name: 'New iPhone' });
       assert.ok(viaAcct.c.events.some((e) => e.ev === 'ready'), 'an account phone connects in Connected');
 
       await b.op({ op: 'remoteMode', mode: 'private' });
@@ -387,9 +406,11 @@ test('bridge: Private refuses account links and pauses linked accounts (or remov
       await back.c.pump(() => back.c.wire('mode').length);
       assert.equal(back.c.wire('mode')[0].mode, 'private');
       assert.ok(!back.c.wire('mode')[0].features.includes('account-ask'));
-      assert.equal(last().devices.find((d) => d.kind === 'account').paused, true, 'kept, paused');
-      const refused = await reconnect(b, relay, acct, pairing);
-      assert.equal(refused.c.alerts[0]?.code, 'unknown-device', 'no phone connects as an account in Private');
+      assert.equal(last().devices.find((d) => d.kind === 'account').paused, undefined, 'kept, and no longer paused: Private lets the account connect and asks per phone');
+      // A phone Connected let in by itself is asked again in Private; one never seen waits for an Allow too.
+      const asked = await reconnect(b, relay, acct, pairing, { key: await createDeviceIdentity(), name: 'Another iPhone' });
+      assert.equal(asked.c.wire('phone-wait').length, 1, 'a new phone in Private waits for the person at the PC');
+      assert.ok(!asked.c.events.some((e) => e.ev === 'ready'));
       await back.c.out.send({ t: 'account-link', reqId: 'pv', pub: b64urlEncode(acct.pub), name: 'Arthur', wait: true });
       await back.c.pump(() => back.c.wire('account-linked').some((m) => m.reqId === 'pv'));
       assert.equal(back.c.wire('account-linked').find((m) => m.reqId === 'pv').error, 'This PC only accepts phones paired with its code.');
@@ -399,7 +420,7 @@ test('bridge: Private refuses account links and pauses linked accounts (or remov
 
       // Back to Connected lets the paused account in; Private with removeAccounts removes it.
       await b.op({ op: 'remoteMode', mode: 'connected' });
-      assert.ok((await reconnect(b, relay, acct, pairing)).c.events.some((e) => e.ev === 'ready'));
+      assert.ok((await reconnect(b, relay, acct, pairing, { key: phoneKey, name: 'New iPhone' })).c.events.some((e) => e.ev === 'ready'), 'its record (auto) lets it in again in Connected');
       await b.op({ op: 'remoteMode', mode: 'private', removeAccounts: true });
       assert.ok(!last().devices.some((d) => d.kind === 'account'));
       await b.op({ op: 'remoteMode', mode: 'open', reqId: 'm' });

@@ -2276,6 +2276,22 @@ body.web .rail-resize, body.web .rail-toggle { display: none !important; }
 .ph-skip span { flex: 1; font-size: 12px; line-height: 1.45; color: var(--faint); }
 .phone-sheet .ph-alarm { margin-top: 12px; font-weight: 650; }
 
+/* Phone sheet: the phone keys behind an account, the Private card and the
+   "New phone connected" lines (2026-10-11, phone.js phonesList, phoneAskBlock, noticesBlock;
+   apaki/remote/ENROLL.md). Spacing only, on the sheet's own parts; a design pass restyles it. */
+.ph-devices .ph-phones { margin: 8px 0 0; }
+.ph-phone { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--hairline); }
+.ph-phone-t { flex: 1; min-width: 0; }
+.ph-phone-n { font-weight: 700; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-phone[data-state="blocked"] .ph-phone-n { color: var(--action-strong); }
+.ph-phone-a { display: flex; gap: 6px; flex: none; }
+.phone-sheet .ph-phone-a button { padding: 4px 9px; font-size: 12px; font-weight: 700; }
+.ph-notices { margin-top: 12px; }
+.ph-notice { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--hairline-strong); font-size: 13px; }
+.ph-notice-t { flex: 1; min-width: 200px; }
+.ph-notice-t span { color: var(--faint); }
+.ph-notice .ph-actions { margin-top: 0; }
+
 /* ---------- the sign-in card (app.js renderSignIn, 2026-10-10) ----------
    On a PC where Claude Code has no login yet: a card floating over the top of
    the stage until the engine reports a login. Full border, no edge accent. */

@@ -19,7 +19,8 @@
  *   create(name)               a new account with a new passkey
  *   signIn()                   a passkey this person already has
  *   refresh()                  fetch the vault, take in PCs other phones added
- *   link(link, { onPending })  save the PC behind an open Link to the account (the PC asks its person first)
+ *   link(link, { onPending, enroll })  save the PC behind an open Link to the account (the PC asks its person first;
+ *                              enroll: right after a scan, with this phone's key as the proof, no asking)
  *   unlink(roomId, link?)      take a PC out of the account (and off the PC when connected)
  *   addPasskey(), removePasskey(id), rename(name), signOut(), signOutEverywhere(), remove()
  *   presence(pc)               is that PC connected to the relay right now?
@@ -27,6 +28,7 @@
 
 import { b64urlDecode, b64urlEncode, concat, createDeviceIdentity, deviceIdFor, exportIdentity, randomBytes } from './protocol.js';
 import * as store from './store.js';
+import { signEnroll } from './phonekey.js';
 
 const subtle = globalThis.crypto.subtle;
 const utf8 = new TextEncoder();
@@ -366,16 +368,31 @@ export const current = () => store.getAccount();
  * (onPending, so the page can say "allow it on the PC"), and the answer
  * comes when the person allows or denies it there. A PC in Private mode
  * refuses (code 'private'); a PC from before this never offers it.
+ *
+ * Enrollment (2026-10-11, ENROLL.md): with `enroll: true`, a PC that lists
+ * 'enroll' in its hello and a Link that has this phone's key, the request also
+ * carries { enroll: true, phone: { pub, sig } }, the phone key signing the
+ * connection's nonce, this phone's key and the account device. Sent right after
+ * a pairing completed, the PC adds the account device at once with no card, in
+ * Private mode too. If its conditions do not hold (the pairing is older than
+ * its window, say) the PC treats it as the request above: a Connected PC
+ * answers pending and waits for Allow, a Private one refuses.
  */
-export async function link(lnk, { onPending = null } = {}) {
+export async function link(lnk, { onPending = null, enroll = false } = {}) {
   const acct = await store.getAccount();
   if (!acct) throw new AccountError('signed-out', 'Sign in to your Apaki account first.');
   if (!lnk || lnk.state !== 'open') throw new AccountError('offline', 'Connect to the PC first.');
-  if (lnk.hello?.mode === 'private') throw new AccountError('private', `${lnk.pcName} is in Private mode: it only accepts phones paired with its code.`);
-  if (!lnk.supports('account-ask')) throw new AccountError('old-pc', `${lnk.pcName} runs an older Apaki. Update it there, then save it to your account.`);
+  const enrolling = Boolean(enroll && lnk.supports('enroll') && lnk.phone && typeof lnk.hello?.nonce === 'string');
+  if (!enrolling && lnk.hello?.mode === 'private') throw new AccountError('private', `${lnk.pcName} is in Private mode: it only accepts phones paired with its code.`);
+  if (!enrolling && !lnk.supports('account-ask')) throw new AccountError('old-pc', `${lnk.pcName} runs an older Apaki. Update it there, then save it to your account.`);
   if (lnk.hello?.asAccount) throw new AccountError('already', `${lnk.pcName} is already in your account.`);
   const pairing = lnk.pairing;
-  const answer = await lnk.request({ t: 'account-link', pub: acct.devicePub, name: acct.name, wait: true }, 'account-linked', 15_000, { onPending });
+  const msg = { t: 'account-link', pub: acct.devicePub, name: acct.name, wait: true };
+  if (enrolling) {
+    msg.enroll = true;
+    msg.phone = await signEnroll(lnk.phone, b64urlDecode(lnk.hello.nonce), b64urlDecode(acct.devicePub));
+  }
+  const answer = await lnk.request(msg, 'account-linked', 15_000, { onPending });
   if (answer.error) throw new AccountError(answer.code === 'private' ? 'private' : 'pc-refused', `${lnk.pcName} said: ${answer.error}`);
   if (answer.deviceId !== (await deviceIdFor(acct.devicePub))) throw new AccountError('bad-pc', 'The PC answered for another device.');
   return updateVault(acct, (json) => {

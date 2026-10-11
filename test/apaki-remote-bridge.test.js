@@ -631,9 +631,21 @@ test('bridge: a paired phone links an Apaki account (allowed on the PC); any pho
     await until(() => b.conns.has(ph2.conn));
     const pairing = { v: 1, roomId: phone.pairing.roomId, relay: phone.pairing.relay, pcPub: phone.pairing.pcPub, pcName: linked.pcName, deviceId: linked.deviceId, psk: linked.psk, pairedAt: new Date().toISOString() };
     const other = await phoneClient(ph2, new PhoneSession({ device: acct, pairing }));
+    await other.pump(() => other.events.some((e) => e.wire?.t === 'hello'));
+    const acctHello = other.events.find((e) => e.wire?.t === 'hello').wire;
+    assert.equal(acctHello.asAccount, true);
+    // 2026-10-11: held after hello, no ready event, until the phone behind the account proves its own key (ENROLL.md).
+    assert.ok(acctHello.features.includes('phone-key') && acctHello.features.includes('enroll'));
+    assert.equal(b64urlDecode(acctHello.nonce).length, 16);
+    await sleep(60);
+    assert.ok(!other.events.some((e) => e.ev === 'ready'), 'held: nothing before the phone key');
+    assert.equal(last().devices.find((d) => d.kind === 'account').connected, false, 'a held connection is not a connected phone');
+    const pixelKey = await createDeviceIdentity();
+    const nonce = b64urlDecode(acctHello.nonce);
+    const sig = new Uint8Array(await globalThis.crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pixelKey.privateKey, new Uint8Array([...new TextEncoder().encode('apaki/v1 via'), ...nonce, ...pixelKey.pub, ...new TextEncoder().encode('Pixel (Chrome)')])));
+    await other.out.send({ t: 'via', name: 'Pixel (Chrome)', pub: b64urlEncode(pixelKey.pub), sig: b64urlEncode(sig) });
     await other.pump(() => other.events.some((e) => e.ev === 'ready'));
-    assert.equal(other.events.find((e) => e.wire?.t === 'hello').wire.asAccount, true);
-    await other.out.send({ t: 'via', name: 'Pixel (Chrome)' });
+    assert.ok(other.events.some((e) => e.wire?.t === 'phone-ok'));
     await until(() => last().devices.find((d) => d.kind === 'account')?.via?.includes('Pixel (Chrome)'));
     assert.equal(last().devices.find((d) => d.kind === 'account').connected, true);
 

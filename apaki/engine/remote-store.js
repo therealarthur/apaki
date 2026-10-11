@@ -58,6 +58,19 @@
  *     so a rebuilt state.json never widens a phone's access.
  *   - pages.json: the phone page versions this PC verified (their file
  *     hashes), re-checked every hour while phone access is on. Not secret.
+ *
+ * Phone keys behind an account device (2026-10-11, ../remote/ENROLL.md;
+ * Arthur: "scanning the desktop phone pairing code should add that phone as
+ * a passkey as well"): an account device record may carry
+ *   phones: [{ id, pub, name, state, firstSeen, lastSeen, decidedAt? }]
+ * one per phone key (remote.js) that connected through the account, state
+ * enrolled, allowed, auto or blocked; and phonesForgot: [{ id, at }], the
+ * phones the PC user forgot (so another engine's older view cannot bring one
+ * back, the way removed does for devices). Kept in secret.json's copy of the
+ * list too, so a rebuilt state.json never forgets a Block (that would let a
+ * blocked phone in again in Connected). 'pending' (a phone waiting for an
+ * Allow in Private) lives only as long as the connection that asks, so it is
+ * never written.
  */
 
 import { execFile } from 'node:child_process';
@@ -81,6 +94,12 @@ const PS_TIMEOUT_MS = 30_000;
 const MAX_REMOVED = 100;
 /** The optional fields a device record may carry into state.json (and the secret's copy of the list). cap: 2026-10-10. */
 const DEVICE_EXTRA = ['kind', 'account', 'by', 'expiresAt', 'cap'];
+/** What a phone key behind an account device may be (ENROLL.md): pending is in memory only (never saved). */
+export const PHONE_STATES = Object.freeze(['enrolled', 'allowed', 'auto', 'pending', 'blocked']);
+/** At most this many phone records per account device (past that the least recently seen one that is not blocked goes). */
+export const MAX_PHONES = 20;
+/** At most this many forgotten phone ids are remembered per account device (newest kept). */
+const MAX_FORGOTTEN = 50;
 const PAGES = 'pages.json';
 /** At most this many verified phone page versions are kept for the hourly re-check (newest kept). */
 const MAX_PAGES = 6;
@@ -100,8 +119,10 @@ on (the Phone button at the bottom of Apaki's sidebar).
 - state.json: not secret. Whether phone access is on, Private or Connected,
   this PC's room id and public key, and the paired phones (their public keys,
   names, when they were paired and last seen, what each may make Claude do,
-  when a pairing expires if you chose a limit). If the hourly page check
-  turned phone access off, why.
+  when a pairing expires if you chose a limit). Under each Apaki account,
+  the phone keys that connected through it (public keys, names, whether you
+  allowed or blocked each one). If the hourly page check turned phone access
+  off, why.
 - secret.json: secret. This PC's private key, the room token and each phone's
   pairing secret, sealed with Windows DPAPI for your Windows account (only you,
   on this PC, can open it). Never share or sync it.
@@ -122,7 +143,8 @@ open Apaki, Phone, turn phone access on, pair again.
 Written by Myrlin Apaki when phone access was first turned on. The feature
 was built by Claude Code (Opus 5.5) for Arthur on 2026-10-09 (Track B, phone
 access); backups and recovery added 2026-10-10; Private and Connected,
-per-phone access and the hourly page check added 2026-10-10.
+per-phone access and the hourly page check added 2026-10-10; phone keys under
+Apaki accounts added 2026-10-11.
 `;
 
 /** The Windows PowerShell that ships with Windows (full path, so PATH cannot swap it). */
@@ -194,8 +216,8 @@ export function ensureDir(dir = remoteDir()) {
   const why = path.join(dir, '_WHY_THIS_IS_HERE.md');
   let cur = null;
   try { cur = fs.readFileSync(why, 'utf8'); } catch { /* none yet */ }
-  // An older note of ours (written before pages.json existed) is brought up to date; anything else is left alone.
-  if (cur === null || (cur !== WHY && cur.startsWith('# Myrlin Apaki: phone access') && !cur.includes('pages.json'))) fs.writeFileSync(why, WHY);
+  // An older note of ours (written before pages.json or the phone keys existed) is brought up to date; anything else is left alone.
+  if (cur === null || (cur !== WHY && cur.startsWith('# Myrlin Apaki: phone access') && (!cur.includes('pages.json') || !cur.includes('phone keys')))) fs.writeFileSync(why, WHY);
   return dir;
 }
 
@@ -232,17 +254,65 @@ function cleanAlarm(a) {
   return { at: String(a.at), version: a.version ? String(a.version) : null, url: a.url ? String(a.url) : null, files: Array.isArray(a.files) ? a.files.map(String).slice(0, 50) : [], of: Number(a.of) || 0, text: String(a.text || '').slice(0, 600) };
 }
 
+/**
+ * One phone record as it is kept (ENROLL.md): the known fields only; null
+ * when it is not one, or when it is 'pending' (that lives only as long as
+ * the connection that asks, so it is never written or read back).
+ */
+export function cleanPhone(p) {
+  if (!p || typeof p.id !== 'string' || !p.id || typeof p.pub !== 'string') return null;
+  if (!PHONE_STATES.includes(p.state) || p.state === 'pending') return null;
+  const out = { id: p.id, pub: p.pub, name: String(p.name || 'Phone').slice(0, 64), state: p.state, firstSeen: p.firstSeen || null, lastSeen: p.lastSeen || null };
+  // When the PC user last decided about it (Allow, Block, a scan in person): a later Allow beats an older Block when two engines merge (remote.js mergeState).
+  if (p.decidedAt) out.decidedAt = String(p.decidedAt);
+  return out;
+}
+
+/** A device's phone records as they are saved or read back (one record per id, the first wins). */
+export function cleanPhones(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const p of list) {
+    const c = cleanPhone(p);
+    if (!c || seen.has(c.id)) continue;
+    seen.add(c.id);
+    out.push(c);
+  }
+  return out;
+}
+
+/** The forgotten phone ids of an account device: [{ id, at }], newest kept. */
+export function cleanForgotten(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter((r) => r && typeof r.id === 'string' && r.id).slice(-MAX_FORGOTTEN).map((r) => ({ id: r.id, at: r.at ? String(r.at) : null }));
+}
+
 /** One device record as it is saved: the known fields only, optional ones when set. */
 function cleanDevice(d) {
   const out = { id: d.id, pub: d.pub, name: d.name, pairedAt: d.pairedAt, lastSeen: d.lastSeen || null };
   for (const k of DEVICE_EXTRA) if (d[k] != null && d[k] !== '') out[k] = d[k];
+  // 2026-10-11: the phone keys behind an account device, and the ones forgotten (only when there are any).
+  const phones = cleanPhones(d.phones);
+  if (phones.length) out.phones = phones;
+  const forgot = cleanForgotten(d.phonesForgot);
+  if (forgot.length) out.phonesForgot = forgot;
   return out;
+}
+
+/** A device as read back from state.json: phone records cleaned (a damaged one is dropped), everything else as it was. */
+function readDevice(d) {
+  if (!d.phones && !d.phonesForgot) return d;
+  const { phones: _p, phonesForgot: _f, ...rest } = d;
+  const phones = cleanPhones(d.phones);
+  const forgot = cleanForgotten(d.phonesForgot);
+  return { ...rest, ...(phones.length ? { phones } : {}), ...(forgot.length ? { phonesForgot: forgot } : {}) };
 }
 
 function normalState(s) {
   if (!s || s.v !== 1) return null;
   const removed = Array.isArray(s.removed) ? s.removed.filter((r) => r && typeof r.id === 'string').slice(-MAX_REMOVED) : [];
-  const devices = Array.isArray(s.devices) ? s.devices.filter((d) => d && typeof d.id === 'string') : [];
+  const devices = Array.isArray(s.devices) ? s.devices.filter((d) => d && typeof d.id === 'string').map(readDevice) : [];
   return { v: 1, enabled: Boolean(s.enabled), mode: modeOf({ mode: s.mode, devices }), pageAlarm: cleanAlarm(s.pageAlarm), roomId: s.roomId || null, pcPub: s.pcPub || null, createdAt: s.createdAt || null, devices, removed };
 }
 
@@ -262,7 +332,7 @@ export function readState(dir = remoteDir()) {
   return { state: FRESH(), status: 'corrupt' };
 }
 
-/** The public state, or a fresh one: { v, enabled, mode, pageAlarm, roomId, pcPub, createdAt, devices: [{ id, pub, name, pairedAt, lastSeen, kind?, account?, by?, expiresAt?, cap? }], removed: [{ id, at }] }. */
+/** The public state, or a fresh one: { v, enabled, mode, pageAlarm, roomId, pcPub, createdAt, devices: [{ id, pub, name, pairedAt, lastSeen, kind?, account?, by?, expiresAt?, cap?, phones?, phonesForgot? }], removed: [{ id, at }] }. */
 export function loadState(dir = remoteDir()) {
   return readState(dir).state;
 }
@@ -323,7 +393,7 @@ async function openSecretFile(file) {
   let s;
   try { s = JSON.parse(bytes.toString('utf8')); } catch { throw new SecretError('unreadable', `${path.basename(file)} does not open to valid data`); }
   if (!s || typeof s !== 'object' || !s.identity || typeof s.token !== 'string') throw new SecretError('unreadable', `${path.basename(file)} has no keys in it`);
-  return { identity: s.identity, token: s.token, psks: s.psks || {}, devices: Array.isArray(s.devices) ? s.devices.filter((d) => d && typeof d.id === 'string') : [], createdAt: s.createdAt || null, mode: validMode(s.mode), scheme: f.scheme };
+  return { identity: s.identity, token: s.token, psks: s.psks || {}, devices: Array.isArray(s.devices) ? s.devices.filter((d) => d && typeof d.id === 'string').map(readDevice) : [], createdAt: s.createdAt || null, mode: validMode(s.mode), scheme: f.scheme };
 }
 
 /**

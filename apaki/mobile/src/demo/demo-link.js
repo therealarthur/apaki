@@ -7,7 +7,8 @@
  * Same surface as apaki/web/src/link.js where boot.js, shim.js and
  * account.js use it: state, pcName, relayHost, pairing, hello, device,
  * roomId, relay, onEvent, onReopen, start, wake, restart, stop, send,
- * request, supports.
+ * request, supports, and (2026-10-11, phone keys) phone and retryNow, which
+ * the demo never uses: no PC here asks about phones.
  *
  *   pairing (a scanned QR)   connecting -> pairing -> sas: shows the 6-digit
  *                            code screen and stays there (the PC would approve)
@@ -22,8 +23,9 @@ export const DEMO_SAS = '482913';
 export const budgetReason = () => null;
 
 export class Link {
-  constructor({ device, offer = null, pairing = null, name = '', expiresAt = null, on = {} }) {
+  constructor({ device, offer = null, pairing = null, name = '', expiresAt = null, phone = null, on = {} }) {
     this.device = device;
+    this.phone = phone;
     this.expiresAt = expiresAt || null;
     this.offer = offer;
     this.pairing = pairing;
@@ -80,6 +82,10 @@ export class Link {
   }
 
   wake() {}
+
+  retryNow() {
+    this.restart();
+  }
 
   restart() {
     if (this.state !== 'open') return;

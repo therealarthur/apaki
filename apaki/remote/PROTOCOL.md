@@ -247,7 +247,8 @@ phone; both use `wire.js`):
 ```
 phone -> PC   { t: 'cmd', cmd }               one engine command, the same shape the desktop window sends
 PC -> phone   { t: 'hello', v, pcName, ops }  right after the channel opens; ops = what this phone may send
-                                              (since 2026-10-10 also features, expiresAt; asAccount for an account device)
+                                              (since 2026-10-10 also features, expiresAt, mode, cap; asAccount for an account
+                                              device; since 2026-10-11 also nonce, see Phone keys below)
               { t: 'lifetime', expiresAt }    the PC user changed how long this phone stays paired (null: forever)
               { t: 'evs', list }              engine events, batched (25 ms or 64 KiB, whichever comes first)
 either way    { t: 'big', stream, bytes }     a message larger than one record, then CHUNK records of
@@ -262,6 +263,30 @@ ever acts on its own panes, and only events about them (plus the folder,
 Glass and index broadcasts) go back to it. A phone that reconnects sends
 `attach` for each pane it had open: same pane, same Claude Code process, its
 history sent again.
+
+### Phone keys on account connections (version 2, 2026-10-11)
+
+Full rules in `ENROLL.md`; the messages, all inside the channel:
+
+```
+PC -> phone   hello adds   nonce: 16 random bytes (base64url), new for each connection
+                           features 'phone-key' and 'enroll', in Private and Connected both
+phone -> PC   { t: 'via', name, pub, sig }    on a connection with asAccount: pub = the phone's own raw P-256 key,
+                           sig = ECDSA P-256 / SHA-256 (r||s, 64 bytes) over UTF8("apaki/v1 via") || nonce || pub || UTF8(name)
+PC -> phone   { t: 'phone-ok' }               this phone may use the PC; the ready event and cached events follow
+              { t: 'phone-wait', timeoutMs }  Private: the PC is asking its user (Allow or Block); the phone waits
+              (encrypted close, reason "This phone was blocked on <PC>. ...")   the phone is blocked
+phone -> PC   { t: 'account-link', reqId, pub, name, wait: true, enroll: true, phone: { pub, sig } }
+                           sig over UTF8("apaki/v1 enroll") || nonce || phone.pub || accountPub; answered at once,
+                           with no card, when the connection is a direct pairing allowed on the PC at most 15 minutes ago
+```
+
+An account connection is held after hello (no ready event, no cached events,
+no ops) until a valid version 2 via and the PC's rule for that phone let it
+in. The nonce ties each signature to one connection, so a recorded via or
+enrollment cannot be replayed; the phone key never leaves the phone. A page
+from before this sends a version 1 via (a name only) or none: after 8 seconds
+Connected lets it in as before and Private closes it.
 
 ## Known limits
 

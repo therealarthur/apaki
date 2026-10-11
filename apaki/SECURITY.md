@@ -82,7 +82,9 @@ the record; where it says "today", read it with this list.
   existing installs; Private is opt-in.** Private refuses account-link
   ("This PC only accepts phones paired with its code."), and on the switch
   offers to remove linked account devices; kept ones are paused (the
-  handshake answers them like an unknown device). The mode is also in
+  handshake answers them like an unknown device; since 2026-10-11 they
+  connect and each phone behind one is asked on the PC, see the status
+  section after this one). The mode is also in
   secret.json, so a rebuilt state.json keeps a Private choice. hello
   carries mode; connected phones hear changes.
 - **Account links need approval on the PC (5 item 2, 1.3 item 4).** In
@@ -131,6 +133,70 @@ the record; where it says "today", read it with this list.
 
 Not done here: items 5, 6, 8 to 12 and 14 to 20 of section 5, the rest of
 section 7's wording outside FEATURES.md and phone.js, and the native app.
+
+## Status after phone keys and enrollment (2026-10-11)
+
+Done since (Claude Code, Sonnet 5.5, PC side; the phone side is built beside
+it; the contract is apaki/remote/ENROLL.md; code in apaki/engine/remote.js,
+remote-store.js, engine.js, apaki/ui/phone.js; tests in
+test/apaki-remote-enroll.test.js, apaki-remote-durable.test.js and the other
+remote tests). It changes what Private means and adds one automatic path, so
+read the "Modes" bullet above and 4.1 and 4.3 with this.
+
+- **Private now means: every phone needs an in-person OK.** Version 1 Private
+  refused account links and shut linked account devices out. Version 2
+  Private lets an account device connect, but the account's key is shared by
+  every phone signed in to it, so the PC could not tell its phones apart. Each
+  phone now has its own key, made on the phone and never leaving it (not in
+  the vault, not sent to a server), and proves it on every account connection:
+  hello carries a fresh nonce for the connection, and the phone signs it with
+  its key (`via`). Until that proof checks out the account connection is held:
+  no ready event, no cached events, no ops. Then the PC applies its rule per
+  phone: a phone scanned at the PC (enrolled) or allowed with a click is let
+  in; one the PC has never seen, or that Connected let in by itself (auto),
+  waits for Allow or Block on the PC (3 minutes, then it is closed and asked
+  again next time); a blocked one is closed. Switching to Private closes the
+  connections of auto phones and of pages that send no phone key, so they are
+  asked on reconnecting; removing the account devices is still offered.
+- **Connected, the default, lets a new phone in and says so.** The PC adds
+  it as auto and shows "New phone connected: <name>" with Block, so signing in
+  on a new iPhone needs nobody at the PC, as Arthur chose. A blocked phone is
+  closed with a message that stops it reconnecting through the account. At
+  most 20 phones are remembered per account (the least recently seen one that
+  is not blocked is dropped; asked again if it returns).
+- **What this adds against the earlier design.** A recorded via cannot be
+  replayed on another connection (the nonce is per connection), the relay or
+  a server cannot swap in another key (the signature covers the phone key and
+  its name), and the PC learns which phone is behind an account connection
+  from a key, not from a name the page chose. Pages from before this send no
+  phone key: Connected lets them in after 8 seconds as before, Private closes
+  them ("Update the page: this PC asks about each phone.").
+- **Enrollment: why the PC adds an account with no card here.** Scanning the
+  PC's code is already the in-person act: the person is at the PC and clicked
+  Allow. Right after it, the phone that paired may add its Apaki account
+  (account-link with enroll) without a second card, in Private too, when
+  all hold: the connection is a direct pairing, allowed on this PC at most 15
+  minutes ago, and the request carries a signature by that phone's key over
+  this connection's nonce, the phone key and the account key. The account
+  device gets that phone's access and lifetime, and the phone is recorded as
+  enrolled. Our servers cannot inject this, because the channel is end to end
+  (only a device the PC paired can send into it), and the phone key never
+  leaves the phone. Anything else is the earlier rule: Connected asks on the
+  PC, Private refuses.
+- **What enrollment does not cover.** The phone page is code we serve (1.3). A
+  page that was swapped while a person pairs could send its own account key
+  inside that 15 minute window and get an account device with no card, where
+  Connected used to ask and Private to refuse. The same page already holds
+  everything the paired phone can do, but an account device is reachable from
+  other devices without that page. The PC's check of the page before it shows
+  a code (5 item 1) and its hourly re-check are what narrow this; the account
+  device only ever has the access the person chose at Allow, and Remove cuts
+  it off.
+- **Still true.** Whoever holds the account's passkey can still reach the
+  account's PCs in Connected (new phones are let in and shown); in Private
+  they reach the PC only as far as the person at the PC allows each phone. A
+  stolen, already allowed phone stays allowed until the person blocks it in
+  the Phone sheet (Block, Allow and Forget on each phone under its account).
 
 ## 1. What our servers can and cannot do today
 
@@ -609,7 +675,7 @@ me."
 | Pairing | QR plus code, per phone | QR once from any phone, then any signed-in phone |
 | Server state | none | account record and vault ciphertext |
 | Client code from our server | none (native app) or your own host | the web page from apaki.myrlin.io, or the native app |
-| Who can reach the PC | phones paired with its QR and approved on it | those, plus anyone holding the account's passkey |
+| Who can reach the PC | phones paired with its QR and approved on it, and (since 2026-10-11) account phones allowed on the PC one by one | those, plus anyone holding the account's passkey (new phones are shown on the PC) |
 | New device without approval on the PC | never | never (after item 2 in section 5) |
 | Presence queries | none | yes |
 | Push notifications | no | later, encrypted end to end |

@@ -23,6 +23,12 @@
  *     when the phone page cannot be checked, with "Pair without checking
  *     the page" saying what it risks; and why phone access went off when
  *     the hourly page check found a change.
+ *   - (2026-10-11, apaki/remote/ENROLL.md) phone keys: under each Apaki
+ *     account, the phones that connected through it (name, state, last
+ *     seen) with Block, Allow and Forget; in Private the "<phone> wants to
+ *     connect" card with Allow and Block (every new phone behind an account
+ *     needs an OK here); in Connected the "New phone connected" lines with
+ *     Block and Dismiss. Private no longer pauses accounts.
  *
  * The engine does the work (apaki/engine/remote.js): this file sends the
  * remote* ops and draws ev 'remote'. The phone's name comes from the phone,
@@ -108,6 +114,9 @@ function lifeSeg(on, k, id = '', days = LIFETIMES) {
   return `<div class="seg ph-life" role="radiogroup" aria-label="How long it stays paired">${opt('', 'Forever')}${days.map((d) => opt(String(d), `${d} day${d === 1 ? '' : 's'}`)).join('')}</div>`;
 }
 
+/** What each phone key's state says on its row (ENROLL.md). */
+const PHONE_STATE = { enrolled: 'Added in person', allowed: 'Allowed', auto: 'Let in by itself', pending: 'Waiting for you', blocked: 'Blocked' };
+
 const STATE_TEXT = {
   off: ['Off', 'Phones you paired cannot reach this PC until you turn this on.'],
   unconfigured: ['Not set up', 'The Apaki relay is not deployed yet, so a phone has no way to reach this PC. Phone access starts working once it is (to try a local relay, start Apaki with APAKI_RELAY_URL set).'],
@@ -153,7 +162,8 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     button.classList.toggle('on', on);
     button.classList.toggle('live', live.length > 0);
     button.innerHTML = `${phoneGlyph(live.length > 0)}<span>Phone</span>${live.length > 1 ? `<span class="ph-n">${live.length}</span>` : ''}`;
-    button.title = live.length ? `${live.map((d) => d.name).join(', ')} connected` : st?.enabled ? 'Phone access is on' : 'Use Apaki from your phone';
+    const fresh = st?.notices?.[0];
+    button.title = fresh ? `New phone connected: ${fresh.name}` : live.length ? `${live.map((d) => d.name).join(', ')} connected` : st?.enabled ? 'Phone access is on' : 'Use Apaki from your phone';
   }
 
   function stopTick() {
@@ -204,6 +214,40 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     return `${done}<div class="ph-start"><button class="primary" data-k="pair">${p ? 'Show a new code' : 'Pair a phone'}</button><span>${p ? 'That code expired.' : PAIR_HINT}</span></div>`;
   }
 
+  /** The phone keys behind an Apaki account (ENROLL.md): state, last seen, and Block, Allow and Forget for each. */
+  function phonesList(d) {
+    const phones = d.phones || [];
+    if (!phones.length) return '';
+    const btn = (k, label, p) => `<button type="button" data-k="${k}" data-acct="${esc(d.id)}" data-phone="${esc(p.id)}">${label}</button>`;
+    const rows = phones.map((p) => {
+      const seen = p.online ? '<span class="ph-live">Connected now</span>' : `Last seen ${esc(ago(p.lastSeen) || 'never')}`;
+      const first = p.firstSeen ? ` · first seen ${esc(day(p.firstSeen))}` : '';
+      const acts = `${p.state === 'blocked' ? '' : btn('phone-block', 'Block', p)}${p.state === 'enrolled' || p.state === 'allowed' ? '' : btn('phone-allow', 'Allow', p)}${btn('phone-forget', 'Forget', p)}`;
+      return `<li class="ph-phone" data-state="${esc(p.state)}"><div class="ph-phone-t"><div class="ph-phone-n">${esc(p.name || 'Phone')}</div><div class="ph-dev-m">${esc(PHONE_STATE[p.state] || p.state)} · ${seen}${first}</div></div><div class="ph-phone-a">${acts}</div></li>`;
+    }).join('');
+    return `<ul class="ph-phones" aria-label="Phones that connected through this account">${rows}</ul>`;
+  }
+
+  /** Private: a phone behind an Apaki account waits for this PC's OK (status phoneRequest). */
+  function phoneAskBlock() {
+    const r = st?.phoneRequest;
+    if (!r) return '';
+    const data = `data-acct="${esc(r.accountDeviceId)}" data-phone="${esc(r.phoneId)}"`;
+    return `<div class="ph-sas ph-phone-ask">
+        <div class="ph-step"><b>${esc(r.name || 'A phone')}</b> wants to connect</div>
+        <p>It signed in to the Apaki account <b>${esc(r.account || 'Apaki account')}</b> and waits. In Private mode every new phone needs your OK here. Allow it only if it is yours.</p>
+        <div class="ph-actions"><button data-k="phone-block" ${data}>Block</button><button class="primary" data-k="phone-allow" ${data}>Allow</button></div>
+      </div>`;
+  }
+
+  /** Connected: the "New phone connected" lines (the phone is in already; Block puts it out). */
+  function noticesBlock() {
+    const list = st?.notices || [];
+    if (!list.length) return '';
+    const rows = list.map((n) => `<div class="ph-notice"><div class="ph-notice-t">New phone connected: <b>${esc(n.name || 'Phone')}</b> <span>through ${esc(n.account || 'your Apaki account')}, ${esc(ago(n.at) || 'just now')}</span></div><div class="ph-actions"><button data-k="phone-block" data-acct="${esc(n.accountDeviceId)}" data-phone="${esc(n.phoneId)}">Block</button><button data-k="notice-dismiss" data-id="${esc(n.id)}">Dismiss</button></div></div>`).join('');
+    return `<div class="ph-notices">${rows}</div>`;
+  }
+
   function devicesBlock() {
     const list = st?.devices || [];
     const rows = list.map((d) => {
@@ -221,10 +265,9 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
       const dcap = d.cap || 'full';
       const capLink = ` · <button type="button" class="ph-life-btn" data-k="cap-edit" data-id="${esc(d.id)}" aria-expanded="${editCap === d.id}" title="Change what it may make Claude do">${esc(CAP_LABEL[dcap] || dcap)}</button>`;
       const capRow = editCap === d.id ? capSeg(dcap, 'cap-set', d.id, st?.caps || CAPS) : '';
-      const paused = acct && d.paused ? ' · <span class="ph-paused">Paused: Private mode</span>' : '';
       const sure = confirmRemove === d.id;
       const title = acct ? `Removes the account from this PC: every phone signed in to ${d.account || 'it'} stops reaching it` : 'Removes this phone: it can never reconnect';
-      return `<li class="ph-dev${d.connected ? ' live' : ''}${acct ? ' acct' : ''}">${phoneGlyph(d.connected)}<div class="ph-dev-t"><div class="ph-dev-n">${esc(d.name || 'Phone')}</div><div class="ph-dev-m">${meta}${paused}${capLink}${lifeLink}</div>${capRow}${lifeRow}</div><button class="ph-remove${sure ? ' sure' : ''}" data-k="revoke" data-id="${esc(d.id)}" title="${esc(title)}">${sure ? 'Remove for good' : 'Remove'}</button></li>`;
+      return `<li class="ph-dev${d.connected ? ' live' : ''}${acct ? ' acct' : ''}">${phoneGlyph(d.connected)}<div class="ph-dev-t"><div class="ph-dev-n">${esc(d.name || 'Phone')}</div><div class="ph-dev-m">${meta}${capLink}${lifeLink}</div>${capRow}${lifeRow}${acct ? phonesList(d) : ''}</div><button class="ph-remove${sure ? ' sure' : ''}" data-k="revoke" data-id="${esc(d.id)}" title="${esc(title)}">${sure ? 'Remove for good' : 'Remove'}</button></li>`;
     }).join('');
     const heading = list.some((d) => d.kind === 'account') ? 'Paired phones and accounts' : 'Paired phones';
     // Connected and no account yet: how to reach this PC from any device (Arthur, 2026-10-10).
@@ -240,13 +283,13 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     const accounts = (s.devices || []).filter((d) => d.kind === 'account');
     const opt = (v, label) => `<button type="button" role="radio" aria-checked="${s.mode === v}" class="${s.mode === v ? 'on' : ''}" data-k="mode" data-mode="${v}">${label}</button>`;
     const line = s.mode === 'private'
-      ? `Private: only phones paired with this PC's code reach it. Apaki accounts cannot be added, and phones never tell our servers which PCs they know. Phones still run the page from ${esc(host)}, which this PC checks before each code.`
+      ? `Private: every phone needs your OK here. A phone you scan a code with is added at once; any other phone, including one signed in to an Apaki account, waits until you allow it. An account is only added right after you pair a phone. Phones still run the page from ${esc(host)}, which this PC checks before each code.`
       : `Connected: phones signed in to an Apaki account can reach this PC too, once you allow that account here. Accounts live on ${esc(host)}, encrypted with your passkey.`;
     const n = accounts.length;
     const confirm = toPrivate ? `<div class="ph-sas ph-confirm">
         <div class="ph-step">Switch to Private</div>
-        <p>${n} Apaki account${n === 1 ? ' is' : 's are'} linked to this PC. In Private mode ${n === 1 ? 'it' : 'they'} cannot connect. Remove ${n === 1 ? 'it' : 'them'}, or keep ${n === 1 ? 'it' : 'them'} paused until you switch back.</p>
-        <div class="ph-actions"><button data-k="mode-cancel">Cancel</button><button data-k="mode-keep">Keep, paused</button><button class="primary" data-k="mode-remove">Remove ${n === 1 ? 'it' : 'them'}</button></div>
+        <p>${n} Apaki account${n === 1 ? ' is' : 's are'} linked to this PC. In Private mode each phone behind ${n === 1 ? 'it' : 'them'} is asked here when it connects, and phones that connected by themselves are asked again. Keep ${n === 1 ? 'it' : 'them'}, or remove ${n === 1 ? 'it' : 'them'}.</p>
+        <div class="ph-actions"><button data-k="mode-cancel">Cancel</button><button data-k="mode-keep">Keep</button><button class="primary" data-k="mode-remove">Remove ${n === 1 ? 'it' : 'them'}</button></div>
       </div>` : '';
     return `<div class="ph-mode"><div class="seg" role="radiogroup" aria-label="Phone access mode">${opt('connected', 'Connected')}${opt('private', 'Private')}</div><p class="ph-mode-t">${line}</p></div>${confirm}`;
   }
@@ -287,6 +330,8 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
       ${s.page?.text ? `<div class="ph-page" data-state="${esc(s.page.state)}" title="${esc(s.page.url || '')}">${esc(s.page.text)}</div>` : ''}
       ${s.page?.canSkip && s.enabled && !s.pairing && !s.request ? `<div class="ph-skip"><button data-k="pair-unchecked">Pair without checking the page</button><span>Your phone would run whatever ${esc(hostIn(s.page.url || s.web, 'the site'))} serves now, unverified. If that page was changed, it could use this pairing to do anything this phone is allowed to do on this PC.</span></div>` : ''}
       ${linkBlock()}
+      ${phoneAskBlock()}
+      ${noticesBlock()}
       ${pairBlock()}
       ${devicesBlock()}
       <div class="ph-foot"><span class="ph-keys">${esc(keys)}</span><button data-k="done">Done</button></div>
@@ -311,6 +356,12 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     on('linklife-pick', (b) => { linkLife = b.dataset.life || ''; render(); });
     on('link-allow', () => send('remoteLinkDecision', { approve: true, cap: linkCap || st?.linkRequest?.cap || 'full', lifetime: linkLife ? Number(linkLife) : null }));
     on('link-deny', () => send('remoteLinkDecision', { approve: false }));
+    // 2026-10-11: one phone key behind an account (the row, the Private card and the notice share these), and a notice's Dismiss.
+    const decide = (action) => (b) => send('remotePhoneDecision', { accountDeviceId: b.dataset.acct, phoneId: b.dataset.phone, action });
+    on('phone-allow', decide('allow'));
+    on('phone-block', decide('block'));
+    on('phone-forget', decide('forget'));
+    on('notice-dismiss', (b) => send('remoteNoticeDismiss', { id: b.dataset.id }));
     on('mode', (b) => {
       const m = b.dataset.mode;
       if (m === st?.mode) return;
@@ -372,10 +423,23 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     send('remoteStatus');
   }
 
+  /** Which phone key the Private card asks about now ('' for none), so a new question opens the sheet once. */
+  const askKey = (s) => (s?.phoneRequest ? `${s.phoneRequest.accountDeviceId}:${s.phoneRequest.phoneId}` : '');
+
   function handle(e) {
     const wasRequest = Boolean(st?.request);
     const wasLink = Boolean(st?.linkRequest);
+    const wasAsk = askKey(st);
+    const wasNotices = new Set((st?.notices || []).map((n) => n.id));
     st = e;
+    if (askKey(e) && askKey(e) !== wasAsk) {
+      // A phone behind an Apaki account waits for an OK (Private): like a pairing, it cannot wait for someone to open the sheet.
+      ding('ask');
+      open();
+    } else if ((e.notices || []).some((n) => !wasNotices.has(n.id))) {
+      // Connected: a new phone got in by itself; the person hears it, and the line waits in the sheet.
+      ding('done');
+    }
     if (e.linkRequest && !wasLink) {
       // A phone asks to add an Apaki account: like a pairing, it cannot wait for someone to open the sheet.
       linkCap = null;

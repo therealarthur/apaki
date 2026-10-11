@@ -19,6 +19,14 @@
  * CryptoKey, so this phone can read and update the vault without a passkey
  * prompt, and the server never sees it.
  *
+ * The phone key (2026-10-11, apaki/remote/ENROLL.md, version 2), one record
+ * keyed 'phone' in the same 'account' store (the database version stays 2, see
+ * below): { key, v, privateKey, publicKey, pub, created }. One ECDSA P-256 key
+ * pair per phone, made once; privateKey is a non-extractable CryptoKey, so page
+ * scripts can sign with it and never read it out. Signing out, forgetting a
+ * PC or an account never touch it: it is what tells this phone from the other
+ * phones of the same account on every PC.
+ *
  * Forgetting a PC deletes its record here; the PC still lists this phone
  * until it is removed there.
  *
@@ -45,6 +53,8 @@
  * pairing is still saved (any version 2 page reads it). New data goes into
  * the existing stores (records are free-form) or into a new database.
  */
+
+import { webPhoneKey } from './phonekey.js';
 
 const DB_NAME = 'apaki-phone';
 const DB_VERSION = 2;
@@ -228,4 +238,40 @@ export const saveAccount = (rec) => run('readwrite', (s) => s.put({ ...rec, key:
 export async function forgetAccount() {
   await run('readwrite', (s) => s.delete('me'), ACCOUNT);
   for (const pc of await listPcs()) if (pc.via === 'account') await forgetPc(pc.roomId);
+}
+
+/* the phone key (2026-10-11) */
+
+const PHONE_KEY = 'phone';
+
+/** A stored phone key record we can sign with: a non-extractable private CryptoKey and its 65-byte public key. */
+const usablePhoneRec = (r) => Boolean(r && r.privateKey && r.privateKey.extractable === false && r.pub?.length === 65);
+
+let phoneKeyP = null;
+
+/**
+ * This phone's key as { pub, sign(bytes) }: made the first time it is asked
+ * for and kept for good (IndexedDB, the 'account' store, record 'phone').
+ * The private key is non-extractable. Made inside one transaction that reads
+ * first, so two tabs asking at the same moment end up with the same key; a
+ * record that cannot sign (damaged) is the only thing that gets replaced.
+ * Throws a StorageError when storage cannot be used; the page then connects
+ * the older way (a PC without phone keys needs nothing, see link.js).
+ */
+export function getPhoneKey() {
+  phoneKeyP ||= (async () => {
+    const have = await run('readonly', (s) => s.get(PHONE_KEY), ACCOUNT);
+    if (usablePhoneRec(have)) return webPhoneKey(have);
+    const kp = await globalThis.crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
+    const pub = new Uint8Array(await globalThis.crypto.subtle.exportKey('raw', kp.publicKey));
+    const rec = { key: PHONE_KEY, v: 1, privateKey: kp.privateKey, publicKey: kp.publicKey, pub, created: new Date().toISOString() };
+    const winner = await run('readwrite', (s) => {
+      const g = s.get(PHONE_KEY);
+      g.onsuccess = () => { if (!usablePhoneRec(g.result)) s.put(rec); };
+      return g;
+    }, ACCOUNT);
+    return webPhoneKey(usablePhoneRec(winner) ? winner : rec);
+  })();
+  phoneKeyP.catch(() => { phoneKeyP = null; });
+  return phoneKeyP;
 }

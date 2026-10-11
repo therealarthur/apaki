@@ -24,6 +24,9 @@ Track B part 2, 2026-10-09 (Claude Code, Opus 5.5, for Arthur).
   no-ops), backed by the link. Re-attaches open panes after a reconnect.
 - `src/store.js`: paired PCs in IndexedDB. The phone's key pair is stored as
   non-extractable CryptoKey objects.
+- `src/phonekey.js`: the phone key's signatures (via, enroll) and the small
+  decisions around it: what to do after a scan, when to connect by itself,
+  what the page remembers per PC. No DOM, so the Node test runner checks it.
 - `src/scan.js`: in-page QR scanning where `BarcodeDetector` exists (Chrome
   and Edge on Android); everywhere else the camera app opens the link.
 - `src/web.css`: the phone layout over Apaki's `app.css` (drawer, tap
@@ -34,6 +37,48 @@ Track B part 2, 2026-10-09 (Claude Code, Opus 5.5, for Arthur).
   The icons are the Myrlin M, made from `apaki/icons/source/apaki-icon-1024.png`
   (192 and 512 px as they are; 180 px for iOS flattened onto the tile's own
   gradient); the favicon is `apaki/icons/source/apaki-icon.svg`.
+
+## The phone key and enrollment (2026-10-11)
+
+Contract: `apaki/remote/ENROLL.md` (version 2). Tests:
+`test/apaki-web-phone.test.js`.
+
+- **The phone key.** One ECDSA P-256 key pair per phone (per browser profile,
+  per app install), made the first time it is needed and kept. The private key
+  is non-extractable: on the web a CryptoKey in IndexedDB (`store.getPhoneKey`,
+  record `phone` in the existing `account` store, because the database version
+  must never be raised again, see `store.js`); in the iOS app a Secure Enclave
+  key made by `ApakiKeys.createKey`, its id and public key in the Keychain
+  (`native-store.js`; `pruneKeys` keeps it). It is not in the account's vault
+  and never leaves the phone. It tells the phones of one account apart, so a
+  PC can ask, allow or block this phone and not the whole account.
+- **Signed via.** On an account connection to a PC whose hello lists
+  `phone-key`, the page sends `{ t: 'via', name, pub, sig }`, with `sig` the
+  ECDSA signature over `"apaki/v1 via" || nonce || pub || name` (the nonce is
+  in the PC's hello). A PC without `phone-key` gets the older via, which is
+  `{ t: 'via', name }`. The PC then answers `phone-ok`, or `phone-wait` while its person
+  decides (the page shows "Waiting for permission"), or closes: a close that
+  starts "This phone was blocked on" ends that connection for good, is
+  remembered per PC (`apaki.blocked@<room>` in localStorage, until a
+  connection works again or the PC is forgotten) and the page does not
+  reconnect to that PC through the account by itself; "Nobody allowed this
+  phone on ..." offers Ask again. The page does not start the app until the
+  PC has said `phone-ok`.
+- **Enrollment.** Right after a scan completes and the PC's hello lists
+  `enroll`, the page adds the account to that PC with no second Allow: signed
+  in, it sends `account-link` with `enroll: true` and `phone: { pub, sig }` at
+  once and a toast says the PC was added; not signed in, a sheet offers "Next
+  time, sign in with Face ID" (create the passkey, or "I already have an Apaki
+  passkey", the button tap being the WebAuthn gesture) and then does the
+  same. "Not now" is remembered per PC (`apaki.enrollNotNow@<room>`). A Private
+  PC takes the enroll link too. A PC that does not list `enroll` keeps the
+  older way (a Connected PC asks its person once).
+- **Home, signed in.** The PCs with online or offline. With exactly one PC
+  online and every other one known to be offline, the page connects by itself,
+  unless the person just tapped Disconnect or came back from a blocked close
+  (one visit, `sessionStorage`), or has the PC list open.
+- If the phone key cannot be made (storage failing), the page works as before:
+  the older via, no enroll, nothing held.
 
 ## Build, try locally, deploy
 

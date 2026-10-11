@@ -18,6 +18,7 @@
  * remoteDisable, remotePairStart, remotePairCancel, remotePairDecision
  * { approve, lifetime? }, remoteDevices, remoteRevoke { deviceId },
  * remoteDeviceLifetime { deviceId, lifetime } and remoteReset (2026-10-10,
+ * see below), then remotePhoneDecision and remoteNoticeDismiss (2026-10-11,
  * see below). Each answers with
  * ev 'remote' (see statusInfo), which is also sent whenever something
  * changes: the relay connection, a phone connecting or leaving, a pairing
@@ -65,9 +66,10 @@
  *     2026-10-10: "make sure users can login on apaki to see their connected
  *     machines!") or 'private' (opt-in: only phones paired with this PC's
  *     code; account-link is refused, and an account device already linked
- *     is kept but cannot connect, or is removed with removeAccounts). hello
- *     carries mode, and connected phones get { t: 'mode', mode } when it
- *     changes.
+ *     is kept but cannot connect, or is removed with removeAccounts; since
+ *     2026-10-11 it can connect, each phone behind it asked on the PC, see
+ *     the last note). hello carries mode, and connected phones get
+ *     { t: 'mode', mode } when it changes.
  *   - account-link is never added silently: in Connected the PC holds it,
  *     answers { t: 'pending', reqId, timeoutMs } and asks its user
  *     (status linkRequest: who asks, the account, the access it would get);
@@ -87,6 +89,51 @@
  *     versions this PC verified (pages.json) and the one it builds, the way
  *     a phone browser asks; a file that differs turns phone access off and
  *     keeps the reason (state.json pageAlarm) for the Phone sheet.
+ *
+ * Phone keys, enrollment and Private as of version 2 (2026-10-11,
+ * ../remote/ENROLL.md; Arthur: "when a user clicks sign in with phone it
+ * should use the phones passkey to see what desktops are connected to that
+ * phone ... scanning the desktop phone pairing code should add that phone
+ * as a passkey as well", approved the same day with new phones following
+ * each PC's mode). WHY each piece is here:
+ *   - An account device is one key shared by every phone signed in to the
+ *     account, so the PC could not tell phones apart, nor ask about a new
+ *     one. Each phone now makes its own key (it never leaves the phone) and
+ *     proves it on every account connection: hello carries a per-connection
+ *     `nonce`, the phone answers { t: 'via', name, pub, sig } (ECDSA P-256
+ *     over "apaki/v1 via" || nonce || pub || name), so a recorded via cannot
+ *     be replayed on another connection and a server cannot swap the key.
+ *   - An account connection is HELD after hello (no ready event, no cached
+ *     events, no ops) until that proof is checked and the phone's record
+ *     under the account device allows it (the table in ENROLL.md):
+ *     blocked: encrypted close; enrolled or allowed: phone-ok; auto: ok in
+ *     Connected, asked in Private; new: in Connected it is let in and the PC
+ *     shows a notice with Block (nobody has to be at the PC), in Private it
+ *     waits ({ t: 'phone-wait' }) for Allow or Block on the PC, and is
+ *     closed when nobody answers in LINK_APPROVAL_MS. Private therefore no
+ *     longer refuses account devices (getDevice): every phone behind one
+ *     needs an in-person OK, and phones Connected let in by themselves
+ *     (auto) are asked again after a switch to Private (setMode).
+ *   - A page from before this sends no proof. After VIA_GRACE_MS Connected
+ *     lets it in as before (shown as "older page"); Private closes it, since
+ *     it cannot be told apart from any other phone of the account.
+ *   - Enrollment: the link rides a pairing the person just approved in
+ *     person (Allow on this PC), so the phone that scanned the code may add
+ *     its Apaki account within ENROLL_WINDOW_MS with no second card
+ *     ({ t: 'account-link', enroll: true, phone: { pub, sig } }, the sig over
+ *     "apaki/v1 enroll" || nonce || phone pub || account pub). The channel is
+ *     end to end, so our servers cannot inject such a message. The account
+ *     device gets that phone's access and lifetime, and the phone's key is
+ *     recorded under it as enrolled, so it is never asked in either mode.
+ *   - Window ops remotePhoneDecision { accountDeviceId, phoneId, action:
+ *     allow|block|forget } and remoteNoticeDismiss { id } (never in
+ *     PHONE_OPS). Status adds, per account device, phones (+ online), and
+ *     at the top phoneRequest (the Private card) and notices (the Connected
+ *     "New phone connected" lines).
+ *   - A forgotten phone leaves a tombstone (phonesForgot) and an explicit
+ *     Allow is stamped (decidedAt), so two engines sharing the folder merge
+ *     phones by id without bringing one back or undoing an Allow after a
+ *     Block; otherwise a Block wins, then the newer lastSeen (mergeState).
  */
 
 import os from 'node:os';
@@ -114,6 +161,16 @@ export const webUrl = (env = process.env) => env.APAKI_WEB_URL || WEB_DEFAULT;
 const PAGE_CHECK_MS = 10 * 60_000;
 /** At most this many Apaki accounts linked to one PC (ACCOUNTS.md). */
 const MAX_ACCOUNT_DEVICES = 8;
+/** An account connection waits this long after hello for a version 2 via; none means a page from before phone keys (ENROLL.md). */
+const VIA_GRACE_MS = 8_000;
+/** A phone paired through Allow on this PC this recently may add its Apaki account with no card (ENROLL.md). */
+const ENROLL_WINDOW_MS = 15 * 60_000;
+/** At most this many phone notices ("New phone connected") are kept, newest first. */
+const MAX_NOTICES = 5;
+/** What each signature is over (ENROLL.md): a label, the connection's nonce, then the keys (and the name for via). */
+const VIA_LABEL = 'apaki/v1 via';
+const ENROLL_LABEL = 'apaki/v1 enroll';
+const utf8 = new TextEncoder();
 
 /** True for an address that is a placeholder (or not an address at all). */
 export function isPlaceholder(url) {
@@ -147,10 +204,24 @@ const RECHECK_FIRST_MS = 2 * 60_000;
 const RECHECK_MS = 60 * 60_000;
 /** What a phone hears when it asks to link an account to a PC in Private mode (SECURITY.md 4.4). */
 const PRIVATE_LINK_ERROR = 'This PC only accepts phones paired with its code.';
-/** The encrypted close an account connection gets when the PC switches to Private (it says neither "removed" nor "expired", so the phone keeps the PC). */
+/**
+ * The encrypted close an account connection got when the PC switched to Private (it says neither "removed" nor "expired", so the phone keeps the PC).
+ * Version 1; since 2026-10-11 Private lets account devices connect and asks per phone (PRIVATE_ASK_CLOSE below), so nothing sends this now.
+ */
 const PRIVATE_CLOSE = 'This PC switched to Private mode: it only accepts phones paired with its code.';
 /** A phone page from before 2026-10-10 gives up on account-link after 10 s, long before a person can answer on the PC. */
 const OLD_PAGE_LINK_ERROR = 'This PC now asks you on the PC before it adds an Apaki account, and this phone page cannot wait for that answer. Pair this phone again with a new code from the PC to get the current page.';
+/**
+ * What a phone behind an Apaki account hears when the PC closes it (ENROLL.md). None of these says "removed" or
+ * "expired" (the phone would forget the PC); only BLOCKED says "blocked", which a page reads as "stop reconnecting".
+ */
+const blockedReason = (pc) => `This phone was blocked on ${pc}. Ask the person at the PC to allow it in its Phone sheet.`;
+const askTimeoutReason = (pc) => `Nobody allowed this phone on ${pc} in time.`;
+const OLD_PAGE_PRIVATE_CLOSE = 'Update the page: this PC asks about each phone.';
+const BAD_VIA_CLOSE = 'This phone could not prove its key to the PC, so the connection was closed.';
+const FORGOT_CLOSE = 'This PC forgot this phone. It is asked about again the next time it connects.';
+const PRIVATE_ASK_CLOSE = 'This PC switched to Private mode: each phone needs an OK on this PC. Connect again to ask.';
+const PHONES_FULL_CLOSE = 'This account already has 20 phones on this PC that cannot be dropped. Forget one in this PC\'s Phone sheet first.';
 
 /**
  * Why the relay closed this PC's socket for the rest of the day, for the
@@ -189,13 +260,67 @@ export function expiryFor(lifetime, now = Date.now()) {
 
 const later = (a, b) => (String(a || '') > String(b || '') ? a : b) || null;
 
+/** When a phone record was last decided or made: an explicit decision on the PC, else when it was first seen. */
+const phoneStamp = (p) => String(p.decidedAt || p.firstSeen || '');
+
+/**
+ * One phone's two records (mine, then the disk's; ENROLL.md): a Block wins,
+ * unless the other side has an explicit decision on the PC (an Allow, a scan
+ * in person) made after it; two blocks, or no block, keep the one seen more
+ * recently (a tie keeps the disk's). lastSeen is the later of the two.
+ */
+function pickPhone(a, b) {
+  let win;
+  if ((a.state === 'blocked') !== (b.state === 'blocked')) {
+    const [blocked, other] = a.state === 'blocked' ? [a, b] : [b, a];
+    win = other.decidedAt && String(other.decidedAt) > phoneStamp(blocked) ? other : blocked;
+  } else {
+    win = String(a.lastSeen || '') > String(b.lastSeen || '') ? a : b;
+  }
+  return { ...win, lastSeen: later(a.lastSeen, b.lastSeen) };
+}
+
+/**
+ * The phone records of one account device from two views of the same folder
+ * (mine, disk): by id, a record either side forgot (phonesForgot: { id, at })
+ * is gone unless it was first seen after the forgetting, then pickPhone.
+ * Returns { phones, phonesForgot }. Exported for the tests.
+ */
+export function mergePhoneLists(mine = {}, disk = {}) {
+  const forgot = new Map();
+  for (const r of [...(disk.phonesForgot || []), ...(mine.phonesForgot || [])]) {
+    if (!r?.id) continue;
+    const prev = forgot.get(r.id);
+    if (!prev || String(r.at || '') > String(prev.at || '')) forgot.set(r.id, r);
+  }
+  // Each side is filtered before they meet, so an older copy of a forgotten phone cannot beat a new record of it.
+  const alive = (list) => (list || []).filter((p) => p?.id && (!forgot.has(p.id) || String(p.firstSeen || '') > String(forgot.get(p.id).at || '')));
+  const byId = new Map();
+  for (const p of alive(mine.phones)) byId.set(p.id, { ...p });
+  for (const p of alive(disk.phones)) {
+    const prev = byId.get(p.id);
+    byId.set(p.id, prev ? pickPhone(prev, p) : { ...p });
+  }
+  return { phones: [...byId.values()], phonesForgot: [...forgot.values()].slice(-50) };
+}
+
+/** Puts a merged { phones, phonesForgot } on a device record (each key only when it has something). */
+function setPhoneLists(d, m) {
+  delete d.phones;
+  delete d.phonesForgot;
+  if (m.phones.length) d.phones = m.phones;
+  if (m.phonesForgot.length) d.phonesForgot = m.phonesForgot;
+  return d;
+}
+
 /**
  * Merges this engine's state with the state.json another engine wrote (same
  * room). Every mutation here reads the file first and writes right after, so
  * the file is the newest view of every field except the phones: a phone
  * either side knows stays unless either side removed it (removed: { id, at },
  * which wins over a pairing older than the removal), and lastSeen is the
- * later of the two. Exported for the tests.
+ * later of the two. The phone keys behind an account device merge by id
+ * (mergePhoneLists). Exported for the tests.
  */
 export function mergeState(mine, disk) {
   const removed = new Map();
@@ -208,7 +333,12 @@ export function mergeState(mine, disk) {
   for (const d of mine.devices || []) byId.set(d.id, { ...d });
   for (const d of disk.devices || []) {
     const prev = byId.get(d.id);
-    byId.set(d.id, prev ? { ...prev, ...d, lastSeen: later(prev.lastSeen, d.lastSeen) } : { ...d });
+    const merged = prev ? { ...prev, ...d, lastSeen: later(prev.lastSeen, d.lastSeen) } : { ...d };
+    // The file's list would replace mine whole above: merge the phone keys behind an account device instead (2026-10-11).
+    if (prev && (prev.phones || d.phones || prev.phonesForgot || d.phonesForgot)) {
+      setPhoneLists(merged, mergePhoneLists(prev, d));
+    }
+    byId.set(d.id, merged);
   }
   const devices = [...byId.values()].filter((d) => {
     const r = removed.get(d.id);
@@ -231,6 +361,21 @@ const REFUSED = {
 
 const hostOf = (url) => { try { return new URL(url).host; } catch { return String(url || ''); } };
 const unref = (t) => { t?.unref?.(); return t; };
+/** The bytes a signature covers: the parts one after the other (ENROLL.md). */
+function concatBytes(...parts) {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
+/** A phone's name as the PC shows it: no control characters, at most 64 characters. */
+const cleanName = (name) => String(name ?? '').replace(/[\u0000-\u001f]/g, '').slice(0, 64);
+
+/** Clears what a connection carries for phone keys (a new connection, or a phone starting over on the same one). */
+function resetPhoneState(c) {
+  clearTimeout(c.graceTimer);
+  Object.assign(c, { nonce: null, held: false, phone: null, ask: null, legacy: false, via: null, graceTimer: null, viaChain: Promise.resolve(), viaBusy: false });
+}
 
 export function createRemote(o) {
   return new RemoteBridge(o);
@@ -276,6 +421,13 @@ export class RemoteBridge {
     this.linkRequest = null;
     this.linkTimer = null;
     this.linkApprovalMs = o.linkApprovalMs ?? LINK_APPROVAL_MS;
+    // Phone keys behind account devices (ENROLL.md): Private-mode questions waiting for the person at the PC (askPhone;
+    // the first is shown as status phoneRequest), the "New phone connected" lines (newest first), and the timings
+    // (tests shorten them): how long an account connection waits for a version 2 via, and the enrollment window.
+    this.asks = [];
+    this.notices = [];
+    this.viaGraceMs = o.viaGraceMs ?? VIA_GRACE_MS;
+    this.enrollWindowMs = o.enrollWindowMs ?? ENROLL_WINDOW_MS;
     // Capability notes for phone panes that opened a session: sent after its history, which redraws the pane (route).
     this.capNotes = new Map();
     this.log = o.log || ((line) => process.stderr.write(`apaki remote: ${line}\n`));
@@ -425,7 +577,14 @@ export class RemoteBridge {
     const known = new Map(old.devices.map((d) => [d.id, d]));
     const psks = secret.psks || {};
     const devices = [];
-    for (const m of secret.devices || []) if (psks[m.id]) devices.push({ ...m, lastSeen: known.get(m.id)?.lastSeen ?? m.lastSeen ?? null });
+    for (const m of secret.devices || []) {
+      if (!psks[m.id]) continue;
+      const d = { ...m, lastSeen: known.get(m.id)?.lastSeen ?? m.lastSeen ?? null };
+      // The phone keys behind an account device (2026-10-11): what both files knew, so a rebuild never forgets a Block.
+      const k = known.get(m.id);
+      if (k && (k.phones || k.phonesForgot || m.phones || m.phonesForgot)) setPhoneLists(d, mergePhoneLists(k, m));
+      devices.push(d);
+    }
     // An older secret.json has no list: the old state's records whose secrets are here still work.
     for (const d of old.devices) if (psks[d.id] && !devices.some((x) => x.id === d.id)) devices.push({ ...d });
     // A phone with a secret here but no public key anywhere cannot be rebuilt (an older secret.json and no state.json).
@@ -532,9 +691,8 @@ export class RemoteBridge {
     const psk = this.secret?.psks?.[id];
     if (!d || !psk) return null;
     if (this.isExpired(d)) { this.expireSoon(); return null; }
-    // Private mode: an Apaki account's device is kept (switching back to Connected lets it in again) but no
-    // phone connects as it; the handshake answers it like an unknown device (SECURITY.md 4.1).
-    if (d.kind === 'account' && this.mode() !== 'connected') return null;
+    // 2026-10-11: Private no longer shuts an account device out (version 1 did, SECURITY.md 4.1). It connects, is held
+    // after hello, and each phone behind it needs an OK on this PC (applyPhone), so Private still means an in-person yes.
     return { id: d.id, pub: d.pub, psk, name: d.name, pairedAt: d.pairedAt };
   }
 
@@ -556,6 +714,13 @@ export class RemoteBridge {
     if (device.expiresAt) rec.expiresAt = device.expiresAt;
     // What it may make Claude do, chosen at Allow (remote-policy.js CAPS); kept explicitly, 'full' included.
     if (device.cap) rec.cap = capOf(device);
+    // The phone keys behind an account device (ENROLL.md): the ones given, else the ones the replaced record had
+    // (an account linked again keeps what the PC knows about its phones).
+    const prev = this.state.devices.find((d) => d.id === rec.id);
+    const phones = device.phones || prev?.phones;
+    if (device.kind === 'account' && phones?.length) rec.phones = phones;
+    const forgot = device.phonesForgot || prev?.phonesForgot;
+    if (device.kind === 'account' && forgot?.length) rec.phonesForgot = forgot;
     this.state.devices = [...this.state.devices.filter((d) => d.id !== rec.id), rec];
     // The same key paired again (an account linked again after it was removed): no longer removed.
     this.state.removed = (this.state.removed || []).filter((r) => r.id !== rec.id);
@@ -647,10 +812,15 @@ export class RemoteBridge {
   }
 
   /**
-   * Private or Connected (SECURITY.md 4.4). Private refuses account links,
-   * drops a pending one, and closes every account connection: the account
-   * devices are removed (removeAccounts) or kept but cannot connect until
-   * Connected again (getDevice). Every connected phone hears the new mode.
+   * Private or Connected (SECURITY.md 4.4). Private refuses account links
+   * (except enrollment, which rides an in-person pairing), drops a pending
+   * one, and handles the account devices: they are removed (removeAccounts),
+   * or kept, and then every account connection whose phone Connected let in
+   * by itself (auto), and every page that sends no phone key, is closed, so
+   * those phones are asked on the PC when they connect again (2026-10-11;
+   * before that every account connection was closed and none could connect).
+   * Phones scanned in person (enrolled) or allowed stay. Every connected
+   * phone hears the new mode.
    */
   async setMode(mode, { removeAccounts = false } = {}) {
     if (!store.PHONE_MODES.includes(mode)) throw new Error(`Phone access is Private or Connected, not "${String(mode).slice(0, 20)}".`);
@@ -663,7 +833,7 @@ export class RemoteBridge {
       if (this.linkRequest) this.clearLinkRequest(PRIVATE_LINK_ERROR);
       for (const d of this.state.devices.filter((x) => x.kind === 'account')) {
         if (removeAccounts) await this.revoke(d.id);
-        else await this.disconnectDevice(d.id, PRIVATE_CLOSE);
+        else await this.askAgain(d.id);
       }
     }
     for (const c of this.conns.values()) if (c.open) c.outbox?.send({ t: 'mode', mode, features: this.helloFeatures() }).catch(() => {});
@@ -689,7 +859,9 @@ export class RemoteBridge {
   helloFeatures() {
     // 'account-ask': account-link is held until the person at the PC answers (a page must send wait: true).
     // The 'account' of before 2026-10-10 (links added at once) is no longer offered, so an older page does not try.
-    return ['mode', 'cap', ...(this.mode() === 'connected' ? ['account-ask'] : [])];
+    // 'phone-key' and 'enroll' (2026-10-11, ENROLL.md), in Private and Connected both: this PC checks a phone key on
+    // account connections (a version 2 via), and accepts account-link with enroll right after an in-person pairing.
+    return ['mode', 'cap', 'phone-key', 'enroll', ...(this.mode() === 'connected' ? ['account-ask'] : [])];
   }
 
   /**
@@ -715,6 +887,8 @@ export class RemoteBridge {
     this.scheme = null;
     this.keysProblem = null;
     this.recovered = null;
+    this.asks = [];
+    this.notices = [];
     this.setStatus('off');
   }
 
@@ -810,11 +984,14 @@ export class RemoteBridge {
     const devices = new Set();
     for (const c of this.conns.values()) {
       clearTimeout(c.timer);
+      clearTimeout(c.graceTimer);
       c.outbox?.close();
-      if (c.open && c.device) devices.add(c.device.id);
+      if (c.open && c.device && !c.held) devices.add(c.device.id);
     }
     this.conns.clear();
     this.request = null;
+    // Phones waiting for an OK went with the socket: nobody to answer, nothing added (their records are dropped).
+    this.clearAsks();
     // The phone that asked to link an account is gone with the socket: nothing to answer, nothing added.
     this.linkRequest = null;
     clearTimeout(this.linkTimer);
@@ -865,6 +1042,10 @@ export class RemoteBridge {
 
   newConn(id) {
     const c = { id, session: null, device: null, open: false, inbox: null, outbox: null, chain: Promise.resolve(), timer: null, sessionsHash: null, lastMeaning: 0 };
+    // Phone keys behind an account device (ENROLL.md): nonce (new for each opened channel), held (an account connection
+    // waits after hello), phone ({ id, pub, name } once a version 2 via checked out), ask (the Private question it waits
+    // on), legacy (let in after VIA_GRACE_MS without a via: an older page), graceTimer, viaChain.
+    resetPhoneState(c);
     c.session = this.newSession();
     c.timer = unref(setTimeout(() => this.handshakeTimeout(c), this.handshakeMs));
     this.conns.set(id, c);
@@ -887,11 +1068,16 @@ export class RemoteBridge {
     if (!c) return;
     this.conns.delete(id);
     clearTimeout(c.timer);
+    clearTimeout(c.graceTimer);
     c.outbox?.close();
     let changed = false;
     if (this.request?.conn === id) { this.request = null; changed = true; }
     if (this.linkRequest?.conn === id) { this.dropLinkRequest(); changed = true; }
-    if (c.open && c.device) { this.afterLeave(c.device.id); changed = true; }
+    // A phone waiting for an OK that goes away takes its question with it (when it was the last one asking).
+    if (c.ask) { this.leaveAsk(c); changed = true; }
+    // A connection still held at hello was never "in": it does not keep the account's panes alive.
+    if (c.open && c.device && !c.held) { this.afterLeave(c.device.id); changed = true; }
+    if (c.held) changed = true;
     if (changed) this.pushStatus();
   }
 
@@ -906,6 +1092,8 @@ export class RemoteBridge {
       c.outbox?.close();
       c.outbox = null;
       c.sessionsHash = null;
+      this.leaveAsk(c);
+      resetPhoneState(c);
       clearTimeout(c.timer);
       c.timer = unref(setTimeout(() => this.handshakeTimeout(c), this.handshakeMs));
     }
@@ -937,18 +1125,37 @@ export class RemoteBridge {
     c.open = true;
     c.inbox = new Inbox({ maxBytes: MAX_PHONE_MESSAGE });
     c.outbox = new Outbox({ session: c.session, write: (f) => this.toRelay(c.id, f), onError: (e) => this.log(`to ${c.id}: ${e.message}`) });
-    this.cancelGrace(device.id);
-    this.touchDevice(device.id);
     // features: what this PC understands beyond commands (an older Apaki sends none; helloFeatures).
     const self = this.state.devices.find((d) => d.id === device.id);
     const cap = capOf(self);
+    // Each opened channel gets its own nonce (2026-10-11): a phone key's proof and an enrollment are signed over it,
+    // so neither can be replayed on another connection (ENROLL.md).
+    c.nonce = randomBytes(16);
+    // An Apaki account's device is shared by every phone signed in to the account: the connection is HELD after hello
+    // (no ready event, no cached events, no ops) until the phone behind it proves its own key and this PC's rule for
+    // that phone lets it in (onVia, applyPhone). An older page sends no proof: viaGrace decides after VIA_GRACE_MS.
+    c.held = self?.kind === 'account';
+    if (!c.held) {
+      this.cancelGrace(device.id);
+      this.touchDevice(device.id);
+    }
     // expiresAt: when this phone's pairing runs out (null: never), so the phone can show it and explain an expiry.
     // mode (Private or Connected) and cap (what this phone may make Claude do), since 2026-10-10.
-    c.outbox.send({ t: 'hello', v: WIRE_VERSION, pcName: this.pcName, ops: this.phoneOps(), features: this.helloFeatures(), expiresAt: self?.expiresAt || null, mode: this.mode(), cap, ...(self?.kind === 'account' ? { asAccount: true } : {}) });
+    c.outbox.send({ t: 'hello', v: WIRE_VERSION, pcName: this.pcName, ops: this.phoneOps(), features: this.helloFeatures(), expiresAt: self?.expiresAt || null, mode: this.mode(), cap, nonce: b64urlEncode(c.nonce), ...(self?.kind === 'account' ? { asAccount: true } : {}) });
+    if (c.held) {
+      c.graceTimer = unref(setTimeout(() => this.viaGrace(c).catch((e) => this.log(`phone key grace: ${e.message}`)), this.viaGraceMs));
+    } else {
+      this.sendReady(c);
+    }
+    this.pushStatus();
+  }
+
+  /** The ready event and the cached broadcasts: what a connection gets once it is in (not before, for a held one). */
+  sendReady(c) {
+    const cap = capOf(this.state.devices.find((d) => d.id === c.device?.id));
     // The ready event a phone gets names the mode its panes start in, never the desktop's default (SECURITY.md 5 item 4).
     c.outbox.push({ ...phoneView(this.readyEvent()), mode: capDefaultMode(cap) });
     for (const ev of this.cache.values()) c.outbox.push(phoneView(ev));
-    this.pushStatus();
   }
 
   ended(c, ev) {
@@ -959,7 +1166,10 @@ export class RemoteBridge {
     let changed = false;
     if (this.request?.conn === c.id) { this.request = null; changed = true; }
     if (this.linkRequest?.conn === c.id) { this.dropLinkRequest(); changed = true; }
-    if (was && c.device) { this.afterLeave(c.device.id); changed = true; }
+    if (c.ask) { this.leaveAsk(c); changed = true; }
+    clearTimeout(c.graceTimer);
+    if (was && c.device && !c.held) { this.afterLeave(c.device.id); changed = true; }
+    if (was && c.held) changed = true;
     if (changed) this.pushStatus();
   }
 
@@ -973,13 +1183,15 @@ export class RemoteBridge {
       this.closeConn(c, 'bad message');
       return;
     }
+    // Held (an account connection that has not been let in yet): the only thing it may say is via (ENROLL.md).
+    if (c.held && !(msg && msg.t === 'via')) return;
     if (msg && msg.t === 'cmd') this.command(c, msg.cmd);
     else if (msg && msg.t === 'account-link') this.accountLink(c, msg).catch((e) => this.log(`account link: ${e.message}`));
     else if (msg && msg.t === 'account-unlink') this.accountUnlink(c, msg).catch((e) => this.log(`account unlink: ${e.message}`));
     else if (msg && msg.t === 'via') {
-      // Which phone is behind an account device's connection, for the Phone sheet.
-      c.via = String(msg.name || '').replace(/[\u0000-\u001f]/g, '').slice(0, 64);
-      this.pushStatus();
+      // Which phone is behind an account device's connection, for the Phone sheet; version 2 proves the phone's own key.
+      // One connection's vias are handled in order (a second one must see what the first one decided).
+      c.viaChain = c.viaChain.then(() => this.onVia(c, msg)).catch((e) => this.log(`via: ${e.message}`));
     }
   }
 
@@ -999,14 +1211,22 @@ export class RemoteBridge {
    * they serve to a phone can add a device to this PC. The Phone sheet then
    * shows the account and who linked it, and Remove cuts every account
    * phone off at once.
+   *
+   * Exception (2026-10-11, ENROLL.md): right after a pairing the person just
+   * approved on this PC, the phone that paired may add its account with no
+   * card, in Private too (enrollCheck, enrollAccount); everything else
+   * is as above.
    */
   async accountLink(c, msg) {
     const reqId = String(msg.reqId || '').slice(0, 40);
     const answer = (v) => c.outbox?.send({ t: 'account-linked', reqId, ...v }).catch(() => {});
     try {
-      if (this.mode() !== 'connected') { answer({ error: PRIVATE_LINK_ERROR, code: 'private' }); return; }
+      // Enrollment (2026-10-11, ENROLL.md): a phone paired through Allow on this PC a moment ago adds its account with no
+      // card, in Private too; anything else is the version 1 rule below (Connected asks, Private refuses).
+      const enroll = await this.enrollCheck(c, msg);
+      if (!enroll && this.mode() !== 'connected') { answer({ error: PRIVATE_LINK_ERROR, code: 'private' }); return; }
       // An older page gives up after 10 s; holding its request would leave an account device whose secret nobody has.
-      if (msg.wait !== true) { answer({ error: OLD_PAGE_LINK_ERROR, code: 'old-page' }); return; }
+      if (!enroll && msg.wait !== true) { answer({ error: OLD_PAGE_LINK_ERROR, code: 'old-page' }); return; }
       const raw = b64urlDecode(String(msg.pub || ''));
       if (raw.length !== 65 || raw[0] !== 4) throw new Error('that is not an account key');
       await globalThis.crypto.subtle.importKey('raw', raw, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
@@ -1014,6 +1234,7 @@ export class RemoteBridge {
       if (id === c.device.id) throw new Error('a device cannot link itself');
       const others = this.state.devices.filter((d) => d.kind === 'account' && d.id !== id);
       if (others.length >= MAX_ACCOUNT_DEVICES) throw new Error(`this PC already has ${MAX_ACCOUNT_DEVICES} Apaki accounts linked; remove one in its Phone sheet first`);
+      if (enroll) { answer(await this.enrollAccount(c, msg, raw, id, enroll)); return; }
       if (this.linkRequest) throw new Error('this PC is already asking about another Apaki account; answer that one on the PC first');
       const account = String(msg.name || '').replace(/[\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 48) || 'Apaki account';
       const self = this.state.devices.find((d) => d.id === c.device.id);
@@ -1091,6 +1312,434 @@ export class RemoteBridge {
     this.pushStatus();
   }
 
+  /* ===== phone keys behind an account device (apaki/remote/ENROLL.md, 2026-10-11) ===== */
+
+  /** An account device's record in the saved state, or null. */
+  accountRec(id) {
+    const d = this.state.devices.find((x) => x.id === id);
+    return d && d.kind === 'account' ? d : null;
+  }
+
+  /** True while the connection is the one this bridge knows and its channel is open. */
+  isLive(c) {
+    return this.conns.get(c.id) === c && c.open;
+  }
+
+  /**
+   * The phone's sign-in on an account connection: { t: 'via', name, pub, sig }
+   * (version 2) proves the phone's own key; { t: 'via', name } (version 1, an
+   * older page) only names it. A direct pairing may send a name too. A second
+   * version 2 via with another key on the same connection closes it.
+   */
+  async onVia(c, msg) {
+    if (!this.isLive(c)) return;
+    const self = this.state.devices.find((d) => d.id === c.device.id);
+    const name = cleanName(msg?.name);
+    if (self?.kind !== 'account' || msg.pub === undefined) {
+      if (c.phone) return; // its key is proven already: a version 1 via changes nothing
+      c.via = name;
+      this.pushStatus();
+      return;
+    }
+    if (c.phone) {
+      // The same key again is nothing new; another key on this connection is a phone trying to be two.
+      let same = false;
+      try { same = b64urlEncode(b64urlDecode(String(msg.pub))) === c.phone.pub; } catch { /* not even a key */ }
+      if (!same) await this.closeConn(c, BAD_VIA_CLOSE);
+      return;
+    }
+    // viaBusy: the grace timer must not decide while the proof is being checked.
+    c.viaBusy = true;
+    let proof;
+    try {
+      proof = await this.verifyVia(c, msg);
+    } catch (e) {
+      c.viaBusy = false;
+      this.log(`phone key from ${c.device.name || 'an account phone'} refused: ${e.message}`);
+      await this.closeConn(c, BAD_VIA_CLOSE);
+      return;
+    }
+    const phoneId = await deviceIdFor(proof.pub);
+    c.viaBusy = false;
+    if (!this.isLive(c)) return;
+    clearTimeout(c.graceTimer);
+    c.graceTimer = null;
+    c.phone = { id: phoneId, pub: b64urlEncode(proof.pub), name: name || 'Phone' };
+    c.via = c.phone.name;
+    await this.applyPhone(c);
+  }
+
+  /**
+   * Checks a version 2 via against this connection's nonce: the phone key is a
+   * P-256 point, and sig (64 bytes, r||s) is ECDSA / SHA-256 over
+   * "apaki/v1 via" || nonce || pub || name as the phone sent it. Returns
+   * { pub } (raw bytes) or throws.
+   */
+  async verifyVia(c, msg) {
+    if (!c.nonce) throw new Error('no nonce on this connection');
+    if (typeof msg.name !== 'string' || msg.name.length > 128) throw new Error('the name is not usable');
+    const pub = b64urlDecode(String(msg.pub || ''));
+    const sig = b64urlDecode(String(msg.sig || ''));
+    if (pub.length !== 65 || pub[0] !== 4) throw new Error('that is not a phone key');
+    if (sig.length !== 64) throw new Error('the signature is not 64 bytes');
+    const subtle = globalThis.crypto.subtle;
+    const key = await subtle.importKey('raw', pub, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const ok = await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, sig, concatBytes(utf8.encode(VIA_LABEL), c.nonce, pub, utf8.encode(msg.name)));
+    if (!ok) throw new Error('the signature does not match');
+    return { pub };
+  }
+
+  /**
+   * No version 2 via arrived within VIA_GRACE_MS of hello: an older page.
+   * Connected lets it in as before (no phone-ok: it would not know it; the
+   * Phone sheet says "older page"); Private closes it, since it cannot be told
+   * apart from any other phone of the account.
+   */
+  async viaGrace(c) {
+    c.graceTimer = null;
+    if (!this.isLive(c) || !c.held || c.phone || c.viaBusy) return;
+    if (this.mode() === 'connected') {
+      this.log(`${c.via || 'a phone'} behind ${c.device.name} sent no phone key; letting it in as an older page`);
+      this.letIn(c, { legacy: true });
+      return;
+    }
+    await this.closeConn(c, OLD_PAGE_PRIVATE_CLOSE);
+  }
+
+  /**
+   * Applies this PC's rule to a phone whose key is proven (the table in
+   * ENROLL.md): blocked is closed; enrolled or allowed is let in; auto is let
+   * in in Connected and asked in Private; a new phone is let in with a notice
+   * in Connected (recorded as auto) and asked in Private (recorded as pending).
+   */
+  async applyPhone(c) {
+    await this.syncBeforeWrite();
+    if (!this.isLive(c) || !c.phone) return;
+    const acct = this.accountRec(c.device.id);
+    if (!acct) { await this.closeConn(c, REMOVED_REASON); return; }
+    const p = c.phone;
+    const now = new Date().toISOString();
+    let rec = acct.phones?.find((x) => x.id === p.id);
+    if (rec?.state === 'blocked') { await this.closeConn(c, blockedReason(this.pcName)); return; }
+    const connected = this.mode() === 'connected';
+    if (rec && (rec.state === 'enrolled' || rec.state === 'allowed' || (rec.state === 'auto' && connected))) {
+      rec.lastSeen = now;
+      if (p.name) rec.name = p.name;
+      this.saveStateQuietly();
+      this.admit(c);
+      return;
+    }
+    if (!rec && connected) {
+      rec = this.newPhoneRecord(acct, p, 'auto', now);
+      if (!this.putPhone(acct, rec)) { await this.closeConn(c, PHONES_FULL_CLOSE); return; }
+      this.addNotice(acct, rec);
+      this.saveStateQuietly();
+      this.log(`${rec.name} connected through the Apaki account "${acct.account || acct.name}" for the first time`);
+      this.admit(c);
+      return;
+    }
+    // Private (an unknown phone, or one Connected let in by itself), or a question already open for this phone.
+    // A connection let in already (an older page whose key proof came late) is closed instead: it asks cleanly when it connects again.
+    if (!c.held) { await this.closeConn(c, PRIVATE_ASK_CLOSE); return; }
+    this.askPhone(c, acct, rec);
+  }
+
+  /** Tells the phone it is in (phone-ok), and lets a held connection through: ready event and cached events follow. */
+  admit(c) {
+    c.outbox?.send({ t: 'phone-ok' }).catch(() => {});
+    if (c.held) this.letIn(c);
+    else { c.legacy = false; this.pushStatus(); }
+  }
+
+  /** A held connection becomes a live one: no ready event or cache went out before this. legacy: let in without a key (an older page). */
+  letIn(c, { legacy = false } = {}) {
+    if (!c.held) return;
+    c.held = false;
+    clearTimeout(c.graceTimer);
+    c.graceTimer = null;
+    if (legacy) c.legacy = true;
+    this.cancelGrace(c.device.id);
+    this.touchDevice(c.device.id);
+    this.sendReady(c);
+    this.pushStatus();
+  }
+
+  /** A new phone record under an account device; firstSeen is always after the phone's last forgetting (mergePhoneLists). */
+  newPhoneRecord(acct, p, state, now) {
+    const tomb = acct.phonesForgot?.find((r) => r.id === p.id);
+    const first = tomb?.at && String(tomb.at) >= now ? new Date(Date.parse(tomb.at) + 1).toISOString() : now;
+    return { id: p.id, pub: p.pub, name: p.name || 'Phone', state, firstSeen: first, lastSeen: now };
+  }
+
+  /**
+   * Adds (or replaces) a phone record under an account device. At MAX_PHONES the
+   * least recently seen record that is not blocked goes (its connections are
+   * closed, it is asked about again as a new phone). False when every record is
+   * blocked, so nothing could be dropped.
+   */
+  putPhone(acct, rec) {
+    const list = acct.phones || (acct.phones = []);
+    const i = list.findIndex((x) => x.id === rec.id);
+    if (i >= 0) { list[i] = rec; return true; }
+    if (list.length >= store.MAX_PHONES) {
+      const seen = (x) => String(x.lastSeen || x.firstSeen || '');
+      const oldest = list.filter((x) => x.state !== 'blocked').sort((a, b) => (seen(a) < seen(b) ? -1 : seen(a) > seen(b) ? 1 : 0))[0];
+      if (!oldest) return false;
+      this.removePhone(acct, oldest.id);
+      this.closePhoneConns(acct.id, oldest.id, FORGOT_CLOSE).catch(() => {});
+    }
+    (acct.phones || (acct.phones = [])).push(rec);
+    return true;
+  }
+
+  /** Drops a phone record and remembers that it was forgotten (phonesForgot), so another engine's older copy cannot bring it back. */
+  removePhone(acct, phoneId) {
+    acct.phones = (acct.phones || []).filter((x) => x.id !== phoneId);
+    if (!acct.phones.length) delete acct.phones;
+    acct.phonesForgot = [...(acct.phonesForgot || []).filter((r) => r.id !== phoneId), { id: phoneId, at: new Date().toISOString() }].slice(-50);
+  }
+
+  /** Closes (encrypted, with `reason`) every connection of one phone key behind an account device, held or live. */
+  async closePhoneConns(accountId, phoneId, reason) {
+    for (const c of [...this.conns.values()]) {
+      if (c.device?.id === accountId && c.phone?.id === phoneId) await this.closeConn(c, reason);
+    }
+  }
+
+  /** After a Block: when no phone is left connected through that account, its conversations stop now. */
+  closeIdleAccountPanes(accountId) {
+    for (const c of this.conns.values()) if (c.open && !c.held && c.device?.id === accountId) return;
+    this.cancelGrace(accountId);
+    this.closePhonePanes(accountId);
+  }
+
+  /** A state write that must not stop a connection (the in-memory record stands; the next write retries). */
+  saveStateQuietly() {
+    try { this.saveStateNow(); } catch (e) { this.log(`saving state: ${e.message}`); }
+  }
+
+  /** The "New phone connected" line for the Phone sheet (Connected: the phone is already in; Block is on the line). */
+  addNotice(acct, rec) {
+    const n = { id: b64urlEncode(randomBytes(8)), kind: 'new-phone', accountDeviceId: acct.id, phoneId: rec.id, name: rec.name, account: acct.account || '', at: new Date().toISOString() };
+    this.notices = [n, ...this.notices.filter((x) => !(x.accountDeviceId === acct.id && x.phoneId === rec.id))].slice(0, MAX_NOTICES);
+  }
+
+  /** remoteNoticeDismiss: the line goes away; the phone stays as it is. */
+  noticeDismiss(id) {
+    this.notices = this.notices.filter((n) => n.id !== id);
+  }
+
+  /**
+   * Private: a phone the PC has not been told to trust waits on its connection
+   * ({ t: 'phone-wait', timeoutMs }) while the Phone sheet asks Allow or Block
+   * (status phoneRequest). One question per phone key; more connections of the
+   * same phone join it. Nobody answering in LINK_APPROVAL_MS closes them.
+   */
+  askPhone(c, acct, rec) {
+    const p = c.phone;
+    const now = new Date().toISOString();
+    let ask = this.asks.find((a) => a.accountDeviceId === acct.id && a.phoneId === p.id);
+    if (!ask) {
+      if (rec) {
+        // Kept to go back to when nobody answers (auto stays auto); pending itself is never saved.
+        if (rec.state !== 'pending') rec.prev = rec.state;
+        rec.state = 'pending';
+        rec.lastSeen = now;
+        if (p.name) rec.name = p.name;
+      } else {
+        rec = this.newPhoneRecord(acct, p, 'pending', now);
+        if (!this.putPhone(acct, rec)) { this.closeConn(c, PHONES_FULL_CLOSE).catch(() => {}); return; }
+      }
+      ask = { accountDeviceId: acct.id, phoneId: p.id, name: rec.name, account: acct.account || '', exp: Date.now() + this.linkApprovalMs, conns: new Set(), timer: null };
+      const mine = ask;
+      ask.timer = unref(setTimeout(() => this.askTimeout(mine).catch((e) => this.log(`phone question: ${e.message}`)), this.linkApprovalMs));
+      this.asks.push(ask);
+      this.log(`${rec.name} asks to connect through the Apaki account "${acct.account || acct.name}"; waiting for an answer on the PC`);
+    }
+    ask.conns.add(c.id);
+    c.ask = ask;
+    c.outbox?.send({ t: 'phone-wait', timeoutMs: Math.max(1000, ask.exp - Date.now()) }).catch(() => {});
+    this.pushStatus({ phoneRequested: true });
+  }
+
+  /** Ends a question without a word: its timer stops, and the connections that waited on it stop waiting. Returns them. */
+  takeAsk(ask) {
+    this.asks = this.asks.filter((a) => a !== ask);
+    clearTimeout(ask.timer);
+    ask.timer = null;
+    const conns = [];
+    for (const id of ask.conns) {
+      const c = this.conns.get(id);
+      if (c) { c.ask = null; conns.push(c); }
+    }
+    ask.conns.clear();
+    return conns;
+  }
+
+  /** A waiting connection is gone: when it was the last one asking, the question and its pending record go. */
+  leaveAsk(c) {
+    const ask = c.ask;
+    if (!ask) return;
+    c.ask = null;
+    ask.conns.delete(c.id);
+    if (ask.conns.size) return;
+    this.takeAsk(ask);
+    this.revertPending(ask.accountDeviceId, ask.phoneId);
+  }
+
+  /** A pending record nobody answered: a phone that was auto goes back to auto, a new one is dropped (the next try asks again). */
+  revertPending(accountId, phoneId) {
+    const acct = this.accountRec(accountId);
+    const rec = acct?.phones?.find((x) => x.id === phoneId);
+    if (!rec || rec.state !== 'pending') return;
+    if (rec.prev) {
+      rec.state = rec.prev;
+      delete rec.prev;
+    } else {
+      acct.phones = acct.phones.filter((x) => x.id !== phoneId);
+      if (!acct.phones.length) delete acct.phones;
+    }
+    this.saveStateQuietly();
+  }
+
+  async askTimeout(ask) {
+    if (!this.asks.includes(ask)) return;
+    this.log(`nobody allowed ${ask.name} on ${this.pcName} in time`);
+    const conns = this.takeAsk(ask);
+    this.revertPending(ask.accountDeviceId, ask.phoneId);
+    for (const c of conns) await this.closeConn(c, askTimeoutReason(this.pcName));
+    this.pushStatus();
+  }
+
+  /** Every open question ends silently (the relay socket went, phone access was turned off, or started over). */
+  clearAsks() {
+    for (const ask of [...this.asks]) {
+      this.takeAsk(ask);
+      this.revertPending(ask.accountDeviceId, ask.phoneId);
+    }
+  }
+
+  /**
+   * The switch to Private with the account devices kept: connections whose
+   * phone Connected let in by itself (auto), and pages that sent no phone key,
+   * are closed so those phones are asked on the PC when they connect again.
+   * Phones scanned in person or allowed stay connected; a connection that is
+   * still being checked meets Private's rules when it gets its answer.
+   */
+  async askAgain(accountId) {
+    const acct = this.accountRec(accountId);
+    for (const c of [...this.conns.values()]) {
+      if (!c.open || c.device?.id !== accountId || c.ask) continue;
+      if (c.phone) {
+        const rec = acct?.phones?.find((x) => x.id === c.phone.id);
+        if (rec && (rec.state === 'enrolled' || rec.state === 'allowed')) continue;
+        if (c.held) continue; // its answer is being worked out (applyPhone reads the mode then)
+        await this.closeConn(c, PRIVATE_ASK_CLOSE);
+      } else if (!c.held) {
+        await this.closeConn(c, OLD_PAGE_PRIVATE_CLOSE);
+      }
+    }
+  }
+
+  /**
+   * remotePhoneDecision from the Phone sheet. allow: the phone is trusted from
+   * now on (state allowed; a phone waiting at the Private card is let in); block:
+   * state blocked, its connections are closed with BLOCKED and its conversations
+   * stop when no other phone of the account is connected; forget: the record is
+   * dropped, its connections close, and it is a new phone next time.
+   */
+  async phoneDecision(accountDeviceId, phoneId, action) {
+    if (!['allow', 'block', 'forget'].includes(action)) throw new Error('A phone can be allowed, blocked or forgotten.');
+    await this.syncBeforeWrite();
+    const acct = this.accountRec(accountDeviceId);
+    if (!acct) throw new Error('That Apaki account is not linked to this PC any more.');
+    const rec = acct.phones?.find((x) => x.id === phoneId);
+    if (!rec) throw new Error('This PC does not know that phone any more.');
+    const now = new Date().toISOString();
+    const ask = this.asks.find((a) => a.accountDeviceId === accountDeviceId && a.phoneId === phoneId);
+    const persist = async () => { if (this.secret) await this.saveSecretNow(); this.saveStateNow(); };
+    this.notices = this.notices.filter((n) => !(n.accountDeviceId === accountDeviceId && n.phoneId === phoneId));
+    if (action === 'allow') {
+      delete rec.prev;
+      if (rec.state !== 'enrolled') rec.state = 'allowed';
+      rec.decidedAt = now;
+      await persist();
+      this.log(`${rec.name} was allowed through the Apaki account "${acct.account || acct.name}"`);
+      if (ask) for (const c of this.takeAsk(ask)) { c.outbox?.send({ t: 'phone-ok' }).catch(() => {}); this.letIn(c); }
+    } else if (action === 'block') {
+      delete rec.prev;
+      rec.state = 'blocked';
+      rec.decidedAt = now;
+      await persist();
+      this.log(`${rec.name} was blocked through the Apaki account "${acct.account || acct.name}"`);
+      if (ask) this.takeAsk(ask);
+      await this.closePhoneConns(accountDeviceId, phoneId, blockedReason(this.pcName));
+      this.closeIdleAccountPanes(accountDeviceId);
+    } else {
+      this.removePhone(acct, phoneId);
+      await persist();
+      this.log(`${rec.name} was forgotten for the Apaki account "${acct.account || acct.name}"`);
+      if (ask) this.takeAsk(ask);
+      await this.closePhoneConns(accountDeviceId, phoneId, FORGOT_CLOSE);
+    }
+  }
+
+  /**
+   * Enrollment (ENROLL.md): does this account-link ride an in-person pairing?
+   * It must say enroll: true with a phone key whose signature covers this
+   * connection's nonce, the phone key and the account key; come from a direct
+   * pairing (not an account device); and that pairing must have been allowed on
+   * this PC at most ENROLL_WINDOW_MS ago. Returns { phonePub, self } or null:
+   * anything less is not enrollment, and account-link follows version 1 (so a
+   * bad signature never adds anything silently).
+   */
+  async enrollCheck(c, msg) {
+    if (msg.enroll !== true || !msg.phone || typeof msg.phone !== 'object' || !c.nonce) return null;
+    const self = this.state.devices.find((d) => d.id === c.device.id);
+    if (!self || self.kind === 'account') return null;
+    const age = this.now() - Date.parse(self.pairedAt || '');
+    if (!Number.isFinite(age) || age < 0 || age > this.enrollWindowMs) return null;
+    try {
+      const accountPub = b64urlDecode(String(msg.pub || ''));
+      const phonePub = b64urlDecode(String(msg.phone.pub || ''));
+      const sig = b64urlDecode(String(msg.phone.sig || ''));
+      if (accountPub.length !== 65 || phonePub.length !== 65 || phonePub[0] !== 4 || sig.length !== 64) return null;
+      const subtle = globalThis.crypto.subtle;
+      const key = await subtle.importKey('raw', phonePub, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+      const ok = await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, sig, concatBytes(utf8.encode(ENROLL_LABEL), c.nonce, phonePub, accountPub));
+      return ok ? { phonePub, self } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Adds the account device for an enrollment: the pairing phone's access and
+   * lifetime, its phone key recorded as enrolled (so it is never asked, in
+   * either mode). An account already linked keeps its secret and the phones
+   * the PC knows (another phone scanned in person later adds itself the same
+   * way); its access and lifetime follow this pairing. Returns the answer.
+   */
+  async enrollAccount(c, msg, raw, id, { phonePub, self }) {
+    const account = String(msg.name || '').replace(/[\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 48) || 'Apaki account';
+    await this.syncBeforeWrite();
+    const now = new Date().toISOString();
+    const existing = this.accountRec(id);
+    const phoneId = await deviceIdFor(phonePub);
+    // Built aside and handed to addDevice with the rest, so it is one write (DPAPI makes each write slow).
+    const draft = { id, phones: (existing?.phones || []).map((x) => ({ ...x })), phonesForgot: existing?.phonesForgot ? [...existing.phonesForgot] : [] };
+    const phone = { ...this.newPhoneRecord(draft, { id: phoneId, pub: b64urlEncode(phonePub), name: self.name }, 'enrolled', now), decidedAt: now };
+    if (!this.putPhone(draft, phone)) throw new Error('this account already has 20 phones on this PC that cannot be dropped; forget one in its Phone sheet first');
+    const psk = existing && this.secret?.psks?.[id] ? this.secret.psks[id] : b64urlEncode(randomBytes(32));
+    const rec = await this.addDevice({
+      id, pub: b64urlEncode(raw), name: `Apaki account (${account})`, kind: 'account', account, by: self.name || c.device.name || 'a phone', psk,
+      pairedAt: existing?.pairedAt || now, cap: capOf(self), expiresAt: self.expiresAt || null, phones: draft.phones, phonesForgot: draft.phonesForgot,
+    });
+    this.log(`${self.name || 'a phone'} added the Apaki account "${account}" right after pairing (enrolled, ${CAP_LABEL[capOf(self)]})`);
+    this.pushStatus({ linked: { id: rec.id, name: rec.name } });
+    return { deviceId: id, psk, pcName: this.pcName };
+  }
+
   async closeConn(c, reason) {
     const f = await c.session.close(reason).catch(() => null);
     if (f) this.toRelay(c.id, f);
@@ -1164,7 +1813,8 @@ export class RemoteBridge {
 
   toDevice(deviceId, ev) {
     for (const c of this.conns.values()) {
-      if (!c.open || c.device?.id !== deviceId) continue;
+      // A held account connection (not let in yet) hears nothing, not even events about the account's other phones.
+      if (!c.open || c.held || c.device?.id !== deviceId) continue;
       if (ev.ev === 'sessions') {
         // The window asks for the list every 15 s; send it only when it changed.
         const h = hashText(JSON.stringify([ev.items, ev.folders, ev.billing]));
@@ -1178,7 +1828,7 @@ export class RemoteBridge {
   broadcast(ev) {
     const now = Date.now();
     for (const c of this.conns.values()) {
-      if (!c.open) continue;
+      if (!c.open || c.held) continue;
       if (ev.ev === 'meaning' && ev.stage === 'embedding') {
         if (now - c.lastMeaning < MEANING_EVERY_MS) continue;
         c.lastMeaning = now;
@@ -1228,7 +1878,7 @@ export class RemoteBridge {
   /* ---------- a phone's conversations when it goes away ---------- */
 
   afterLeave(deviceId) {
-    for (const c of this.conns.values()) if (c.open && c.device?.id === deviceId) return;
+    for (const c of this.conns.values()) if (c.open && !c.held && c.device?.id === deviceId) return;
     if (this.graceTimers.has(deviceId)) return;
     this.graceTimers.set(deviceId, unref(setTimeout(() => {
       this.graceTimers.delete(deviceId);
@@ -1275,6 +1925,9 @@ export class RemoteBridge {
         case 'remoteMode': await this.setMode(String(c.mode || ''), { removeAccounts: c.removeAccounts === true }); break;
         case 'remoteDeviceCap': await this.setCap(String(c.deviceId || ''), c.cap); break;
         case 'remoteLinkDecision': await this.decideLink(c.approve === true, { cap: c.cap, lifetime: c.lifetime }); break;
+        // 2026-10-11 (ENROLL.md): Allow, Block or Forget one phone key behind an account device, and dismiss a "New phone connected" line.
+        case 'remotePhoneDecision': await this.phoneDecision(String(c.accountDeviceId || ''), String(c.phoneId || ''), String(c.action || '')); break;
+        case 'remoteNoticeDismiss': this.noticeDismiss(String(c.id || '')); break;
         default: break; // remoteStatus, remoteDevices: the status below
       }
     } catch (e) {
@@ -1323,8 +1976,9 @@ export class RemoteBridge {
       const f = await c.session.close(reason).catch(() => null);
       if (f) this.toRelay(c.id, f);
     }
-    for (const c of this.conns.values()) { clearTimeout(c.timer); c.outbox?.close(); }
+    for (const c of this.conns.values()) { clearTimeout(c.timer); clearTimeout(c.graceTimer); c.outbox?.close(); }
     this.conns.clear();
+    this.clearAsks();
     this.closeSocket();
     for (const t of this.graceTimers.values()) clearTimeout(t);
     this.graceTimers.clear();
@@ -1526,6 +2180,8 @@ export class RemoteBridge {
     }
     this.cancelGrace(deviceId);
     this.closePhonePanes(deviceId);
+    // An account removed takes its phone keys and their "New phone connected" lines with it.
+    this.notices = this.notices.filter((n) => n.accountDeviceId !== deviceId);
   }
 
   /* ---------- status ---------- */
@@ -1544,10 +2200,15 @@ export class RemoteBridge {
   statusInfo() {
     const connected = new Set();
     const via = new Map(); // account device id -> the phones connected through it now
+    const online = new Set(); // `${account device id}:${phone id}`: phone keys with a connection that is in
     for (const c of this.conns.values()) {
-      if (!c.open || !c.device) continue;
+      // A held account connection (not let in yet) is not connected: the phone behind it may be refused.
+      if (!c.open || !c.device || c.held) continue;
       connected.add(c.device.id);
-      if (c.via) via.set(c.device.id, [...(via.get(c.device.id) || []), c.via]);
+      if (c.phone) online.add(`${c.device.id}:${c.phone.id}`);
+      // A phone key's own name; an older page (no key proof) is marked as such; a direct pairing's via is its plain name.
+      const label = c.phone ? c.phone.name : c.legacy ? `${c.via || 'A phone'} (older page)` : c.via;
+      if (label) via.set(c.device.id, [...(via.get(c.device.id) || []), label]);
     }
     return {
       ev: 'remote',
@@ -1577,13 +2238,18 @@ export class RemoteBridge {
       devices: this.state.devices.map((d) => ({
         id: d.id, name: d.name, pairedAt: d.pairedAt, lastSeen: d.lastSeen, expiresAt: d.expiresAt || null, connected: connected.has(d.id), panes: (this.engine.phonePanes?.(d.id) || []).length,
         cap: capOf(d),
-        ...(d.kind === 'account' ? { kind: 'account', account: d.account || '', by: d.by || '', via: via.get(d.id) || [], paused: this.mode() !== 'connected' } : {}),
+        // phones (2026-10-11, ENROLL.md): the phone keys behind an account device, with whether each is connected now.
+        // No paused flag any more: Private lets an account device connect and asks about each phone.
+        ...(d.kind === 'account' ? { kind: 'account', account: d.account || '', by: d.by || '', via: via.get(d.id) || [], phones: (d.phones || []).map((p) => ({ id: p.id, pub: p.pub, name: p.name, state: p.state, firstSeen: p.firstSeen || null, lastSeen: p.lastSeen || null, online: online.has(`${d.id}:${p.id}`) })) } : {}),
       })),
       // The QR address holds the one-time secret: it goes to the desktop window only. unchecked: shown without a page check.
       pairing: this.offer && !this.offer.used ? { url: this.offer.url, exp: this.offer.exp, unchecked: Boolean(this.offer.unchecked) } : null,
       request: this.request ? { sas: this.request.sas, name: this.request.device.name, id: this.request.device.id } : null,
       // An account-link waiting for the person at the PC: who asks, the account's name, the access offered first.
       linkRequest: this.linkRequest ? { id: this.linkRequest.id, account: this.linkRequest.account, by: this.linkRequest.by, via: this.linkRequest.via, cap: this.linkRequest.cap, exp: this.linkRequest.exp } : null,
+      // A phone key waiting for an Allow or Block in Private (the first question; the rest follow), and the "New phone connected" lines (Connected), newest first.
+      phoneRequest: this.asks[0] ? { accountDeviceId: this.asks[0].accountDeviceId, phoneId: this.asks[0].phoneId, name: this.asks[0].name, account: this.asks[0].account, exp: this.asks[0].exp } : null,
+      notices: this.notices.slice(0, MAX_NOTICES).map((n) => ({ ...n })),
     };
   }
 
@@ -1601,6 +2267,7 @@ export class RemoteBridge {
     clearTimeout(this.linkTimer);
     this.stopRecheck();
     for (const t of this.graceTimers.values()) clearTimeout(t);
-    for (const c of this.conns.values()) clearTimeout(c.timer);
+    for (const c of this.conns.values()) { clearTimeout(c.timer); clearTimeout(c.graceTimer); }
+    for (const a of this.asks) clearTimeout(a.timer);
   }
 }

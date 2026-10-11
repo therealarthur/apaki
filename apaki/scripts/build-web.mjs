@@ -51,7 +51,7 @@ const REMOTE = path.join(APAKI, 'remote');
 // app.js loads it only on the desktop.
 const UI_SKIP = new Set(['phone.js']);
 const uiFiles = () => fs.readdirSync(UI).filter((f) => /\.(js|css)$/.test(f) && !UI_SKIP.has(f) && fs.statSync(path.join(UI, f)).isFile());
-const WEB_FILES = ['boot.js', 'link.js', 'shim.js', 'store.js', 'scan.js', 'account.js', 'native.js', 'web.css'];
+const WEB_FILES = ['boot.js', 'link.js', 'shim.js', 'store.js', 'scan.js', 'account.js', 'native.js', 'phonekey.js', 'web.css'];
 const REMOTE_FILES = ['protocol.js', 'wire.js'];
 const RELAY_PLACEHOLDER = 'wss://relay.apaki.invalid';
 

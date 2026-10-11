@@ -38,7 +38,8 @@
  * "Session in use" card and takeover as one held by another app. Desktop ops:
  * remoteStatus, remoteEnable, remoteDisable, remotePairStart,
  * remotePairCancel, remotePairDecision, remoteDevices, remoteRevoke (ev
- * remote). attach re-sends a pane's state without restarting it (a phone that
+ * remote; since 2026-10-11 also remotePhoneDecision, remoteNoticeDismiss).
+ * attach re-sends a pane's state without restarting it (a phone that
  * reconnected).
  * Artifacts (2026-10-09, Arthur: like Codex's built-in artifacts, out of the
  * box): every pane's Claude Code gets Apaki's tools at runtime, through SDK
@@ -115,6 +116,8 @@ import { dropHeld, heldView, resetHeld, setHeld, takeForAutoSend } from './queue
 import { COMPACT_CHOICES, COMPACT_DEFAULT, compactSettings, loadPrefs, normalizeCompact, prefsFile, savePrefs } from './prefs.js';
 // The context meter before a conversation runs: its last call's usage, from the transcript (2026-10-10 night).
 import { estimateEvent, lastUsage } from './context-estimate.js';
+// The session list's times: the last message, not the file's modified time (2026-10-11).
+import { LastActive } from './last-active.js';
 import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
 // Signing in on a fresh install (2026-10-10, see "signing in to Claude" below).
 import { liveLogin } from '../../src/auth.js';
@@ -342,6 +345,9 @@ function subagentCount(id) {
  * headless ones are listed too, marked headless, and so is any transcript the
  * SDK's list skips (no prompt yet).
  */
+// When each conversation was last really used (last-active.js); cached per transcript version.
+const lastActive = new LastActive();
+
 async function loadSessions() {
   const memo = new Map();
   const loadInfos = (programmatic) => {
@@ -360,8 +366,11 @@ async function loadSessions() {
     if (it) byId.set(id, it);
   }
   state.byId = byId;
+  // Times and order follow the last real message, not the file's modified time (last-active.js, 2026-10-11).
+  const files = transcriptMap();
+  await lastActive.apply(byId.values(), files).catch((e) => process.stderr.write(`last active: ${e.message || e}\n`));
   state.items = [...byId.values()].sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
-  state.files = transcriptMap();
+  state.files = files;
   return term;
 }
 
@@ -1193,6 +1202,10 @@ const handlers = {
   remoteMode: (c) => remote.op(c),
   remoteDeviceCap: (c) => remote.op(c),
   remoteLinkDecision: (c) => remote.op(c),
+  // Allow, Block or Forget one phone key behind an Apaki account, and dismiss a "New phone connected" line (2026-10-11, ENROLL.md).
+  // Window only, like every remote* op: remote-policy.js never lists them for a phone.
+  remotePhoneDecision: (c) => remote.op(c),
+  remoteNoticeDismiss: (c) => remote.op(c),
   // The background host (host.js): its state, and exit once idle (an update) or now. Desktop only:
   // remote-policy.js does not allow them for phones.
   hostStatus: (c) => emit(hostControl({ ...c, op: 'hostStatus' })),
