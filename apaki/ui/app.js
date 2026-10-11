@@ -529,9 +529,28 @@ function closeTab(t, { confirmBusy = true } = {}) {
 }
 
 function newConversation(p) {
-  if (!p || p.busy || p.isViewer) { addTab(); return; }
-  p.cwd = ''; // home, like a new terminal; "Starts in" changes it
-  p.open(null, { warm: true });
+  // A new conversation is a new pane in the current tab, next to the focused one (Arthur, 2026-10-11: "a new
+  // conversation creates a new pane in the currently active tab, not a new tab"); it no longer replaces the
+  // focused conversation. A pane that is already a new, unsent conversation is reused; a full tab opens a new one.
+  if (p && !p.sessionId && !p.busy && !p.isViewer && !p.isBrowser) { focusPane(p); return; }
+  const t = activeTab();
+  if (!t || !t.root) { addTab(); return; }
+  if (L.count(t.root) >= L.MAX_PANES) {
+    (S.panes.get(t.focused) || p)?.note?.(`${L.MAX_PANES} panes is the most per tab; opened in a new tab instead.`, 'warn');
+    addTab();
+    return;
+  }
+  const base = p || focusedPane();
+  // Home folder, like a new terminal ("Starts in" changes it); the model, effort and mode of the pane it came from.
+  const np = createPane({ cwd: '', model: base?.model, effort: base?.effort, mode: base?.mode });
+  const anchor = t.focused && L.has(t.root, t.focused) ? t.focused : L.ids(t.root)[0];
+  t.root = L.insert(t.root, anchor, np.id, 'right');
+  t.focused = np.id;
+  layout(t);
+  np.open(null, { warm: true });
+  focusPane(np);
+  renderTabs();
+  save();
 }
 
 // The open "Start this conversation in" sheet (startfolder.js), if any.
