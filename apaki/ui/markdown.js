@@ -84,6 +84,13 @@ const LANG = {
   c: 'js', cpp: 'js', 'c++': 'js', java: 'js', cs: 'js', csharp: 'js', kotlin: 'js', swift: 'js', php: 'js', rb: 'py', ruby: 'py',
 };
 
+/** Same as /(^|\n)\s*$/.test(code.slice(0, i)), without rescanning all earlier lines. */
+function atLineStart(code, i) {
+  let j = i - 1;
+  while (j >= 0 && code[j] !== '\n' && /\s/.test(code[j])) j--;
+  return j < 0 || code[j] === '\n';
+}
+
 /**
  * Colours code with a single left-to-right scan: comments, strings, numbers,
  * keywords, function calls. Every piece of text is escaped on its own.
@@ -129,9 +136,9 @@ export function highlight(code, lang) {
       const w = word[0];
       const isKey = kind === 'sql' ? words.has(w.toLowerCase()) : words.has(w);
       if (isKey) out += span('key', w);
-      else if (kind === 'yaml' && /^\s*:/.test(code.slice(i + w.length)) && /(^|\n)\s*$/.test(code.slice(0, i))) out += span('fn', w);
+      else if (kind === 'yaml' && /^\s*:/.test(code.slice(i + w.length)) && atLineStart(code, i)) out += span('fn', w);
       else if (/^\s*\(/.test(code.slice(i + w.length))) out += span('fn', w);
-      else if (kind === 'sh' && /(^|\n)\s*$/.test(code.slice(0, i))) out += span('fn', w);
+      else if (kind === 'sh' && atLineStart(code, i)) out += span('fn', w);
       else out += esc(w);
       i += w.length; continue;
     }
