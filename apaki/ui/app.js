@@ -201,6 +201,8 @@ const host = {
   openTasksPanel: (p, anchor) => openTasksPanel(p, anchor),
   tasksChanged: (p) => tasksChanged(p),
   subagentCount: (id) => S.sessions.find((s) => s.id === id)?.subagents || 0,
+  // A conversation Claude Code deleted that Apaki's archive kept (engine archivedCopy, 2026-10-12): the pane says so at its top.
+  archivedCopy: (id) => Boolean(id && S.sessions.find((s) => s.id === id)?.archivedCopy),
   sessionTitle: (id) => S.sessions.find((s) => s.id === id)?.title || paneBySession(id)?.title || null,
   showSession: (id) => { const p = paneBySession(id); if (p) { const t = tabOf(p); if (t && t.id !== S.active) switchTab(t); focusPane(p); return; } const s = S.sessions.find((x) => x.id === id); if (s) openFromRail(s, { ctrlKey: true }); },
   dragPane: (p, e) => {
@@ -407,10 +409,13 @@ const RAIL_MIN = 220;
 const RAIL_MAX = 560;
 const RAIL_DEFAULT = 312;
 const RAIL_HIDE_AT = 150;
+// Under this width the wordmark steps down from the display size to the title size (app.css body.rail-narrow, 2026-10-12).
+const RAIL_WORDMARK_FULL = 300;
 
 function applyRail() {
   if (WEB) return;
   document.documentElement.style.setProperty('--rail', `${Math.round(S.railW || RAIL_DEFAULT)}px`);
+  document.body.classList.toggle('rail-narrow', (S.railW || RAIL_DEFAULT) < RAIL_WORDMARK_FULL);
   document.body.classList.toggle('rail-collapsed', Boolean(S.railCollapsed));
   if ($('railShow')) $('railShow').hidden = !S.railCollapsed;
 }
@@ -1610,6 +1615,8 @@ function renderRail() {
       s.terminal ? `<span class="live">terminal${s.terminal.status ? ` · ${esc(s.terminal.status)}` : ''}</span>` : '',
       s.headless ? '<span class="headless" title="Started headless and never typed into: claude -p, a worker, or a window with relay on from its first message">claude -p</span>' : '',
       s.bare ? '<span class="headless" title="Its transcript has no messages yet">empty</span>' : '',
+      // Claude Code deleted it after 30 days; Apaki's archive kept a copy (engine archivedCopy, 2026-10-12). Words, no badge.
+      s.archivedCopy ? `<span class="arch-copy" title="Claude Code deleted the original after 30 days; Apaki's archive kept this copy, without images.${s.restorable ? ' Open it and send a message to restore it.' : ''}">Archived copy</span>` : '',
       ago(s.lastModified), esc(short(s.cwd)),
       S.view === 'all' && s.folder ? `▸ ${esc(folderName(s.folder) || '')}` : '',
     ].filter(Boolean).join(' · ');
@@ -2292,6 +2299,8 @@ await listen('engine', ({ payload: e }) => {
         const s = p.sessionId && S.sessions.find((x) => x.id === p.sessionId);
         // One name per session: a rename anywhere (here, /rename in a terminal, latch) reaches the tab.
         if (s?.title && s.title !== p.title && !s.bare && !p.renaming && !/^New session \(/.test(s.title)) { p.setTitle(s.title); renderTabs(); }
+        // Restored from the archive (a message brought it back) or newly an archived copy: the line at its top follows.
+        if (s && p.historyShownFor === s.id && Boolean(s.archivedCopy) !== Boolean(p.archivedCopy)) p.setArchivedCopy?.(s.archivedCopy);
       }
       S.warm = new Set(S.sessions.filter((x) => x.warm).map((x) => x.id));
       // Rows that were showing their subagents when the workspace was saved.

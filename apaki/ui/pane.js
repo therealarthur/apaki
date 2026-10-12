@@ -30,6 +30,8 @@ const IMAGE_MAX_EDGE = 1568;
 // top of the loaded part the reader gets before the next page loads on its own.
 const HISTORY_PAGE = 300;
 const NEAR_TOP_PX = 600;
+// The line at the top of a conversation Apaki's transcript archive kept after Claude Code deleted it (setArchivedCopy).
+const ARCHIVED_COPY_TEXT = 'Claude Code deleted the original after 30 days. Images were not kept. Send a message to restore it and continue.';
 
 const LOCAL = [
   { name: 'new', description: 'Start a new conversation in this pane' },
@@ -44,12 +46,13 @@ const LOCAL = [
 const MODELS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-1' };
 const MODEL_NAMES = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5', 'claude-fable-5-1': 'Fable 5.1' };
 // Permission modes, in Shift+Tab order, worded like Claude Code's footer.
-// bypassPermissions is "full access" in Codex terms.
+// bypassPermissions is "full access" in Codex terms. `short` is the chip's word in a narrow message box
+// (a phone, a narrow split; 2026-10-12), so every setting shows whole instead of being cut at the edge.
 export const MODES = [
-  { value: 'bypassPermissions', label: 'Bypass permissions', mark: '⏵⏵', hint: 'Full access: every tool runs without asking' },
-  { value: 'acceptEdits', label: 'Auto-accept edits', mark: '⏵⏵', hint: 'File edits run; other tools follow your settings' },
-  { value: 'plan', label: 'Plan mode', mark: '⏸', hint: 'Claude plans and asks before changing anything' },
-  { value: 'default', label: 'Ask permissions', mark: '?', hint: 'Your Claude Code permission rules decide' },
+  { value: 'bypassPermissions', label: 'Bypass permissions', short: 'Bypass', mark: '⏵⏵', hint: 'Full access: every tool runs without asking' },
+  { value: 'acceptEdits', label: 'Auto-accept edits', short: 'Accept edits', mark: '⏵⏵', hint: 'File edits run; other tools follow your settings' },
+  { value: 'plan', label: 'Plan mode', short: 'Plan', mark: '⏸', hint: 'Claude plans and asks before changing anything' },
+  { value: 'default', label: 'Ask permissions', short: 'Ask', mark: '?', hint: 'Your Claude Code permission rules decide' },
 ];
 const EFFORT_HINTS = { low: 'Fastest, least thinking', medium: 'Balanced', high: 'Thinks harder', xhigh: 'Thinks much harder', max: 'Everything it has' };
 
@@ -157,6 +160,12 @@ export class Pane {
       this.el.style.setProperty('--composer-h', `${this.$.wrap.offsetHeight}px`);
       if (atEnd) g.scrollTop = g.scrollHeight;
     }).observe(this.$.wrap);
+    // The prompt pin floats over the top of the conversation (2026-10-12): its height, so the conversation fades out
+    // under it instead of showing a cut line of text above and beside the card (app.css .ground mask, --pin-h).
+    if (this.$.pin) new ResizeObserver(() => this.el.style.setProperty('--pin-h', `${this.$.pin.offsetHeight}px`)).observe(this.$.pin);
+    // A pane drawn while hidden (a background tab, the phone's list screen) measured nothing, so its pin was stale
+    // when it came into view and covered your message (2026-10-12): look again whenever the conversation's box changes size.
+    new ResizeObserver(() => this.schedulePin()).observe(this.$.ground);
     this.renderChips();
     this.setTitle(this.title);
     this.wire();
@@ -227,7 +236,9 @@ export class Pane {
     model.textContent = MODEL_NAMES[this.model] || this.model;
     effort.innerHTML = `${effortGrid(this.effort)}<span>${esc(this.effort)}</span>`;
     const m = MODES.find((x) => x.value === this.mode) || MODES[0];
-    mode.innerHTML = `<span class="mm">${m.mark}</span>${esc(m.label)}`;
+    // The full label, and the short one a narrow message box shows instead (app.css .ml-short).
+    mode.innerHTML = `<span class="mm">${m.mark}</span><span class="ml-full">${esc(m.label)}</span><span class="ml-short">${esc(m.short || m.label)}</span>`;
+    mode.setAttribute('aria-label', `Permission mode: ${m.label}`);
     mode.dataset.mode = m.value;
     mode.title = `${m.hint} · Shift+Tab to cycle`;
   }
@@ -429,7 +440,11 @@ export class Pane {
   pinnedTurn() {
     const turns = this.$.T.querySelectorAll(':scope > .turn-user');
     if (!turns.length) return null;
-    const edge = this.$.ground.getBoundingClientRect().top + 6;
+    // Not laid out (display: none, a hidden tab): every box measures 0, which read as "scrolled past" (2026-10-12).
+    // No pin until it shows; the ground's ResizeObserver asks again then.
+    const box = this.$.ground.getBoundingClientRect();
+    if (!box.height) return null;
+    const edge = box.top + 6;
     // Turns run top to bottom, so the last one above the edge is a binary search away.
     let lo = 0;
     let hi = turns.length - 1;
@@ -466,7 +481,14 @@ export class Pane {
   jumpTo(u) {
     const g = this.$.ground;
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const top = u.getBoundingClientRect().top - g.getBoundingClientRect().top + g.scrollTop - (this.$.pin.offsetHeight || 0) - 14;
+    // 22 px under the pin (2026-10-12): clear of the 20 px fade the conversation takes under the pin (app.css --pin-h).
+    // After the jump the pin shows the message before this one, which can run to two lines where this one had one,
+    // so room is kept for a two-line pin.
+    const txt = this.$.pin.querySelector('.pin-text');
+    const lh = txt ? parseFloat(getComputedStyle(txt).lineHeight) || 0 : 0;
+    const oneLine = Boolean(lh) && txt.offsetHeight < lh * 1.5;
+    const room = (this.$.pin.offsetHeight || 0) + (oneLine ? lh : 0);
+    const top = u.getBoundingClientRect().top - g.getBoundingClientRect().top + g.scrollTop - room - 22;
     g.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' });
     u.classList.remove('pin-arrive');
     void u.offsetWidth;
@@ -924,6 +946,9 @@ export class Pane {
     if (paged) this.renderLoader();
     else if (total > messages.length) this.note(`Showing the latest ${messages.length} of ${total} messages. The whole conversation is in the session.`);
     this.renderMessages(messages);
+    // A conversation Claude Code deleted and Apaki's archive kept (2026-10-12): the list marks it archivedCopy
+    // (or the history event does); one quiet line at the top says so. Absent flag, nothing is drawn.
+    this.setArchivedCopy(Boolean(e.archivedCopy) || Boolean(this.host.archivedCopy?.(this.historyShownFor)));
     this.flushOpenNotes();
     this.scrollDown(true);
     // Back where you were reading when the workspace was saved (crash recovery).
@@ -993,6 +1018,25 @@ export class Pane {
   // now sends the whole conversation across compactions, newest page first; earlier pages come with
   // historyBefore (the button at the top, or on their own when scrolled near the top), cut tool output,
   // long thinking and compaction summaries in full and images one at a time with historyBlock.
+
+  /**
+   * An archived copy (2026-10-12): Claude Code deletes a transcript after 30 days, and Apaki's transcript archive
+   * (engine transcript-archive.js) keeps a slim copy, without images. The list marks such a session archivedCopy;
+   * open here, one quiet line at the very top of the conversation says what it is and how to bring it back.
+   * on=false takes the line away (the engine restored it after a message). Idempotent.
+   */
+  setArchivedCopy(on) {
+    this.archivedCopy = Boolean(on);
+    const T = this.$.T;
+    const line = T.querySelector(':scope > .arch-line');
+    if (!this.archivedCopy) { line?.remove(); return; }
+    if (line) { if (T.firstElementChild !== line) T.prepend(line); return; }
+    const n = el('div', 'arch-line');
+    n.setAttribute('role', 'note');
+    // Reads as one sentence: "From Apaki's archive: Claude Code deleted the original after 30 days. ..."
+    n.innerHTML = `<span class="arch-k">From Apaki's archive:</span> ${esc(ARCHIVED_COPY_TEXT)}`;
+    T.prepend(n);
+  }
 
   /** "Load earlier messages" at the top while there is more; gone once everything is here. */
   renderLoader() {
@@ -1086,6 +1130,8 @@ export class Pane {
     if (e.prompts && Number.isFinite(e.prompts.before)) { this.promptsBefore = e.prompts.before; this._pinKey = ''; this.updatePin?.(); }
     this.historyCut = h.hasMore ? { shown: h.loaded, total: h.total, paged: true } : null;
     this.renderLoader();
+    // The archived-copy line stays the first thing in the conversation, above the earlier page and the loader.
+    if (this.archivedCopy) this.setArchivedCopy(true);
     this.renderArtifactsButton();
     for (const r of waits) r(true);
     requestAnimationFrame(() => this.maybeLoadEarlier());

@@ -324,6 +324,22 @@ body.web.native .transcript { font-size: 16px; line-height: 1.5; }
 body.web.native .composer-wrap { padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); background: none; -webkit-backdrop-filter: none; backdrop-filter: none; border-top: 0; }
 body.web.native .composer { border-radius: 22px; padding: 6px 6px 4px 12px; }
 body.web.native .composer textarea { font-size: 16px; line-height: 1.4; }
+/* 2026-10-12 (a 390 px phone cut the settings at "Bypa..."): the attach button, the field and the round send button
+   share the first line, the way Messages lays them out, and the settings get the whole second line under them, so
+   every chip shows whole; a very narrow phone wraps them to a third line rather than cutting one. Same card, same
+   height as before (the field's line and the settings' line). .composer-row is only a wrapper here (display:
+   contents), so its buttons take their places in the card's grid. */
+body.web.native .composer {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; column-gap: 4px;
+  grid-template-areas: "att att att" "attach text send" "chips chips chips";
+  padding: 6px 6px 4px;
+}
+body.web.native .composer > .attachments { grid-area: att; }
+body.web.native .composer > textarea { grid-area: text; align-self: center; padding: 8px 4px; }
+body.web.native .composer-row { display: contents; }
+body.web.native .composer-row > .icon-btn:not(.mic) { grid-area: attach; }
+body.web.native .composer-row > .send { grid-area: send; margin-bottom: 3px; }
+body.web.native .composer-row > .chips { grid-area: chips; flex-wrap: wrap; overflow: visible; row-gap: 2px; margin-top: 2px; -webkit-mask-image: none; mask-image: none; }
 body.web.native .send:not(.queue):not(.stop) { display: grid; place-items: center; width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; border-radius: 50%; font-size: 0; }
 body.web.native .send:not(.queue):not(.stop)::before {
   content: ''; width: 17px; height: 17px; background: currentColor;
@@ -469,6 +485,14 @@ body.web.native .pane > .ground {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-h, 120px) - 16px), transparent calc(100% - var(--composer-h, 120px) + 24px));
   mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-h, 120px) - 16px), transparent calc(100% - var(--composer-h, 120px) + 24px));
 }
+/* 2026-10-12: while the "You asked" pin shows, the conversation also fades out under it at the top (app.css, the
+   2026-10-12 polish pass), so no cut line of text shows above or beside the card. */
+body.web.native .pane:has(> .prompt-pin:not([hidden])) > .ground {
+  -webkit-mask-image: linear-gradient(to bottom, transparent var(--pin-h, 0px), #000 calc(var(--pin-h, 0px) + 20px), #000 calc(100% - var(--composer-h, 120px) - 16px), transparent calc(100% - var(--composer-h, 120px) + 24px));
+  mask-image: linear-gradient(to bottom, transparent var(--pin-h, 0px), #000 calc(var(--pin-h, 0px) + 20px), #000 calc(100% - var(--composer-h, 120px) - 16px), transparent calc(100% - var(--composer-h, 120px) + 24px));
+}
+/* The todo checklist reads with the conversation on a phone, where replies are 16 px: the body step, not the desktop's small one. */
+body.web.native .todos { font-size: var(--fs-body); }
 @media (prefers-reduced-motion: reduce) {
   body.web.native .stages, body.web.native .sheet-scrim, body.web.native .pair-screen.sheet-mode { transition: none !important; }
 }

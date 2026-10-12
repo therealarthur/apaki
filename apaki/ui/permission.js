@@ -168,7 +168,9 @@ export function permissionHtml(view, { from = '' } = {}) {
     + `<div class="perm-tool"><span class="perm-name">${esc(view.tool)}</span>${view.server ? `<span class="perm-srv">${esc(view.server)}</span>` : ''}</div>`
     + `<div class="perm-body">${view.blocks.map(blockHtml).join('')}</div>`
     + view.notes.map((n) => `<div class="perm-note ${n.tone === 'warn' ? 'warn' : ''}">${esc(n.text)}</div>`).join('')
-    + '<input type="text" class="perm-say" data-note maxlength="2000" autocomplete="off" aria-label="A note for Claude, sent with Deny" placeholder="Or tell Claude what to do instead (sent with Deny)">'
+    // The placeholder fits a 390 px phone whole (2026-10-12; "(sent with Deny)" was cut there): the Deny button
+    // turns into "Deny with note" as soon as there is one, and the field's label still says it goes with Deny.
+    + '<input type="text" class="perm-say" data-note maxlength="2000" autocomplete="off" aria-label="A note for Claude, sent with Deny" placeholder="Or tell Claude what to do instead">'
     + `${view.always ? `<div class="perm-always"><span class="perm-always-h">Always allow saves</span>${view.always.map((l) => `<span class="perm-always-l">${esc(l)}</span>`).join('')}</div>` : ''}`
     + `<div class="row perm-row"><button data-k="deny">Deny</button>${view.always ? '<button data-k="always" title="Allow it now and save the rule above, the way Claude Code does">Always allow</button>' : ''}<button class="primary" data-k="once"${view.defaultToNo ? '' : ' title="Enter"'}>Allow once</button></div>`
     + `<div class="perm-keys">${keys}</div>`;
