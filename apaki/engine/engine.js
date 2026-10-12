@@ -88,6 +88,11 @@
  *   ev history     { paneId, sessionId, messages, total, hasMore, first, earlier, compactions, source }
  *   op historyBefore { paneId, sessionId?, before, limit?, all? } -> ev historyPage (same fields, to prepend)
  *   op historyBlock  { paneId, sessionId?, ref } -> ev historyBlock { ref, kind, text | media_type + data }
+ * Your prompts, exact (2026-10-12, history.js promptOf): every user message of a page says prompt: { text, images } or
+ * false, and the pane draws a bubble for exactly the prompts; pages carry prompts: { before, total }.
+ *   op historyPrompts { paneId, sessionId? } -> ev historyPrompts { prompts: [{ id, text, at, images }], total }
+ *   op historyBefore   gains until (a message id the page must reach back to)
+ *   ev historyCount    { paneId, sessionId, first, prompts: { before, total } }   a Codex thread's count, a moment after its first page
  *
  * Permission prompts (2026-10-12, permissions.js): in Ask permissions and Auto-accept edits Claude Code asks
  * before a tool it does not already allow, and the pane's window (or phone) is asked the same way a question is:
@@ -1514,9 +1519,22 @@ const handlers = {
     if (!p?.sessionId || (c.sessionId && c.sessionId !== p.sessionId)) { emit({ ...base, sessionId: c.sessionId || null, error: 'That conversation is not open in this pane.' }); return; }
     if (!c.before) { emit({ ...base, sessionId: p.sessionId, error: 'Which message to load before is missing.' }); return; }
     const limit = Math.min(5000, Math.max(1, Math.floor(Number(c.limit)) || HISTORY_PAGE));
-    const page = await historyStore.pageBefore(p.sessionId, String(c.before), { limit, all: c.all === true }).catch(() => null);
+    // until: a prompt picked in the pane's list that is not loaded yet; the page reaches back to it (2026-10-12).
+    const page = await historyStore.pageBefore(p.sessionId, String(c.before), { limit, all: c.all === true, until: typeof c.until === 'string' ? c.until : null }).catch(() => null);
     if (!page) { emit({ ...base, sessionId: p.sessionId, error: 'The rest of this conversation cannot be read from its transcript.' }); return; }
     emit({ ...base, sessionId: p.sessionId, ...page });
+  },
+  // Every prompt you typed in the conversation open in a pane, oldest first (2026-10-12, the pin's list of your prompts;
+  // history.js promptOf decides what a prompt is, the same rule the pane draws by). Read only, like historyBefore.
+  // historyPrompts { paneId, sessionId? } -> historyPrompts { prompts: [{ id, text, at, images }], total } | { error }
+  historyPrompts: async (c) => {
+    const p = panes.get(String(c.paneId || ''));
+    if (p && isCodexPane(p)) { await codex.prompts(c, p); return; }
+    const base = { ev: 'historyPrompts', reqId: c.reqId || null, paneId: c.paneId || null };
+    if (!p?.sessionId || (c.sessionId && c.sessionId !== p.sessionId)) { emit({ ...base, sessionId: c.sessionId || null, error: 'That conversation is not open in this pane.' }); return; }
+    const r = await historyStore.prompts(p.sessionId).catch(() => null);
+    if (!r) { emit({ ...base, sessionId: p.sessionId, error: 'The prompts of this conversation cannot be read from its transcript.' }); return; }
+    emit({ ...base, sessionId: p.sessionId, ...r });
   },
   // One cut tool result, thinking block, summary or image in full, from its own line of the transcript.
   // historyBlock { paneId, sessionId?, ref } -> historyBlock { ref, kind: 'text', text, length, cut } | { kind: 'image', media_type, data, bytes } | { error }
