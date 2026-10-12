@@ -53,7 +53,7 @@ import { DiffPane, newDiffViewerId } from './diff.js';
 import { initTooltips, setTip } from './tooltip.js';
 // The session list in the ChatGPT app's manner, folders that open in place, the session menu and Details (2026-10-12).
 import {
-  GLYPH, createOpenState, detailLine, detailsHtml, folderMenuItems, groupRows, navKey, rowStates, rowTip, sessionFacts, sessionMenuItems, shortTime, statesHtml,
+  GLYPH, createOpenState, detailLine, detailsHtml, folderMenuItems, groupRows, leadHtml, navKey, rowTip, sessionFacts, sessionMenuItems, shortTime,
 } from './sessionlist.js';
 
 const { invoke } = window.__TAURI__.core;
@@ -2162,7 +2162,9 @@ function sessionRow(s, o = {}) {
   // A conversation in a linked worktree keeps a quiet worktree mark (its branch is in the second line and the card),
   // except under its own worktree row in the Worktrees view, which says it.
   const wtMark = worktree && !s.wtKid ? `<span class="sr-s sr-wt" role="img" aria-label="${esc(`In the worktree of ${branch}`)}">${GLYPH_WORKTREE}</span>` : '';
-  li.innerHTML = `<div class="sr-line">${statesHtml(rowStates(s, live, { showPinned: !o.grouped }))}${wtMark}<span class="t">${esc(s.title || '(untitled)')}</span><span class="sr-end"><time class="sr-time" data-at="${at}">${esc(shortTime(at, Date.now(), { grouped: Boolean(o.grouped) }))}</time><button class="sr-more" tabindex="-1" aria-label="More for this session">${GLYPH.more}</button></span></div>`
+  // Glass's row (2026-10-12): one leading glyph for the provider and the state, the name, then quiet marks and the time.
+  const pinMark = !o.grouped && s.pinned ? `<span class="sr-s sr-pinned" role="img" aria-label="Pinned">${GLYPH.pinned}</span>` : '';
+  li.innerHTML = `<div class="sr-line">${leadHtml(s, live)}<span class="t">${esc(s.title || '(untitled)')}</span>${pinMark}${wtMark}<span class="sr-end"><time class="sr-time" data-at="${at}">${esc(shortTime(at, Date.now(), { grouped: Boolean(o.grouped) }))}</time><button class="sr-more" tabindex="-1" aria-label="More for this session">${GLYPH.more}</button></span></div>`
     + `<div class="sr-detail"><div class="sr-detail-in"><div class="m">${esc(detail)}</div></div></div>${s.why ? `<div class="why">${esc(s.why)}</div>` : snip}`;
   // Its subagents (2026-10-10): a count to click open, in the row's second line; the list follows the row.
   const subsOpen = S.expanded.has(s.id);

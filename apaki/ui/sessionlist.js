@@ -175,6 +175,10 @@ export const GLYPH = Object.freeze({
   'archived-copy': '<svg class="sg sg-archived" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="3" rx="1"/><path d="M3 6v6.5c0 .6.4 1 1 1h8c.6 0 1-.4 1-1V6M6.5 8.8h3"/></svg>',
   // The small Codex mark (2026-10-12): a hexagon with a prompt chevron, apart from the terminal's rectangle.
   codex: '<svg class="sg sg-codex" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.7 13.5 4.85v6.3L8 14.3 2.5 11.15v-6.3z"/><path d="M6.5 5.9 8.7 8l-2.2 2.1"/></svg>',
+  // Claude's mark: a small eight-ray spark.
+  claude: '<svg class="sg sg-claude" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2v11.6M2.2 8h11.6M3.9 3.9l8.2 8.2M12.1 3.9l-8.2 8.2"/></svg>',
+  // Working: a quiet track with an arc turning on it (Glass's indeterminate arc).
+  spin: '<svg class="sg sg-spin" viewBox="0 0 16 16" aria-hidden="true"><circle class="trk" cx="8" cy="8" r="5.6"/><path class="arc" d="M8 2.4a5.6 5.6 0 0 1 5.6 5.6"/></svg>',
   pinned: '<svg class="sg sg-pinned" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.6 2.2 13.8 6.4l-1.6.6-2.4 2.4.2 3-1.2 1.2-2.4-2.4L3.6 14l-.6-.6 2.8-2.8-2.4-2.4 1.2-1.2 3 .2L10 4.8z"/></svg>',
   more: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.6" cy="8" r="1.15"/><circle cx="8" cy="8" r="1.15"/><circle cx="12.4" cy="8" r="1.15"/></svg>',
   chevron: '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>',
@@ -184,6 +188,31 @@ export const GLYPH = Object.freeze({
 /** The state marks of a row as HTML: small glyphs (Codex's too), with their words for screen readers. */
 export function statesHtml(states) {
   return states.map((x) => `<span class="sr-s sr-${x.k}" role="img" aria-label="${esc(x.label)}">${GLYPH[x.k] || ''}</span>`).join('');
+}
+
+/*
+ * The leading glyph (2026-10-12, Arthur: "myrlin glass ui/ux is much clearer, we want to borrow from it as much as
+ * possible"). Glass gives each row one small leading glyph that carries its state; here it carries the provider and
+ * what the session is doing, in one place, most urgent first: waiting for your answer (amber), working (a turning arc),
+ * open in a terminal, an archived copy, else the provider's own mark (Claude's spark, Codex's hexagon). Its colour is
+ * the provider's (Claude orange, Codex green) or the waiting amber; nothing else is coloured.
+ */
+const LEAD_ORDER = ['waiting', 'working', 'terminal', 'archived-copy'];
+
+/** The one leading state of a row: { k, label, provider } (k: waiting, working, terminal, archived-copy or mark). */
+export function leadOf(s, live = {}) {
+  const provider = s?.codex || String(s?.id || '').startsWith('codex:') ? 'codex' : 'claude';
+  const states = rowStates(s, live);
+  const who = provider === 'codex' ? 'Codex' : 'Claude Code';
+  const top = LEAD_ORDER.map((k) => states.find((x) => x.k === k)).find(Boolean);
+  return top ? { k: top.k, label: `${who}: ${top.label}`, provider } : { k: 'mark', label: who, provider };
+}
+
+/** The leading glyph as HTML. */
+export function leadHtml(s, live = {}) {
+  const l = leadOf(s, live);
+  const glyph = l.k === 'mark' ? GLYPH[l.provider] : l.k === 'working' ? GLYPH.spin : GLYPH[l.k];
+  return `<span class="sr-lead sr-${l.k} is-${l.provider}" role="img" aria-label="${esc(l.label)}">${glyph || ''}</span>`;
 }
 
 /**

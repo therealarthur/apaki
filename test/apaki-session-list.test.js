@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 import {
-  agoText, bytesText, createOpenState, detailLine, detailsHtml, exactTime, folderMenuItems, groupRows, modelName, navKey, recencyGroup,
+  agoText, bytesText, createOpenState, detailLine, detailsHtml, exactTime, folderMenuItems, groupRows, leadHtml, leadOf, modelName, navKey, recencyGroup,
   rowStates, rowTip, sessionFacts, sessionMenuItems, shortTime,
 } from '../apaki/ui/sessionlist.js';
 
@@ -106,6 +106,22 @@ test('row states: working, waiting for an answer, a terminal, Codex, an archived
   assert.deepEqual(k({ id: 'a', pinned: true }), [], 'under Pinned it is already said');
   assert.deepEqual(k({ id: 'a', pinned: true }, {}, { showPinned: true }), ['pinned']);
   assert.match(rowStates({ terminal: { name: 'Windows Terminal', status: 'waiting' } })[1].label, /Open in Windows Terminal, waiting/);
+});
+
+test('the leading glyph (Glass\'s list): one per row, the provider\'s mark or the most urgent state, in the provider\'s colour', () => {
+  const k = (s, live) => { const l = leadOf(s, live); return `${l.k}/${l.provider}`; };
+  assert.equal(k({ id: SID }), 'mark/claude');
+  assert.equal(k({ id: 'codex:019a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8', codex: true }), 'mark/codex');
+  assert.equal(k({ id: SID, running: true }), 'working/claude');
+  assert.equal(k({ id: SID, running: true, terminal: { name: 'Windows Terminal', status: 'working' } }), 'working/claude', 'working says more than the terminal');
+  assert.equal(k({ id: SID, terminal: { name: 'Windows Terminal', status: 'idle' } }), 'terminal/claude');
+  assert.equal(k({ id: SID, running: true }, { waiting: true }), 'waiting/claude', 'waiting for you says the most');
+  assert.equal(k({ id: SID, archivedCopy: true }), 'archived-copy/claude');
+  assert.equal(k({ id: SID, pinned: true }), 'mark/claude', 'pinned is a quiet mark after the name, not the lead');
+  assert.equal(leadOf({ id: SID, running: true }).label, 'Claude Code: Working');
+  assert.match(leadHtml({ id: SID }), /^<span class="sr-lead sr-mark is-claude" role="img" aria-label="Claude Code"><svg class="sg sg-claude"/);
+  assert.match(leadHtml({ id: 'codex:x', codex: true, running: true }), /class="sr-lead sr-working is-codex"[^>]*><svg class="sg sg-spin"/);
+  assert.match(leadHtml({ id: SID }, { waiting: true }), /class="sr-lead sr-waiting is-claude"/);
 });
 
 test('the hover card: full name, exact time, folder, branch or worktree, agent, model, size and state', () => {
@@ -346,7 +362,12 @@ test('wiring: folders open in place, the list is grouped and compact, the menus,
   const css = read('../apaki/ui/app.css');
   const mine = css.slice(css.indexOf('/* ---------- the session list, compact'));
   assert.match(mine, /\.folder-kids \{ display: grid; grid-template-rows: 0fr; transition: grid-template-rows 200ms/);
-  assert.match(mine, /@media \(prefers-reduced-motion: reduce\) \{\n  \.srow \.sr-working svg \{ animation: none; \}/);
+  assert.match(mine, /@media \(prefers-reduced-motion: reduce\) \{\n  \.srow \.sr-lead \.arc \{ animation: none; \}/);
+  // Glass's list: a soft fill for hover and selection (no borders), a hairline only between groups, provider colours.
+  assert.match(mine, /li\.srow\.on,\n:root :is\(\.sessions, \.folder-sess\) li\.srow\.menu-open \{ background: var\(--sl-raise-2\); box-shadow: inset 0 0 0 1px var\(--sl-raise-2\); border: 0; \}/);
+  assert.match(mine, /--sl-claude: #d97757;/);
+  assert.match(mine, /--sl-codex: #10a37f;/);
+  assert.match(mine, /\.sessions li\.sr-group:first-child \{ margin-top: 0; padding-top: 2px; border-top: 0; \}/);
   assert.equal(/font-size:\s*\d+px|font:[^;]*\d+px/.test(mine), false, 'type sizes come from the --fs tokens');
   assert.equal(/transition:[^;]*\b(height|max-height)\b/.test(mine), false, 'no layout property is animated');
   assert.equal(/border-left:\s*[1-9]/.test(mine), false, 'nothing down a left edge');

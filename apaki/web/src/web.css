@@ -852,7 +852,11 @@ body.web.native .srow .sr-line { min-height: 48px; gap: 8px; }
 body.web.native .srow .sr-more { display: none; }
 body.web.native .srow .sr-time { padding-right: 0; font-size: var(--fs-small); }
 body.web.native .srow .sr-s { width: 16px; height: 16px; }
-body.web.native .srow .sr-s svg { width: 15px; height: 15px; }
+body.web.native .srow .sr-s svg { width: 14px; height: 14px; }
+body.web.native .srow .sr-lead { width: 26px; height: 26px; }
+body.web.native .srow .sr-lead svg { width: 17px; height: 17px; }
+body.web.native .srow .sr-detail-in { padding-left: 34px; }
+body.web.native :is(.sessions, .folder-sess) .srow .snip, body.web.native :is(.sessions, .folder-sess) .srow .why { margin-left: 34px; }
 body.web.native .srow:focus-visible .sr-detail, body.web.native .srow.menu-open .sr-detail { grid-template-rows: 0fr; }
 body.web.native .srow.on .sr-detail, body.web.native .srow.subs-open .sr-detail { grid-template-rows: 1fr; }
 body.web.native :is(.sessions, .folder-sess) .srow .m { padding-bottom: 10px; }
