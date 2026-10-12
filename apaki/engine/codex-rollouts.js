@@ -54,6 +54,8 @@ export function createRolloutScanner({ home = os.homedir(), env = process.env, r
   const where = roots || rolloutRoots(home, env);
   /** file -> { key, row }: what was read from a file the last time its size and time were as now. */
   const cache = new Map();
+  /** codex:<id> -> its rollout file, from the last walk (rows()). */
+  const paths = new Map();
 
   /**
    * Rows for the threads the server did not list. `known` holds the codex:<id> ids the server listed; a rollout
@@ -63,6 +65,9 @@ export function createRolloutScanner({ home = os.homedir(), env = process.env, r
     const files = [];
     for (const r of where) walk(r, files);
     files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    // Every rollout seen, newest first wins (2026-10-12): the list reads each thread's last message time from its file.
+    paths.clear();
+    for (const f of files) if (!paths.has(`codex:${f.id}`)) paths.set(`codex:${f.id}`, f.file);
     const out = [];
     const seen = new Set();
     let read = 0;
@@ -88,5 +93,5 @@ export function createRolloutScanner({ home = os.homedir(), env = process.env, r
     return out;
   }
 
-  return { rows, roots: where, cacheSize: () => cache.size };
+  return { rows, roots: where, cacheSize: () => cache.size, paths: () => paths };
 }

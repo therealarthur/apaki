@@ -319,7 +319,9 @@ export function turnsToMessages(turns) {
           if (u.text) blocks.push({ type: 'text', text: u.text });
           for (let i = 0; i < u.images; i++) blocks.push({ type: 'image_marker' });
           if (u.files.length) blocks.push({ type: 'text', text: u.files.map((f) => `[file: ${f}]`).join('\n') });
-          if (blocks.length) out.push({ type: 'user', uuid: id, at, message: { role: 'user', content: blocks } });
+          // A prompt you typed (history.js promptOf, 2026-10-12): the pane's bubble and its prompt list count exactly these.
+          const said = [u.text, ...u.files.map((f) => `[file: ${f}]`)].filter(Boolean).join('\n');
+          if (blocks.length) out.push({ type: 'user', uuid: id, at, prompt: { text: said, images: u.images }, message: { role: 'user', content: blocks } });
           break;
         }
         case 'agentMessage':
@@ -341,7 +343,7 @@ export function turnsToMessages(turns) {
           if (!use) break;
           out.push({ type: 'assistant', uuid: id, at, message: { role: 'assistant', content: [use] } });
           const res = toolResultOf(item);
-          if (res) out.push({ type: 'user', uuid: `${id}:r`, at, message: { role: 'user', content: [res] } });
+          if (res) out.push({ type: 'user', uuid: `${id}:r`, at, prompt: false, message: { role: 'user', content: [res] } });
         }
       }
     }

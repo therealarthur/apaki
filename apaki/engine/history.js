@@ -52,6 +52,8 @@ import fs from 'node:fs';
 
 /** Items in the first page and in each earlier page. */
 export const PAGE = 300;
+/** Messages a page asked to reach a given message (pageOf until) also takes from before it. */
+const UNTIL_CONTEXT = 4;
 /** Tool output kept per result in a page (the rest comes with block()). */
 export const RESULT_CHARS = 4000;
 /** Thinking text and a compaction summary kept in a page. */
@@ -619,7 +621,9 @@ export function buildHistory(entries, ops = []) {
   const index = new Map();
   const mids = [];
   let compactions = 0;
-  for (const e of seq) {
+  // Local commands' records (/model, /compact...): typed, but not prompts Claude answers (promptOf).
+  const localRuns = localCommandRuns(seq);
+  for (const [k, e] of seq.entries()) {
     // A system line Claude Code showed (systemNote, hookNote): a notice item, drawn apart from Claude's words.
     const note = e.type === 'system' ? e.note : e.type === 'attachment' ? e.att?.note : null;
     if (note && !e.side && !e.team) {
@@ -656,11 +660,18 @@ export function buildHistory(entries, ops = []) {
       continue;
     }
     index.set(e.uuid, items.length);
-    items.push({
+    const item = {
       type: e.type, uuid: e.uuid, at: e.at || null, parent_tool_use_id: null,
       message: { role: e.role || e.type, content: e.content, ...(e.model ? { model: e.model } : {}) },
       ...(e.queued ? { queued: true } : {}),
-    });
+    };
+    // Every user message says whether it is a prompt you typed (the pane draws a bubble for exactly these, the pin
+    // counts exactly these), and a line for the few that are not but say something (an interruption, bash mode).
+    if (e.type === 'user') {
+      item.prompt = promptOf(item, { localRun: localRuns.has(k) }) || false;
+      if (!item.prompt) { const n = userNoteOf(item); if (n) item.note = n; }
+    }
+    items.push(item);
     mids.push(e.type === 'assistant' ? e.mid || null : null);
   }
   return { items, index, by, compactions, leaf: leaf.uuid };
@@ -678,13 +689,81 @@ export function buildHistory(entries, ops = []) {
  * on screen. A page now says how many prompts come before it and how many there are in all, counted the way the
  * pane draws them (a user message with words; not tool results, command wrappers or reminders).
  */
+// The older rule, per text block (2026-10-11); promptOf below replaced it on 2026-10-12. Kept for reference.
+// eslint-disable-next-line no-unused-vars
 const NOT_A_PROMPT = /^\s*<(command-|local-command-|system-reminder)/;
-export function isPromptItem(it) {
-  if (!it || it.type !== 'user' || it.parent_tool_use_id) return false;
+
+/*
+ * One rule for what a prompt is (2026-10-12, Arthur: the prompt list "is 100% accurate"; "it can have 20 of 21+, but
+ * when you reach the top it should load ALL prompts"). The engine counted with one rule (isPromptItem, per text block)
+ * and the pane drew user bubbles with another (all text blocks joined, reminders taken out), so the two disagreed:
+ * a prompt that began with a system reminder was drawn but not counted, a task notification was counted but not
+ * drawn, "[Request interrupted by user]" was drawn and counted as if you had typed it. Now buildHistory decides once
+ * per user message (promptOf) and marks it: prompt { text, images } for what you typed, false for everything else;
+ * the pane draws a bubble exactly for the marked ones, and pageOf counts exactly those.
+ *   a prompt      your words (system reminders taken out), pictures you attached, a slash command you typed that
+ *                 Claude answers (shown as "/name args"), a message you queued that reached Claude
+ *   not a prompt  tool results, meta lines, compaction summaries, a local command (/model, /compact...) and its
+ *                 output, task notifications, a hook's output, bash mode lines, an interruption marker
+ */
+const WRAPPER = /^<(command-|local-command-|system-reminder|task-notification|bash-input|bash-stdout|bash-stderr|user-prompt-submit-hook|user-memory-input)/;
+const REMINDERS = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+
+/** A slash command's record as typed: "/name args" (null when it is not one). */
+function slashText(text) {
+  const n = /<command-name>\s*([^<]*?)\s*<\/command-name>/.exec(text);
+  if (!n || !n[1]) return null;
+  const a = /<command-args>([\s\S]*?)<\/command-args>/.exec(text);
+  return `${n[1].startsWith('/') ? n[1] : `/${n[1]}`}${a && a[1].trim() ? ` ${a[1].trim()}` : ''}`;
+}
+
+/**
+ * Whether a user message of the history is a prompt you typed: { text, images } (text is what the pane shows), or
+ * null. localRun: the message is the record of a local command (history.js localCommandRuns).
+ */
+export function promptOf(it, { localRun = false } = {}) {
+  if (!it || it.type !== 'user' || it.parent_tool_use_id) return null;
   const c = it.message?.content;
-  if (typeof c === 'string') return Boolean(c.trim()) && !NOT_A_PROMPT.test(c);
-  if (!Array.isArray(c)) return false;
-  return c.some((b) => (b?.type === 'text' && b.text?.trim() && !NOT_A_PROMPT.test(b.text)) || b?.type === 'image');
+  const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
+  const images = blocks.filter((b) => b?.type === 'image' || b?.type === 'image_marker').length;
+  const text = blocks.filter((b) => b?.type === 'text').map((b) => String(b.text ?? '')).join('\n').replace(REMINDERS, '').trim();
+  if (/^<command-(name|message|args)>/.test(text)) {
+    const typed = localRun ? null : slashText(text);
+    return typed ? { text: typed, images } : null;
+  }
+  if (WRAPPER.test(text) || INTERRUPTION_PREFIXES.some((p) => text.startsWith(p))) return images ? { text: '', images } : null;
+  if (!text && !images) return null;
+  return { text, images };
+}
+
+/** A line the pane shows for a user message that is not a prompt but says something (an interruption, a bash command), or null. */
+export function userNoteOf(it) {
+  const c = it?.message?.content;
+  const text = (typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b?.type === 'text').map((b) => b.text || '').join('\n') : '').trim();
+  if (INTERRUPTION_PREFIXES.some((p) => text.startsWith(p))) return { text: /^\[Request interrupted by user/.test(text) ? 'Interrupted by you.' : text.replace(/^\[|\]$/g, ''), tone: 'dim', label: '' };
+  const bash = /^<bash-input>([\s\S]*?)<\/bash-input>/.exec(text);
+  if (bash) return { text: `! ${bash[1].trim()}`, tone: 'info', label: 'Bash mode', mono: true };
+  return null;
+}
+
+export function isPromptItem(it) {
+  // Marked when the history was built (promptOf); messages from elsewhere (the SDK's list) by the same rule.
+  if (it && it.prompt !== undefined) return Boolean(it.prompt);
+  return Boolean(promptOf(it));
+}
+
+/**
+ * Every prompt of a built history, oldest first: [{ id, text, at, images }] (text cut to `chars`), for the pane's
+ * list of your prompts (op historyPrompts).
+ */
+export function promptList(h, { chars = 240 } = {}) {
+  const out = [];
+  for (const it of h.items) {
+    if (!isPromptItem(it)) continue;
+    const p = it.prompt || promptOf(it);
+    out.push({ id: it.uuid, text: p.text.length > chars ? `${p.text.slice(0, chars - 1)}…` : p.text, at: it.at || null, images: p.images || 0 });
+  }
+  return out;
 }
 /** Prompts before each item index (cached on the built history): before[i] = prompts in items[0..i). */
 function promptsBefore(h) {
@@ -695,7 +774,7 @@ function promptsBefore(h) {
   return out;
 }
 
-export function pageOf(h, { before = null, limit = PAGE, all = false } = {}) {
+export function pageOf(h, { before = null, limit = PAGE, all = false, until = null } = {}) {
   const n = h.items.length;
   let end = n;
   if (before) {
@@ -704,6 +783,9 @@ export function pageOf(h, { before = null, limit = PAGE, all = false } = {}) {
     end = i;
   }
   let start = all ? 0 : Math.max(0, end - Math.max(1, Math.floor(limit) || PAGE));
+  // until: the page reaches back to that message (a prompt picked in the pane's list that is not loaded yet), with a
+  // few messages before it for context (2026-10-12).
+  if (until && h.index.has(until)) start = Math.min(start, Math.max(0, h.index.get(until) - UNTIL_CONTEXT));
   while (start > 0 && resultsOnly(h.items[start])) start -= 1;
   const pb = promptsBefore(h);
   return { messages: h.items.slice(start, end), total: n, hasMore: start > 0, first: h.items[start]?.uuid ?? null, earlier: start, compactions: h.compactions, prompts: { before: pb[start], total: pb[n] } };
@@ -862,11 +944,19 @@ export class HistoryStore {
     return { ...pageOf(h, { limit }), source: 'transcript' };
   }
 
-  /** The page before item `before` (all: everything before it); null when the transcript cannot be read. */
-  async pageBefore(sessionId, before, { limit = PAGE, all = false } = {}) {
+  /** The page before item `before` (all: everything before it; until: back to that message); null when the transcript cannot be read. */
+  async pageBefore(sessionId, before, { limit = PAGE, all = false, until = null } = {}) {
     const h = await this.history(sessionId);
     if (!h) return null;
-    return { ...pageOf(h, { before, limit, all }), source: 'transcript' };
+    return { ...pageOf(h, { before, limit, all, until }), source: 'transcript' };
+  }
+
+  /** Every prompt of the conversation, oldest first ({ prompts, total }), or null when the transcript cannot be read. */
+  async prompts(sessionId) {
+    const h = await this.history(sessionId);
+    if (!h) return null;
+    const prompts = promptList(h);
+    return { prompts, total: prompts.length };
   }
 
   /**

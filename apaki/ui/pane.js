@@ -672,7 +672,9 @@ Click for changes, commit, push, pull request, merge`;
     // Counted over the whole conversation: the prompts before the first one loaded here come from the engine
     // (history prompts.before, 2026-10-11), so "N of M" is your real place, not "13 of 13" of a loaded page.
     const before = Math.max(0, this.promptsBefore || 0);
-    return hit < 0 ? null : { el: turns[hit], n: before + hit + 1, of: before + turns.length };
+    // more: earlier pages exist and their prompts are not counted yet (a Codex thread before its count arrives): "of M+".
+    const more = Boolean(this.history?.hasMore) && this.promptsKnown === false;
+    return hit < 0 ? null : { el: turns[hit], n: before + hit + 1, of: before + turns.length, more };
   }
 
   updatePin() {
@@ -680,7 +682,7 @@ Click for changes, commit, push, pull request, merge`;
     if (!pin) return;
     const t = this.pinnedTurn();
     if (!t) { pin.hidden = true; this._pinKey = ''; return; }
-    const key = `${t.n}/${t.of}`;
+    const key = `${t.n}/${t.of}${t.more ? '+' : ''}`;
     if (key === this._pinKey && !pin.hidden && this._pinEl === t.el) return;
     this._pinKey = key;
     this._pinEl = t.el;
@@ -688,9 +690,85 @@ Click for changes, commit, push, pull request, merge`;
     const words = [...t.el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE || n.matches?.('mark.find-hit')).map((n) => n.textContent).join('').trim();
     const imgs = t.el.querySelectorAll('.imgs img, .imgs .img-marker').length;
     const text = words || (imgs ? `${imgs} image${imgs > 1 ? 's' : ''}` : 'Your message');
-    pin.innerHTML = `<button class="pin-card" title="Scroll up to this message"><span class="pin-head"><span class="pin-who">${t.el.classList.contains('steered') ? 'You, steered in' : 'You asked'}</span><span class="pin-n">${t.n} of ${t.of}</span><span class="pin-go">Jump up<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2"/></svg></span></span><span class="pin-text">${esc(text)}</span></button>`;
-    pin.querySelector('.pin-card').onclick = () => this.jumpTo(t.el);
+    // "N of M" opens the list of all your prompts (2026-10-12); the rest of the card jumps up to this one.
+    pin.innerHTML = `<div class="pin-card" role="button" tabindex="0" title="Scroll up to this message"><span class="pin-head"><span class="pin-who">${t.el.classList.contains('steered') ? 'You, steered in' : 'You asked'}</span><button class="pin-n" title="All your prompts in this conversation">${t.n} of ${t.of}${t.more ? '+' : ''}</button><span class="pin-go">Jump up<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2"/></svg></span></span><span class="pin-text">${esc(text)}</span></div>`;
+    const card = pin.querySelector('.pin-card');
+    card.onclick = (ev) => { if (ev.target.closest('.pin-n')) return; this.jumpTo(t.el); };
+    card.onkeydown = (ev) => { if ((ev.key === 'Enter' || ev.key === ' ') && !ev.target.closest('.pin-n')) { ev.preventDefault(); this.jumpTo(t.el); } };
+    pin.querySelector('.pin-n').onclick = (ev) => { ev.stopPropagation(); this.openPromptList(ev.currentTarget, t.n); };
     pin.hidden = false;
+  }
+
+  /* ---------- the list of your prompts (2026-10-12) ---------- */
+
+  // Arthur: "the prompt list at the top that shows user prompts that you can click on to see the response is 100%
+  // accurate - it can have 20 of 21+, but when you reach the top it should load ALL prompts as the user scrolls all
+  // the way to the start". The engine lists every prompt of the conversation (op historyPrompts, the same rule the
+  // bubbles are drawn by); picking one that is not loaded yet loads the history back to it, keeping your place.
+
+  /** Asks for every prompt of this conversation and shows them in a menu at the pin's count. */
+  openPromptList(anchor, current) {
+    if (!this.sessionId) { this.showPromptList(anchor, this.domPrompts(), current); return; }
+    const reqId = `pl-${Date.now().toString(36)}`;
+    this._promptListReq = { reqId, anchor, current };
+    this.send('historyPrompts', { reqId, sessionId: this.sessionId });
+  }
+
+  /** The prompts drawn here, as the list shows them (a conversation the engine has no transcript of yet). */
+  domPrompts() {
+    return [...this.$.T.querySelectorAll(':scope > .turn-user')].map((u, i) => ({ id: u.dataset.mid || `dom-${i}`, text: [...u.childNodes].filter((x) => x.nodeType === Node.TEXT_NODE).map((x) => x.textContent).join('').trim(), images: u.querySelectorAll('.imgs > *').length }));
+  }
+
+  /** ev historyPrompts: the menu. Prompts typed here since the engine read the transcript are added from the screen. */
+  onHistoryPrompts(e) {
+    const want = this._promptListReq;
+    if (!want || e.reqId !== want.reqId) return;
+    this._promptListReq = null;
+    if (e.error) { this.note(e.error, 'warn'); return; }
+    const list = Array.isArray(e.prompts) ? e.prompts.slice() : [];
+    const drawn = this.$.T.querySelectorAll(':scope > .turn-user').length + Math.max(0, this.promptsBefore || 0);
+    if (drawn > list.length) list.push(...this.domPrompts().slice(list.length - drawn));
+    this.showPromptList(want.anchor, list, want.current);
+  }
+
+  showPromptList(anchor, list, current) {
+    if (!list.length) { this.note('No prompts in this conversation yet.'); return; }
+    const items = [{ heading: `Your prompts (${list.length})` }, ...list.map((p, i) => ({
+      value: String(i), label: `${i + 1}. ${p.text || (p.images ? `${p.images} image${p.images > 1 ? 's' : ''}` : 'Your message')}`.slice(0, 160),
+      hint: p.at ? stamp(Date.parse(p.at)) : '', checked: i + 1 === current,
+    }))];
+    const box = menu(anchor, items, { above: false, width: 340, onPick: (v) => this.jumpToPrompt(list[Number(v)], Number(v)) });
+    box?.querySelector('.menu-item.on')?.scrollIntoView({ block: 'center' });
+  }
+
+  /**
+   * Scrolls to one of your prompts: drawn already, or loaded first (the history back to it, page by page, your place
+   * kept while it loads). i: its place in the whole conversation (0 = the first).
+   */
+  async jumpToPrompt(p, i) {
+    const find = () => {
+      if (p?.id) { const hit = this.$.T.querySelector(`:scope > .turn-user[data-mid="${CSS.escape(p.id)}"]`); if (hit) return hit; }
+      // By its place: the prompts before the loaded ones are counted (promptsBefore), the rest are drawn in order.
+      const k = i - Math.max(0, this.promptsBefore || 0);
+      const turns = this.$.T.querySelectorAll(':scope > .turn-user');
+      return k >= 0 && k < turns.length && this.promptsKnown !== false ? turns[k] : null;
+    };
+    let el = find();
+    for (let guard = 0; !el && this.history?.hasMore && guard < 400; guard++) {
+      if (!(await this.loadEarlier({ until: p?.id && !String(p.id).startsWith('dom-') ? p.id : null }))) break;
+      el = find();
+    }
+    if (el) this.jumpTo(el);
+    else this.note('That prompt could not be found in what this pane can load.', 'warn');
+  }
+
+  /** ev historyCount: how many prompts come before the loaded pages (a Codex thread, a moment after its first page). */
+  onHistoryCount(e) {
+    if (e.sessionId !== this.sessionId || !this.history || e.first !== this.history.first || !e.prompts) return;
+    this.promptsBefore = Math.max(0, e.prompts.before || 0);
+    this.promptsKnown = true;
+    this._pinKey = '';
+    this.updatePin();
   }
 
   /** Scrolls a message of yours to the top (just under the pin) and marks it for a moment. */
@@ -737,7 +815,7 @@ Click for changes, commit, push, pull request, merge`;
 
   clearEmpty() { if (this.$.T.querySelector('.empty')) this.$.T.innerHTML = ''; }
 
-  addUser(text, images = [], { steered = false } = {}) {
+  addUser(text, images = [], { steered = false, mid = null } = {}) {
     this.clearEmpty();
     // You wrote something: the next TodoWrite starts a new checklist (a steered message is part of the turn that runs, so it keeps its card).
     if (!steered) this.todoCard = null;
@@ -751,8 +829,11 @@ Click for changes, commit, push, pull request, merge`;
     }
     u.append(document.createTextNode(text));
     u.dataset.ts = stamp(this._at || Date.now());
+    // The message's id from the history, so the list of your prompts can find it (jumpToPrompt).
+    if (mid) u.dataset.mid = mid;
     this.$.T.append(u);
     this.scrollDown(true);
+    return u;
   }
 
   /** Redraws a streaming reply as markdown, once per animation frame. */
@@ -1164,6 +1245,19 @@ Click for changes, commit, push, pull request, merge`;
       const c = m.message?.content;
       // A slash command's output shows as the system line it was; its name and reminders stay hidden.
       if (m.type === 'user' && typeof c === 'string' && /^\s*<local-command-(stdout|stderr)>/.test(c)) { const n = noticeFor({ type: 'user', isSynthetic: true, message: { content: c } }); if (n) this.sysline(n); continue; }
+      // The engine marked whether this is a prompt you typed (history.js promptOf, codex-map.js; 2026-10-12): a bubble
+      // for exactly those, so the pin's "N of M" and the list of your prompts match what is drawn. Tool results still
+      // go to their calls; an interruption or a bash mode line is a system line, never "you".
+      if (m.type === 'user' && m.prompt !== undefined) {
+        this._at = m.at ? Date.parse(m.at) : null;
+        const blocks = Array.isArray(c) ? c : [];
+        if (m.prompt) {
+          const imgs = blocks.filter((b) => b.type === 'image' || b.type === 'image_marker').map((b) => (b.ref ? { ref: b.ref, media_type: b.media_type, bytes: b.bytes } : {}));
+          this.addUser(m.prompt.text, imgs, { steered: Boolean(m.queued), mid: m.uuid });
+        } else if (m.note?.text) this.sysline(m.note);
+        for (const b of blocks) if (b.type === 'tool_result') this.toolResult(b.tool_use_id, b.content, b.is_error, b);
+        continue;
+      }
       if (m.type === 'user' && typeof c === 'string' && (/^\s*<(command-|local-command-|system-reminder)/.test(c))) continue;
       this._at = m.at ? Date.parse(m.at) : null;
       // queued: typed while Claude worked and taken into the running turn, as "Steered in" shows live.
@@ -1181,6 +1275,8 @@ Click for changes, commit, push, pull request, merge`;
     this.historyRev = e.rev || null;
     // Your prompts before the first one drawn (pinnedTurn counts the whole conversation).
     this.promptsBefore = e.prompts?.before || 0;
+    // Known unless earlier pages exist and the engine has not counted them yet (a Codex thread: ev historyCount follows).
+    this.promptsKnown = Boolean(e.prompts) || !paged || !e.hasMore;
     this.historyShownFor = e.sessionId || this.sessionId || null;
     // A refresh (the conversation moved on elsewhere): keep the takeover card and, unless you were at the end, your place.
     const card = e.refresh ? this.$.T.querySelector(':scope > .takeover') : null;
@@ -1319,18 +1415,21 @@ Click for changes, commit, push, pull request, merge`;
     const h = this.history;
     const g = this.$.ground;
     if (!h?.hasMore || h.loading || !g.clientHeight) return;
-    if (g.scrollTop < NEAR_TOP_PX) this.loadEarlier();
+    // Ahead of the reader (2026-10-12): a page comes while more than a screen is still above, so scrolling all the way
+    // up to the first prompt never waits at an empty top.
+    if (g.scrollTop < Math.max(NEAR_TOP_PX, g.clientHeight * 1.5)) this.loadEarlier();
   }
 
   /** Asks for the page before the oldest loaded message (all: everything before it). Resolves true once it is drawn. */
-  loadEarlier({ all = false } = {}) {
+  loadEarlier({ all = false, until = null } = {}) {
     const h = this.history;
     if (!h?.hasMore) return Promise.resolve(false);
     const done = new Promise((resolve) => h.waits.push(resolve));
     if (h.loading) return done;
     h.loading = true;
     this.renderLoader();
-    this.send('historyBefore', { sessionId: this.sessionId, before: h.first, ...(all ? { all: true } : { limit: HISTORY_PAGE }) });
+    // until: a prompt picked in the list of your prompts; the page reaches back to it (2026-10-12).
+    this.send('historyBefore', { sessionId: this.sessionId, before: h.first, ...(all ? { all: true } : { limit: HISTORY_PAGE }), ...(until ? { until } : {}) });
     // No answer (the engine restarted): the button works again.
     h.timer = setTimeout(() => { if (this.history !== h || !h.loading) return; h.loading = false; this.renderLoader(); for (const r of h.waits.splice(0)) r(false); }, 30000);
     return done;
@@ -1384,7 +1483,9 @@ Click for changes, commit, push, pull request, merge`;
     if (anchor) g.scrollTop += anchor.getBoundingClientRect().top - y0;
     Object.assign(h, { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total: e.total ?? h.total, loaded: h.loaded + (e.messages || []).length, countless: Boolean(e.countless) });
     // Earlier prompts are on screen now: fewer come before the first one drawn (the pin's "N of M", 2026-10-11).
-    if (e.prompts && Number.isFinite(e.prompts.before)) { this.promptsBefore = e.prompts.before; this._pinKey = ''; this.updatePin?.(); }
+    if (e.prompts && Number.isFinite(e.prompts.before)) { this.promptsBefore = e.prompts.before; this.promptsKnown = true; this._pinKey = ''; this.updatePin?.(); }
+    // Everything is here: the count is what is drawn (promptsBefore 0), whatever the engine could count before.
+    else if (!e.hasMore) { this.promptsBefore = 0; this.promptsKnown = true; this._pinKey = ''; this.updatePin?.(); }
     this.historyCut = h.hasMore ? { shown: h.loaded, total: h.total, paged: true } : null;
     this.renderLoader();
     // The archived-copy line stays the first thing in the conversation, above the earlier page and the loader.
@@ -2039,6 +2140,9 @@ Click for changes, commit, push, pull request, merge`;
       // Earlier messages of this conversation (Load earlier, scrolling up, Ctrl+F's Search all), and one cut block in full.
       case 'historyPage': if (e.sessionId === this.sessionId) this.prependHistory(e); break;
       case 'historyBlock': if (!e.sessionId || e.sessionId === this.sessionId) this.onHistoryBlock(e); break;
+      // The list of your prompts, and a Codex thread's count of the prompts before its loaded pages (2026-10-12).
+      case 'historyPrompts': this.onHistoryPrompts(e); break;
+      case 'historyCount': this.onHistoryCount(e); break;
       case 'session_id':
         this.sessionId = e.sessionId; this.setCwdLine(); this.host.changed(this);
         if (this.pendingName) { this.send('rename', { sessionId: e.sessionId, title: this.pendingName }); this.pendingName = null; }

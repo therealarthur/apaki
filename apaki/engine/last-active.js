@@ -27,6 +27,17 @@ export function lastMessageAt(text) {
   const lines = String(text).split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
+    // A Codex rollout (2026-10-12): its messages are response_item lines with a role. The server's own times are when
+    // a turn started (recencyAt) or anything was written (updatedAt: also token counts, a rename); this is the last message.
+    if (line.includes('"type":"response_item"') && line.includes('"type":"message"') && (line.includes('"role":"user"') || line.includes('"role":"assistant"'))) {
+      let r;
+      try { r = JSON.parse(line); } catch { continue; }
+      const role = r?.payload?.role;
+      if (r?.type !== 'response_item' || r.payload?.type !== 'message' || (role !== 'user' && role !== 'assistant')) continue;
+      const t = Date.parse(r.timestamp);
+      if (Number.isFinite(t)) return t;
+      continue;
+    }
     // Cheap checks first: most tail lines are bookkeeping.
     if (!line.includes('"timestamp"') || !(line.includes('"type":"user"') || line.includes('"type":"assistant"'))) continue;
     let j;
