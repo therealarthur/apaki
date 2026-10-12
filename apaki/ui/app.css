@@ -618,7 +618,8 @@ body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-event
 /* Section header: heavy wide caps label, a count, and its controls. A white
    band under it marks where each section starts. */
 .sec-head {
-  display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px 0 18px;
+  /* Room above and below its text, not flush against its band (2026-10-12, Impeccable cramped-padding). */
+  display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 8px 12px 8px 18px;
   background: hsla(var(--w), .55); border-bottom: 1px solid hsla(232, 40%, 88%, .7);
 }
 .sec-t { font: 900 11px/1 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-deep); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -1142,7 +1143,8 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
   background: linear-gradient(120deg, hsla(var(--pearl-stop-blue), .08), hsla(var(--pearl-stop-purple), .06) 50%, hsla(var(--pearl-stop-cyan), .07)), hsla(var(--w), .58);
   -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6);
   border: 1px solid hsla(var(--w), .8);
-  box-shadow: 0 0 0 1px hsla(232, 40%, 78%, .28), 0 10px 26px -18px rgba(var(--shadow-rgb), .5);
+  /* A defined edge with a tight lift, not a hairline plus a wide halo (2026-10-12, Impeccable thin-border-wide-shadow). */
+  box-shadow: 0 0 0 1px hsla(232, 40%, 78%, .28), 0 4px 10px -6px rgba(var(--shadow-rgb), .4);
 }
 .glass-card[hidden] { display: none; }
 .gc-head { display: flex; align-items: baseline; gap: 8px; padding: 0 10px 3px; }
@@ -1599,7 +1601,10 @@ input.rename {
 /* The working line: the phase, then three dots that rise and fade in turn. */
 .status .ph { color: var(--brand-deep); font-weight: 650; }
 .status .dots { display: inline-flex; align-items: flex-end; gap: 2.5px; height: 1em; margin: 0 4px 0 4px; vertical-align: -1px; }
-.status .dots i { width: 3px; height: 3px; border-radius: 50%; background: var(--brand-strong); opacity: .25; animation: dot-wave 1.2s ease-in-out infinite; }
+.status .dots i { width: 3px; height: 3px; border-radius: 50%; background: var(--brand-strong); opacity: .25; }
+/* The waving dots are gone (2026-10-12: Arthur bans dot indicators in any form, and Impeccable flags pulsing dots):
+   the changing thinking word and the running seconds already say Claude is working. */
+.status .dots { display: none; }
 .status .dots i:nth-child(2) { animation-delay: .16s; }
 .status .dots i:nth-child(3) { animation-delay: .32s; }
 @keyframes dot-wave { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2.5px); } }

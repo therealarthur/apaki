@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "repeating-stripes-gradient",
+        "value": "*",
+        "files": [
+          "apaki/ui/index.html"
+        ],
+        "createdAt": "2026-10-12T05:08:48.792Z",
+        "reason": "Claude (2026-10-12): the repeated gradient is the app's grid texture, its brand background (Arthur's grid/pearlescent look), not decorative stripes"
+      },
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "apaki/ui/index.html"
+        ],
+        "createdAt": "2026-10-12T05:08:59.595Z",
+        "reason": "Claude (2026-10-12): light theme tints every elevation shadow with the palette navy on purpose (--shadow-rgb 44,53,120); dark theme switches --shadow-rgb to black, so no colored glow sits on a dark surface"
+      }
+    ]
+  }
+}
