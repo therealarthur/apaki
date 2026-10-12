@@ -1882,7 +1882,7 @@ export class Pane {
         if (e.terminal?.length) this.openNotes.push([`This session is also open in a Claude Code terminal window (${e.terminal.map((t) => t.name).join(', ')}). Stop typing there while you work here; that window must /resume to see these turns.`, 'warn']);
         // Re-attached (the background host kept this Claude Code process running): nothing was cut off.
         if (this.crashNote && e.attached) this.crashNote = false;
-        if (this.crashNote) { this.openNotes.push(['Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
+        if (this.crashNote) { this.openNotes.push([this.kind === 'codex' ? 'Apaki closed while Codex was working here, and its Codex process stopped with it. Everything it did until then is above; send a message to carry on.' : 'Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
         if (this.turnStoppedNote) { this.openNotes.push(['The engine restarted while Claude was working here, and that turn stopped. Everything until then is above; send a message to carry on.', 'warn']); this.turnStoppedNote = false; }
         if (e.sessionId !== this.sessionId || e.reset) this.liveTasks.clear();
         this.renderTasksButton();
