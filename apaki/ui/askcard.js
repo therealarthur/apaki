@@ -141,7 +141,7 @@ export const READ_ONLY_TEXT = 'Claude is asking a question on the PC. This phone
 /** The quiet words above a card: who asks, and what. */
 export function kicker(entry) {
   const who = entry.who || 'Claude';
-  if (entry.kind === 'permission') return `${who} asks first`;
+  if (entry.kind === 'permission') return `${who} asks permission`;
   if (entry.kind === 'plan') return `${who}'s plan`;
   const n = entry.model?.questions.length || 0;
   return `${who} has ${n === 1 ? 'a question' : `${n} questions`}`;

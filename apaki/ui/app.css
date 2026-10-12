@@ -2577,7 +2577,17 @@ body.rail-collapsed .signin-card { left: 22px; }
 .ask-btn.primary { background: var(--fill); border-color: var(--fill); color: #fff; }
 .ask-btn.primary:hover { background: var(--fill-hover); border-color: var(--fill-hover); }
 .ask-plan { margin: 6px 0 2px; padding: 2px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--ground); }
+/* The plan is read, not a reply: no reply mark in front, and its headings stay under the card's own line. */
+.ask-plan.turn-assistant::before { content: none; }
+.ask-plan.turn-assistant :is(h1, h2, h3, h4) { margin: 10px 0 4px; font-size: var(--fs-body); }
+.ask-plan.turn-assistant > :first-child { margin-top: 8px; }
 .ask-card .perm-tool { margin-top: 8px; }
+/* What the second choice saves, under its words: one quiet line, not a heading of its own. */
+.ask-choice .perm-always { display: block; margin: 1px 0 0; }
+.ask-choice .perm-always-h { font-weight: 500; color: var(--soft); }
+.ask-choice .perm-always-h::after { content: ': '; }
+.ask-choice .perm-always-l { color: var(--soft); font-family: var(--font-body); }
+.ask-choice .perm-always-l + .perm-always-l::before { content: ' · '; }
 /* A phone that only watches the PC pane: the question shows, its choices are off, one line says where to answer. */
 .ask-ro { flex: none; margin-top: 8px; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--tint); color: var(--soft); font-size: var(--fs-small); }
 .ask-card.ro .ask-choice, .ask-card.ro .ask-btn, .ask-card.ro .ask-say { opacity: .55; cursor: default; }
