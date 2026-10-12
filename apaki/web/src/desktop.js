@@ -104,6 +104,13 @@ export function initDesktop({ haptic = () => {}, showChat = () => {} } = {}) {
   // A pane that follows a desktop pane has the conversation's session id too, but it is not "open here": it is "Watching".
   const openHere = (id) => [...(A?.S?.panes?.values() || [])].some((p) => p.sessionId === id && !p.following);
   const watching = (paneId) => [...(A?.S?.panes?.values() || [])].some((p) => p.following === paneId);
+  // The desktop pane that has a conversation open (its id, which a phone can follow), for the Session in use card's Watch live (app.js).
+  if (A) {
+    A.deskPaneFor = (sessionId) => {
+      for (const t of D.ev?.tabs || []) for (const p of t?.panes || []) if (p?.kind === 'session' && p.sessionId === sessionId && typeof p.paneId === 'string' && p.paneId) return p.paneId;
+      return null;
+    };
+  }
 
   function row(r) {
     const meta = r.meta && r.go ? `<span class="desk-m">${r.busy ? effortGrid('max', { live: true }) : ''}${esc(r.meta)}</span>` : '';

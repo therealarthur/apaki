@@ -166,6 +166,33 @@ test('pane: what a follower hears. opened says whether the phone may only watch;
   assert.equal(d.sent.length, n);
 });
 
+test('pane: the Session in use card offers Watch live when a pane of the PC has the conversation, and Take over here stays the other choice', () => {
+  const lockedPane = (deskPaneFor) => {
+    const calls = [];
+    const p = Object.create(Pane.prototype);
+    Object.assign(p, {
+      id: 'p9', sessionId: null, cwd: '', title: 'New conversation', lastOpen: null,
+      $: { T: fakeEl(), ground: fakeEl(), wrap: fakeEl() },
+      host: { deskPaneFor, watchLive: (pane, id) => calls.push(['watchLive', pane.id, id]), changed() {}, close: (pane) => calls.push(['close', pane.id]), send: (op, args) => calls.push([op, args.force]) },
+      setCwdLine() {}, setBusy() {}, setStatus() {}, setTitle() {}, scrollDown() {}, startDriftWatch() {}, stopDriftWatch() {},
+    });
+    p.showLocked({ ev: 'locked', sessionId: 'sess-1', holder: { name: 'Apaki on this PC', app: 'apaki', at: Date.now() }, title: 'Fix it', cwd: 'C:/code' });
+    return { p, calls, card: p.$.T.children.at(-1) };
+  };
+  const a = lockedPane((sid) => (sid === 'sess-1' ? 'ph1' : null));
+  assert.match(a.card.innerHTML, /<button class="tk-go tk-watch">Watch live<\/button><button class="tk-take">Take over here<\/button><button class="tk-no">Cancel<\/button>/, 'watching is the first and primary choice: it takes nothing from the PC');
+  a.card.querySelector('.tk-watch').onclick();
+  assert.deepEqual(a.calls, [['watchLive', 'p9', 'ph1']]);
+  a.card.querySelector('.tk-take').onclick();
+  assert.deepEqual(a.calls.at(-1), ['open', true], 'Take over here still opens with force');
+  // No pane of the PC has it (a terminal holds it, or the PC cannot follow): the card is what it was.
+  const b = lockedPane(() => null);
+  assert.match(b.card.innerHTML, /<button class="tk-go tk-take">Take over here<\/button>/);
+  assert.equal(/Watch live/.test(b.card.innerHTML), false);
+  const c = lockedPane(undefined);
+  assert.equal(/Watch live/.test(c.card.innerHTML), false, 'a desktop window has no such host function');
+});
+
 test('pane: who sent a message that another window typed into the conversation', () => {
   assert.equal(peerName('Desktop', true), 'the PC');
   assert.equal(peerName('Desktop', false), '', 'the window never draws its own words as a stranger\'s');
@@ -273,10 +300,13 @@ test('wiring: the page follows, asks before it takes over, saves and restores a 
   assert.match(app, /busy: Boolean\(p\?\.busy && !p\?\.following\)/, 'a follower is never "crashed mid-turn" on restore');
   assert.match(app, /if \(typeof lf\.follow === 'string' && lf\.follow\) \{[\s\S]*?send\('follow', \{ paneId: fp\.id, desktopPaneId: lf\.follow \}\);[\s\S]*?return L\.leaf\(fp\.id\);/, 'restored by following again, never by open');
   assert.match(app, /if \(p\.following\) \{ send\('follow', \{ paneId: p\.id, desktopPaneId: p\.following \}\); continue; \}/, 'after an engine restart too');
+  assert.match(app, /deskPaneFor: \(sessionId\) => \(WEB && window\.__apakiLink\?\.supports\?\.\('follow'\) \? window\.__apaki\?\.deskPaneFor\?\.\(sessionId\) \|\| null : null\)/, 'only a phone whose PC can follow is offered it');
+  assert.match(app, /function watchLive\(p, desktopPaneId\) \{[\s\S]*?followDesktop\(\{ desktopPaneId, title, viewOnly: phoneCap\(\) !== 'full' \}\);[\s\S]*?closePane\(p, \{ confirmBusy: false \}\)/, 'a new follower, then the pane that met the lock closes');
   const boot = read('../apaki/web/src/boot.js');
   assert.match(boot, /new CustomEvent\('apaki:cap', \{ detail: \{ cap \} \}\)/);
   const desk = read('../apaki/web/src/desktop.js');
   assert.match(desk, /!openHere\(id\) && link\?\.supports\?\.\('follow'\)/, 'a conversation this phone holds itself is shown, not followed');
+  assert.match(desk, /A\.deskPaneFor = \(sessionId\) => \{[\s\S]*?p\?\.kind === 'session' && p\.sessionId === sessionId && typeof p\.paneId === 'string'/, 'the lock card asks the desktop list which pane has a conversation');
   const css = read('../apaki/web/src/web.css');
   assert.match(css, /body\.web \.pane\.following \.follow-bar \{[^}]*position: sticky;[^}]*min-height: 44px;/s, '44 px touch target');
   assert.match(css, /\.follow-bar \.fb-go \{[^}]*min-width: 44px; min-height: 44px;/s);

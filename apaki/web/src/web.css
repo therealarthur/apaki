@@ -97,6 +97,8 @@ body.web .sheet input[type=text] { font-size: 16px; padding: 11px 12px; }
 body.web .menu-item { padding: 12px 12px; font-size: 15px; }
 body.web .takeover { margin-top: 6vh; padding: 20px 18px; }
 body.web .tk-row button { padding: 12px 16px; }
+/* Session in use can offer three choices on a phone (Watch live, Take over here, Cancel): they wrap rather than squeeze. */
+body.web .tk-row { flex-wrap: wrap; }
 body.web .stage-empty .new { padding: 12px 16px; }
 
 /* The PC this phone talks to, at the top of the drawer's footer. */

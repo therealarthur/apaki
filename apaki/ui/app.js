@@ -204,6 +204,9 @@ const host = {
   close: (p) => closePane(p),
   // A pane that follows a pane on the PC asks to take its conversation over (the phone's shared view; takeOver below).
   takeOver: (p) => takeOver(p),
+  // The Session in use card on a phone offers Watch live when a pane of the PC's window has the conversation (desktop.js deskPaneFor).
+  deskPaneFor: (sessionId) => (WEB && window.__apakiLink?.supports?.('follow') ? window.__apaki?.deskPaneFor?.(sessionId) || null : null),
+  watchLive: (p, desktopPaneId) => watchLive(p, desktopPaneId),
   voice: (p) => toggleVoice(p),
   folder: (p, value) => paneFolder(p, value),
   folderMenu: (p, anchor) => folderMenu(p.sessionId, anchor),
@@ -782,6 +785,18 @@ function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
   renderTabs();
   save();
   return p;
+}
+
+/**
+ * Watch live, from the Session in use card (pane.js showLocked): the pane asked to open a conversation a pane of the PC has, and
+ * chose to watch it instead of taking it over. A new pane follows (followDesktop, or the one that follows it already is shown) and
+ * the pane that met the lock closes, so the engine never has a half opened pane of this phone where the follower is to be.
+ */
+function watchLive(p, desktopPaneId) {
+  if (!p || !desktopPaneId || !S.panes.has(p.id)) return;
+  const title = p.title === 'New conversation' ? '' : p.title;
+  const f = followDesktop({ desktopPaneId, title, viewOnly: phoneCap() !== 'full' });
+  if (f && f !== p && S.panes.has(p.id)) closePane(p, { confirmBusy: false });
 }
 
 /**

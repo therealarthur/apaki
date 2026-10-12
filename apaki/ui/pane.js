@@ -642,6 +642,8 @@ Click for changes, commit, push, pull request, merge`;
     if (!lost) this.$.T.innerHTML = '';
     this.$.T.querySelector('.takeover')?.remove();
     const terminal = h.app === 'latch-relay' || !h.app;
+    // On a phone, when a pane of the PC's window has it open: watching it live takes nothing from that pane (the shared view).
+    const watchPane = lost ? null : this.host.deskPaneFor?.(e.sessionId || this.sessionId) || null;
     const card = el('div', 'takeover', `
       <div class="tk-kicker">${lost ? 'Taken over' : 'Session in use'}</div>
       <h3>${lost ? `${esc(who)} took this session` : `Open in ${esc(who)}`}</h3>
@@ -651,11 +653,13 @@ Click for changes, commit, push, pull request, merge`;
       <p class="tk-fine">${terminal
         ? 'That terminal window is blocked as soon as you take over: its next message is stopped with a note to continue here, so nothing forks.'
         : 'That window stops before its next message, with a note to continue here, so nothing forks.'} Anything it already did is on disk and loads here.</p>
-      <div class="tk-row"><button class="tk-go">${lost ? 'Take it back' : 'Take over here'}</button><button class="tk-no">${lost ? 'Close pane' : 'Cancel'}</button></div>`);
-    card.querySelector('.tk-go').onclick = () => {
+      <div class="tk-row">${watchPane ? '<button class="tk-go tk-watch">Watch live</button>' : ''}<button class="${watchPane ? 'tk-take' : 'tk-go tk-take'}">${lost ? 'Take it back' : 'Take over here'}</button><button class="tk-no">${lost ? 'Close pane' : 'Cancel'}</button></div>`);
+    card.querySelector('.tk-take').onclick = () => {
       this.$.T.innerHTML = '';
       this.open(this.lastOpen || { id: this.sessionId, cwd: this.cwd, title: this.title }, { warm: true, force: true });
     };
+    const watch = card.querySelector('.tk-watch');
+    if (watch) watch.onclick = () => this.host.watchLive?.(this, watchPane);
     card.querySelector('.tk-no').onclick = () => {
       if (lost) { this.host.close(this); return; }
       this.lockedBy = null;
