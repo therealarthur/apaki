@@ -121,7 +121,7 @@
  *   op sessionInfo { sessionId } -> ev sessionInfo { sessionId, ok, info }   read only: transcript facts, size, live state
  *   op pin { sessionId, pinned } -> ev sessions (rows carry pinned: true)   Pin to top
  *   op exportSession { sessionId, inline? } -> ev exported { ok, name, path | markdown }   Export as Markdown
- *   op resumeTerminal { sessionId }   a terminal running claude --resume (or codex resume) in its folder (the window only)
+ *   (Open in a terminal sends op openTerminal { sessionId, kind, paneId? }, which the console toggle's work builds)
  *   ev sessions rows also carry model (the last reply's, from the tail last-active.js reads)
  *
  *   op hostStatus -> ev host { pid, window, remoteOn, panes, lifecycle }
@@ -158,7 +158,7 @@ import { LastActive } from './last-active.js';
 // The session list's Details, Pin to top, Export as Markdown and Open in a terminal (2026-10-12).
 import * as pins from './pins.js';
 import { createCodexList } from './codex-list.js';
-import { SESSION_ID_RE, codexMarkdown, diskSize, exportName, findRollout, freePath, historyMarkdown, resumeCommand, scanClaude, scanCodex } from './session-info.js';
+import { SESSION_ID_RE, codexMarkdown, diskSize, exportName, findRollout, freePath, historyMarkdown, scanClaude, scanCodex } from './session-info.js';
 // Every conversation kept past Claude Code's 30-day cleanup, listed, opened and restored from D: (2026-10-12).
 import { archiveRoot, archiveTranscripts, archivedMeta, archivedSessions, openArchived, restoreArchived } from './transcript-archive.js';
 // What a phone shows of the desktop's tabs (2026-10-11).
@@ -396,9 +396,13 @@ const CODEX_FOUND = Boolean(findCodex());
  * sends the list again (at most every 2 s, from what is loaded: the Claude list is not read again for it).
  */
 let codexListTimer = null;
-const codexList = CODEX_FOUND && !process.env.APAKI_NO_CODEX_LIST
+// Off with APAKI_NO_CODEX_LIST, and with LATCH_NO_INDEX (the switch the engine tests use for "no background reading of
+// this PC's conversations": they run with the real home folder).
+const codexList = CODEX_FOUND && !process.env.APAKI_NO_CODEX_LIST && !process.env.LATCH_NO_INDEX
   ? createCodexList({
     cacheFile: path.join(latchDir(), 'codex-list.json'),
+    // The first pass waits until the engine has started and sent its first list (the kept rows are in that list).
+    firstDelayMs: 3000,
     log: (line) => process.stderr.write(`apaki: ${line}\n`),
     onChange: () => {
       if (codexListTimer) return;
@@ -1805,27 +1809,8 @@ const handlers = {
       emit({ ev: 'exported', reqId: c.reqId, sessionId: id, ok: false, message: `Could not save it: ${e.message || e}` });
     }
   },
-  // A terminal on this PC that resumes the session in its folder (the window only, like worktreeTerminal).
-  resumeTerminal: (c) => {
-    const id = String(c.sessionId || '');
-    if (!SESSION_ID_RE.test(id)) { emit({ ev: 'note', paneId: null, reqId: c.reqId, text: 'That is not a session id.' }); return; }
-    // One Claude Code per session: a pane here holding it would fight the terminal over the transcript.
-    if ([...panes.values()].some((p) => p.sessionId === id)) { emit({ ev: 'note', paneId: null, reqId: c.reqId, text: 'It is open in Apaki. Close its pane first, then open it in a terminal.' }); return; }
-    const item = listItemOf(id) || {};
-    let dir = String(item.cwd || '');
-    try { if (!dir || !fs.statSync(dir).isDirectory()) dir = os.homedir(); } catch { dir = os.homedir(); }
-    const t = resumeCommand(process.platform, { cwd: dir, id });
-    if (!t) return;
-    const start = (x, fallback) => {
-      try {
-        const child = spawn(x.cmd, x.args, { cwd: x.cwd || dir, detached: true, stdio: 'ignore', windowsHide: false });
-        child.on('error', () => { if (fallback) start(fallback, null); });
-        child.unref();
-      } catch { if (fallback) start(fallback, null); }
-    };
-    start(t, t.fallback);
-    emit({ ev: 'note', paneId: null, reqId: c.reqId, text: `Opening a terminal: ${t.words.join(' ')}` });
-  },
+  // Open in a terminal is the engine op openTerminal { sessionId, kind, paneId? }, built with the console toggle (another
+  // branch, reconciled at merge): it opens the exact session in a terminal window with the pane's settings.
   folder: async (c) => {
     if (c.action === 'create') { const f = folders.createFolder(c.name); if (!f.error && c.sessionId) folders.moveToFolder(c.sessionId, f.id); }
     if (c.action === 'move') folders.moveToFolder(c.sessionId, c.folderId || null);

@@ -1,6 +1,6 @@
 /**
- * session-info.js: everything Apaki can tell about one conversation, for the session list's Details sheet, its
- * Export as Markdown and its Open in a terminal (2026-10-12). READ ONLY: nothing here writes a transcript or a rollout.
+ * session-info.js: everything Apaki can tell about one conversation, for the session list's Details sheet and its
+ * Export as Markdown (2026-10-12). READ ONLY: nothing here writes a transcript or a rollout.
  *
  * WHY (Arthur, 2026-10-12): "the sessions listed should be a bit more compact but when selected or right clicked have
  * more information available ... all information available somewhere in details/properties when right clicking". The
@@ -8,7 +8,7 @@
  * from the conversation's own file when it is asked for:
  *
  *   scanClaude(file)   one pass over a Claude Code transcript: created and last message times, prompts (counted the way
- *                      a pane draws them, history.js isPromptItem), replies, tool calls, compactions, the models used and
+ *                      a pane draws them, history.js promptOf), replies, tool calls, compactions, the models used and
  *                      the last one, Claude Code's version, the git branch and folder it last ran in, its names (custom
  *                      title, summary) and the tokens of its replies (each API message counted once).
  *   scanCodex(file)    the same from a Codex rollout (~/.codex/sessions/.../rollout-*.jsonl): session_meta, turn_context
@@ -20,7 +20,6 @@
  *   historyMarkdown(items, meta)   a built history (history.js buildHistory) as a Markdown document
  *   codexMarkdown(text, meta)      a rollout as a Markdown document
  *   exportName(title, id)          a safe file name for it
- *   resumeCommand(platform, ...)   what opens a terminal that resumes it (claude --resume, codex resume); pure, tested
  */
 
 import fs from 'node:fs';
@@ -364,40 +363,4 @@ export function freePath(dir, name, exists = fs.existsSync) {
     if (!exists(p)) return p;
   }
   return path.join(dir, `${stem} ${Date.now()}${ext}`);
-}
-
-/* ---------- Open in a terminal ---------- */
-
-/**
- * What opens a terminal in the session's folder that resumes it: `claude --resume <id>`, or `codex resume <thread id>`
- * for a Codex thread. Windows Terminal (a plain console window when it is missing), Terminal on a Mac, the desktop's
- * default on Linux. Arguments are passed as a list (no shell parses the folder or the id), and the id must look like
- * one. Returns null for an id that does not. Pure, so the choice is tested without opening anything.
- */
-export function resumeCommand(platform, { cwd = '', id = '' } = {}) {
-  const sid = String(id || '');
-  if (!SESSION_ID_RE.test(sid)) return null;
-  const codex = sid.startsWith('codex:');
-  const words = codex ? ['codex', 'resume', sid.slice(6)] : ['claude', '--resume', sid];
-  const dir = String(cwd || '');
-  if (platform === 'win32') {
-    const plain = { cmd: 'cmd.exe', args: ['/c', 'start', '', '/D', dir, 'cmd.exe', '/k', ...words], cwd: dir };
-    // Windows Terminal reads ";" in its arguments as "another tab": a folder with one goes to the plain console.
-    if (dir.includes(';')) return { ...plain, words };
-    return { cmd: 'wt.exe', args: ['-d', dir, 'cmd.exe', '/k', ...words], cwd: dir, fallback: plain, words };
-  }
-  const line = words.join(' ');
-  if (platform === 'darwin') {
-    const sh = `cd '${dir.replace(/'/g, "'\\''")}' && ${line}`;
-    const script = `tell application "Terminal" to do script "${sh.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-    return { cmd: 'osascript', args: ['-e', script, '-e', 'tell application "Terminal" to activate'], cwd: dir, words };
-  }
-  return { cmd: 'x-terminal-emulator', args: ['-e', 'bash', '-lc', `${line}; exec bash`], cwd: dir, words };
-}
-
-/** The command a person types to resume it themselves (Copy resume command). */
-export function resumeLine({ cwd = '', id = '' } = {}) {
-  const sid = String(id || '');
-  const cmd = sid.startsWith('codex:') ? `codex resume ${sid.slice(6)}` : `claude --resume ${sid}`;
-  return `${cwd ? `cd "${cwd}" && ` : ''}${cmd}`;
 }

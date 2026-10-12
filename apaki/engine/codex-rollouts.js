@@ -60,9 +60,9 @@ export function createRolloutScanner({ home = os.homedir(), env = process.env, r
   /**
    * Rows for the threads the server did not list. `known` holds the codex:<id> ids the server listed; a rollout
    * of one of those is left to the server's row. Up to MAX_NEW_PER_CALL new files are read per call (maxNew: fewer,
-   * for the main list's background passes, codex-list.js).
+   * for the main list's background passes, codex-list.js, which also yields after every file read: yieldEvery 1).
    */
-  async function rows(known = new Set(), { maxNew = MAX_NEW_PER_CALL } = {}) {
+  async function rows(known = new Set(), { maxNew = MAX_NEW_PER_CALL, yieldEvery = 20 } = {}) {
     const files = [];
     for (const r of where) walk(r, files);
     files.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -81,7 +81,7 @@ export function createRolloutScanner({ home = os.homedir(), env = process.env, r
       if (!hit || hit.key !== key) {
         if (read >= maxNew) continue;
         read += 1;
-        if (read % 20 === 0) await new Promise((r) => setImmediate(r));
+        if (read % yieldEvery === 0) await new Promise((r) => setImmediate(r));
         const meta = codexMeta(f.file);
         hit = { key, meta };
         cache.set(f.file, hit);

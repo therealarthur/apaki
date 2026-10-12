@@ -113,7 +113,7 @@ export const PHONE_OPS = Object.freeze([
   'codexOpenFile',
   // 2026-10-12 (the session list's menu and Details sheet, session-info.js): Details and Export read only, at every access
   // level (an export comes back as text: a phone never writes a file on the PC); Pin to top changes the list like a folder
-  // move, so it is a SESSION_WRITE_OPS op. Not here on purpose: resumeTerminal, which opens a window on the PC.
+  // move, so it is a SESSION_WRITE_OPS op. Not here on purpose: openTerminal (Open in a terminal), which opens a window on the PC.
   'sessionInfo', 'exportSession', 'pin',
 ]);
 

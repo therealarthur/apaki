@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  SESSION_ID_RE, codexMarkdown, diskSize, exportName, findRollout, freePath, historyMarkdown, resumeCommand, resumeLine, scanClaude, scanCodex, toolLine,
+  SESSION_ID_RE, codexMarkdown, diskSize, exportName, findRollout, freePath, historyMarkdown, scanClaude, scanCodex, toolLine,
 } from '../apaki/engine/session-info.js';
 import { lastMessageInfo } from '../apaki/engine/last-active.js';
 import { PHONE_OPS, SESSION_WRITE_OPS, checkPhoneCommand } from '../apaki/engine/remote-policy.js';
@@ -179,22 +179,8 @@ test('toolLine, exportName and freePath', () => {
   assert.equal(freePath('D', 'a.md', (p) => taken.has(p)), path.join('D', 'a 3.md'));
 });
 
-test('resumeCommand: claude --resume or codex resume in the folder, as argument lists; a bad id opens nothing', () => {
-  const w = resumeCommand('win32', { cwd: 'C:\\acme\\web', id: SID });
-  assert.deepEqual(w.args, ['-d', 'C:\\acme\\web', 'cmd.exe', '/k', 'claude', '--resume', SID]);
-  assert.equal(w.cmd, 'wt.exe');
-  assert.deepEqual(w.fallback.args, ['/c', 'start', '', '/D', 'C:\\acme\\web', 'cmd.exe', '/k', 'claude', '--resume', SID]);
-  assert.deepEqual(resumeCommand('win32', { cwd: 'C:\\a', id: `codex:${TID}` }).words, ['codex', 'resume', TID]);
-  const semi = resumeCommand('win32', { cwd: 'C:\\a;b', id: SID });
-  assert.equal(semi.cmd, 'cmd.exe', 'Windows Terminal would split the folder at ";"');
-  const mac = resumeCommand('darwin', { cwd: "/Users/a/it's \"here\"", id: SID });
-  assert.equal(mac.cmd, 'osascript');
-  assert.match(mac.args[1], /^tell application "Terminal" to do script "cd '\/Users\/a\/it'\\\\''s \\"here\\"' && claude --resume 0e7f4b4e/);
-  assert.deepEqual(resumeCommand('linux', { cwd: '/home/a', id: SID }).args, ['-e', 'bash', '-lc', `claude --resume ${SID}; exec bash`]);
-  for (const id of ['', 'x; rm -rf /', `${SID} && calc`, 'codex:nope']) assert.equal(resumeCommand('win32', { cwd: 'C:\\', id }), null, id);
-  assert.equal(resumeLine({ cwd: 'C:\\acme', id: SID }), `cd "C:\\acme" && claude --resume ${SID}`);
-  assert.equal(resumeLine({ id: `codex:${TID}` }), `codex resume ${TID}`);
-  assert.ok(SESSION_ID_RE.test(SID) && SESSION_ID_RE.test(`codex:${TID}`) && !SESSION_ID_RE.test('abc'));
+test('session ids: a Claude Code id or codex:<thread id>, nothing else', () => {
+  assert.ok(SESSION_ID_RE.test(SID) && SESSION_ID_RE.test(`codex:${TID}`) && !SESSION_ID_RE.test('abc') && !SESSION_ID_RE.test(`codex:../${SID}`));
 });
 
 test('pins: pin, unpin, newest first, kept in latch/pinned.json; a bad id changes nothing', async () => {
@@ -233,7 +219,7 @@ test('policy: Details and Export at every access level (Export always inline), P
   const ask = (cmd, cap) => checkPhoneCommand(cmd, { deviceId: DEV, paneExists: () => false, paneCount: () => 0, cap });
   for (const op of ['sessionInfo', 'exportSession', 'pin']) assert.ok(PHONE_OPS.includes(op), op);
   assert.ok(SESSION_WRITE_OPS.includes('pin'));
-  assert.ok(!PHONE_OPS.includes('resumeTerminal'), 'a phone opens no windows on the PC');
+  assert.ok(!PHONE_OPS.includes('openTerminal'), 'Open in a terminal is for the PC only: a phone opens no windows there');
   for (const cap of ['full', 'noshell', 'chat']) {
     assert.deepEqual(ask({ op: 'sessionInfo', reqId: 'r1', sessionId: SID, path: 'C:\\x' }, cap).cmd, { op: 'sessionInfo', reqId: `phone:${DEV}:r1`, sessionId: SID }, cap);
     assert.deepEqual(ask({ op: 'exportSession', sessionId: `codex:${TID}`, inline: false, path: 'C:\\x' }, cap).cmd, { op: 'exportSession', sessionId: `codex:${TID}`, inline: true }, cap);
@@ -243,19 +229,19 @@ test('policy: Details and Export at every access level (Export always inline), P
   const chat = ask({ op: 'pin', sessionId: SID }, 'chat');
   assert.equal(chat.ok, false);
   assert.match(chat.error, /cannot pin sessions/);
-  for (const bad of [{ op: 'sessionInfo' }, { op: 'sessionInfo', sessionId: '../../x' }, { op: 'exportSession', sessionId: 5 }, { op: 'pin', sessionId: 'a b' }, { op: 'resumeTerminal', sessionId: SID }]) {
+  for (const bad of [{ op: 'sessionInfo' }, { op: 'sessionInfo', sessionId: '../../x' }, { op: 'exportSession', sessionId: 5 }, { op: 'pin', sessionId: 'a b' }, { op: 'openTerminal', sessionId: SID, kind: 'claude' }]) {
     assert.equal(ask(bad, 'full').ok, false, JSON.stringify(bad));
   }
 });
 
 test('engine: the new ops are wired, documented, and the list rows carry pinned and model', () => {
   const engine = fs.readFileSync(new URL('../apaki/engine/engine.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-  for (const op of ['sessionInfo', 'pin', 'exportSession', 'resumeTerminal']) {
+  for (const op of ['sessionInfo', 'pin', 'exportSession']) {
     assert.match(engine, new RegExp(`\\n  ${op}: `), `engine.js handles ${op}`);
     assert.match(engine.slice(0, engine.indexOf('import ')), new RegExp(`op ${op} `), `the header lists ${op}`);
   }
   assert.match(engine, /pins\.pinned\(\)\.has\(it\.id\) \? \{ pinned: true \}/);
   assert.match(engine, /it\.model \? \{ model: it\.model \}/);
-  // A terminal never opens for a session a pane here holds.
-  assert.match(engine, /It is open in Apaki\. Close its pane first/);
+  // Open in a terminal is the console toggle's openTerminal (another branch): this branch launches nothing itself.
+  assert.equal(/\n  resumeTerminal: /.test(engine), false);
 });

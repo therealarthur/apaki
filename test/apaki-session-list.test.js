@@ -143,11 +143,11 @@ test('the session menu covers what a person does with a session, and says why wh
   assert.equal(hint('move'), 'in Checkout');
   assert.equal(hint('details'), 'Alt+Enter');
   assert.equal(hint('rename'), 'F2');
-  // Open in a pane here and working: Show it, Stop and Close; a terminal would fight the pane over the transcript.
+  // Open in a pane here and working: Show it, Open in a terminal with the pane's settings (engine openTerminal), Stop, Close.
   const busy = sessionMenuItems(s, { pane: { busy: true } });
-  assert.deepEqual(values(busy).slice(0, 4), ['open', null, 'stop', 'close']);
+  assert.deepEqual(values(busy).slice(0, 4), ['open', 'terminal', 'stop', 'close']);
   assert.equal(busy.find((x) => x.label === 'Show it')?.value, 'open');
-  assert.match(busy.find((x) => x.label === 'Open in a terminal').disabled, /close the pane first/);
+  assert.equal(busy.find((x) => x.value === 'terminal').hint, 'with this pane\'s settings');
   assert.equal(busy.find((x) => x.value === 'stop').hint, 'stop Claude here (Esc)');
   assert.ok(!values(busy).includes('split') && !values(busy).includes('tab'));
   // Running in the background (no pane here): Stop stops its turn; a terminal's own turn is stopped there.
@@ -323,7 +323,8 @@ test('wiring: folders open in place, the list is grouped and compact, the menus,
   assert.match(app, /wireListKeys\(\$\('sessions'\)\);\nwireListKeys\(\$\('folders'\)\);/);
   assert.match(app, /const items = sessionMenuItems\(s, \{/);
   for (const v of ['terminal', 'pin', 'move', 'ask', 'export', 'details', 'subs']) assert.match(app, new RegExp(`v === '${v}'`), v);
-  assert.match(app, /send\('resumeTerminal', \{ sessionId: s\.id \}\)/);
+  // Open in a terminal sends the console toggle's op (built in another branch): the session, its kind, and its pane here.
+  assert.match(app, /send\('openTerminal', \{ sessionId: s\.id, kind: s\.codex \? 'codex' : 'claude', \.\.\.\(pane && !pane\.isViewer \? \{ paneId: pane\.id \} : \{\}\) \}\)/);
   assert.match(app, /send\('pin', \{ sessionId: s\.id, pinned: on \}\)/);
   assert.match(app, /send\('sessionInfo', \{ sessionId: s\.id \}\)/);
   assert.match(app, /case 'sessionInfo':/);
@@ -334,7 +335,7 @@ test('wiring: folders open in place, the list is grouped and compact, the menus,
   assert.match(phoneMenu, /value: 'details', label: 'Details'/);
   assert.match(phoneMenu, /value: 'ask', label: 'Ask Claude about it'/);
   assert.match(phoneMenu, /phoneCan\('exportSession'\)/);
-  assert.equal(/stopSession|revealFolder|openExternal|digPrompt|resumeTerminal/.test(phoneMenu), false);
+  assert.equal(/stopSession|revealFolder|openExternal|digPrompt|openTerminal|'terminal'/.test(phoneMenu), false, 'no Open in a terminal on the phone');
   const native = read('../apaki/web/src/native.js');
   assert.match(native, /for \(const list of \[\$\('sessions'\), \$\('folders'\)\]\) if \(list\) longPressOn\(list\);/);
   assert.match(native, /closest\?\.\('li\[data-id\], \.folder-row\[data-folder\]'\)/);

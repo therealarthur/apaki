@@ -1803,7 +1803,9 @@ function sessionMenu(s, e, row = null) {
       else if (v === 'here') openFromRail(s, { here: true });
       else if (v === 'tab') { if (pane) focusPane(pane); else openFromRail(s, { ctrlKey: true }); }
       else if (v === 'split') openFromRail(s, { shiftKey: true });
-      else if (v === 'terminal') send('resumeTerminal', { sessionId: s.id });
+      // openTerminal is built with the console toggle (another branch; reconciled at merge): the exact session in an
+      // external terminal window, with the pane's model, effort, mode and billing when it is open in one. PC only.
+      else if (v === 'terminal') send('openTerminal', { sessionId: s.id, kind: s.codex ? 'codex' : 'claude', ...(pane && !pane.isViewer ? { paneId: pane.id } : {}) });
       else if (v === 'stop') { if (runningHere) pane.stop(); else send('stopSession', { sessionId: s.id }); }
       else if (v === 'close') closePane(pane);
       else if (v === 'pin' || v === 'unpin') setPinned(s, v === 'pin');

@@ -873,4 +873,10 @@ body.web.native .folder-sess li.srow { position: relative; margin: 0; border: 0;
 body.web.native .folder-sess li.srow::before { content: ''; position: absolute; left: 18px; right: 0; bottom: 0; height: 1px; background: var(--hairline); }
 body.web.native .folder-sess li.srow:active, body.web.native .folder-row:active { background: hsla(232, 60%, 62%, .1); }
 body.web.native .folder-note { padding: 8px 18px 12px; }
+/* Details on the phone: a narrower label column, and copy buttons a finger can hit. */
+body.web .sheet .sd-rows { grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; }
+body.web .sheet .sd-btn { min-height: 44px; min-width: 56px; padding: 0 12px; border-radius: 10px; }
+body.web .sheet .sd-rows dd { align-items: center; }
+/* Keep-warm's moving ring sits inside the full-width row, rounded, so it never reads as a mark down one edge. */
+body.web.native :is(.sessions, .folder-sess) li.srow .warm-ring { inset: 4px 10px 4px 10px; border-radius: 10px; }
 body.web.native .folder-note .link-btn { min-height: 44px; }

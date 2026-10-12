@@ -123,6 +123,22 @@ test('codex list: a refresh at most every REFRESH_MS unless forced; a pass that 
     assert.equal(passes, 2);
     assert.equal(timers.length, 0, 'three heads: no second batch');
     assert.ok(BATCH >= 20 && BATCH <= 250);
+    // firstDelayMs: a refresh before then only schedules the first pass (once).
+    const later = [];
+    let p2 = 0;
+    const s2 = createRolloutScanner({ roots: w.roots });
+    const r2 = s2.rows.bind(s2);
+    s2.rows = (known, o) => { p2 += 1; return r2(known, o); };
+    const delayed = createCodexList({ scanner: s2, now: () => t, firstDelayMs: 3000, setTimer: (fn, ms) => { later.push([fn, ms]); return null; } });
+    await delayed.refresh();
+    await delayed.refresh();
+    assert.equal(p2, 0);
+    assert.equal(later.length, 1);
+    assert.equal(later[0][1], 3000);
+    await later[0][0]();
+    await delayed.idle();
+    assert.equal(p2, 1);
+    assert.equal(delayed.rows().length, 3);
     // maxNew limits the heads one pass reads.
     const small = createRolloutScanner({ roots: w.roots });
     assert.equal((await small.rows(new Set(), { maxNew: 2 })).length, 2);
@@ -152,7 +168,8 @@ test('the window: Codex threads interleaved with Claude\'s in All, under the sam
   assert.equal(/if \(s\.codex && S\.view === 'all'/.test(app), false, 'All no longer leaves Codex threads out');
   assert.match(app, /\{ id: 'all', label: 'All', n: live\.length \}/);
   const engine = read('../apaki/engine/engine.js');
-  assert.match(engine, /const codexList = CODEX_FOUND && !process\.env\.APAKI_NO_CODEX_LIST/);
+  assert.match(engine, /const codexList = CODEX_FOUND && !process\.env\.APAKI_NO_CODEX_LIST && !process\.env\.LATCH_NO_INDEX/, 'engine tests (real home folder) read no rollouts');
+  assert.match(engine, /firstDelayMs: 3000,/);
   assert.match(engine, /for \(const row of codexRowsNow\(\)\) list\.push\(compact\(row, null, folderOf\)\);/);
   assert.match(engine, /codexList\?\.refresh\(\);/);
   assert.match(engine, /function codexRowsById\(\) \{ return new Map\(codexRowsNow\(\)/, 'search hits use the same rows');

@@ -255,9 +255,9 @@ export function sessionMenuItems(s, ctx = {}) {
     items.push({ value: 'tab', label: 'Open in a new tab', hint: 'Ctrl+click' });
     items.push({ value: 'here', label: 'Open here', hint: 'replaces the focused pane' });
   }
+  // Open in a terminal (the engine's openTerminal): the exact session in a terminal window; from a pane, with its settings.
   if (s.archivedCopy) items.push({ value: null, label: 'Open in a terminal', disabled: 'Claude Code deleted the original; open it here and send a message to restore it first', hint: 'restore it first' });
-  else if (pane) items.push({ value: null, label: 'Open in a terminal', disabled: 'It is open in a pane here; close the pane first', hint: 'open here' });
-  else items.push({ value: 'terminal', label: 'Open in a terminal', hint: codex ? 'codex resume' : 'claude --resume' });
+  else items.push({ value: 'terminal', label: 'Open in a terminal', hint: pane ? 'with this pane\'s settings' : codex ? 'codex resume' : 'claude --resume' });
   if (running || pane) {
     items.push({ divider: true });
     if (running) items.push({ value: 'stop', label: 'Stop', hint: runningHere ? (codex ? 'stop Codex here (Esc)' : 'stop Claude here (Esc)') : 'stop its running turn', danger: true });

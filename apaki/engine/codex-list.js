@@ -40,7 +40,7 @@ const signature = (rows) => rows.map((r) => `${r.id}|${r.lastModified || 0}|${r.
 
 export function createCodexList({
   cacheFile = null, scanner = createRolloutScanner(), lastActive = new LastActive(), log = () => {}, onChange = () => {},
-  now = Date.now, setTimer = setTimeout,
+  now = Date.now, setTimer = setTimeout, firstDelayMs = 0,
 } = {}) {
   let rows = [];
   let sig = '';
@@ -48,6 +48,11 @@ export function createCodexList({
   let lastRun = 0;
   let saveTimer = null;
   let followTimer = null;
+  // firstDelayMs: the first pass waits this long after the list is made, so the engine's start (and the first session
+  // list it sends) does not share the disk with it.
+  const readyAt = now() + firstDelayMs;
+  let firstTimer = null;
+  let firstScheduled = false;
 
   // What a previous run kept: the heads, the tails' times, and the rows themselves (shown before anything is read).
   if (cacheFile) {
@@ -84,7 +89,8 @@ export function createCodexList({
   /** One pass: the rollouts' rows (BATCH new heads at most), timed by their last message. */
   async function pass() {
     const before = scanner.cacheSize();
-    const found = await scanner.rows(new Set(), { maxNew: BATCH });
+    // One head at a time between turns of the event loop: the engine answers its window while this reads.
+    const found = await scanner.rows(new Set(), { maxNew: BATCH, yieldEvery: 1 });
     const read = scanner.cacheSize() - before;
     await lastActive.apply(found, scanner.paths?.() || new Map());
     found.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
@@ -106,6 +112,10 @@ export function createCodexList({
   /** A background pass, unless one ran in the last REFRESH_MS (force: now) or one is running. */
   function refresh({ force = false } = {}) {
     if (running) return running;
+    if (!force && now() < readyAt) {
+      if (!firstScheduled) { firstScheduled = true; firstTimer = setTimer(() => refresh({ force: true }), readyAt - now()); firstTimer?.unref?.(); }
+      return Promise.resolve();
+    }
     if (!force && now() - lastRun < REFRESH_MS) return Promise.resolve();
     lastRun = now();
     running = pass().catch((e) => log(`codex list: ${e.message || e}`)).finally(() => { running = null; });
@@ -131,6 +141,6 @@ export function createCodexList({
     refresh,
     /** Tests: wait for a pass that is running. */
     idle: () => running || Promise.resolve(),
-    stop() { clearTimeout(followTimer); clearTimeout(saveTimer); },
+    stop() { clearTimeout(followTimer); clearTimeout(saveTimer); clearTimeout(firstTimer); },
   };
 }
