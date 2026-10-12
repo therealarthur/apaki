@@ -116,6 +116,22 @@
  *   op hostQuit { whenIdle: true } | { now: true } -> ev hostQuit { ok, pending, waiting }
  *   ev opened from attach also carries running (its Claude Code process is up)
  *                  and turn (any turn runs, also one Claude started by itself)
+ *
+ * The shared view (2026-10-11, remote.js "The shared view"; Arthur: a phone shows
+ * the desktop's panes and swipes between them WITHOUT taking a pane's session
+ * over): a phone pane follows a desktop pane instead of opening its session.
+ *   op follow { reqId, paneId: <the phone's pane>, desktopPaneId, readOnly } (only from remote.js, after
+ *                  checkPhoneCommand) -> to that phone pane only: ev opened { attached: true, follower: true, readOnly,
+ *                  busy, turn, running, model, effort, mode, title ... } like attach (no queue: what the window
+ *                  typed and has not sent is its own), ev history, the questions waiting (ev ask) and the running tasks.
+ *                  After that remote.js sends the phone every event of the desktop pane (FOLLOW_EVENTS) too, and runs
+ *                  the phone's send, steer, interrupt, answer, contextUsage and history ops on the desktop pane.
+ *                  The desktop pane keeps its one runner: nothing is taken over, no second Claude Code starts.
+ *   ev peerMessage { paneId, from, text, images, steered, origin }  a message another window sent into a desktop pane
+ *                  (the engine does not echo user messages): from a phone, the window and the other followers draw it;
+ *                  from the window, only the phones that follow get it. The sender drew its own (`origin`, never sent on)
+ *   ev followers   { paneId, phones: [names] }  (from remote.js) who watches a desktop pane, for the window's "Also on" line
+ *   ev ask_gone    now also follows an answer: the first answer, from the window or a phone, drops the other side's sheet
  */
 
 import { execFile, spawn } from 'node:child_process';
@@ -947,6 +963,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   // A pane in a folder the lists have no numbers for yet (a new worktree): the branch label follows within a second.
   wtSoon(600);
   emit({ ev: 'opened', tookOver: Boolean(opts.force),  reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
+  // Phones that watch this desktop pane (the shared view) stay on it through a new conversation; the window's pane may be new.
+  if (!parsePhoneId(p.id)) remote?.announceFollowers?.(p.id);
   if (opts.warm !== false) runner.start();
   // The whole conversation, newest page first (history.js; the SDK's list when the file cannot be read).
   if (sessionId) await sendHistory(p, sessionId);
@@ -1018,10 +1036,54 @@ async function attach(reqId, paneId, sessionId, cwd) {
   emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: paneTurnBusy(p), running: Boolean(p.runner.running), reqId, paneId: p.id, sessionId: p.sessionId, cwd: p.runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [],
     // The queue as this engine holds it (queue-hold.js): what is still queued, and the ids it sent while no window was here.
     ...heldView(p) });
+  // A window that came back learns which phones watch this pane (the shared view).
+  if (!parsePhoneId(p.id)) remote?.announceFollowers?.(p.id);
   if (p.sessionId) await sendHistory(p, p.sessionId);
   for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: p.id, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}) });
   // Subagents and background tasks still running in this process, so the window's Tasks button and panel show them again.
   for (const msg of taskReplay(p)) emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
+}
+
+/**
+ * The shared view (2026-10-11): a message went into a desktop pane. The engine does not echo user messages (a window draws its
+ * own as it sends), so the other windows of the pane need an event to draw it:
+ *   - sent by a phone that follows the pane (c.follower is its name): the window draws it, and so does every other follower;
+ *     the phone that sent it drew its own (origin names that phone's pane, remote.js mirror skips it);
+ *   - sent by the window (or by this engine's auto-send of a queue): only the phones that follow the pane get it. The window
+ *     is not told, so it never draws its own message twice.
+ * A phone pane's own messages are nobody's business (no follower is registered for them).
+ */
+function peerMessage(c, text, images, steered) {
+  if (parsePhoneId(String(c.paneId))) return;
+  const ev = { ev: 'peerMessage', paneId: String(c.paneId), from: c.follower || 'Desktop', text, images, steered, origin: c.origin || null };
+  if (c.follower) emit(ev); else remote?.mirror?.(ev);
+}
+
+/**
+ * The shared view (2026-10-11): a phone pane starts following a desktop pane. It gets the desktop pane's state the way a window
+ * that attaches does (opened with attached, busy, running, model, effort and mode, the newest page of history, the questions that
+ * still wait, the running tasks), addressed to the phone's own pane id so remote.js sends it to that phone only. Nothing is
+ * opened, taken over or started: the desktop pane keeps its one runner, its lock and its queue. What the window typed and has not
+ * sent (its queue, held here for a window-less host) is never part of it. After this, remote.js sends the phone the pane's later
+ * events (mirror) and applies the phone's ops to the desktop pane.
+ */
+async function followState(c) {
+  const to = String(c.paneId);
+  const p = panes.get(String(c.desktopPaneId || ''));
+  // remote.js checked that the pane is a conversation; it may have closed since. The phone pane then hears closed, which also
+  // removes it from remote.js's list of followers.
+  if (!p || parsePhoneId(p.id)) { emit({ ev: 'closed', reqId: c.reqId, paneId: to }); return; }
+  const info = p.sessionId ? await getSessionInfo(p.sessionId).catch(() => null) : null;
+  emit({
+    ev: 'opened', attached: true, follower: true, readOnly: Boolean(c.readOnly), reqId: c.reqId, paneId: to,
+    busy: Boolean(p.busy), turn: paneTurnBusy(p), running: Boolean(p.runner?.running),
+    sessionId: p.sessionId, cwd: p.runner?.cwd || null, title: info?.customTitle || info?.summary || 'New conversation',
+    model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [],
+  });
+  // The history and the meter estimate for a conversation with no process: the same helper, named for the phone's pane.
+  if (p.sessionId) await sendHistory({ id: to, runner: p.runner, sessionId: p.sessionId }, p.sessionId);
+  for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: to, toolName: a.toolName, input: a.input, readOnly: Boolean(c.readOnly) });
+  for (const msg of taskReplay(p)) emit({ ev: 'sdk', paneId: to, sessionId: p.sessionId, msg });
 }
 
 /** Closes a pane: its Claude Code process stops and its session lock is freed. */
@@ -1215,7 +1277,13 @@ const handlers = {
   digPrompt: (c) => digPromptOp(c.reqId, String(c.query || ''), Array.isArray(c.candidates) ? c.candidates : []),
   open: (c) => open(c.reqId, c.paneId, c.sessionId || null, c.cwd || null, { warm: c.warm, model: c.model, effort: c.effort, mode: c.mode, force: c.force, kind: c.kind }),
   attach: (c) => attach(c.reqId, c.paneId, c.sessionId || null, c.cwd || null),
-  send: (c) => send(c.reqId, c.paneId, String(c.text || ''), Array.isArray(c.images) ? c.images : []),
+  // A phone pane shows a desktop pane (the shared view): remote.js registered it and sends this once, after checkPhoneCommand.
+  follow: (c) => followState(c),
+  send: (c) => {
+    const images = Array.isArray(c.images) ? c.images : [];
+    peerMessage(c, String(c.text || ''), images, false);
+    return send(c.reqId, c.paneId, String(c.text || ''), images);
+  },
   close: (c) => closePane(c.reqId, c.paneId),
   // A Stop: the queue stays unsent after it (queue-hold.js), until the next message is sent.
   interrupt: (c) => { const p = getPane(c.paneId); p.userStopped = true; return isCodexPane(p) ? codex.interrupt(p) : p.runner?.interrupt(); },
@@ -1243,7 +1311,12 @@ const handlers = {
     const content = images.length
       ? [...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })), ...(text ? [{ type: 'text', text }] : [])]
       : text;
-    if (p.runner?.steer(content, { busy: Boolean(p.busy) })) { emit({ ev: 'steered', reqId: c.reqId, paneId: p.id, qid: c.qid }); return; }
+    if (p.runner?.steer(content, { busy: Boolean(p.busy) })) {
+      // Steered in from another window of this pane (the shared view): it draws it too ("Steered in"); the sender answers below.
+      peerMessage(c, text, images, true);
+      emit({ ev: 'steered', reqId: c.reqId, paneId: p.id, qid: c.qid });
+      return;
+    }
     // Why it could not be taken in, in the engine log (2026-10-11: a steer that went out only after the turn ended).
     const r = p.runner;
     process.stderr.write(`apaki: steer missed in pane ${p.id}: runner ${r ? 'yes' : 'none'}, process ${r?.running ? 'up' : 'down'}, pending ${r?.pending?.length ?? 0}, turn ${r?.turnActive ? 'active' : 'idle'}, pane busy ${Boolean(p.busy)}\n`);
@@ -1251,7 +1324,15 @@ const handlers = {
   },
   // A question, plan approval or permission prompt is settled once: the entry leaves the map first, so a second answer finds nothing.
   // A permission prompt turns the reply into the SDK's result itself (permissions.js answer), never trusting rules or input from it.
-  answer: (c) => { const a = state.asks.get(c.askId); state.asks.delete(c.askId); if (a?.answer) a.answer(c.result || null); else a?.resolve(c.result || null); },
+  answer: (c) => {
+    const a = state.asks.get(c.askId);
+    state.asks.delete(c.askId);
+    if (a?.answer) a.answer(c.result || null); else a?.resolve(c.result || null);
+    // The first answer wins (2026-10-11, the shared view): the question may be on screen in the window and on phones that follow
+    // its pane, so whoever did not answer has its sheet taken away the way a stale question's is (ask_gone). Nothing extra is sent
+    // for a pane nobody else watches, so the window's own answers behave as before.
+    if (a && (c.follower || remote?.followerNames?.(a.paneId)?.length)) emit({ ev: 'ask_gone', askId: c.askId, paneId: a.paneId });
+  },
   model: async (c) => {
     const p = getPane(c.paneId);
     // A Codex pane's model is one of Codex's (op codexModels); it never becomes the default for new Claude panes.
@@ -1647,10 +1728,12 @@ async function dispatch(c) {
   // A send or steer takes its queued messages out of this engine's copy at once, before it waits its turn in the
   // pane's chain below: the copy must never still hold what a window is sending (queue-hold.js, no double send).
   // `queued` only comes from the desktop window; remote-policy.js strips it from a phone's send.
+  // A phone following this desktop pane (c.follower, set by remote.js) has no queue here: its qid is its own, and must never
+  // match, and so drop, an id in the window's queue.
   if ((c.op === 'send' || c.op === 'steer') && c.paneId != null) {
     const hp = panes.get(String(c.paneId));
     if (hp) {
-      dropHeld(hp, c.op === 'steer' ? [c.qid] : c.queued);
+      if (!c.follower) dropHeld(hp, c.op === 'steer' ? [c.qid] : c.queued);
       // A new message after a Stop: the queue goes out after this turn again.
       if (c.op === 'send') hp.userStopped = false;
     }
@@ -1724,6 +1807,14 @@ remote = createRemote({
     // A folder some listed session ran in, or a worktree (or a folder in one) of a repository the engine lists (2026-10-12).
     knownCwd: (cwd) => Boolean(state.items?.some((it) => it.cwd === cwd)) || wtIndex.knownPath(cwd),
     phoneSessions: (deviceId) => phonePanes(deviceId).map((id) => panes.get(id)?.sessionId).filter(Boolean),
+    // What a phone may follow (the shared view, 2026-10-11): a desktop conversation pane this engine holds. The window's own saved
+    // layout says when an id is a viewer, browser or task pane instead; anything else, or a phone pane, is not there.
+    desktopPane: (id) => {
+      if (typeof id !== 'string' || parsePhoneId(id)) return null;
+      const kind = desktopKinds.get(id);
+      if (kind && kind !== 'session') return kind;
+      return panes.has(id) ? 'conversation' : null;
+    },
   },
 });
 
@@ -1873,9 +1964,13 @@ function saveWorkspace(st) {
 // The desktop's tabs as phones see them (desktop-tabs.js, 2026-10-11): sent when they change, and once at start
 // from the saved workspace, so a phone sees them even while the window is closed (remote.js caches the last one).
 let lastDesktopTabs = '';
+// What each pane of the window is (desktop-tabs.js kind: session, browser, task, viewer), by the window's pane id, so a phone is
+// told "not a conversation" for a viewer instead of "not open" (the shared view, 2026-10-11; engine.desktopPane).
+let desktopKinds = new Map();
 function sendDesktopTabs(st) {
   if (!st || typeof st !== 'object') return;
   const tabs = desktopTabs(st);
+  desktopKinds = new Map(tabs.flatMap((t) => t.panes).filter((p) => p.paneId).map((p) => [p.paneId, p.kind]));
   const key = JSON.stringify(tabs);
   if (key === lastDesktopTabs) return;
   lastDesktopTabs = key;
