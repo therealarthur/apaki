@@ -111,12 +111,19 @@ export function patchLines(change) {
   return out;
 }
 
-/** The HTML of a patch's diff block (inside a <pre class="diff">): a header per file, then its lines, capped. */
-export function patchHtml(changes) {
+/**
+ * The HTML of a patch's diff block (inside a <pre class="diff">): a header per file, then its lines, capped.
+ * open: true makes each file's name a button that opens the file in the viewer (a file that was deleted has none);
+ * only for patches that were applied, so not in an approval sheet.
+ */
+export function patchHtml(changes, { open = false } = {}) {
   return (Array.isArray(changes) ? changes : []).map((c) => {
     const lines = patchLines(c);
     const more = Math.max(0, lines.length - LINES_PER_FILE);
-    const head = `<span class="hunk file">${esc(c.path || '')} <i>${esc(CHANGE_WORD[c.kind] || c.kind || '')}${c.move_path ? ` to ${esc(c.move_path)}` : ''}</i></span>`;
+    const name = open && c.path && (c.kind || 'update') !== 'delete'
+      ? `<button type="button" class="file-open" data-path="${esc(c.move_path || c.path)}" title="Open in the viewer">${esc(c.path)}</button>`
+      : esc(c.path || '');
+    const head = `<span class="hunk file">${name} <i>${esc(CHANGE_WORD[c.kind] || c.kind || '')}${c.move_path ? ` to ${esc(c.move_path)}` : ''}</i></span>`;
     return head + lines.slice(0, LINES_PER_FILE).map((l) => `<span class="${l.cls}">${esc(l.text)}</span>`).join('') + (more ? `<span class="more">... ${more} more line${more === 1 ? '' : 's'}</span>` : '');
   }).join('');
 }

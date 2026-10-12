@@ -107,3 +107,13 @@ test('events: a phone gets its Codex pane\'s events only, and the thread list is
   assert.equal(phoneView({ ev: 'ready', voice: true, codex: true }).voice, false);
   assert.equal(phoneView({ ev: 'ready', voice: true, codex: true }).codex, true);
 });
+
+test('codexOpenFile: a path for this phone\'s own Codex pane; the engine checks it against the files that pane changed', () => {
+  assert.ok(PHONE_OPS.includes('codexOpenFile'));
+  assert.deepEqual(ok({ op: 'codexOpenFile', reqId: 'o1', paneId: 'c1', path: 'src/Table.tsx', junk: 1 }), { op: 'codexOpenFile', reqId: `phone:${DEVICE}:o1`, paneId: `phone:${DEVICE}:c1`, path: 'src/Table.tsx' });
+  assert.match(bad({ op: 'codexOpenFile', paneId: 'c1' }), /Bad file name/);
+  assert.match(bad({ op: 'codexOpenFile', paneId: 'c1', path: 'a\u0000b' }), /Bad file name/);
+  assert.match(bad({ op: 'codexOpenFile', paneId: 'c1', path: 'x'.repeat(2000) }), /Bad file name/);
+  assert.equal(bad({ op: 'codexOpenFile', path: 'x' }).length > 0, true, 'a pane is required');
+  for (const cap of ['noshell', 'chat']) assert.equal(checkPhoneCommand({ op: 'codexOpenFile', paneId: 'c1', path: 'x' }, ctx({ cap })).ok, true, 'the engine refuses a viewer to a phone whose pane has no tools');
+});

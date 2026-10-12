@@ -1561,13 +1561,13 @@
         "codex:client-request:thread/search",
         "codex:enum:ThreadSourceKind"
       ],
-      "status": "partial",
-      "surfaces": { "desktop": "partial", "phone": "partial" },
-      "where": ["apaki/remote/CODEX.md", "src/codex.js", "apaki/engine/codex-panes.js"],
-      "commits": ["abdb517", "72f21e4"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "src/codex.js", "apaki/engine/codex-panes.js", "apaki/engine/codex-rollouts.js", "index/src/main.rs", "test/apaki-codex-rollouts.test.js"],
+      "commits": ["abdb517", "72f21e4", "b62faaf"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "thread/list (cli, vscode, exec, appServer and unknown sources; recency order; the state database first, a rollout scan on refresh), shaped as session rows. Not done: the rollout files in ~/.codex/sessions and archived_sessions for threads the server does not list; the search index still finds those, and opening one by id works."
+      "notes": "thread/list (cli, vscode, exec, appServer and unknown sources; recency order; the state database first, a rollout scan on refresh), shaped as session rows, plus the rollout files in ~/.codex/sessions and ~/.codex/archived_sessions (or $CODEX_HOME) for ids the server did not list (apaki/engine/codex-rollouts.js: read only, the head of each new or changed file, kept by size and time, 250 files read per refresh). Archived ones list under Archived and cannot be unarchived from Apaki. The Codex view still lists them when the server will not start. The search index now reads archived_sessions too (index/src/main.rs; a Rust change that was not built here)."
     },
     {
       "id": "codex-sidebar-tab-search-archive-sections",
@@ -1587,10 +1587,10 @@
       "status": "partial",
       "surfaces": { "desktop": "partial", "phone": "partial" },
       "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-panes.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "b62faaf"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "A Codex view next to All and In terminals (op codexThreads), threads out of All, search finds them (words and meaning), rename through thread/name/set (the Codex app shows the same name), archive in Apaki's own list, right-click: fork (thread/fork), copy the codex resume command, folders. Not done: times from the last message (the list uses the server's recency time), folders mapped to the Codex app's thread sections (threadSection/*, thread/section/move)."
+      "notes": "A Codex view next to All and In terminals (op codexThreads), threads out of All, search finds them (words and meaning, archived threads too), rename through thread/name/set (the Codex app shows the same name), archive in Apaki's own list (a thread archived in the Codex app lists under Archived and says so), right-click: fork (thread/fork), copy the codex resume command, folders; the same menu as a sheet on the phone. Not done: folders mapped to the Codex app's thread sections (threadSection/*, thread/section/move), which live in the Codex app's own state; times come from the server's recency time (a rollout row from the file's last write)."
     },
     {
       "id": "codex-panes-in-any-tab",
@@ -1655,13 +1655,13 @@
         "codex:notification:turn/started",
         "codex:notification:turn/completed"
       ],
-      "status": "partial",
-      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
       "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js", "apaki/engine/queue-hold.js", "apaki/engine/codex-panes.js", "test/apaki-codex-e2e.test.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "01c60cf"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Send (turn/start), Stop (turn/interrupt, the turn ends as stopped), steer (turn/steer, Ctrl+Enter or the Steer button; a steer with no turn running comes back as steer_missed and goes out as a message), the queue with Edit, Up arrow to edit, the engine sending the queue when no window is connected: all the same code as for Claude. Not done: the server side queue (thread/queue/*, experimental); Apaki's own queue does the same job."
+      "notes": "Send (turn/start), Stop (turn/interrupt, the turn ends as stopped), steer (turn/steer, Ctrl+Enter or the Steer button; a steer with no turn running comes back as steer_missed and goes out as a message), the queue with Edit, Up arrow to edit, the engine sending the queue when no window is connected: all the same code as for Claude, worded for Codex (checked in the demo window: Enter queues, the Queued card has Steer, Edit and a remove button). The server side queue (thread/queue/*, thread/queue/changed) is experimental and is not used: Apaki's own queue does the same job for both agents, and the server's only matters for a thread another client also drives."
     },
     {
       "id": "codex-attachments-and-voice",
@@ -1698,13 +1698,13 @@
         "codex:client-request:review/start",
         "codex:client-request:mcpServerStatus/list"
       ],
-      "status": "partial",
-      "surfaces": { "desktop": "partial", "phone": "partial" },
-      "where": ["apaki/remote/CODEX.md", "apaki/engine/engine.js", "apaki/engine/codex-panes.js", "apaki/ui/codex.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/engine/engine.js", "apaki/engine/codex-panes.js", "apaki/ui/codex.js", "apaki/ui/pane.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "b62faaf", "0056eaa", "47f1cfe"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "In the pane: /new, /resume, /model, /effort, /approvals, /folder; from the engine: /compact, /status, /review, /diff, /mcp. Not done: /init and /mention (and a list read from the server, which has none)."
+      "notes": "In the pane: /new, /resume, /model, /effort, /approvals, /folder, /fork; from the engine: /compact, /status, /review (uncommitted changes, branch <name>, commit <sha>, or free instructions), /diff, /mcp, /goal, /revert, /init (a turn that asks for an AGENTS.md), /mention <file> (attached to the next message as a mention item, once). The server has no command list, so Codex's own list is its skills (skills/list): the enabled ones follow the commands in the slash menu (never shadowing a command) and /name words sends one as $name in the text plus a skill input item, as the Codex app does. Phones type the same words; /revert and a goal change are refused to a Chat only phone."
     },
     {
       "id": "codex-context-meter-and-compaction",
@@ -1719,10 +1719,10 @@
       "status": "partial",
       "surfaces": { "desktop": "partial", "phone": "partial" },
       "where": ["apaki/remote/CODEX.md", "apaki/engine/context-estimate.js", "apaki/engine/codex-map.js", "apaki/engine/codex-panes.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "01c60cf"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "The meter is the last call's tokens over the model's context window (thread/tokenUsage/updated), with the split (input, cached, output, reasoning); it shows once a turn has run (a resumed thread has no usage until then). Compact now (the meter's menu or /compact) runs thread/compact/start and the compaction shows as a divider. Not done: the auto-compact settings (a Codex config key, not a protocol call)."
+      "notes": "The meter is the last call's tokens over the model's context window (thread/tokenUsage/updated), with the split (input, cached, output, reasoning); it shows once a turn has run (a resumed thread has no usage until then). Its tooltip says where Codex compacts on its own when the user's model_auto_compact_token_limit is set. Compact now (the meter's menu or /compact) runs thread/compact/start and the compaction shows as a divider. Not done: changing the auto-compact setting (a Codex config key; Apaki never writes ~/.codex/config.toml)."
     },
     {
       "id": "codex-agent-message-and-reasoning",
@@ -1924,13 +1924,13 @@
       "title": "Codex MCP elicitation: a form from the tool server's schema",
       "product": "codex",
       "upstream": ["codex:server-request:mcpServer/elicitation/request"],
-      "status": "partial",
-      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
       "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-map.test.js", "test/apaki-codex-e2e.test.js"],
       "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "A tool-call approval (Codex marks it in _meta) is a permission sheet, a form is the question sheet (one question per field; enums, yes or no and text), a link asks first and then opens in Apaki's browser. The shapes were written from the schema; none was seen live (no turn was started on a real account). Not done: the openai/form variants and user verification (declined, never left waiting)."
+      "notes": "A tool-call approval (Codex marks it in _meta) is a permission sheet, a form is the question sheet (one question per field; enums, yes or no and text), a link asks first and then opens in Apaki's browser. The shapes were written from the schema and run end to end against the fake app-server; none was seen live (no turn was started on a real account). The openai/form variants and user verification are declined, never left waiting."
     },
     {
       "id": "claude-mcp-elicitation",
@@ -2039,10 +2039,10 @@
       "status": "partial",
       "surfaces": { "desktop": "partial", "phone": "partial" },
       "where": ["apaki/remote/CODEX.md", "apaki/ui/glasscard.js", "apaki/engine/codex-panes.js", "apaki/engine/codex-map.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "01c60cf"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "The pane's billing chip shows the signed-in account (account/read: ChatGPT and the plan, or API key) and follows account/updated; account/rateLimits/updated at 80 percent and above becomes the same usage warning Claude shows (five hour, weekly). Swaps stay Glass's: the corner card still switches the live login. Not verified: whether a Glass swap while the app-server runs sends account/updated."
+      "notes": "The pane's billing chip shows the signed-in account (account/read: ChatGPT and the plan, or API key) and follows account/updated; its tooltip lists the plan windows (account/rateLimits/read, kept current by account/rateLimits/updated) and the worst one shows beside the account name; at 80 percent and above the same usage warning Claude shows (five hour, weekly). Swaps stay Glass's: the corner card still switches the live login. Not verified: whether a Glass swap while the app-server runs sends account/updated."
     },
     {
       "id": "codex-review-revert-fork",
@@ -2057,13 +2057,13 @@
         "chatgpt-desktop:feature:review-mode",
         "chatgpt-desktop:feature:thread-fork-and-revert"
       ],
-      "status": "partial",
-      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
       "where": ["apaki/remote/CODEX.md", "apaki/engine/codex-panes.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "0056eaa"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "/review starts an inline review of the uncommitted changes (review/start); fork from the right-click menu (thread/fork). Not done: revert (thread/revert), other review targets."
+      "notes": "/review (review/start) takes the uncommitted changes, a base branch, a commit or free instructions; fork from the right-click menu and /fork (thread/fork); /revert takes the newest turn out of the thread (thread/revert, then the pane is drawn again from the server) and leaves the files Codex changed alone. Tested against the fake app-server; the semantics of thread/revert were read from the schema only (a real thread was not changed)."
     },
     {
       "id": "codex-goals",
@@ -2074,13 +2074,13 @@
         "codex:notification:thread/goal/updated",
         "codex:notification:thread/goal/cleared"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
       "where": ["apaki/remote/CODEX.md"],
-      "commits": ["abdb517"],
+      "commits": ["abdb517", "0056eaa"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Where the Codex app shows them. Claude Code has a goal concept too (active_goal message, tool-input:ProposeGoal) that Apaki does not show. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "/goal sets (thread/goal/set, origin user), shows (thread/goal/get) and clears (thread/goal/clear) the thread's goal; when Codex moves it (done, blocked, out of budget, or changed in the Codex app) a line says so, once per change of state (thread/goal/updated and cleared). Not shown: a standing goal indicator in the pane header. Claude Code's own goal concept (active_goal, ProposeGoal) is still not shown."
     },
     {
       "id": "codex-phone-panes",

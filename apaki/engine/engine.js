@@ -1440,6 +1440,11 @@ const handlers = {
   // Codex (2026-10-12, codex-panes.js): the model list with each model's own efforts and the account line (model/list),
   // and the Codex threads on this PC for the list's Codex view (thread/list). Both start the app-server on first use.
   codexModels: (c) => codex.models(c.reqId || null),
+  // A file this Codex pane changed, in the viewer (the patch line's file name; codex-panes.js openFile checks the path).
+  codexOpenFile: async (c) => {
+    const p = panes.get(String(c.paneId || ''));
+    if (p && isCodexPane(p)) await codex.openFile(c, p);
+  },
   codexThreads: async (c) => { await codex.list({ refresh: c.refresh === true, reqId: c.reqId || null }); },
   // Commands come from a running Claude Code process. A pane that has not
   // started yet (restored, waiting for its first message) gets the list last

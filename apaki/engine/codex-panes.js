@@ -324,7 +324,7 @@ export function createCodex(env) {
     return {
       threadId: null, turnId: null, loaded: false, cwd: '', touched: { model: false, effort: false, mode: false },
       items: new Map(), blocks: new Map(), blockSeq: 0, out: new Map(), sentIds: new Set(), reqByTurn: new Map(), planSeq: 0,
-      usage: null, mentions: [], goalStatus: null, contextTimer: null, startedAt: 0, diffs: new Map(), lastDiffTurn: null, compactWait: null, opts,
+      usage: null, mentions: [], changedFiles: new Set(), goalStatus: null, contextTimer: null, startedAt: 0, diffs: new Map(), lastDiffTurn: null, compactWait: null, opts,
     };
   }
 
@@ -419,10 +419,58 @@ export function createCodex(env) {
     try {
       const rev = await revOf(threadId);
       const page = await history.firstPage(threadId, { limit: HISTORY_PAGE });
+      trackFromMessages(p, page.messages);
       emit({ ev: 'history', reqId, paneId: p.id, sessionId: p.sessionId, ...page, rev, ...(refresh ? { refresh: true } : {}) });
     } catch (e) {
       note(p, `Codex could not read this conversation's history: ${e.message || e}`, 'warn');
     }
+  }
+
+  /* ---------- opening a changed file in the viewer ---------- */
+
+  const MAX_CHANGED_FILES = 3000;
+  const MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
+
+  /** Remembers the files this pane's Codex changed (absolute paths): the only ones the pane may open in the viewer. */
+  function trackChanged(p, changes) {
+    const cx = p.codex;
+    if (!cx || !Array.isArray(changes)) return;
+    for (const c of changes) {
+      for (const raw of [c?.path, c?.move_path]) {
+        if (!raw || typeof raw !== 'string' || cx.changedFiles.size >= MAX_CHANGED_FILES) continue;
+        cx.changedFiles.add(path.resolve(cx.cwd || os.homedir(), raw));
+      }
+    }
+  }
+
+  /** The changes in a page of history messages (ApplyPatch tool calls), so a thread opened later can open its files too. */
+  function trackFromMessages(p, messages) {
+    for (const m of Array.isArray(messages) ? messages : []) {
+      for (const b of Array.isArray(m?.message?.content) ? m.message.content : []) {
+        if (b?.type === 'tool_use' && b.name === 'ApplyPatch') trackChanged(p, b.input?.changes);
+      }
+    }
+  }
+
+  /**
+   * Op codexOpenFile { path }: shows a file this conversation changed in the viewer, as the Codex app's side panel does
+   * (the patch line's file name is the button). Only files Codex changed here are opened; nothing is written.
+   */
+  async function openFile(c, p) {
+    const cx = p.codex;
+    const file = path.resolve(cx.cwd || os.homedir(), String(c.path || ''));
+    const name = path.basename(file);
+    if (!c.path || !cx.changedFiles.has(file)) { note(p, 'Apaki opens the files this conversation changed.', 'warn'); return; }
+    let st = null;
+    try { st = fs.statSync(file); } catch { st = null; }
+    if (!st?.isFile()) { note(p, `${name} is not there any more.`, 'warn'); return; }
+    if (st.size > MAX_PREVIEW_BYTES) { note(p, `${name} is too large to preview (${Math.round(st.size / 1048576)} MB).`, 'warn'); return; }
+    const show = tools(p)?.show;
+    if (!show) { note(p, 'This phone\'s access does not allow opening files.', 'warn'); return; }
+    try {
+      const r = await show({ kind: 'file', path: file, title: name }, { via: 'codex-file' });
+      if (r && r.ok === false) note(p, String(r.text || `Could not open ${name}.`).slice(0, 300), 'warn');
+    } catch (e) { note(p, `Could not open ${name}: ${e.message || e}`, 'warn'); }
   }
 
   /** A short revision of the thread on disk, for the drift check: its updated time and recency (digits only). */
@@ -441,6 +489,7 @@ export function createCodex(env) {
     const limit = Math.min(5000, Math.max(1, Math.floor(Number(c.limit)) || HISTORY_PAGE));
     try {
       const page = await history.pageBefore(threadId, String(c.before), { limit, all: c.all === true });
+      trackFromMessages(p, page.messages);
       emit({ ...base, sessionId: p.sessionId, ...page });
     } catch (e) {
       emit({ ...base, sessionId: p.sessionId, error: `Codex could not read the rest of this conversation: ${e.message || e}` });
@@ -798,6 +847,7 @@ export function createCodex(env) {
   function emitToolUse(p, item) {
     const cx = p.codex;
     const use = toolUseOf(item);
+    if (item?.type === 'fileChange') trackChanged(p, use?.input?.changes);
     if (!use || cx.items.get(item.id)?.shown) return false;
     cx.items.set(item.id, { ...item, shown: true });
     sdk(p, assistantMessage(cx.turnId || item.id, [use]));
@@ -1148,7 +1198,7 @@ export function createCodex(env) {
   }
 
   return {
-    isCodexPane, open, attach, send, steer, interrupt, setModel, setEffort, setMode, models, list, sendContext, historyBefore, historyCheck, sendHistory,
+    isCodexPane, open, attach, send, steer, openFile, interrupt, setModel, setEffort, setMode, models, list, sendContext, historyBefore, historyCheck, sendHistory,
     runTool, openedLink, pickPane, release, close, rename, fork, recap, shutdown, touchIdle, rpc, commands: () => COMMANDS.map((c) => ({ ...c })), commandsFor,
     /** The thread rows read by the last list() (empty until the Codex view asks). */
     cachedRows: () => shared.rows || [],

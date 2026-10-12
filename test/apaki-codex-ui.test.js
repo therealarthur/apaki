@@ -195,3 +195,14 @@ test('plan usage: a line for the tooltip, the worst window beside the name, noth
   assert.equal(usageWorst(undefined), '');
   assert.equal(usageWorst([{ label: 'x', usedPercent: 'many' }]), '');
 });
+
+test('patch headers: the file name is a button only when asked (an applied patch), never for a deleted file, and the path is escaped', () => {
+  const changes = [{ path: 'src/<a>.ts', kind: 'update', diff: '@@ -1 +1 @@' }, { path: 'old.ts', kind: 'delete', diff: 'x' }, { path: 'a "b".ts', kind: 'update', move_path: 'moved "b".ts', diff: '' }];
+  const plain = patchHtml(changes);
+  assert.equal(plain.includes('file-open'), false, 'an approval sheet has no buttons');
+  const open = patchHtml(changes, { open: true });
+  assert.equal((open.match(/class="file-open"/g) || []).length, 2);
+  assert.ok(open.includes('data-path="src/&lt;a&gt;.ts"'));
+  assert.ok(open.includes('data-path="moved &quot;b&quot;.ts"'), 'a moved file opens where it went');
+  assert.ok(!/<button[^>]*>old\.ts/.test(open), 'a deleted file has nothing to open');
+});

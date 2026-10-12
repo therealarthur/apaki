@@ -598,3 +598,39 @@ test('a skill is called as /name words; command words are never skills, and the 
   s.client.emit('notification', 'turn/completed', { threadId: THREAD, turn: { id: 'T1', status: 'completed' } });
   await sent;
 });
+
+test('a file name in a patch opens the file in the viewer, only if this conversation changed it; changes in history count too', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-open-'));
+  const changed = path.join(dir, 'Table.tsx');
+  const other = path.join(dir, 'secret.txt');
+  const fromHistory = path.join(dir, 'old.md');
+  for (const f of [changed, other, fromHistory]) fs.writeFileSync(f, 'x');
+  // The thread's history holds a turn that changed old.md.
+  const turn = { id: 'TT', status: 'completed', startedAt: 1, completedAt: 2, durationMs: 1000, error: null, itemsView: 'full', items: [
+    { type: 'userMessage', id: 'u', content: [{ type: 'text', text: 'edit it', text_elements: [] }] },
+    { type: 'fileChange', id: 'fc', status: 'completed', changes: [{ path: 'old.md', kind: { type: 'update' }, diff: '@@ -1 +1 @@\n-a\n+b' }] },
+  ] };
+  const s = setup({ table: { 'thread/resume': () => ({ ...resumed(), cwd: dir }), 'thread/turns/list': { data: [turn], nextCursor: null } } });
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  const notes = () => s.of('note').map((n) => n.text);
+  // the history's change is known; a file nobody changed is refused
+  await s.codex.openFile({ path: 'old.md' }, p);
+  assert.deepEqual(s.shows.map((x) => [x.input.kind, x.input.path, x.input.title, x.meta.via]), [['file', fromHistory, 'old.md', 'codex-file']]);
+  await s.codex.openFile({ path: changed }, p);
+  assert.equal(s.shows.length, 1);
+  assert.match(notes().at(-1), /opens the files this conversation changed/);
+  // a change drawn live (a relative path counts from the thread's folder)
+  s.client.emit('notification', 'item/started', { threadId: THREAD, turnId: 'T', item: { type: 'fileChange', id: 'f1', status: 'inProgress', changes: [{ path: 'Table.tsx', kind: { type: 'update' }, diff: '@@ -1 +1 @@\n-a\n+b' }] } });
+  await s.codex.openFile({ path: 'Table.tsx' }, p);
+  assert.equal(s.shows.at(-1).input.path, changed);
+  // a file nobody changed is refused even inside the folder; one that is gone is said to be gone
+  await s.codex.openFile({ path: other }, p);
+  assert.equal(s.shows.length, 2);
+  fs.rmSync(changed);
+  await s.codex.openFile({ path: changed }, p);
+  assert.match(notes().at(-1), /not there any more/);
+  await s.codex.openFile({ path: '' }, p);
+  assert.equal(s.shows.length, 2);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -23,19 +23,22 @@ params).
 ## Checklist (each item: built, tested, and recorded in apaki/parity)
 
 Discovery and lists
-- [ ] Every Codex thread on the PC: thread/list (includes the Codex app's
+- [x] Every Codex thread on the PC: thread/list (includes the Codex app's
       threads), plus the rollout files in ~/.codex/sessions and
       ~/.codex/archived_sessions for anything the server does not list.
-      Partly (2026-10-12): thread/list is read (quick state-database read,
-      rollout scan on refresh). The rollout files the server does not list
-      are not scanned; the search index still finds them and opens them by id.
+      (2026-10-12: thread/list is read, quick state-database read first and a
+      rollout scan on refresh; apaki/engine/codex-rollouts.js then lists the
+      rollout files the server did not, read only, archived ones under
+      Archived. The search index reads archived_sessions too: a Rust change in
+      index/src/main.rs that was not built here.)
 - [ ] A Codex tab in the sidebar next to Claude's, with the same search
       (keyword and meaning index cover Codex threads), times from the last
       message, archive, rename (thread/name/set), folders mapped to Codex's
       own thread sections (threadSection/*, thread/section/move) both ways.
-      Partly: the Codex view, search, archive, rename and fork are done;
-      times use the server's recency time, and the Codex app's thread
-      sections are not mapped.
+      Partly: the Codex view, search (archived threads included), archive,
+      rename and fork are done; times use the server's recency time (a rollout
+      row the file's last write), and the Codex app's thread sections are not
+      mapped (they live in the Codex app's own state).
 - [x] Codex threads open as panes in any tab, next to Claude panes; drag and
       drop, tabs, split, the badge and unread all work the same.
       (2026-10-12: also a new conversation, from the empty pane.)
@@ -45,26 +48,30 @@ The pane (prompt box parity)
       picker, the Codex app's approval and sandbox presets: read-only, auto
       (workspace write, ask on request), full access (danger-full-access,
       approvals never), shown like Claude's permission modes.
-- [ ] Send (turn/start), Stop (turn/interrupt), steer (turn/steer, Ctrl+Enter),
+- [x] Send (turn/start), Stop (turn/interrupt), steer (turn/steer, Ctrl+Enter),
       queue (thread/queue/changed), Edit queued, the same keyboard rules.
-      Partly: send, stop, steer, Edit queued and the keyboard rules are done;
-      the queue is Apaki's own (the same for Claude and Codex), not the
-      server's experimental thread/queue/*.
+      (Same code as Claude's pane, worded for Codex. The queue is Apaki's own,
+      the same for both agents, not the server's experimental thread/queue/*,
+      which only matters for a thread another client also drives.)
 - [x] Attach images and files (input items; thread/attachment/*), paste,
       drag in; voice through Apaki's local Whisper into the box.
       (Pictures go inline, other files are saved where Codex can read them
       and mentioned by path; thread/attachment/* is not used. No voice on the
       phone, as for Claude.)
-- [ ] Slash commands Codex offers (from its own list where the server gives
+- [x] Slash commands Codex offers (from its own list where the server gives
       one; otherwise the documented set: new, model, approvals, review,
       compact, diff, mention, status, init, mcp), with Apaki's own (resume)
       handled like Claude's.
-      Partly: new, resume, model, effort, approvals, folder, compact, status,
-      review, diff, mcp. Not done: init, mention.
+      (2026-10-12: new, resume, model, effort, approvals, folder, fork,
+      compact, status, review [branch, commit or instructions], diff, mcp,
+      init, mention, goal, revert. The server has no command list; its skills
+      (skills/list) follow the commands in the slash menu and /name words
+      sends one as the Codex app does.)
 - [ ] Context meter from thread/tokenUsage/updated; compaction
       (thread/compact/start, thread/compacted) and auto-compact settings.
-      Partly: the meter and Compact now are done; the auto-compact settings
-      (a Codex config key) are not.
+      Partly: the meter, Compact now and the percent where the user's own
+      auto-compact limit fires are done; changing that setting (a Codex config
+      key, which Apaki never writes) is not.
 
 What the conversation shows
 - [x] Streaming agent messages (item/agentMessage/delta), reasoning summaries
@@ -92,10 +99,10 @@ Questions and approvals (Codex's AskUserQuestion and friends)
       applyPatchApproval: Approve once, Approve for the session, Deny, with
       the command or the diff shown; the same sheet style as Claude's plan
       approval.
-- [ ] mcpServer/elicitation/request: a form from the tool server's schema.
-      Partly: tool-call approvals, forms and links are built from the schema
-      and tested against the fake server; none was seen live (no turn was
-      started on a real account). The openai/form variants are declined.
+- [x] mcpServer/elicitation/request: a form from the tool server's schema.
+      (Tool-call approvals, forms and links are built from the schema and
+      tested against the fake server; none was seen live, no turn was started
+      on a real account. The openai/form variants are declined.)
 - [x] From a phone: the same sheets, through the phone policy (caps).
 
 Browser and viewer knowledge (as Claude has in apaki-tools.js)
@@ -122,11 +129,14 @@ Accounts and the rest
       limits (account/rateLimits/updated) shown like Claude's usage, swaps
       and API keys reflected live.
       Partly: the account shows in the billing chip and follows
-      account/updated; usage at 80 percent and above is the same warning
-      Claude shows. Swaps stay Glass's; not verified live.
-- [ ] Review mode (review/start), revert (thread/revert), fork
+      account/updated; the chip's tooltip lists the plan windows (the worst
+      one shows beside the name) and usage at 80 percent and above is the same
+      warning Claude shows. Swaps stay Glass's; not verified live.
+- [x] Review mode (review/start), revert (thread/revert), fork
       (thread/fork), goals (thread/goal/*) where the Codex app shows them.
-      Partly: /review and fork. Not done: revert, goals.
+      (/review with its four targets, fork and /fork, /revert [history only,
+      files stay; read from the schema, not tried on a real thread], /goal.
+      No standing goal indicator in the pane header.)
 - [x] Phone access: Codex panes on the phone with the same caps; remote
       policy covers the new ops.
 - [x] Do not touch the ChatGPT or Codex desktop apps' running processes or
@@ -149,7 +159,8 @@ on this PC that sends nothing billable.
   already draws (SDK-shaped, so the same renderer serves both agents and the
   phone page). `codex-history.js`: history by thread/turns/list.
   `codex-panes.js`: the pane glue; engine.js sends the ops of a Codex pane
-  there (same op names as a Claude pane).
+  there (same op names as a Claude pane). `codex-rollouts.js`: the rollout
+  files the server does not list, read only.
 - The window side is `apaki/ui/codex.js` (presets, model and effort choices,
   patch lines) with small branches in pane.js, app.js, permission.js and
   menu.js; the phone page shares all of it. `remote-policy.js` knows the

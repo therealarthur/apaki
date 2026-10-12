@@ -790,7 +790,15 @@ Click for changes, commit, push, pull request, merge`;
       d.append(el('pre', '', esc(block.input.content || block.input.command || '')));
     } else if (block.name === 'ApplyPatch' && Array.isArray(block.input?.changes)) {
       // Codex's file changes (2026-10-12): the diffs it applied, a header per file.
-      d.append(el('pre', 'diff', patchHtml(block.input.changes)));
+      const pre = el('pre', 'diff', patchHtml(block.input.changes, { open: true }));
+      // The file name in a patch header opens the file in the viewer, as the Codex app's side panel does.
+      pre.addEventListener('click', (ev) => {
+        const b = ev.target.closest?.('.file-open');
+        if (!b) return;
+        ev.preventDefault();
+        this.send('codexOpenFile', { path: b.dataset.path });
+      });
+      d.append(pre);
     }
     this.$.T.append(d);
     this.tools.set(block.id, d);

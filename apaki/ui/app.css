@@ -2660,6 +2660,10 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
 .diff .hunk.file { color: var(--ink); font-weight: 600; background: var(--tint-deep); }
 .diff .hunk.file i { font-style: normal; font-weight: 500; color: var(--faint); }
 .diff .ctx { display: block; color: var(--soft); }
+/* A changed file's name in a patch header opens it in the viewer: still the name, underlined softly, the action ink on hover. */
+.diff .hunk.file .file-open { border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: var(--hairline-strong); text-underline-offset: 3px; text-align: left; }
+.diff .hunk.file .file-open:hover { color: var(--action-strong); text-decoration-color: currentColor; }
+.diff .hunk.file .file-open:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 3px; }
 .diff .more { display: block; color: var(--faint); }
 .tool pre.diff .hunk, .tool pre.diff .ctx, .tool pre.diff .more { padding: 0 11px; }
 :root[data-theme="dark"] .diff .hunk { background: var(--tint); }
