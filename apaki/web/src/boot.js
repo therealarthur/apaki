@@ -761,6 +761,8 @@ function linkHandlers() {
     // The PC changed what this phone may make Claude do: the PC list says it, the panes hear it from the PC.
     cap: (cap) => {
       if (S.overlay) goHome().catch(() => {});
+      // Panes that follow a PC pane become view only, or send again (app.js, the shared view).
+      window.dispatchEvent(new CustomEvent('apaki:cap', { detail: { cap } }));
       toast(cap === 'full' ? `${S.link?.pcName || 'The PC'} gave this phone full access.` : `${S.link?.pcName || 'The PC'} set this phone to ${CAP_WORDS[cap] || cap}.`);
     },
     // The PC said when this pairing runs out (or that it never does): kept with the PC, shown in the PC list.

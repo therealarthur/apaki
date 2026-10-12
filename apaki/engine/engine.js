@@ -122,11 +122,34 @@
  *   op worktrees { cwd?, full?, refresh? } -> ev worktrees { repos: [{ name, base, worktrees: [{ path, branch, added, removed, ahead, behind, ... }] }] }
  *   op worktreeDiff { path, scope? } -> ev worktreeDiff;  op worktreePlan / worktreeRun { kind, ... } -> ev worktreePlan / worktreeResult
  *   op worktreeTerminal { path } (the window only)
+ * The session list (2026-10-12, session-info.js and pins.js; Arthur: compact rows like the ChatGPT app, everything else
+ * in a menu and a Details sheet):
+ *   op sessionInfo { sessionId } -> ev sessionInfo { sessionId, ok, info }   read only: transcript facts, size, live state
+ *   op pin { sessionId, pinned } -> ev sessions (rows carry pinned: true)   Pin to top
+ *   op exportSession { sessionId, inline? } -> ev exported { ok, name, path | markdown }   Export as Markdown
+ *   (Open in a terminal sends op openTerminal { sessionId, kind, paneId? }, which the console toggle's work builds)
+ *   ev sessions rows also carry model (the last reply's, from the tail last-active.js reads)
  *
  *   op hostStatus -> ev host { pid, window, remoteOn, panes, lifecycle }
  *   op hostQuit { whenIdle: true } | { now: true } -> ev hostQuit { ok, pending, waiting }
  *   ev opened from attach also carries running (its Claude Code process is up)
  *                  and turn (any turn runs, also one Claude started by itself)
+ *
+ * The shared view (2026-10-11, remote.js "The shared view"; Arthur: a phone shows
+ * the desktop's panes and swipes between them WITHOUT taking a pane's session
+ * over): a phone pane follows a desktop pane instead of opening its session.
+ *   op follow { reqId, paneId: <the phone's pane>, desktopPaneId, readOnly } (only from remote.js, after
+ *                  checkPhoneCommand) -> to that phone pane only: ev opened { attached: true, follower: true, readOnly,
+ *                  busy, turn, running, model, effort, mode, title ... } like attach (no queue: what the window
+ *                  typed and has not sent is its own), ev history, the questions waiting (ev ask) and the running tasks.
+ *                  After that remote.js sends the phone every event of the desktop pane (FOLLOW_EVENTS) too, and runs
+ *                  the phone's send, steer, interrupt, answer, contextUsage and history ops on the desktop pane.
+ *                  The desktop pane keeps its one runner: nothing is taken over, no second Claude Code starts.
+ *   ev peerMessage { paneId, from, text, images, steered, origin }  a message another window sent into a desktop pane
+ *                  (the engine does not echo user messages): from a phone, the window and the other followers draw it;
+ *                  from the window, only the phones that follow get it. The sender drew its own (`origin`, never sent on)
+ *   ev followers   { paneId, phones: [names] }  (from remote.js) who watches a desktop pane, for the window's "Also on" line
+ *   ev ask_gone    now also follows an answer: the first answer, from the window or a phone, drops the other side's sheet
  */
 
 import { execFile, spawn } from 'node:child_process';
@@ -154,6 +177,10 @@ import { COMPACT_CHOICES, COMPACT_DEFAULT, compactSettings, loadPrefs, normalize
 import { estimateEvent, lastUsage } from './context-estimate.js';
 // The session list's times: the last message, not the file's modified time (2026-10-11).
 import { LastActive } from './last-active.js';
+// The session list's Details, Pin to top, Export as Markdown and Open in a terminal (2026-10-12).
+import * as pins from './pins.js';
+import { createCodexList } from './codex-list.js';
+import { SESSION_ID_RE, codexMarkdown, diskSize, exportName, findRollout, freePath, historyMarkdown, scanClaude, scanCodex } from './session-info.js';
 // Every conversation kept past Claude Code's 30-day cleanup, listed, opened and restored from D: (2026-10-12).
 import { archiveRoot, archiveTranscripts, archivedMeta, archivedSessions, openArchived, restoreArchived } from './transcript-archive.js';
 // What a phone shows of the desktop's tabs (2026-10-11).
@@ -384,6 +411,31 @@ const codex = createCodex({
 // Whether Codex is installed here, so the window offers it; looked up once, without starting anything.
 const CODEX_FOUND = Boolean(findCodex());
 
+/*
+ * Codex threads in the main session list from the start (2026-10-12, codex-list.js; Arthur: Codex sessions integrated
+ * exactly like Claude's). Read from the rollout files, read only, without starting the app-server; what was read is kept
+ * in latch/codex-list.json so a restart reads only new or changed rollouts. A background pass that changed the rows
+ * sends the list again (at most every 2 s, from what is loaded: the Claude list is not read again for it).
+ */
+let codexListTimer = null;
+// Off with APAKI_NO_CODEX_LIST, and with LATCH_NO_INDEX (the switch the engine tests use for "no background reading of
+// this PC's conversations": they run with the real home folder).
+const codexList = CODEX_FOUND && !process.env.APAKI_NO_CODEX_LIST && !process.env.LATCH_NO_INDEX
+  ? createCodexList({
+    cacheFile: path.join(latchDir(), 'codex-list.json'),
+    // The first pass waits until the engine has started and sent its first list (the kept rows are in that list).
+    firstDelayMs: 3000,
+    log: (line) => process.stderr.write(`apaki: ${line}\n`),
+    onChange: () => {
+      if (codexListTimer) return;
+      codexListTimer = setTimeout(() => { codexListTimer = null; if (state.items) emitSessions(null); }, 2000);
+      codexListTimer.unref?.();
+    },
+  })
+  : null;
+/** The Codex rows of the list now: the Codex view's (app-server) rows over the rollouts' (no I/O). */
+const codexRowsNow = () => (codexList ? codexList.rows(codex.cachedRows()) : codex.cachedRows());
+
 /** Opens a web page, or a stored artifact's file, outside Apaki (the system browser or default app). */
 function openOutside(target) {
   const [cmd, args] = process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', target]]
@@ -422,6 +474,9 @@ function compact(it, term, folderOf) {
     ...(it.archivedCopy ? { archivedCopy: true, restorable: true } : {}),
     // A turn is running in this engine (a pane here, a phone's pane, or one kept running in the background).
     running: [...panes.values()].some((p) => p.sessionId === it.id && (p.runner?.turnRunning || p.runner?.turnActive || (isCodexPane(p) && p.busy))),
+    // Pinned to the top of the list (pins.js), and the model of its last reply when its tail says (last-active.js), 2026-10-12.
+    ...(pins.pinned().has(it.id) ? { pinned: true } : {}),
+    ...(it.model ? { model: it.model } : {}),
   };
 }
 
@@ -482,14 +537,22 @@ async function loadSessions() {
 
 async function sessions(reqId) {
   const term = await loadSessions();
+  emitSessions(reqId, term);
+  // Codex threads: a background pass over the rollouts (codex-list.js), at most every 30 s; a change sends the list again.
+  codexList?.refresh();
+}
+
+/** Sends the session list as last loaded (term: the terminal sessions), with the Codex rows as they are now. */
+function emitSessions(reqId, term = terminalSessions()) {
   const folderOf = folders.folderOfSessions();
   const list = state.items.map((it) => compact(it, term.get(it.id)?.[0], folderOf));
   // Open in a terminal right now, even before Claude Code wrote a transcript.
   for (const [id, recs] of term) {
     if (!state.byId.has(id)) list.push(compact({ id, title: `New session (${recs[0].name || 'terminal'})`, cwd: recs[0].cwd, lastModified: recs[0].updatedAt }, recs[0], folderOf));
   }
-  // The Codex threads read the last time the Codex view asked (op codexThreads): listed with the rest, marked codex.
-  for (const row of codex.cachedRows()) list.push(compact(row, null, folderOf));
+  // The Codex threads, from the start (2026-10-12, codex-list.js: the rollouts, read only, with the Codex view's rows over
+  // them): listed with the rest, marked codex.
+  for (const row of codexRowsNow()) list.push(compact(row, null, folderOf));
   emit({ ev: 'sessions', reqId, items: list, folders: folders.listFolders(), billing: billingInfo(), voice: voiceReady() });
 }
 
@@ -521,11 +584,11 @@ async function search(reqId, query) {
  * name, its last message) and in search. A thread the Codex view has listed now shows as that row; any other one gets
  * its first prompt as the title and its last message time from the rollout (last-active.js).
  */
-function codexRowsById() { return new Map(codex.cachedRows().map((r) => [r.id, r])); }
+function codexRowsById() { return new Map(codexRowsNow().map((r) => [r.id, r])); }
 
 /** The Codex view's rows, with the fields the quick filter (src/picker.js filterItems) matches on. */
 function codexSearchRows() {
-  return codex.cachedRows().map((r) => ({ ...r, titleLower: String(r.title || '').toLowerCase(), hay: [r.id, r.title, r.firstPrompt, r.cwd].join(' ').toLowerCase() }));
+  return codexRowsNow().map((r) => ({ ...r, titleLower: String(r.title || '').toLowerCase(), hay: [r.id, r.title, r.firstPrompt, r.cwd].join(' ').toLowerCase() }));
 }
 
 /** A search hit on a Codex thread as a list row. */
@@ -572,6 +635,114 @@ async function askSearchOp(reqId, query, paneId) {
 function digPromptOp(reqId, query, candidateIds = []) {
   const candidates = candidateIds.map((id) => state.byId.get(id)).filter(Boolean).map((it) => ({ id: it.id, title: it.title, cwd: it.cwd }));
   emit({ ev: 'digReady', reqId, query, prompt: digPrompt(query, candidates) });
+}
+
+/* ---------- one session's details (the list's Details sheet, Export, Open in a terminal; session-info.js) ---------- */
+
+/** The list record of a session (Claude Code, a Codex thread the Codex view read, or a terminal's new session), or null. */
+function listItemOf(id) {
+  return state.byId?.get(id) || codexRowsNow().find((r) => r.id === id) || null;
+}
+
+/**
+ * Everything known about one session (op sessionInfo, read only): its list record, what its transcript or rollout says
+ * (session-info.js), its size on disk, and what this engine knows live (panes holding it, their model, effort, mode and
+ * billing, a terminal window, folder, archive and pin). Fields that cannot be known are left out, never guessed.
+ */
+async function sessionInfoOf(id) {
+  if (!state.items) await loadSessions().catch(() => {});
+  const codexId = isCodexId(id);
+  const item = listItemOf(id) || {};
+  const info = {
+    id, provider: codexId ? 'codex' : 'claude', title: item.title || '', firstPrompt: item.firstPrompt || '', cwd: item.cwd || '', branch: item.branch || '',
+    lastActive: item.lastModified || 0, fileModified: item.fileModified || 0, size: item.size || 0, headless: Boolean(item.headless),
+    archived: archive.archived().has(id) || Boolean(item.codexArchived), codexArchived: Boolean(item.codexArchived), archivedCopy: false,
+    pinned: pins.pinned().has(id), folder: null, terminal: [], panes: [], subagents: 0, shells: 0, shellsRunning: 0,
+  };
+  const f = folders.folderOfSessions().get(id);
+  if (f) info.folder = { id: f.id, name: f.name };
+  info.terminal = (terminalSessions().get(id) || []).map((t) => ({ name: t.name || '', status: t.status || '', pid: t.pid || null }));
+  for (const p of panes.values()) {
+    if (p.sessionId !== id) continue;
+    const running = Boolean(p.runner?.turnRunning || p.runner?.turnActive || (isCodexPane(p) && p.busy));
+    info.panes.push({ where: parsePhoneId(p.id) ? 'phone' : 'desktop', model: p.model || '', effort: p.effort || '', mode: p.mode || '', billing: p.credential?.name || '', running });
+  }
+  if (codexId) {
+    const found = findRollout(id);
+    if (found) {
+      info.transcript = found.file;
+      info.codexArchived = info.codexArchived || found.archived;
+      info.archived = info.archived || found.archived;
+      info.size = diskSize(found.file, null).size;
+      Object.assign(info, pickScan(await scanCodex(found.file).catch(() => null)));
+    }
+    return info;
+  }
+  const live = transcriptMap().get(id);
+  const file = live || (archivedOnly(id) ? openArchived(id, { cache: ARCHIVE_OPEN_DIR }) : null);
+  if (!file) return info;
+  info.transcript = live || '';
+  info.archivedCopy = !live;
+  if (live) {
+    const d = diskSize(live, id);
+    Object.assign(info, { size: d.size, sideSize: d.side, totalSize: d.total });
+    try {
+      info.subagents = countSubagents(live);
+      const shells = listShells(live);
+      info.shells = shells.length;
+      info.shellsRunning = shells.filter((s) => s.running).length;
+    } catch { /* its side folder is being written */ }
+  }
+  Object.assign(info, pickScan(await scanClaude(file).catch(() => null)));
+  return info;
+}
+
+/** The fields of a scan that Details shows (the list record keeps its own title, folder and time when the scan has none). */
+function pickScan(s) {
+  if (!s) return {};
+  const out = {
+    created: s.created || 0, prompts: s.prompts, replies: s.replies, toolCalls: s.toolCalls, compactions: s.compactions,
+    model: s.model || '', models: s.models || [], version: s.version || '', tokens: s.tokens,
+  };
+  if (s.lastActive) out.lastActive = s.lastActive;
+  if (s.cwd) out.lastCwd = s.cwd;
+  if (s.gitBranch) out.gitBranch = s.gitBranch;
+  if (s.effort) out.effort = s.effort;
+  if (s.customTitle) out.customTitle = s.customTitle;
+  if (s.summary) out.summary = s.summary;
+  if (s.firstPrompt) out.firstPromptFull = s.firstPrompt;
+  if (s.originator) out.originator = s.originator;
+  if (s.approval) out.approval = s.approval;
+  if (s.sandbox) out.sandbox = s.sandbox;
+  return out;
+}
+
+/** A session as Markdown (op exportSession): Claude Code's from its built history, a Codex thread's from its rollout. */
+async function sessionMarkdown(id) {
+  const item = listItemOf(id) || {};
+  const meta = { id, title: item.title || '', cwd: item.cwd || '', branch: item.branch || '', lastActive: item.lastModified || 0, model: item.model || '' };
+  if (isCodexId(id)) {
+    const found = findRollout(id);
+    if (!found) return null;
+    return codexMarkdown(await fs.promises.readFile(found.file, 'utf8'), meta);
+  }
+  const h = await historyStore.history(id);
+  if (!h || !h.items.length) return null;
+  const first = h.items.find((x) => x.at);
+  return historyMarkdown(h.items, { ...meta, created: first ? Date.parse(first.at) || 0 : 0 });
+}
+
+/** Where a desktop export goes: Downloads, else the home folder. */
+function exportDir() {
+  const dl = path.join(os.homedir(), 'Downloads');
+  try { if (fs.statSync(dl).isDirectory()) return dl; } catch { /* no Downloads folder */ }
+  return os.homedir();
+}
+
+/** Shows a file selected in Explorer (or Finder, or its folder on Linux). */
+function revealFile(file) {
+  const [cmd, args] = process.platform === 'win32' ? ['explorer.exe', [`/select,${file}`]] : process.platform === 'darwin' ? ['open', ['-R', file]] : ['xdg-open', [path.dirname(file)]];
+  try { spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: false }).unref(); } catch { /* nothing to show it with */ }
 }
 
 /* ---------- history ---------- */
@@ -987,6 +1158,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   // A pane in a folder the lists have no numbers for yet (a new worktree): the branch label follows within a second.
   wtSoon(600);
   emit({ ev: 'opened', tookOver: Boolean(opts.force),  reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
+  // Phones that watch this desktop pane (the shared view) stay on it through a new conversation; the window's pane may be new.
+  if (!parsePhoneId(p.id)) remote?.announceFollowers?.(p.id);
   if (opts.warm !== false) runner.start();
   // The whole conversation, newest page first (history.js; the SDK's list when the file cannot be read).
   if (sessionId) await sendHistory(p, sessionId);
@@ -1058,10 +1231,56 @@ async function attach(reqId, paneId, sessionId, cwd) {
   emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: paneTurnBusy(p), running: Boolean(p.runner.running), reqId, paneId: p.id, sessionId: p.sessionId, cwd: p.runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [],
     // The queue as this engine holds it (queue-hold.js): what is still queued, and the ids it sent while no window was here.
     ...heldView(p) });
+  // A window that came back learns which phones watch this pane (the shared view).
+  if (!parsePhoneId(p.id)) remote?.announceFollowers?.(p.id);
   if (p.sessionId) await sendHistory(p, p.sessionId);
   for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: p.id, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}) });
   // Subagents and background tasks still running in this process, so the window's Tasks button and panel show them again.
   for (const msg of taskReplay(p)) emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
+}
+
+/**
+ * The shared view (2026-10-11): a message went into a desktop pane. The engine does not echo user messages (a window draws its
+ * own as it sends), so the other windows of the pane need an event to draw it:
+ *   - sent by a phone that follows the pane (c.follower is its name): the window draws it, and so does every other follower;
+ *     the phone that sent it drew its own (origin names that phone's pane, remote.js mirror skips it);
+ *   - sent by the window (or by this engine's auto-send of a queue): only the phones that follow the pane get it. The window
+ *     is not told, so it never draws its own message twice.
+ * A phone pane's own messages are nobody's business (no follower is registered for them).
+ */
+function peerMessage(c, text, images, steered) {
+  if (parsePhoneId(String(c.paneId))) return;
+  const ev = { ev: 'peerMessage', paneId: String(c.paneId), from: c.follower || 'Desktop', text, images, steered, origin: c.origin || null };
+  if (c.follower) emit(ev); else remote?.mirror?.(ev);
+}
+
+/**
+ * The shared view (2026-10-11): a phone pane starts following a desktop pane. It gets the desktop pane's state the way a window
+ * that attaches does (opened with attached, busy, running, model, effort and mode, the newest page of history, the questions that
+ * still wait, the running tasks), addressed to the phone's own pane id so remote.js sends it to that phone only. Nothing is
+ * opened, taken over or started: the desktop pane keeps its one runner, its lock and its queue. What the window typed and has not
+ * sent (its queue, held here for a window-less host) is never part of it. After this, remote.js sends the phone the pane's later
+ * events (mirror) and applies the phone's ops to the desktop pane.
+ */
+async function followState(c) {
+  const to = String(c.paneId);
+  const p = panes.get(String(c.desktopPaneId || ''));
+  // remote.js checked that the pane is a conversation; it may have closed since. The phone pane then hears closed, which also
+  // removes it from remote.js's list of followers.
+  if (!p || parsePhoneId(p.id)) { emit({ ev: 'closed', reqId: c.reqId, paneId: to }); return; }
+  // A Codex pane (2026-10-12): the same state from Codex's side, under the phone's pane id.
+  if (isCodexPane(p)) { await codex.attach(c.reqId, p, { paneId: to, readOnly: Boolean(c.readOnly) }); return; }
+  const info = p.sessionId ? await getSessionInfo(p.sessionId).catch(() => null) : null;
+  emit({
+    ev: 'opened', attached: true, follower: true, readOnly: Boolean(c.readOnly), reqId: c.reqId, paneId: to,
+    busy: Boolean(p.busy), turn: paneTurnBusy(p), running: Boolean(p.runner?.running),
+    sessionId: p.sessionId, cwd: p.runner?.cwd || null, title: info?.customTitle || info?.summary || 'New conversation',
+    model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [],
+  });
+  // The history and the meter estimate for a conversation with no process: the same helper, named for the phone's pane.
+  if (p.sessionId) await sendHistory({ id: to, runner: p.runner, sessionId: p.sessionId }, p.sessionId);
+  for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: to, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}), readOnly: Boolean(c.readOnly) });
+  for (const msg of taskReplay(p)) emit({ ev: 'sdk', paneId: to, sessionId: p.sessionId, msg });
 }
 
 /** Closes a pane: its Claude Code process stops and its session lock is freed. */
@@ -1255,7 +1474,13 @@ const handlers = {
   digPrompt: (c) => digPromptOp(c.reqId, String(c.query || ''), Array.isArray(c.candidates) ? c.candidates : []),
   open: (c) => open(c.reqId, c.paneId, c.sessionId || null, c.cwd || null, { warm: c.warm, model: c.model, effort: c.effort, mode: c.mode, force: c.force, kind: c.kind }),
   attach: (c) => attach(c.reqId, c.paneId, c.sessionId || null, c.cwd || null),
-  send: (c) => send(c.reqId, c.paneId, String(c.text || ''), Array.isArray(c.images) ? c.images : []),
+  // A phone pane shows a desktop pane (the shared view): remote.js registered it and sends this once, after checkPhoneCommand.
+  follow: (c) => followState(c),
+  send: (c) => {
+    const images = Array.isArray(c.images) ? c.images : [];
+    peerMessage(c, String(c.text || ''), images, false);
+    return send(c.reqId, c.paneId, String(c.text || ''), images);
+  },
   close: (c) => closePane(c.reqId, c.paneId),
   // A Stop: the queue stays unsent after it (queue-hold.js), until the next message is sent.
   interrupt: (c) => { const p = getPane(c.paneId); p.userStopped = true; return isCodexPane(p) ? codex.interrupt(p) : p.runner?.interrupt(); },
@@ -1283,7 +1508,12 @@ const handlers = {
     const content = images.length
       ? [...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })), ...(text ? [{ type: 'text', text }] : [])]
       : text;
-    if (p.runner?.steer(content, { busy: Boolean(p.busy) })) { emit({ ev: 'steered', reqId: c.reqId, paneId: p.id, qid: c.qid }); return; }
+    if (p.runner?.steer(content, { busy: Boolean(p.busy) })) {
+      // Steered in from another window of this pane (the shared view): it draws it too ("Steered in"); the sender answers below.
+      peerMessage(c, text, images, true);
+      emit({ ev: 'steered', reqId: c.reqId, paneId: p.id, qid: c.qid });
+      return;
+    }
     // Why it could not be taken in, in the engine log (2026-10-11: a steer that went out only after the turn ended).
     const r = p.runner;
     process.stderr.write(`apaki: steer missed in pane ${p.id}: runner ${r ? 'yes' : 'none'}, process ${r?.running ? 'up' : 'down'}, pending ${r?.pending?.length ?? 0}, turn ${r?.turnActive ? 'active' : 'idle'}, pane busy ${Boolean(p.busy)}\n`);
@@ -1291,7 +1521,15 @@ const handlers = {
   },
   // A question, plan approval or permission prompt is settled once: the entry leaves the map first, so a second answer finds nothing.
   // A permission prompt turns the reply into the SDK's result itself (permissions.js answer), never trusting rules or input from it.
-  answer: (c) => { const a = state.asks.get(c.askId); state.asks.delete(c.askId); if (a?.answer) a.answer(c.result || null); else a?.resolve(c.result || null); },
+  answer: (c) => {
+    const a = state.asks.get(c.askId);
+    state.asks.delete(c.askId);
+    if (a?.answer) a.answer(c.result || null); else a?.resolve(c.result || null);
+    // The first answer wins (2026-10-11, the shared view): the question may be on screen in the window and on phones that follow
+    // its pane, so whoever did not answer has its sheet taken away the way a stale question's is (ask_gone). Nothing extra is sent
+    // for a pane nobody else watches, so the window's own answers behave as before.
+    if (a && (c.follower || remote?.followerNames?.(a.paneId)?.length)) emit({ ev: 'ask_gone', askId: c.askId, paneId: a.paneId });
+  },
   model: async (c) => {
     const p = getPane(c.paneId);
     // A Codex pane's model is one of Codex's (op codexModels); it never becomes the default for new Claude panes.
@@ -1629,6 +1867,42 @@ const handlers = {
     const cmd = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
     try { spawn(cmd, [dir], { detached: true, stdio: 'ignore', windowsHide: false }).unref(); } catch { /* nothing to open it with */ }
   },
+  /* ---------- the session list's Details, Pin to top, Export and Open in a terminal (2026-10-12, session-info.js) ---------- */
+  // Everything known about one session, read only (a phone may ask at every access level: remote-policy.js).
+  sessionInfo: async (c) => {
+    const id = String(c.sessionId || '');
+    if (!SESSION_ID_RE.test(id)) { emit({ ev: 'sessionInfo', reqId: c.reqId, sessionId: id, ok: false, message: 'That is not a session id.' }); return; }
+    try {
+      emit({ ev: 'sessionInfo', reqId: c.reqId, sessionId: id, ok: true, info: await sessionInfoOf(id) });
+    } catch (e) {
+      emit({ ev: 'sessionInfo', reqId: c.reqId, sessionId: id, ok: false, message: `Could not read it: ${e.message || e}` });
+    }
+  },
+  // Pinned sessions show under Pinned at the top of the list (pins.js); pinned: false unpins.
+  pin: async (c) => {
+    pins.setPinned(String(c.sessionId || ''), c.pinned !== false);
+    await sessions(c.reqId || null);
+  },
+  // The conversation as a Markdown file in Downloads, shown in Explorer; inline (a phone) sends the text back instead.
+  exportSession: async (c) => {
+    const id = String(c.sessionId || '');
+    const item = listItemOf(id) || {};
+    const name = exportName(item.title || item.firstPrompt || 'Conversation', id);
+    let markdown = null;
+    try { markdown = SESSION_ID_RE.test(id) ? await sessionMarkdown(id) : null; } catch (e) { process.stderr.write(`export ${id}: ${e.message || e}\n`); }
+    if (!markdown) { emit({ ev: 'exported', reqId: c.reqId, sessionId: id, ok: false, message: 'There is nothing to export: its transcript is not on this PC.' }); return; }
+    if (c.inline) { emit({ ev: 'exported', reqId: c.reqId, sessionId: id, ok: true, name, markdown }); return; }
+    try {
+      const file = freePath(exportDir(), name);
+      await fs.promises.writeFile(file, markdown, 'utf8');
+      emit({ ev: 'exported', reqId: c.reqId, sessionId: id, ok: true, name: path.basename(file), path: file });
+      revealFile(file);
+    } catch (e) {
+      emit({ ev: 'exported', reqId: c.reqId, sessionId: id, ok: false, message: `Could not save it: ${e.message || e}` });
+    }
+  },
+  // Open in a terminal is the engine op openTerminal { sessionId, kind, paneId? }, built with the console toggle (another
+  // branch, reconciled at merge): it opens the exact session in a terminal window with the pane's settings.
   folder: async (c) => {
     if (c.action === 'create') { const f = folders.createFolder(c.name); if (!f.error && c.sessionId) folders.moveToFolder(c.sessionId, f.id); }
     if (c.action === 'move') folders.moveToFolder(c.sessionId, c.folderId || null);
@@ -1700,10 +1974,12 @@ async function dispatch(c) {
   // A send or steer takes its queued messages out of this engine's copy at once, before it waits its turn in the
   // pane's chain below: the copy must never still hold what a window is sending (queue-hold.js, no double send).
   // `queued` only comes from the desktop window; remote-policy.js strips it from a phone's send.
+  // A phone following this desktop pane (c.follower, set by remote.js) has no queue here: its qid is its own, and must never
+  // match, and so drop, an id in the window's queue.
   if ((c.op === 'send' || c.op === 'steer') && c.paneId != null) {
     const hp = panes.get(String(c.paneId));
     if (hp) {
-      dropHeld(hp, c.op === 'steer' ? [c.qid] : c.queued);
+      if (!c.follower) dropHeld(hp, c.op === 'steer' ? [c.qid] : c.queued);
       // A new message after a Stop: the queue goes out after this turn again.
       if (c.op === 'send') hp.userStopped = false;
     }
@@ -1777,6 +2053,14 @@ remote = createRemote({
     // A folder some listed session ran in, or a worktree (or a folder in one) of a repository the engine lists (2026-10-12).
     knownCwd: (cwd) => Boolean(state.items?.some((it) => it.cwd === cwd)) || wtIndex.knownPath(cwd),
     phoneSessions: (deviceId) => phonePanes(deviceId).map((id) => panes.get(id)?.sessionId).filter(Boolean),
+    // What a phone may follow (the shared view, 2026-10-11): a desktop conversation pane this engine holds. The window's own saved
+    // layout says when an id is a viewer, browser or task pane instead; anything else, or a phone pane, is not there.
+    desktopPane: (id) => {
+      if (typeof id !== 'string' || parsePhoneId(id)) return null;
+      const kind = desktopKinds.get(id);
+      if (kind && kind !== 'session') return kind;
+      return panes.has(id) ? 'conversation' : null;
+    },
   },
 });
 
@@ -1926,9 +2210,13 @@ function saveWorkspace(st) {
 // The desktop's tabs as phones see them (desktop-tabs.js, 2026-10-11): sent when they change, and once at start
 // from the saved workspace, so a phone sees them even while the window is closed (remote.js caches the last one).
 let lastDesktopTabs = '';
+// What each pane of the window is (desktop-tabs.js kind: session, browser, task, viewer), by the window's pane id, so a phone is
+// told "not a conversation" for a viewer instead of "not open" (the shared view, 2026-10-11; engine.desktopPane).
+let desktopKinds = new Map();
 function sendDesktopTabs(st) {
   if (!st || typeof st !== 'object') return;
   const tabs = desktopTabs(st);
+  desktopKinds = new Map(tabs.flatMap((t) => t.panes).filter((p) => p.paneId).map((p) => [p.paneId, p.kind]));
   const key = JSON.stringify(tabs);
   if (key === lastDesktopTabs) return;
   lastDesktopTabs = key;

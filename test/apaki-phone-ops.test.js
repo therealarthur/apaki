@@ -32,7 +32,8 @@ const ask = (cmd, cap = 'full', extra = {}) => checkPhoneCommand(cmd, ctx(cap, e
 
 test('policy: the session menu\'s commands are phone ops for Full and No shell, and Chat only (read only) is refused with a reason', () => {
   for (const op of ['rename', 'forkSession', 'archive', 'folder']) assert.ok(PHONE_OPS.includes(op), op);
-  assert.deepEqual([...SESSION_WRITE_OPS].sort(), ['archive', 'folder', 'forkSession', 'rename']);
+  // pin (2026-10-12, Pin to top) joined the list: it changes what the PC keeps, like a folder move.
+  assert.deepEqual([...SESSION_WRITE_OPS].sort(), ['archive', 'folder', 'forkSession', 'pin', 'rename']);
   for (const cap of ['full', 'noshell']) {
     assert.equal(ask({ op: 'rename', sessionId: SID, title: 'Checkout flake' }, cap).ok, true, cap);
     assert.equal(ask({ op: 'forkSession', sessionId: SID }, cap).ok, true, cap);
@@ -279,5 +280,6 @@ test('wiring: the engine answers browserView through the pane\'s own browser too
   assert.match(engine, /browserView: async \(c\) => \{\n\s+const p = getPane\(c\.paneId\);\n\s+const b = toolsFor\(p\)\.browser;\n\s+const r = b \? await b\.view\(\)/);
   for (const op of ['rename', 'forkSession', 'archive', 'folder', 'askSearch', 'browserView']) assert.match(engine, new RegExp(`\\n  ${op}: (async )?\\(c\\)`), `engine.js has a ${op} handler`);
   // Every op a phone may send has a handler in the engine (artifactGet is the one it checks for at run time).
-  for (const op of PHONE_OPS) assert.match(engine, new RegExp(`\\n  ${op}: `), `engine.js handles ${op}`);
+  // unfollow is the exception (the shared view): it ends a registry entry in remote.js (endFollow) and never reaches the engine.
+  for (const op of PHONE_OPS.filter((o) => o !== 'unfollow')) assert.match(engine, new RegExp(`\\n  ${op}: `), `engine.js handles ${op}`);
 });

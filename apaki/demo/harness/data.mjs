@@ -550,6 +550,31 @@ PRESETS['handoff-phone'] = () => ({
 });
 
 /**
+ * The shared view (2026-10-12): the same desktop, with each pane carrying the window's pane id (engine desktop-tabs.js paneId)
+ * so a phone can follow one without taking it over. Two tabs: the working tab, and one with a second conversation.
+ * The phone starts with nothing open; the desktop holds all three sessions, so Take over here is the real lock path.
+ * Use with phone.html?ws=follow-phone&follow=1 (follow=0 is a PC without the feature; cap=noshell|chat is a restricted phone).
+ */
+PRESETS['follow-phone'] = () => ({
+  active: 0,
+  tabs: [],
+  scripts: { [ID.invoices]: ['background-invoices', 'generic'], [ID.review]: ['background-review', 'generic'], [ID.flaky]: ['generic'] },
+  rail: { view: 'all', expanded: [], scroll: 0, width: 352, collapsed: false },
+  desktopTabs: [
+    { index: 0, active: true, panes: handoffDesktopTabs()[0].panes.map((p, i) => ({ paneId: `ph${i + 1}`, ...p })) },
+    { index: 1, active: false, panes: [
+      { paneId: 'ph4', kind: 'session', sessionId: ID.uploads, title: 'Move image uploads to signed URLs', busy: false, focused: true },
+    ] },
+  ],
+  held: {
+    [ID.flaky]: { name: 'Apaki on this PC', app: 'apaki' },
+    [ID.invoices]: { name: 'Apaki on this PC', app: 'apaki' },
+    [ID.review]: { name: 'Apaki on this PC', app: 'apaki' },
+    [ID.uploads]: { name: 'Apaki on this PC', app: 'apaki' },
+  },
+});
+
+/**
  * The phone in the pairing scene: nothing paired yet, so it starts on its own "Connect to your PC" screen
  * (phone-boot.mjs); once the PC allows it, its list shows the desktop of the base preset.
  */

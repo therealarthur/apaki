@@ -9,6 +9,13 @@
  * layout order with a kind, a title, the session id of a conversation,
  * whether it is working and which pane has focus. Drafts, queued messages,
  * folders, scroll positions and browser addresses stay on the PC.
+ *
+ * paneId (2026-10-11, the shared view): the desktop window's own id for the
+ * pane ("p3"), so a phone can name one in follow (remote-policy.js). It is an
+ * opaque short id and nothing else of the window's: an id that is not plain
+ * letters, digits, "_" and "-" (at most 40) is sent as null, which a phone
+ * cannot follow. Browsers, tasks and viewers carry one too (the PC refuses to
+ * follow them: only a conversation can be followed).
  */
 
 /** At most this many tabs and panes per tab go to a phone (the desktop keeps 6 panes a tab). */
@@ -21,9 +28,11 @@ const title = (s, fallback) => {
   return (t || fallback).slice(0, TITLE_CHARS);
 };
 
+const PANE_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+
 /** One leaf of the layout tree as a phone pane, or null for a leaf a phone does not show. */
 function paneOf(leaf, focused) {
-  const base = { focused: leaf.pane === focused };
+  const base = { paneId: typeof leaf.pane === 'string' && PANE_ID_RE.test(leaf.pane) ? leaf.pane : null, focused: leaf.pane === focused };
   if (typeof leaf.s === 'string' && leaf.s) return { kind: 'session', sessionId: leaf.s, title: title(leaf.title, 'New conversation'), busy: Boolean(leaf.busy), ...base };
   if (!leaf.s && leaf.type === 'leaf' && 'draft' in leaf && !leaf.web && !leaf.task && !leaf.artifact) return { kind: 'session', sessionId: null, title: 'New conversation', busy: false, ...base };
   if (leaf.web && typeof leaf.web === 'object') return { kind: 'browser', title: title(leaf.web.title, 'Browser'), ...base };

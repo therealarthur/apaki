@@ -48,8 +48,15 @@ Track B part 2, 2026-10-09 (Claude Code, Opus 5.5, for Arthur).
   every access level, actions with Full access).
 - `src/desktop.js` (2026-10-11): "On your desktop" at the top of the list: the
   desktop window's tabs and panes (the engine's `desktopTabs` event, which
-  `shim.js onDesktopTabs` keeps), the tab in front first; a conversation opens
-  here the way a tap in the session list does, other panes are quiet rows.
+  `shim.js onDesktopTabs` keeps), the tab in front first; other panes are quiet
+  rows. A tap on a conversation FOLLOWS that desktop pane (2026-10-12, the shared
+  view, `remote/PROTOCOL.md` "Following a desktop pane"): a pane of the phone
+  shows it live without taking it over, with one bar ("Watching live on <PC>",
+  Take over, which asks first), the model, effort and mode chips read only, and
+  a "View only" line instead of the message box for No shell and Chat only. The
+  row says Watching. On a PC without the feature a tap opens the conversation
+  the way a tap in the session list does. The Session in use card offers Watch
+  live next to Take over here when a desktop pane has the conversation.
 - `src/browserview.js` (2026-10-12): the page Claude opened in the PC's browser,
   as a read-only picture in a sheet (see "Phone parity" below).
 - `src/shell.html`: the pairing card, the reconnect line and the drawer scrim,

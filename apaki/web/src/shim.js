@@ -49,9 +49,10 @@ export function installShim(link) {
 
   const sent = (msg) => {
     if (!msg?.paneId) return;
-    if (msg.op === 'open' || msg.op === 'attach') panes.set(msg.paneId, { sessionId: msg.sessionId || null, cwd: msg.cwd || null });
+    // rid: the request that made it, so a closed that answers it (a follow of a pane that is gone) can tell itself from the closed that answers a later unfollow or close.
+    if (msg.op === 'open' || msg.op === 'attach') panes.set(msg.paneId, { sessionId: msg.sessionId || null, cwd: msg.cwd || null, rid: msg.reqId || null });
     // 2026-10-11: a pane that follows a desktop pane (op follow) follows it again after a reconnect.
-    if (msg.op === 'follow') panes.set(msg.paneId, { follow: msg.desktopPaneId });
+    if (msg.op === 'follow') panes.set(msg.paneId, { follow: msg.desktopPaneId, rid: msg.reqId || null });
     if (msg.op === 'close' || msg.op === 'unfollow') panes.delete(msg.paneId);
   };
 
@@ -60,14 +61,16 @@ export function installShim(link) {
     if (!p) return;
     if (ev.ev === 'opened' || ev.ev === 'session_id') p.sessionId = ev.sessionId || null;
     if (ev.ev === 'opened' && ev.cwd) p.cwd = ev.cwd;
-    if (ev.ev === 'closed') panes.delete(ev.paneId);
+    // Only a closed the PC raised by itself (no request id: the desktop pane went away) or the answer to this pane's own opening ends it. The answer to an unfollow or close sent earlier can arrive after the pane was opened again (Take over).
+    if (ev.ev === 'closed' && (!ev.reqId || ev.reqId === p.rid)) panes.delete(ev.paneId);
   };
 
   link.onEvent = (ev) => { seen(ev); if (ev?.ev === 'desktopTabs') gotDesktopTabs(ev); deliver(ev); };
   link.onReopen = () => {
     for (const [paneId, p] of panes) {
-      if (p.follow) link.send({ op: 'follow', reqId: `re${++seq}`, paneId, desktopPaneId: p.follow }).catch(() => {});
-      else link.send({ op: 'attach', reqId: `re${++seq}`, paneId, sessionId: p.sessionId, cwd: p.cwd }).catch(() => {});
+      p.rid = `re${++seq}`;
+      if (p.follow) link.send({ op: 'follow', reqId: p.rid, paneId, desktopPaneId: p.follow }).catch(() => {});
+      else link.send({ op: 'attach', reqId: p.rid, paneId, sessionId: p.sessionId, cwd: p.cwd }).catch(() => {});
     }
     link.send({ op: 'sessions', reqId: `re${++seq}` }).catch(() => {});
   };
