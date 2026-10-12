@@ -500,6 +500,36 @@ export const SCENES = {
     },
   },
 
+  /**
+   * Git worktrees (2026-10-12, shipped that day; apaki/remote/WORKTREES.md): the sidebar on its Worktrees view, the
+   * pane's branch label with its change count, its menu, and View changes opening the diff viewer beside the
+   * conversation. The repositories are the harness's invented ones (harness/worktrees.mjs).
+   */
+  worktrees: {
+    title: 'Worktrees: the branch label, its menu and the diff viewer',
+    shows: 'Conversations grouped by repository and worktree in the sidebar; the pane header shows the branch and its change count; its menu opens View changes, a diff viewer beside the conversation.',
+    ws: 'worktrees',
+    hero: 'diff',
+    async run(s) {
+      await s.waitFor(() => document.querySelector('.pane.focused .wt-btn'));
+      await s.begin();
+      await s.pause(900);
+      await s.still('list');
+      await s.click('.pane.focused .wt-btn', { ms: 900 });
+      await s.waitFor(() => [...document.querySelectorAll('.menu .menu-item')].some((b) => b.textContent.includes('View changes')));
+      await s.pause(1300);
+      await s.still('menu', { cursor: true });
+      await s.click('.menu .menu-item:has-text("View changes")', { ms: 700 });
+      await s.waitFor(() => document.querySelector('.df-body .df-bar'), null, 10000);
+      await s.pause(1600);
+      // Down through the changed files, slowly.
+      await s.scrollTo('.df-ground', 260, 1600);
+      await s.pause(1200);
+      await s.still('diff');
+      await s.pause(600);
+    },
+  },
+
   history: {
     title: 'A long transcript',
     shows: 'The whole conversation: tool calls and a diff, a subagent, and what Claude Code says itself (a hook, an API retry, a usage warning), up to the compaction at the top.',

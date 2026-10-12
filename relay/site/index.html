@@ -46,6 +46,7 @@
       <nav class="head-nav" aria-label="On this page">
         <a href="#glass">Glass</a>
         <a href="#sessions">Sessions</a>
+        <a href="#worktrees">Worktrees</a>
         <a href="#browser">Browser</a>
         <a href="#phone">Phone</a>
         <a href="#security">Security</a>
@@ -261,6 +262,36 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
       </div>
     </section>
 
+    <!-- ===== Worktrees (shipped 2026-10-12; apaki/remote/WORKTREES.md) ===== -->
+    <section class="feature sec sec-cut-bottom g-teal-arch" id="worktrees" aria-labelledby="worktrees-title">
+      <div class="wrap">
+        <div class="feature-head" data-reveal>
+          <div>
+            <h2 id="worktrees-title">A git worktree for each piece of work</h2>
+          </div>
+          <p>Start a conversation in a new worktree from the Starts in sheet, with the branch named from your first message. The sidebar's Worktrees view groups conversations by repository and branch, and every pane shows its branch and what changed, like fix-flaky-checkout +11 -2.</p>
+        </div>
+        <div class="feature-media" data-reveal>
+          <div class="player window" role="group" aria-label="Recording: the Worktrees view in the sidebar, the branch label on a conversation, its menu, and View changes opening a diff viewer beside the conversation">
+            <div class="clip is-current">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/worktrees-dark-1200.webp 1200w, assets/media/worktrees-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
+                <img src="assets/media/worktrees-light-1200.webp" srcset="assets/media/worktrees-light-1200.webp 1200w, assets/media/worktrees-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="A conversation in the worktree fix-flaky-checkout, with its changes open in a diff viewer beside it: three files, eleven lines added and two removed" loading="lazy" decoding="async">
+              </picture>
+              <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/worktrees-light.mp4" data-dark="assets/media/worktrees-dark.mp4"></video>
+            </div>
+            <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+          </div>
+        </div>
+        <ul class="points points-grid" data-reveal>
+          <li>View changes opens a diff viewer beside the conversation: everything since the branch left its base, or only what is not committed yet.</li>
+          <li>Commit, push, open a pull request with gh, or merge into the base. Each action shows the commands it will run first.</li>
+          <li>Remove is refused while a worktree has uncommitted or unpushed work, and merged worktrees are offered for cleanup in one prompt.</li>
+          <li>The phone shows the same branches and changes; its actions need Full access.</li>
+        </ul>
+      </div>
+    </section>
+
     <!-- ===== Browser ===== -->
     <section class="feature sec g-orbs" id="browser" aria-labelledby="browser-title">
       <div class="wrap">
@@ -402,18 +433,13 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
         <div class="section-head" data-reveal>
           <h2 id="next-title">Coming next</h2>
         </div>
-        <div class="cards">
+        <div class="cards cards-two">
           <article class="card" data-reveal>
             <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="3.5" y="6" width="25" height="20" rx="3"/><path d="M8.5 13l4 3-4 3M15 19.5h7"/></svg>
             <h3>Codex, side by side</h3>
             <p>Codex threads open as panes next to Claude's, with Codex's own model, effort and approval choices, its questions and approvals as sheets, and the same browser pane and viewer.</p>
           </article>
           <article class="card" data-reveal="2">
-            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><circle cx="9" cy="7" r="2.6"/><circle cx="9" cy="25" r="2.6"/><circle cx="23" cy="12" r="2.6"/><path d="M9 9.6v12.8M23 14.6c0 5-6 5.4-12.2 8.6"/></svg>
-            <h3>Worktrees</h3>
-            <p>Start a conversation in a new git worktree, see your work grouped by repository and branch, and view changes, commit, push or open a pull request from the pane. The phone gets the same.</p>
-          </article>
-          <article class="card" data-reveal="3">
             <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><path d="M9.5 24.5h13.5a5.5 5.5 0 0 0 .6-11A7.5 7.5 0 0 0 9.2 12a6.3 6.3 0 0 0 .3 12.5z"/></svg>
             <h3>Apaki Cloud</h3>
             <p>Sign in from any browser and leave nothing behind, a Cloud button on the desktop that lists your machines, and a push to your phone when Claude asks or finishes. A paid option on our relay; a relay you run gets every feature.</p>

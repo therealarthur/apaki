@@ -43,6 +43,8 @@ const CLIPS = {
   'glass-swap': 'panel',
   browser: 'browsing',
   'phone-pair': 'approve',
+  // Git worktrees (shipped 2026-10-12): the diff viewer beside the conversation.
+  worktrees: 'diff',
 };
 
 /**

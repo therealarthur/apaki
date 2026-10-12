@@ -33,7 +33,8 @@ function buildRepos() {
       branches: ['main', 'fix-flaky-checkout', 'signed-uploads', 'dashboard-flash', 'tax-rounding'],
       worktrees: [
         wt(WEB, 'main', { main: true, upstream: 'origin/main' }),
-        wt(wtPath(WEB, 'fix-flaky-checkout'), 'fix-flaky-checkout', { added: 42, removed: 7, files: 5, changed: 2, ahead: 3, unpushed: 3 }),
+        // The numbers match the three files its diff shows below (2026-10-12: the label and the viewer agree on screen).
+        wt(wtPath(WEB, 'fix-flaky-checkout'), 'fix-flaky-checkout', { added: 11, removed: 2, files: 3, changed: 2, ahead: 3, unpushed: 3 }),
         wt(wtPath(WEB, 'signed-uploads'), 'signed-uploads', { added: 118, removed: 36, files: 9, changed: 0, ahead: 5, behind: 2, upstream: 'origin/signed-uploads', aheadUp: 0 }),
         wt(wtPath(WEB, 'dashboard-flash'), 'dashboard-flash', { merged: true, upstream: 'origin/dashboard-flash' }),
       ],

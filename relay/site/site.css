@@ -306,6 +306,7 @@ html:not(.js) .reel-tabs { display: none; }
 .section-head { max-width: 760px; margin-bottom: clamp(32px, 4vw, 48px); }
 .section-head p { margin-top: 14px; font-weight: 700; }
 .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(16px, 2vw, 24px); }
+.cards-two { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 900px; }
 .card {
   display: flex; flex-direction: column; gap: 12px; padding: 28px 26px;
   border-radius: var(--radius-lg); background: var(--frost); border: 1px solid var(--hairline-strong);
@@ -395,16 +396,19 @@ html:not(.js) .reel-tabs { display: none; }
   .sec { --cut: 64px; padding-top: 88px; padding-bottom: 88px; }
   .sec-cut-y { padding-top: 152px; padding-bottom: 152px; }
   .sec-cut-top { padding-top: 152px; }
+  .sec-cut-bottom { padding-bottom: 152px; }
 }
 @media (max-width: 960px) {
   .sec { --cut: 48px; padding-top: 72px; padding-bottom: 72px; }
   .sec-cut-y { padding-top: 120px; padding-bottom: 120px; }
   .sec-cut-top { padding-top: 120px; }
+  .sec-cut-bottom { padding-bottom: 120px; }
 }
 @media (max-width: 720px) {
   .sec { --cut: 28px; padding: 56px 20px; }
   .sec-cut-y { padding-top: 84px; padding-bottom: 84px; }
   .sec-cut-top { padding-top: 84px; }
+  .sec-cut-bottom { padding-bottom: 84px; }
 }
 
 /* Sections on a dark ground: the light-on-dark tokens, in both themes. */
@@ -476,6 +480,18 @@ html:not(.js) .reel-tabs { display: none; }
 :root[data-theme="dark"] .g-warm-field {
   background-color: #221A27;
   background-image: radial-gradient(60% 80% at 12% 30%, rgba(var(--peach), .1), rgba(var(--peach), 0) 100%), linear-gradient(115deg, #2A1D22, #241B2A 55%, #191830);
+}
+
+/* Worktrees: a cool teal field, the pearl's cyan into periwinkle, closing in an arch at the bottom. */
+.sec-cut-bottom { padding-bottom: 184px; }
+.g-teal-arch {
+  background-color: #E3F2F4;
+  background-image: radial-gradient(46% 60% at 86% 22%, hsla(0, 0%, 100%, .7), hsla(0, 0%, 100%, 0) 100%), linear-gradient(160deg, #DDF2F3, #E6EAFB 75%);
+  clip-path: ellipse(140% 100% at 50% 0);
+}
+:root[data-theme="dark"] .g-teal-arch {
+  background-color: #0F1F25;
+  background-image: radial-gradient(46% 60% at 86% 22%, hsla(189, 60%, 50%, .1), hsla(189, 60%, 50%, 0) 100%), linear-gradient(160deg, #0E2228, #15182C 75%);
 }
 
 /* Browser: the pearl, with a large cool orb low on the left and a small warm one high on the right. */
