@@ -861,3 +861,45 @@ body.bv-open .toast { z-index: 90; }
   .bv-state.skeleton { animation: none; }
   .bv-row button, .bv-row button:active { transition: none; transform: none; }
 }
+
+/* ---------- the compact session list and folders that open in place, on the phone (2026-10-12, sessionlist.js) ----------
+   One line per row (the name and the time), 48 px tall for the finger; the row open on the PC side shows its second
+   line; a long press opens the menu (native.js), so there is no ... button. Folders open in place in the same scroll as
+   the list, their rows the list's rows, indented. */
+body.web.native :is(.sessions, .folder-sess) li.srow { padding: 0 34px 0 18px; }
+body.web.native .srow .sr-line { min-height: 48px; gap: 8px; }
+body.web.native .srow .sr-more { display: none; }
+body.web.native .srow .sr-time { padding-right: 0; font-size: var(--fs-small); }
+body.web.native .srow .sr-s { width: 16px; height: 16px; }
+body.web.native .srow .sr-s svg { width: 14px; height: 14px; }
+body.web.native .srow .sr-lead { width: 26px; height: 26px; }
+body.web.native .srow .sr-lead svg { width: 17px; height: 17px; }
+body.web.native .srow .sr-detail-in { padding-left: 34px; }
+body.web.native :is(.sessions, .folder-sess) .srow .snip, body.web.native :is(.sessions, .folder-sess) .srow .why { margin-left: 34px; }
+body.web.native .srow:focus-visible .sr-detail, body.web.native .srow.menu-open .sr-detail { grid-template-rows: 0fr; }
+body.web.native .srow.on .sr-detail, body.web.native .srow.subs-open .sr-detail { grid-template-rows: 1fr; }
+body.web.native :is(.sessions, .folder-sess) .srow .m { padding-bottom: 10px; }
+/* "Open" moves from after the name (which is cut now) to before the time. */
+body.web.native .sessions li.srow.on .t::after, body.web.native .sessions li.srow.shown .t::after { content: none; }
+body.web.native .srow .sr-end { display: flex; align-items: center; gap: 8px; }
+body.web.native .srow.on .sr-end::before, body.web.native .srow.shown .sr-end::before {
+  content: 'Open'; font: 800 var(--fs-micro)/1 var(--font-display); font-stretch: 125%; letter-spacing: .1em; text-transform: uppercase; color: var(--brand-strong);
+}
+body.web.native .sessions li.sr-group { padding: 16px 18px 6px; font-size: var(--fs-small); }
+body.web.native .sessions li.sr-group::before, body.web.native .sessions li.sr-group::after { content: none; }
+/* Folders: no inner scroll on the phone (the page scrolls), rows a finger tall. */
+body.web.native .rail-folders .folder-list { max-height: none; overflow: visible; padding: 4px 0 0; }
+body.web.native .folder-row { height: 48px; padding: 0 16px 0 18px; border-radius: 0; gap: 10px; }
+body.web.native .folder-row .fn { font-size: var(--fs-body); }
+body.web.native .folder-sess { padding-left: 16px; }
+body.web.native .folder-sess li.srow { position: relative; margin: 0; border: 0; border-radius: 0; box-shadow: none; background: none; }
+body.web.native .folder-sess li.srow::before { content: ''; position: absolute; left: 18px; right: 0; bottom: 0; height: 1px; background: var(--hairline); }
+body.web.native .folder-sess li.srow:active, body.web.native .folder-row:active { background: hsla(232, 60%, 62%, .1); }
+body.web.native .folder-note { padding: 8px 18px 12px; }
+/* Details on the phone: a narrower label column, and copy buttons a finger can hit. */
+body.web .sheet .sd-rows { grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; }
+body.web .sheet .sd-btn { min-height: 44px; min-width: 56px; padding: 0 12px; border-radius: 10px; }
+body.web .sheet .sd-rows dd { align-items: center; }
+/* Keep-warm's moving ring sits inside the full-width row, rounded, so it never reads as a mark down one edge. */
+body.web.native :is(.sessions, .folder-sess) li.srow .warm-ring { inset: 4px 10px 4px 10px; border-radius: 10px; }
+body.web.native .folder-note .link-btn { min-height: 44px; }

@@ -19,6 +19,9 @@
  *   rename, forkSession, archive, folder     the session list's own actions (2026-10-12, below)
  *   askSearch                                Ask Claude over past conversations (2026-10-12, below)
  *   browserView                              one picture of the PC browser page its own conversation opened
+ *   sessionInfo, exportSession               read only, every access level: a session's Details, and its Markdown
+ *                                            sent back as text (2026-10-12; a phone never writes a file on the PC)
+ *   pin                                      Pin to top, a session-list write like folder (Full and No shell)
  * Never billing, never the remote* ops (pairing, devices), never voice,
  * Dig deeper (it starts an Opus session outside a conversation), folders
  * beyond move and create, stopSession, revealFolder or openExternal (they act
@@ -124,6 +127,10 @@ export const PHONE_OPS = Object.freeze([
   // 2026-10-11 (the shared view): follow { reqId, paneId: <this phone's local id>, desktopPaneId } makes the phone's pane show a
   // desktop conversation pane without taking its session over; unfollow { paneId } ends it.
   'follow', 'unfollow',
+  // 2026-10-12 (the session list's menu and Details sheet, session-info.js): Details and Export read only, at every access
+  // level (an export comes back as text: a phone never writes a file on the PC); Pin to top changes the list like a folder
+  // move, so it is a SESSION_WRITE_OPS op. Not here on purpose: openTerminal (Open in a terminal), which opens a window on the PC.
+  'sessionInfo', 'exportSession', 'pin',
 ]);
 
 /** What worktreePlan and worktreeRun can be asked to do (worktrees.js KINDS; test/apaki-worktrees-engine.test.js keeps the lists equal). */
@@ -133,7 +140,7 @@ export const WORKTREE_KINDS = Object.freeze(['create', 'remove', 'commit', 'push
 const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile', 'historyPrompts', 'follow', 'unfollow']);
 
 /** Session-list actions that change what the PC keeps (2026-10-12): not for a Chat only phone. */
-export const SESSION_WRITE_OPS = Object.freeze(['rename', 'forkSession', 'archive', 'folder']);
+export const SESSION_WRITE_OPS = Object.freeze(['rename', 'forkSession', 'archive', 'folder', 'pin']);
 
 /** Ops that DRIVE the desktop pane a follower shows (only capability 'full' may; the rest of a follower's ops only read). */
 const DRIVE_OPS = new Set(['send', 'steer', 'interrupt']);
@@ -260,7 +267,7 @@ export function capAllowsOp(cap, op) {
 /** Why an op was refused for this capability, for the person on the phone. */
 export function capOpText(cap, op) {
   if (op === 'browserView') return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC: Claude cannot use the browser from it, so there is no page to show.`;
-  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, which only reads: it cannot ${{ rename: 'rename', forkSession: 'fork', archive: 'archive', folder: 'move' }[op] || 'change'} sessions. Change the phone's access in Apaki's Phone sheet on the PC.`;
+  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, which only reads: it cannot ${{ rename: 'rename', forkSession: 'fork', archive: 'archive', folder: 'move', pin: 'pin' }[op] || 'change'} sessions. Change the phone's access in Apaki's Phone sheet on the PC.`;
 }
 
 /**
@@ -835,6 +842,22 @@ export function checkPhoneCommand(cmd, ctx) {
       break;
     case 'browserView':
       // Nothing but the pane: the engine shows the page that pane's own Claude opened (paneId checked above).
+      break;
+    // 2026-10-12: the session list's Details sheet and menu (session-info.js, pins.js).
+    case 'sessionInfo':
+      if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
+      out.sessionId = cmd.sessionId;
+      break;
+    case 'exportSession':
+      if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
+      out.sessionId = cmd.sessionId;
+      // Always inline: the Markdown comes back to the phone; nothing is written on the PC for it.
+      out.inline = true;
+      break;
+    case 'pin':
+      if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
+      out.sessionId = cmd.sessionId;
+      out.pinned = cmd.pinned !== false;
       break;
     default:
       return fail('Not available from a phone.', cmd);

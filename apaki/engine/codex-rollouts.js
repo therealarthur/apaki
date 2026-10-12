@@ -59,9 +59,10 @@ export function createRolloutScanner({ home = os.homedir(), env = process.env, r
 
   /**
    * Rows for the threads the server did not list. `known` holds the codex:<id> ids the server listed; a rollout
-   * of one of those is left to the server's row. Up to MAX_NEW_PER_CALL new files are read per call.
+   * of one of those is left to the server's row. Up to MAX_NEW_PER_CALL new files are read per call (maxNew: fewer,
+   * for the main list's background passes, codex-list.js, which also yields after every file read: yieldEvery 1).
    */
-  async function rows(known = new Set()) {
+  async function rows(known = new Set(), { maxNew = MAX_NEW_PER_CALL, yieldEvery = 20 } = {}) {
     const files = [];
     for (const r of where) walk(r, files);
     files.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -78,20 +79,32 @@ export function createRolloutScanner({ home = os.homedir(), env = process.env, r
       const key = `${f.size}:${f.mtimeMs}`;
       let hit = cache.get(f.file);
       if (!hit || hit.key !== key) {
-        if (read >= MAX_NEW_PER_CALL) continue;
+        if (read >= maxNew) continue;
         read += 1;
-        if (read % 20 === 0) await new Promise((r) => setImmediate(r));
+        if (read % yieldEvery === 0) await new Promise((r) => setImmediate(r));
         const meta = codexMeta(f.file);
         hit = { key, meta };
         cache.set(f.file, hit);
       }
       out.push({
         id: cid, title: hit.meta.title || 'Codex thread', firstPrompt: hit.meta.title || '', cwd: hit.meta.cwd || '', branch: '',
-        lastModified: f.mtimeMs, size: 0, codex: true, source: 'rollout', ...(f.archived ? { codexArchived: true } : {}),
+        // size: the rollout's bytes (2026-10-12), for the list's hover card.
+        lastModified: f.mtimeMs, size: f.size || 0, codex: true, source: 'rollout', ...(f.archived ? { codexArchived: true } : {}),
       });
     }
     return out;
   }
 
-  return { rows, roots: where, cacheSize: () => cache.size, paths: () => paths };
+  return {
+    rows, roots: where, cacheSize: () => cache.size, paths: () => paths,
+    /** The heads read so far, to keep across restarts (codex-list.js): [[file, key, meta]]. */
+    entries: () => [...cache].map(([file, hit]) => [file, hit.key, hit.meta]),
+    /** Seeds the cache from kept entries; a file whose size or time changed since is read again. */
+    seed(list) {
+      for (const e of Array.isArray(list) ? list : []) {
+        if (!Array.isArray(e) || typeof e[0] !== 'string' || typeof e[1] !== 'string' || !e[2] || typeof e[2] !== 'object' || cache.has(e[0])) continue;
+        cache.set(e[0], { key: e[1], meta: { title: String(e[2].title || ''), cwd: String(e[2].cwd || ''), startedAt: Number(e[2].startedAt) || 0 } });
+      }
+    },
+  };
 }

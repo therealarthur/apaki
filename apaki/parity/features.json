@@ -2184,6 +2184,71 @@
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
       "notes": "The empty pane offers Claude Code or Codex; Codex starts a thread with the first message (thread/start with the folder, any picked model and preset, and the developer instructions), so no thread exists until something is sent. Phone and desktop alike."
+    },
+    {
+      "id": "session-list-compact-recency",
+      "title": "Session list like the ChatGPT app: one line per session, recency groups, exact times, a hover card",
+      "product": "chatgpt-desktop",
+      "upstream": ["chatgpt-desktop:feature:projects-threads-sidebar"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/sessionlist.js", "apaki/ui/app.js", "apaki/ui/app.css", "apaki/ui/tooltip.js", "apaki/web/src/web.css", "apaki/engine/last-active.js", "test/apaki-session-list.test.js"],
+      "commits": ["16c6527", "77e62d7"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": {  },
+      "notes": "Arthur 2026-10-12: \"think about chatgpt app and how the sessions are displayed\". A row is the name, cut, and the last message's time in a short form (now, 12m, the clock today, a weekday and the time this week, then the date), under Pinned, Today, Yesterday, Previous 7 days, Previous 30 days, then each month. Then Myrlin Glass's list design (Arthur: \"myrlin glass ui/ux is much clearer, we want to borrow from it\"): one leading glyph per row carries the provider and the state (Claude's spark in Claude orange, Codex's hexagon in Codex green, a turning arc when working, an amber bubble when it waits for your answer, a terminal, an archived copy), the name in a strong weight, the time right-aligned in a muted mono, hover and selection a soft fill with no borders, hairlines only between groups; never a pill. The row in the focused pane or under the keyboard eases open a second line (folder, branch, model, size, subagents). Hover (setTip): the full name, the exact date and time, folder, branch or worktree, agent, model, size, state. Keys: arrows, Home, End, Enter, F2, Alt+Enter, the context menu key. Phone: the same rows 48 px tall, no hover (the long press menu instead). Evaluated in the demo harness at 1440x900, the narrowest sidebar and 390x844, light and dark, reduced motion."
+    },
+    {
+      "id": "session-folders-accordion",
+      "title": "Folders open and close in place in the sidebar, several at once, remembered",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/app.js", "apaki/ui/sessionlist.js", "apaki/ui/app.css", "apaki/web/src/native.js", "apaki/web/src/web.css", "test/apaki-session-list.test.js"],
+      "commits": ["16c6527", "77e62d7"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": {  },
+      "notes": "Arthur 2026-10-12: \"the folders should expand when clicked on and contract when clicked on again instead of just transitioning the entire sidepanel\". A click opens a folder's sessions under it (grid rows 0fr to 1fr, no layout property animated, off under reduced motion), a second click closes it; several can be open; the open ones are kept in localStorage and the saved workspace. Dropping a session on a folder still moves it in; Show only this folder (the old view) is in the folder's menu with Rename and Delete. Keys: Enter or Space, Right and Left, arrows, F2. Phone: a tap opens or closes, a long press opens the folder's menu (Open or Close, Show only this folder; renaming and deleting folders stay on the PC), the rows under a folder open like the list's."
+    },
+    {
+      "id": "session-details-sheet",
+      "title": "Session Details: every fact about a conversation, with copy buttons",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/session-info.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/ui/sessionlist.js", "apaki/ui/app.js", "test/apaki-session-info.test.js", "test/apaki-session-list.test.js"],
+      "commits": ["f1dbec9", "16c6527", "77e62d7", "c782307"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": {  },
+      "notes": "Right click > Details (or Alt+Enter). The list's facts show at once; op sessionInfo (read only, every phone access level) adds what the transcript or rollout says: created and last message (exact, local time), prompts counted by the pane's rule (history.js promptOf), replies once per API message, tool calls, compactions, tokens, models used and the last, effort, Claude Code or Codex version, branch, the folder it last ran in, size on disk with the side folder, subagents and background shells, archive, pin, terminal and the panes holding it (model, effort, permissions, billing). Copy buttons for the id, folder, transcript and resume command; Show (Explorer) and Export on the PC only."
+    },
+    {
+      "id": "session-menu-pin-export-terminal-ask",
+      "title": "Session menu: Pin to top, Open beside, Open in a terminal, Export as Markdown, Ask Claude about it, Details",
+      "product": "apaki",
+      "upstream": [],
+      "status": "partial",
+      "surfaces": { "desktop": "supported", "phone": "partial" },
+      "where": ["apaki/ui/sessionlist.js", "apaki/ui/app.js", "apaki/engine/pins.js", "apaki/engine/session-info.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "test/apaki-session-info.test.js", "test/apaki-session-list.test.js"],
+      "commits": ["f1dbec9", "16c6527"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": {  },
+      "notes": "Arthur 2026-10-12: \"think about everything a user might want to do with a session\". The menu (right click, the row's ... button, the context menu key): Open, Open beside, Open in a new tab, Open here, Open in a terminal (sends the engine op openTerminal { sessionId, kind, paneId? }, which the console toggle's work builds: the exact session in a terminal window with the pane's settings), Stop and Close its pane when they apply, Rename, Pin to top (latch/pinned.json, shared with the phone), Move to folder, Fork, Archive or Unarchive, Ask Claude about it (a new conversation in its folder with where the transcript is), Export as Markdown (Downloads, shown in Explorer), its subagents, Copy session id, Copy resume command, Show folder in Explorer, Details. Phone: Details, Pin (Full and No shell), Ask Claude, Export (the Markdown comes back as text and is saved on the phone); left out on purpose, so the phone stays partial: Open in a terminal and Show folder in Explorer, which open windows on the PC."
+    },
+    {
+      "id": "codex-threads-in-main-list",
+      "title": "Codex threads in the main session list from startup, beside Claude's, without starting the app-server",
+      "product": "codex",
+      "upstream": ["codex:client-request:thread/list", "chatgpt-desktop:feature:projects-threads-sidebar"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/codex-list.js", "apaki/engine/codex-rollouts.js", "apaki/engine/last-active.js", "apaki/engine/engine.js", "apaki/engine/archive.js", "apaki/ui/app.js", "apaki/ui/sessionlist.js", "test/apaki-codex-list.test.js"],
+      "commits": ["c782307"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": {  },
+      "notes": "Arthur 2026-10-12: Codex sessions integrated exactly like Claude's. The engine reads the rollout files (read only) without the app-server, times each by its last message and keeps what it read in latch/codex-list.json, so a restart lists them at once and reads only new or changed rollouts; a background pass runs at most every 30 s and sends the list again only when it changed. Measured on this PC: 1,804 rollouts, a warm pass about 130 ms. The Codex view's rows (names set in Codex) win for the same thread. In the window they sit in All with Claude's under the same recency headings, with a small Codex mark, the same hover card, menu and Details; Archive works on them (archive.js takes codex: ids)."
     }
   ]
 }
