@@ -321,7 +321,8 @@ const SETUP = {
   },
   async blurred(page) {
     await SETUP.busy(page);
-    await page.evaluate(() => { window.dispatchEvent(new Event('blur')); });
+    // What Tauri forwards when the window loses focus: the page is no longer the focused document, and blur fires.
+    await page.evaluate(() => { document.hasFocus = () => false; window.dispatchEvent(new Event('blur')); });
     await sleep(800);
   },
 };

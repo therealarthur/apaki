@@ -1,6 +1,7 @@
 /**
  * The stream painter (apaki/ui/streampaint.js, 2026-10-12, input lag): one frame callback for every streaming reply,
- * a minimum gap per reply, a time budget per frame, every draw before any settle (one layout), slower while typing.
+ * a minimum gap per reply, a time budget per frame, every draw before any settle (one layout), nothing drawn while
+ * someone is typing (but never for long).
  */
 
 import assert from 'node:assert/strict';
@@ -11,17 +12,35 @@ import { createStreamPainter } from '../apaki/ui/streampaint.js';
 const K = {};
 const key = (n) => (K[n] ||= { n });
 
-/** A painter on a fake clock and a fake frame loop: step(ms) advances the clock by ms and runs the pending frame. */
+/**
+ * A painter on a fake clock with a fake frame loop and timers: step(ms) advances the clock by ms, then runs the pending
+ * frame callback and every timer that has come due.
+ */
 function rig(opts = {}) {
   let t = 1000;
-  let pending = null;
-  const painter = createStreamPainter({ raf: (f) => { pending = f; return 1; }, now: () => t, ...opts });
+  let raf = null;
+  const timers = [];
+  const painter = createStreamPainter({
+    raf: (f) => { raf = f; return 1; },
+    wait: (f, ms) => { timers.push({ at: t + ms, f }); },
+    now: () => t,
+    ...opts,
+  });
   return {
     painter,
-    clock: () => t,
     advance(ms) { t += ms; },
-    frames() { return pending ? 1 : 0; },
-    step(ms = 16) { t += ms; const f = pending; pending = null; if (f) f(); return Boolean(f); },
+    frames() { return raf ? 1 : 0; },
+    timers: () => timers.length,
+    step(ms = 16) {
+      t += ms;
+      let ran = false;
+      const due = timers.filter((x) => x.at <= t);
+      for (const x of due) { timers.splice(timers.indexOf(x), 1); x.f(); ran = true; }
+      const f = raf;
+      raf = null;
+      if (f) { f(); ran = true; }
+      return ran;
+    },
   };
 }
 
@@ -47,7 +66,7 @@ test('a reply is drawn at most once per gap; text that arrives in between is dra
   assert.equal(draws, 1);
   for (let i = 0; i < 5; i++) { r.painter.queue(key('a'), draw); r.step(16); }
   assert.ok(draws <= 3, `about one draw per 50 ms, got ${draws} in 5 frames of 16 ms`);
-  r.step(16); r.step(16); r.step(16);
+  for (let i = 0; i < 6; i++) r.step(16);
   assert.equal(r.painter.size, 0, 'the last text was drawn');
 });
 
@@ -66,7 +85,7 @@ test('every settle runs once, after every draw', () => {
 test('a frame that has spent its budget carries the rest over, but always draws at least one', () => {
   let clock = 0;
   let pending = null;
-  const painter = createStreamPainter({ raf: (f) => { pending = f; return 1; }, now: () => clock, budget: 6, gap: 0 });
+  const painter = createStreamPainter({ raf: (f) => { pending = f; return 1; }, wait: (f) => { pending = f; }, now: () => clock, budget: 6, gap: 0 });
   const log = [];
   for (const k of ['a', 'b', 'c']) painter.queue(key(k), () => { log.push(k); clock += 8; });
   const run = () => { const f = pending; pending = null; clock += 16; if (f) f(); };
@@ -80,19 +99,45 @@ test('a frame that has spent its budget carries the rest over, but always draws 
   assert.equal(painter.size, 0);
 });
 
-test('typing slows the updates for a moment', () => {
-  const r = rig({ gap: 50, typingGap: 110, typingMs: 400 });
+test('while someone types nothing is drawn, and the reply is drawn as soon as they pause', () => {
+  const r = rig({ gap: 50, hold: 220 });
+  let draws = 0;
+  const draw = () => { draws++; };
+  r.painter.queue(key('a'), draw);
+  r.step(16);
+  assert.equal(draws, 1);
+  // Typing, a key every 100 ms for a second: text keeps arriving, nothing is painted.
+  for (let i = 0; i < 10; i++) {
+    r.painter.typed();
+    r.painter.queue(key('a'), draw);
+    r.step(50); r.step(50);
+  }
+  assert.equal(draws, 1, 'no paint while keys keep coming');
+  assert.ok(r.painter.size === 1, 'the reply is waiting, not lost');
+  // They pause: within a couple of frames after the hold it is drawn, once, with everything that arrived.
+  for (let i = 0; i < 20 && r.painter.size; i++) r.step(16);
+  assert.equal(draws, 2);
+  assert.equal(r.painter.size, 0);
+});
+
+test('typing never holds a reply back for longer than maxWait', () => {
+  const r = rig({ gap: 50, hold: 220, maxWait: 1200 });
   let draws = 0;
   r.painter.queue(key('a'), () => { draws++; });
-  r.step(16);
+  // A key every 100 ms, forever: after 1.2 s the reply is drawn anyway.
+  let ms = 0;
+  while (ms < 3000 && !draws) { r.painter.typed(); r.step(100); ms += 100; }
+  assert.equal(draws, 1);
+  assert.ok(ms >= 1200 && ms <= 1500, `drawn after about 1.2 s of typing, not ${ms} ms`);
+});
+
+test('while typing the painter waits on a timer, not a frame callback every 16 ms', () => {
+  const r = rig({ hold: 220 });
+  r.painter.queue(key('a'), () => {});
   r.painter.typed();
-  for (let i = 0; i < 6; i++) { r.painter.queue(key('a'), () => { draws++; }); r.step(16); }
-  assert.ok(draws <= 2, `at most one more draw in 96 ms while typing, got ${draws}`);
-  r.advance(500);
-  r.painter.queue(key('a'), () => { draws++; });
-  const before = draws;
-  r.step(16);
-  assert.equal(draws, before + 1, 'back to the normal gap once typing stops');
+  r.step(1);
+  assert.equal(r.frames(), 0, 'no frame callback pending');
+  assert.ok(r.timers() >= 1, 'a timer to look again');
 });
 
 test('cancel drops a queued reply; a draw that throws does not stop the others', () => {
