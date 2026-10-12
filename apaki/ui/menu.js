@@ -78,8 +78,11 @@ export function menu(anchor, items, { onPick, above = true, width } = {}) {
  */
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-export function effortGrid(level, { live = false } = {}) {
-  const n = Math.max(1, EFFORTS.indexOf(level) + 1);
+export function effortGrid(level, { live = false, levels = null } = {}) {
+  // A Codex model lists its own efforts (2026-10-12): the grid spreads however many there are over the five columns.
+  const list = Array.isArray(levels) && levels.length ? levels : EFFORTS;
+  const at = list.indexOf(level);
+  const n = list === EFFORTS ? Math.max(1, at + 1) : Math.max(1, Math.min(5, Math.round(((at < 0 ? 0 : at + 1) / list.length) * 5)));
   let dots = '';
   for (let c = 0; c < 5; c++) for (let r = 0; r < 3; r++) dots += `<i style="--c:${c};--r:${r}"${c < n ? ' class="lit"' : ''}></i>`;
   return `<span class="egrid${n === 5 ? ' max' : ''}${live ? ' live' : ''}" aria-hidden="true">${dots}</span>`;

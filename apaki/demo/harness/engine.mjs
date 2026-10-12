@@ -19,6 +19,8 @@ import {
   CONTEXT, CONTEXT_USED, COMMANDS, PRESETS, ID, DAY, HOUR, MIN,
 } from './data.mjs';
 import { Turn, TurnAborted, SCRIPTS } from './turns.mjs';
+// Codex panes (2026-10-12): the ops a Codex pane sends, answered from invented data.
+import { createCodexDemo } from './codex.mjs';
 
 const MODEL = 'claude-opus-5-5';
 const PAIR_URL = 'https://apaki.myrlin.io/pair#v1.q7T2mK9xRw4LbN8cHf3Yp6Ds5GjV1eAu';
@@ -60,6 +62,7 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
 
   const later = (ms, ev) => setTimeout(() => send(ev), ms);
   const emit = (ev) => send(ev);
+  const codexDemo = createCodexDemo({ emit, later, nextId, sessions, panes, now });
 
   /* billing, Glass */
 
@@ -275,6 +278,8 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     if (!c || typeof c.op !== 'string') return;
     if (c.op.startsWith('remote')) { remoteOp(c); return; }
     const pane = panes.get(c.paneId);
+    // A Codex pane's ops (and the two only Codex has) are answered there; the workspace starts with Codex only in the codex preset.
+    if (codexDemo.handle(c, pane)) return;
     switch (c.op) {
       case 'sessions': sendSessions(c.reqId); break;
       case 'loadState': later(10, { ev: 'state', state: { v: 1, savedAt: now() + 5000, active: start.active || 0, tabs: start.tabs, rail: start.rail, win: null } }); break;
@@ -373,7 +378,7 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
   function boot() {
     if (listening) return;
     listening = true;
-    later(30, { ev: 'ready', billing: billing(), voice: false, model: MODEL });
+    later(30, { ev: 'ready', billing: billing(), voice: false, model: MODEL, ...(start.codex ? { codex: true } : {}) });
     later(90, { ev: 'index', ok: true, stats: { blocks_added: 3 }, ms: 410 });
     later(120, { ev: 'meaning', stage: 'ready', result: { ok: true, passages: 31_408 } });
     later(160, glassEvent(false));

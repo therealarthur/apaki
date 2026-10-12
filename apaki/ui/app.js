@@ -44,6 +44,8 @@ import { findStep, openFind } from './find.js';
 import { ARM_MS, denyLabel, permissionHtml, permissionKey, permissionReply, permissionView } from './permission.js';
 import { DRAG_TASK, KIND_LABEL, TaskPane, closeTasksPanel, newTaskViewerId, specKey, taskGlyph, tasksPanel, tasksPanelPane } from './tasks.js';
 import { ArtifactPane, newViewerId } from './artifacts.js';
+// Codex panes and rows (codex.js, 2026-10-12).
+import { CARD_ONLY_VIA } from './codex.js';
 import { BrowserPane } from './browser.js';
 
 const { invoke } = window.__TAURI__.core;
@@ -79,6 +81,8 @@ const S = {
   voice: false, seq: 0, engineLost: false,
   defaults: { model: 'claude-opus-5-5', effort: 'xhigh', mode: 'bypassPermissions', billing: null },
   tabs: [], active: null, panes: new Map(), drag: null,
+  // Codex (2026-10-12): installed here (the engine's ready event), and the model list it read (event codexModels).
+  codexAvailable: false, codex: null,
 };
 
 /**
@@ -207,6 +211,10 @@ const host = {
   // A conversation Claude Code deleted that Apaki's archive kept (engine archivedCopy, 2026-10-12): the pane says so at its top.
   archivedCopy: (id) => Boolean(id && S.sessions.find((s) => s.id === id)?.archivedCopy),
   sessionTitle: (id) => S.sessions.find((s) => s.id === id)?.title || paneBySession(id)?.title || null,
+  // Codex panes (pane.js): whether Codex is installed, the model list the engine read, and a request for it.
+  codexAvailable: () => S.codexAvailable,
+  codexModels: () => S.codex,
+  askCodexModels: () => askCodexModels(),
   showSession: (id) => { const p = paneBySession(id); if (p) { const t = tabOf(p); if (t && t.id !== S.active) switchTab(t); focusPane(p); return; } const s = S.sessions.find((x) => x.id === id); if (s) openFromRail(s, { ctrlKey: true }); },
   dragPane: (p, e) => {
     e.dataTransfer.setData(DRAG_PANE, p.id);
@@ -509,11 +517,15 @@ function createTab(root = null) {
   return t;
 }
 
+/** The model, effort and mode a new pane takes from the pane it comes from: Claude's own, never a Codex pane's. */
+const inheritable = (base) => (base && base.kind !== 'codex' ? { model: base.model, effort: base.effort, mode: base.mode } : {});
+
 /** A new tab with one pane, holding `session` or a new conversation. */
 function addTab({ session = null, cwd = null, activate = true } = {}) {
   const base = focusedPane();
   // New conversations start in the home folder unless a folder is given (Arthur, 2026-10-09).
-  const p = createPane({ cwd: cwd || session?.cwd || '', model: base?.model, effort: base?.effort, mode: base?.mode });
+  // A Codex pane's model, effort and mode are Codex's (2026-10-12): a new Claude pane never inherits them.
+  const p = createPane({ cwd: cwd || session?.cwd || '', ...inheritable(base) });
   const t = createTab(L.leaf(p.id));
   layout(t);
   p.open(session, { warm: true });
@@ -612,7 +624,7 @@ function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
   if (have) { focusPane(have, { scroll: false }); return have; }
   const t = activeTab();
   const base = focusedPane();
-  const p = createPane({ cwd: '', model: base?.model, effort: base?.effort, mode: base?.mode });
+  const p = createPane({ cwd: '', ...inheritable(base) });
   p.following = desktopPaneId;
   p.el.classList.add('following');
   if (viewOnly) {
@@ -651,7 +663,7 @@ function newConversation(p) {
   }
   const base = p || focusedPane();
   // Home folder, like a new terminal ("Starts in" changes it); the model, effort and mode of the pane it came from.
-  const np = createPane({ cwd: '', model: base?.model, effort: base?.effort, mode: base?.mode });
+  const np = createPane({ cwd: '', ...inheritable(base) });
   const anchor = t.focused && L.has(t.root, t.focused) ? t.focused : L.ids(t.root)[0];
   t.root = L.insert(t.root, anchor, np.id, 'right');
   t.focused = np.id;
@@ -895,7 +907,7 @@ function dropSession(t, z, s) {
     return;
   }
   const base = z.pane || focusedPane();
-  const p = createPane({ cwd: s.cwd, title: s.title, model: base?.model, effort: base?.effort, mode: base?.mode });
+  const p = createPane({ cwd: s.cwd, title: s.title, ...inheritable(base) });
   t.root = z.where === 'root' ? L.leaf(p.id) : L.insert(t.root, z.pane.id, p.id, z.edge);
   t.focused = p.id;
   layout(t);
@@ -1123,12 +1135,29 @@ async function updateBadge() {
 function viewList() {
   const live = S.sessions.filter((s) => !s.archived);
   const term = live.filter((s) => s.terminal).length;
+  const codex = live.filter((s) => s.codex).length;
   return [
-    { id: 'all', label: 'All', n: live.length },
+    { id: 'all', label: 'All', n: live.length - (S.codexAvailable ? codex : 0) },
     { id: 'terminal', label: 'In terminals', n: term },
+    // Codex threads (2026-10-12): their own view, next to Claude's, read from the Codex app-server when it is opened.
+    ...(S.codexAvailable ? [{ id: 'codex', label: 'Codex', n: codex }] : []),
     // Archived sessions (right-click > Archive) open from a link under the list (renderRail), so the
     // header keeps two switches; while that view shows, the header's x leaves it.
   ];
+}
+
+/** Asks the engine for Codex's model list (once; the answer is event codexModels). */
+let codexModelsAsked = 0;
+function askCodexModels() {
+  if (S.codex || Date.now() - codexModelsAsked < 4000) return;
+  codexModelsAsked = Date.now();
+  send('codexModels');
+}
+
+/** Reads the Codex threads on this PC for the Codex view (event codexThreads); refresh=true reads them again now. */
+function loadCodexThreads(refresh = false) {
+  if (!S.codexAvailable) return;
+  send('codexThreads', refresh ? { refresh: true } : {});
 }
 
 /* ---------- folders ---------- */
@@ -1484,7 +1513,6 @@ function beginRename(sessionId, anchor, { pane = null } = {}) {
  */
 function sessionMenu(s, e) {
   e.preventDefault();
-  if (s.codex) return;
   const cur = s.folder || null;
   const pane = paneBySession(s.id);
   const runningHere = Boolean(pane?.busy);
@@ -1506,7 +1534,7 @@ function sessionMenu(s, e) {
     ...(WEB ? [] : [s.archived ? { value: 'unarchive', label: 'Unarchive', hint: 'back in the lists' } : { value: 'archive', label: 'Archive', hint: 'hide it; nothing is deleted' }]),
     { divider: true },
     { value: 'copy-id', label: 'Copy session id' },
-    { value: 'copy-resume', label: 'Copy resume command', hint: 'claude --resume' },
+    { value: 'copy-resume', label: 'Copy resume command', hint: s.codex ? 'codex resume' : 'claude --resume' },
     ...(WEB || !s.cwd ? [] : [{ value: 'reveal', label: 'Show folder', hint: short(s.cwd) }]),
     { divider: true },
     { heading: 'Move to folder' },
@@ -1527,7 +1555,7 @@ function sessionMenu(s, e) {
       else if (v === 'fork') send('forkSession', { sessionId: s.id });
       else if (v === 'archive' || v === 'unarchive') send('archive', { sessionId: s.id, archived: v === 'archive' });
       else if (v === 'copy-id') copyText(s.id, 'Session id copied.');
-      else if (v === 'copy-resume') copyText(`${s.cwd ? `cd "${s.cwd}" && ` : ''}claude --resume ${s.id}`, 'Resume command copied.');
+      else if (v === 'copy-resume') copyText(`${s.cwd ? `cd "${s.cwd}" && ` : ''}${s.codex ? `codex resume ${s.id.replace(/^codex:/, '')}` : `claude --resume ${s.id}`}`, 'Resume command copied.');
       else if (v === 'reveal') send('revealFolder', { cwd: s.cwd });
       else if (v === 'new') startNewFolder(s.id);
       else if (v === 'out') moveToFolder(s.id, null);
@@ -1578,6 +1606,9 @@ function copyText(text, said) {
 function inView(s) {
   if (S.view === 'archived') return Boolean(s.archived);
   if (s.archived) return false;
+  if (S.view === 'codex') return Boolean(s.codex);
+  // Codex threads have their own view; a search shows its hits wherever they are (every agent's), a folder shows what is in it.
+  if (s.codex && S.view === 'all' && !S.results && S.codexAvailable) return false;
   if (S.view === 'all') return true;
   if (S.view === 'terminal') return Boolean(s.terminal);
   const f = S.folders.find((x) => x.id === S.view);
@@ -1589,7 +1620,7 @@ function renderRail() {
   views.innerHTML = '';
   for (const v of viewList()) {
     const b = el('button', v.id === S.view ? 'on' : '', `${esc(v.label)}<span class="count">${v.n}</span>`);
-    b.onclick = () => { S.view = v.id; renderRail(); };
+    b.onclick = () => { S.view = v.id; if (v.id === 'codex') loadCodexThreads(); renderRail(); };
     // Dropping a session on All takes it out of its folder.
     if (v.id === 'all') { b.title = 'Drop a session here to take it out of its folder'; folderDropTarget(b, (sid) => moveToFolder(sid, null)); }
     views.append(b);
@@ -1602,7 +1633,7 @@ function renderRail() {
   }
   renderFolders();
   const folder = S.folders.find((f) => f.id === S.view);
-  $('sessionsTitle').textContent = S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : S.view === 'archived' ? 'Archived' : 'Sessions';
+  $('sessionsTitle').textContent = S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : S.view === 'archived' ? 'Archived' : S.view === 'codex' ? 'Codex threads' : 'Sessions';
   $('sessionsCount').textContent = String(Math.min(rows.length, 400));
   $('clearView').hidden = !folder && S.view !== 'archived';
   $('searchState').textContent = S.results ? S.searchInfo : '';
@@ -1614,7 +1645,7 @@ function renderRail() {
     const li = el('li');
     li.dataset.id = s.id;
     const meta = [
-      s.codex ? '<span class="codex">codex · read-only</span>' : '',
+      s.codex ? '<span class="codex">codex</span>' : '',
       s.terminal ? `<span class="live">terminal${s.terminal.status ? ` · ${esc(s.terminal.status)}` : ''}</span>` : '',
       s.headless ? '<span class="headless" title="Started headless and never typed into: claude -p, a worker, or a window with relay on from its first message">claude -p</span>' : '',
       s.bare ? '<span class="headless" title="Its transcript has no messages yet">empty</span>' : '',
@@ -1639,7 +1670,7 @@ function renderRail() {
     li.onclick = (e) => openFromRail(s, e);
     li.oncontextmenu = (e) => sessionMenu(s, e);
     li.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); openFromRail(s, { ctrlKey: true }); } };
-    if (!s.codex) {
+    {
       li.draggable = true;
       li.title = `Click: open (a new tab, or the empty pane) · Shift+click: split right · drag onto a pane edge to split, or onto a folder · right-click: stop, rename, fork, archive and more${S.warm.has(s.id) ? '\nKeep-warm is keeping its prompt cache warm' : ''}`;
       li.addEventListener('dragstart', (e) => {
@@ -1683,7 +1714,7 @@ function renderRailMarks() {
 }
 
 function openFromRail(s, e = {}) {
-  if (s.codex) { (focusedPane() || addTab().root && focusedPane())?.open(s, { warm: false }); return; }
+  // A Codex thread opens like any session now (2026-10-12): a new tab, the empty pane, or a split; the pane becomes a Codex one.
   const existing = paneBySession(s.id);
   if (existing) { focusPane(existing); return; }
   if (e.ctrlKey || e.metaKey) { addTab({ session: s }); return; }
@@ -2041,7 +2072,7 @@ function permissionSheet(e) {
     const always = root.querySelector('[data-k=always]');
     if (always) always.onclick = () => choose('always');
     // The button says when the note goes with it.
-    noteBox?.addEventListener('input', () => { denyBtn.textContent = denyLabel(noteBox.value); });
+    noteBox?.addEventListener('input', () => { denyBtn.textContent = denyLabel(noteBox.value, view.labels?.deny); });
     onKey = (ev) => {
       if (!root.isConnected || sheetKey !== e.askId) return;
       const t = ev.target;
@@ -2087,10 +2118,11 @@ function askSheet(e) {
   }
   const qs = input.questions || [];
   const picks = qs.map(() => new Set());
-  const html = `${from}<h2>Claude has ${qs.length === 1 ? 'a question' : `${qs.length} questions`}</h2>${qs.map((q, qi) => `
-    <div class="q">${esc(q.question)}</div>
+  const who = pane?.kind === 'codex' ? 'Codex' : 'Claude';
+  const html = `${from}<h2>${who} has ${qs.length === 1 ? 'a question' : `${qs.length} questions`}</h2>${qs.map((q, qi) => `
+    ${q.header && q.header !== q.question && pane?.kind === 'codex' ? `<div class="from">${esc(q.header)}</div>` : ''}<div class="q">${esc(q.question)}</div>
     ${(q.options || []).map((o, oi) => `<button class="opt" data-q="${qi}" data-o="${oi}">${esc(o.label)}${o.description ? `<small>${esc(o.description)}</small>` : ''}</button>`).join('')}
-    <input type="text" data-other="${qi}" placeholder="Or type your own answer">`).join('')}
+    <input type="${q.secret ? 'password' : 'text'}" data-other="${qi}" placeholder="${q.options?.length ? 'Or type your own answer' : 'Type your answer'}"${q.secret ? ' autocomplete="off"' : ''}>`).join('')}
     <div class="row"><button data-k="skip">Skip</button><button class="primary" data-k="ok">Answer</button></div>`;
   sheet(html, (root, close) => {
     root.querySelectorAll('.opt').forEach((b) => {
@@ -2149,6 +2181,8 @@ function snapshot() {
       return {
         // A pane following a desktop pane (followDesktop) is kept as an empty one: reopening its session would take it over.
         type: 'leaf', pane: lf.pane, s: (!p?.following && p?.sessionId) || null, cwd: p?.cwd || '', title: p?.following ? '' : p?.title || '', model: p?.model, effort: p?.effort, mode: p?.mode,
+        // A new Codex conversation has no session id to say so yet (2026-10-12).
+        ...(p?.kind === 'codex' ? { kind: 'codex' } : {}),
         draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ id: q.id, text: q.text })),
         scroll: g ? { atEnd: g.scrollHeight - g.scrollTop - g.clientHeight < 40, top: Math.round(g.scrollTop) } : null,
         busy: Boolean(p?.busy), pendingName: p?.pendingName || null,
@@ -2206,7 +2240,7 @@ function restore(saved = readLocal()) {
       const sid = lf.s && !seen.has(lf.s) ? lf.s : null;
       if (sid) seen.add(sid);
       // The session id is set at once so a save before the engine answers keeps it.
-      const p = createPane({ id: lf.pane, sessionId: sid, cwd: lf.cwd, title: lf.title, model: lf.model, effort: lf.effort, mode: lf.mode });
+      const p = createPane({ id: lf.pane, sessionId: sid, cwd: lf.cwd, title: lf.title, model: lf.model, effort: lf.effort, mode: lf.mode, kind: lf.kind });
       // What you were typing, what was queued, where you were reading, a name waiting for its session.
       if (lf.draft) { p.$.input.value = lf.draft; p.autosize(); p.renderSendButton?.(); }
       // The saved id is kept: the engine may hold the same item (it sends it itself when the turn ends with no window), and matches by id (pane.js adoptQueue).
@@ -2241,7 +2275,8 @@ await listen('engine', ({ payload: e }) => {
   if (e.ev === 'artifact' || e.ev === 'openUrl') {
     const p = S.panes.get(e.paneId);
     p?.handle(e);
-    if (e.ev === 'artifact') openViewer({ ...e, sourcePane: e.paneId }, { auto: true });
+    // A turn's changes and a picture Codex looked at are cards (their Open shows the viewer); only Claude's and Codex's own shows pop one up.
+    if (e.ev === 'artifact' && (!CARD_ONLY_VIA.has(e.via) || e.open)) openViewer({ ...e, sourcePane: e.paneId }, { auto: !e.open });
     // openUrl: the engine already put it in the built-in browser (browserId),
     // or this window does now (beside the conversation, without the focus).
     if (e.ev === 'openUrl' && !e.browserId && p) openUrlHere(e.url, p, { focus: false, reason: e.reason || 'show' });
@@ -2266,6 +2301,10 @@ await listen('engine', ({ payload: e }) => {
     case 'ready':
       S.voice = Boolean(e.voice);
       S.defaults.billing = e.billing;
+      // Codex is installed here: the Codex view and the new-conversation choice show. Back in that view from the last session, read its threads.
+      S.codexAvailable = Boolean(e.codex);
+      if (S.view === 'codex') loadCodexThreads();
+      if (!S.codexAvailable && S.view === 'codex') S.view = 'all';
       for (const p of S.panes.values()) p.setVoice(S.voice);
       // The engine restarted: every pane lost its Claude Code process. Reopen
       // each one (without starting Claude Code until its next message).
@@ -2322,6 +2361,23 @@ await listen('engine', ({ payload: e }) => {
         if (!S.sessions.some((s) => s.id === id)) S.sessions.unshift({ id, title: `New session (${r.name || 'terminal'})`, firstPrompt: '', cwd: r.cwd || '', lastModified: r.updatedAt || Date.now(), terminal: { name: r.name, status: r.status, pid: r.pid }, folder: null });
       }
       if (!S.drag) renderRail();
+      break;
+    }
+    case 'codexModels':
+      // Codex's models with each one's efforts (engine codexModels): the pickers of every Codex pane use them.
+      if (!e.error) { S.codex = { models: e.models || [], defaults: e.defaults || null, presets: e.presets || [], account: e.account || null }; for (const p of S.panes.values()) p.codexModelsChanged?.(); }
+      break;
+    case 'codexThreads': {
+      // The Codex threads on this PC: they replace the Codex rows of the list (the other rows are not touched).
+      if (e.error && !(e.items || []).length) { $('searchState').textContent = `Codex: ${e.error}`; break; }
+      const keep = S.sessions.filter((x) => !x.codex);
+      S.sessions = [...keep, ...(e.items || [])];
+      for (const p of S.panes.values()) {
+        const s = p.sessionId && S.sessions.find((x) => x.id === p.sessionId);
+        if (s?.codex && s.title && !p.renaming) p.setTitle(s.title);
+      }
+      renderRail();
+      renderTabs();
       break;
     }
     case 'subagents': {
@@ -2547,6 +2603,8 @@ $('refreshSessions').onclick = () => {
   const b = $('refreshSessions');
   b.classList.remove('spin'); void b.offsetWidth; b.classList.add('spin');
   send('sessions');
+  // The Codex view reads Codex again too (the list also refreshes when the view opens).
+  if (S.view === 'codex') loadCodexThreads(true);
 };
 
 // For apaki/scripts/cdp-check.mjs: the live state, read only.

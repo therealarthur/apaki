@@ -1,0 +1,403 @@
+/**
+ * Codex panes with a scripted client in place of the process (apaki/engine/codex-panes.js), 2026-10-12.
+ *
+ * test/apaki-codex-e2e.test.js drives the whole engine against a fake app-server. These cover what that cannot show
+ * without a phone or a clock: a restricted phone's pane (read-only whatever it asks for), a server that dies, a request
+ * the server withdraws, attachments saved for Codex to read, the idle stop, the pane Apaki's tools answer for. The
+ * client is an EventEmitter that records every request and answers from a table.
+ */
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { CODEX_SHARED, createCodex, isCodexPane } from '../apaki/engine/codex-panes.js';
+
+const THREAD = '01a00000-0000-7000-8000-000000000001';
+const THREAD2 = '01a00000-0000-7000-8000-000000000002';
+const PHONE = 'phone:AAAAAAAAAAAAAAAAAAAAAA:c1';
+
+class MockClient extends EventEmitter {
+  constructor(table = {}) {
+    super();
+    this.calls = [];
+    this.responded = [];
+    this.errors = [];
+    this.stops = 0;
+    this.ready = true;
+    this.table = table;
+  }
+  async ensure() { this.ready = true; return {}; }
+  async request(method, params) {
+    this.calls.push({ method, params });
+    const h = this.table[method];
+    if (h instanceof Error) throw h;
+    return typeof h === 'function' ? h(params) : (h ?? {});
+  }
+  respond(id, result) { this.responded.push({ id, result }); }
+  respondError(id, code, message) { this.errors.push({ id, code, message }); }
+  async stop() { this.stops += 1; this.ready = false; }
+  of(method) { return this.calls.filter((c) => c.method === method).map((c) => c.params); }
+}
+
+const MODELS = { data: [
+  { id: 'm1', model: 'm1', displayName: 'M1', isDefault: true, hidden: false, defaultReasoningEffort: 'low', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }] },
+] };
+const thread = (id = THREAD) => ({ id, name: 'A thread', preview: 'p', cwd: 'C:\\proj', updatedAt: 5, recencyAt: 6 });
+const resumed = (id = THREAD) => ({ thread: thread(id), model: 'm1', reasoningEffort: 'low', cwd: 'C:\\proj', approvalPolicy: 'never', sandbox: { type: 'dangerFullAccess' } });
+
+/** A Codex module over a mock client, with the engine's side faked: events, asks, panes, Apaki's tools. */
+function setup({ cap = null, table = {}, attachDir = null } = {}) {
+  const events = [];
+  const asks = new Map();
+  const panes = new Map();
+  const shows = [];
+  const browser = { calls: [], call: async (tool, input) => { browser.calls.push([tool, input]); return { ok: true, text: `did ${tool}` }; } };
+  const client = new MockClient({
+    'model/list': MODELS, 'config/read': { config: { model: 'm1', model_reasoning_effort: 'low', approval_policy: 'on-request', sandbox_mode: 'workspace-write' } },
+    'account/read': { account: { type: 'chatgpt', planType: 'pro' } },
+    'thread/resume': () => resumed(), 'thread/start': () => ({ ...resumed(THREAD2), approvalPolicy: 'on-request', sandbox: { type: 'workspaceWrite' } }),
+    'turn/start': () => ({ turn: { id: 'T1' } }), 'thread/turns/list': { data: [], nextCursor: null }, 'thread/read': { thread: thread() },
+    ...table,
+  });
+  const turnsEnded = [];
+  const activity = [];
+  const codex = createCodex({
+    emit: (ev) => events.push(ev), asks, panes,
+    tools: (p) => ({ show: async (input, meta) => { shows.push({ paneId: p.id, input, meta }); return { ok: true, text: 'shown' }; }, browser }),
+    openPage: (p, o) => events.push({ ev: 'openPage', paneId: p.id, ...o }),
+    createClient: () => client,
+    phoneCap: (id) => (id.startsWith('phone:') ? cap : null),
+    attachDir: () => attachDir,
+    activity: (p, msg) => activity.push(msg),
+    turnEnded: (p, info) => turnsEnded.push({ paneId: p.id, ...info }),
+    log: () => {},
+  });
+  const pane = (id) => { const p = { id }; panes.set(id, p); return p; };
+  const of = (name) => events.filter((e) => e.ev === name);
+  return { codex, client, events, asks, panes, pane, shows, browser, turnsEnded, activity, of };
+}
+
+test('a restricted phone\'s Codex pane is read-only and never asks, whatever the page picked; Full may pick', async () => {
+  for (const cap of ['chat', 'noshell']) {
+    const s = setup({ cap });
+    const p = s.pane(PHONE);
+    await s.codex.open('r1', p, `codex:${THREAD}`, null, { mode: 'full-access', model: 'm1' });
+    const resume = s.client.of('thread/resume')[0];
+    assert.equal(resume.approvalPolicy, 'never', `${cap}: no prompts nobody could answer`);
+    assert.equal(resume.sandbox, 'read-only');
+    assert.equal(p.mode, 'read-only', 'the server said full access; the phone\'s access wins');
+    const opened = s.of('opened')[0];
+    assert.equal(opened.mode, 'read-only');
+    // A pick the access does not allow is refused, and the pane says what it really has.
+    assert.equal(s.codex.setMode(p, 'full-access'), false);
+    assert.equal(s.codex.setMode(p, 'auto'), false);
+    assert.equal(p.mode, 'read-only');
+    assert.deepEqual(s.of('settings').at(-1), { ev: 'settings', paneId: PHONE, model: 'm1', effort: 'low', mode: 'read-only' });
+    await s.codex.send('r2', p, 'hello', []);
+    const turn = s.client.of('turn/start')[0];
+    assert.equal(turn.approvalPolicy, 'never');
+    assert.deepEqual(turn.sandboxPolicy, { type: 'readOnly' });
+  }
+  const full = setup({ cap: 'full' });
+  const p = full.pane(PHONE);
+  await full.codex.open('r1', p, null, null, { mode: 'full-access' });
+  assert.equal(p.mode, 'full-access');
+  assert.equal(full.codex.setMode(p, 'auto'), true);
+  await full.codex.send('r2', p, 'hello', []);
+  assert.equal(full.client.of('thread/start')[0].sandbox, 'workspace-write');
+  assert.equal(full.client.of('turn/start')[0].approvalPolicy, 'on-request');
+});
+
+test('a phone whose access is lowered while its pane is open drops to read-only at once', async () => {
+  let cap = 'full';
+  const events = [];
+  const panes = new Map();
+  const client = new MockClient({ 'model/list': MODELS, 'config/read': {}, 'account/read': {}, 'thread/resume': () => resumed(), 'thread/turns/list': { data: [] }, 'thread/read': { thread: thread() } });
+  const codex = createCodex({ emit: (e) => events.push(e), asks: new Map(), panes, tools: () => ({}), openPage: () => {}, createClient: () => client, phoneCap: () => cap, log: () => {} });
+  const p = { id: PHONE };
+  panes.set(PHONE, p);
+  await codex.open('r', p, `codex:${THREAD}`, null, {});
+  assert.equal(p.mode, 'full-access');
+  cap = 'chat';
+  codex.recap(p);
+  assert.equal(p.mode, 'read-only');
+  assert.equal(events.filter((e) => e.ev === 'settings').at(-1).mode, 'read-only');
+  await codex.send('r2', p, 'x', []);
+  assert.equal(client.of('turn/start')[0].approvalPolicy, 'never');
+});
+
+test('Apaki\'s tools answer for the pane whose turn runs; a restricted phone\'s pane gets none; no pane, no tools', async () => {
+  const s = setup({ cap: 'chat' });
+  assert.deepEqual(await s.codex.runTool('show', { title: 'x' }), { ok: false, text: 'No Codex conversation is open in Apaki right now.' });
+
+  const a = s.pane('pa');
+  const b = s.pane('pb');
+  await s.codex.open('r', a, `codex:${THREAD}`, null, {});
+  await s.codex.open('r', b, `codex:${THREAD2}`, null, {});
+  a.lastActiveAt = 100;
+  b.lastActiveAt = 200;
+  assert.equal(s.codex.pickPane().id, 'pb', 'nothing running: the one used last');
+  a.busy = true;
+  assert.equal(s.codex.pickPane().id, 'pa', 'a running turn wins');
+  assert.equal(s.codex.pickPane(THREAD2).id, 'pb', 'a thread the call names wins over both');
+  assert.equal(s.codex.pickPane('nope').id, 'pa');
+
+  const r = await s.codex.runTool('show', { title: 'T', kind: 'markdown', content: '#' }, {});
+  assert.equal(r.ok, true);
+  assert.equal(s.shows[0].paneId, 'pa');
+  assert.equal(s.shows[0].meta.via, 'show');
+  await s.codex.runTool('browser_open', { url: 'http://localhost:3000/' });
+  assert.deepEqual(s.browser.calls, [['browser_open', { url: 'http://localhost:3000/' }]]);
+  // A thread id the tool server passes along (when the server sends one) picks its pane.
+  await s.codex.runTool('show', { title: 'U' }, { 'x-codex-turn-metadata': { thread_id: THREAD2 } });
+  assert.equal(s.shows[1].paneId, 'pb');
+  // A link a command opened lands in the running pane.
+  s.codex.openedLink('http://localhost:5173/');
+  assert.deepEqual(s.events.find((e) => e.ev === 'openPage'), { ev: 'openPage', paneId: 'pa', url: 'http://localhost:5173/', title: null, reason: 'BROWSER', toolUseId: null });
+
+  const phone = setup({ cap: 'chat' });
+  const pp = phone.pane(PHONE);
+  await phone.codex.open('r', pp, `codex:${THREAD}`, null, {});
+  const refused = await phone.codex.runTool('browser_read', {});
+  assert.equal(refused.ok, false);
+  assert.match(refused.text, /Chat only/);
+  assert.equal(phone.shows.length + phone.browser.calls.length, 0);
+});
+
+test('a server that dies ends the turns it was running, drops what waited, and the next message resumes the thread', async () => {
+  const s = setup();
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  await s.codex.send('r2', p, 'go', []);
+  assert.equal(p.busy, true);
+  s.client.emit('request', 41, 'item/commandExecution/requestApproval', { threadId: THREAD, itemId: 'i', command: 'npm i' });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(s.asks.size, 1);
+  s.client.emit('exit', 1, null, { expected: false });
+  assert.equal(p.busy, false);
+  assert.equal(s.asks.size, 0);
+  assert.deepEqual(s.of('ask_gone').length, 1);
+  const result = s.of('result').at(-1);
+  assert.equal(result.isError, true);
+  assert.match(result.result, /app-server stopped/);
+  assert.equal(s.turnsEnded.length, 1, 'the host learns the turn ended');
+  // The next message loads the thread again first.
+  await s.codex.send('r3', p, 'again', []);
+  assert.equal(s.client.of('thread/resume').length, 2);
+  assert.equal(s.client.of('turn/start').length, 2);
+
+  // A stop Apaki asked for is quiet.
+  const q = setup();
+  const qp = q.pane('p1');
+  await q.codex.open('r', qp, `codex:${THREAD}`, null, {});
+  await q.codex.send('r2', qp, 'go', []);
+  q.client.emit('exit', null, null, { expected: true });
+  assert.equal(q.of('result').length, 0);
+});
+
+test('a question the server withdraws drops its sheet and is never answered; one a turn leaves behind is dropped when the turn ends', async () => {
+  const s = setup();
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  s.client.emit('request', 7, 'item/tool/requestUserInput', { threadId: THREAD, itemId: 'q', isBlocking: true, questions: [{ id: 'a', header: 'H', question: 'Which?', options: [{ label: 'X', description: '' }] }] });
+  await new Promise((r) => setImmediate(r));
+  const [askId, entry] = [...s.asks][0];
+  assert.equal(entry.codexRequestId, 7);
+  assert.equal(s.of('ask')[0].toolName, 'AskUserQuestion');
+  s.client.emit('notification', 'serverRequest/resolved', { threadId: THREAD, requestId: 7 });
+  assert.equal(s.asks.size, 0);
+  assert.deepEqual(s.of('ask_gone').map((e) => e.askId), [askId]);
+  entry.answer({ behavior: 'allow', updatedInput: { answers: { 'Which?': 'X' } } });
+  assert.deepEqual(s.client.responded, [], 'a late answer is not sent');
+
+  s.client.emit('request', 8, 'item/commandExecution/requestApproval', { threadId: THREAD, itemId: 'i', command: 'x' });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(s.asks.size, 1);
+  s.client.emit('notification', 'turn/completed', { threadId: THREAD, turn: { id: 'T9', status: 'completed' } });
+  assert.equal(s.asks.size, 0, 'the turn is over, so nobody waits for the answer');
+  assert.equal(s.of('ask_gone').length, 2);
+  // Answered once: the second answer does nothing.
+  s.client.emit('request', 9, 'item/commandExecution/requestApproval', { threadId: THREAD, itemId: 'i', command: 'x' });
+  await new Promise((r) => setImmediate(r));
+  const [, e2] = [...s.asks][0];
+  e2.answer({ behavior: 'allow' });
+  e2.answer({ behavior: 'deny' });
+  e2.resolve();
+  assert.deepEqual(s.client.responded, [{ id: 9, result: { decision: 'accept' } }]);
+});
+
+test('server requests nobody can answer are refused, never left waiting', async () => {
+  const s = setup();
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  const ask = async (id, method, params) => { s.client.emit('request', id, method, params); await new Promise((r) => setImmediate(r)); };
+  // A thread no pane has open.
+  await ask(1, 'item/commandExecution/requestApproval', { threadId: 'other', itemId: 'i', command: 'x' });
+  await ask(2, 'item/fileChange/requestApproval', { threadId: 'other', itemId: 'i' });
+  await ask(3, 'item/permissions/requestApproval', { threadId: 'other', itemId: 'i', permissions: {} });
+  await ask(4, 'item/tool/requestUserInput', { threadId: 'other', questions: [] });
+  await ask(5, 'mcpServer/elicitation/request', { threadId: 'other', serverName: 's', mode: 'form' });
+  await ask(6, 'execCommandApproval', { conversationId: 'other', callId: 'c', command: ['x'] });
+  // Asks that are Apaki's to refuse.
+  await ask(7, 'mcpServer/elicitation/request', { threadId: THREAD, serverName: 's', mode: 'openai/userVerification', challenge: 'c' });
+  await ask(8, 'item/tool/call', { threadId: THREAD, tool: 'shell_thing', callId: 'c' });
+  await ask(9, 'account/chatgptAuthTokens/refresh', { reason: 'expired' });
+  await ask(10, 'something/new', {});
+  const by = Object.fromEntries(s.client.responded.map((r) => [r.id, r.result]));
+  assert.deepEqual(by[1], { decision: 'decline' });
+  assert.deepEqual(by[2], { decision: 'decline' });
+  assert.deepEqual(by[3], { permissions: {}, scope: 'turn' });
+  assert.deepEqual(by[4], { answers: {} });
+  assert.equal(by[5].action, 'decline');
+  assert.deepEqual(by[6], { decision: 'denied' });
+  assert.equal(by[7].action, 'decline');
+  assert.equal(by[8].success, false);
+  assert.match(by[8].contentItems[0].text, /does not provide a tool named shell_thing/);
+  assert.equal(s.client.errors.find((e) => e.id === 9).code, -32000);
+  assert.equal(s.client.errors.find((e) => e.id === 10).code, -32601);
+  assert.equal(s.asks.size, 0);
+});
+
+test('attachments: pictures go inline as data URLs, other files are saved where Codex can read them and mentioned by path', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-codex-attach-'));
+  try {
+    const s = setup({ attachDir: dir });
+    const p = s.pane('p1');
+    await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+    const pdf = Buffer.from('%PDF-1.4 hello');
+    await s.codex.send('r2', p, 'read these', [
+      { media_type: 'image/png', data: 'AAAA' },
+      { media_type: 'application/pdf', data: pdf.toString('base64'), name: '../../evil/..\\Report 1.pdf' },
+      { media_type: 'application/octet-stream', data: '', name: 'empty.bin' },
+    ]);
+    const input = s.client.of('turn/start')[0].input;
+    assert.deepEqual(input.map((i) => i.type), ['text', 'image', 'mention']);
+    assert.equal(input[1].url, 'data:image/png;base64,AAAA');
+    assert.equal(input[2].name, 'Report 1.pdf');
+    assert.ok(input[2].path.startsWith(path.join(dir, THREAD)), 'one folder per thread, inside the attachments folder');
+    assert.equal(fs.readFileSync(input[2].path, 'utf8'), '%PDF-1.4 hello');
+    assert.ok(fs.readFileSync(path.join(dir, '_WHY_THIS_IS_HERE.md'), 'utf8').includes('codex-attachments'), 'the folder says what it is');
+    // A message of only a file still goes (the mention is its content); one with nothing in it does not start a turn.
+    await s.codex.send('r3', p, '', [{ media_type: 'text/plain', data: Buffer.from('hi').toString('base64'), name: 'a.txt' }]);
+    assert.equal(s.client.of('turn/start').length, 2);
+    await s.codex.send('r4', p, '   ', []);
+    assert.equal(s.client.of('turn/start').length, 2);
+    assert.equal(s.of('result').at(-1).reqId, 'r4');
+    // Steer carries the same.
+    p.busy = true;
+    p.codex.turnId = 'T1';
+    s.client.table['turn/steer'] = { turnId: 'T1' };
+    await s.codex.steer({ reqId: 's1', qid: 'q', text: 'more', images: [{ media_type: 'text/plain', data: Buffer.from('b').toString('base64'), name: 'b.txt' }] }, p);
+    const steer = s.client.of('turn/steer')[0];
+    assert.equal(steer.expectedTurnId, 'T1');
+    assert.deepEqual(steer.input.map((i) => i.type), ['text', 'mention']);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('/compact starts a compaction and frees the pane when the server reports it; a server that reports nothing frees it anyway', async (t) => {
+  const s = setup();
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  const sent = s.codex.send('r2', p, '/compact', []);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(p.busy, true);
+  assert.equal(s.client.of('thread/compact/start')[0].threadId, THREAD);
+  s.client.emit('notification', 'item/started', { threadId: THREAD, turnId: 'T', item: { type: 'contextCompaction', id: 'cc' } });
+  s.client.emit('notification', 'item/completed', { threadId: THREAD, turnId: 'T', item: { type: 'contextCompaction', id: 'cc' } });
+  await sent;
+  assert.equal(p.busy, false);
+  assert.ok(s.activity.some((m) => m.subtype === 'compact_boundary'));
+  const done = s.of('result').filter((e) => e.reqId === 'r2');
+  assert.equal(done.length, 1);
+  assert.equal(done[0].quiet, true, 'a slash command has no footer');
+  assert.equal(s.turnsEnded.length, 1);
+  void t;
+});
+
+test('the server stops when the last Codex pane has been gone a while, and not before', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const s = setup();
+  const a = s.pane('a');
+  const b = s.pane('b');
+  await s.codex.open('r', a, `codex:${THREAD}`, null, {});
+  await s.codex.open('r', b, `codex:${THREAD2}`, null, {});
+  await s.codex.close(a);
+  t.mock.timers.tick(10 * 60 * 1000);
+  assert.equal(s.client.stops, 0, 'another Codex pane is still open');
+  assert.equal(isCodexPane(a), false);
+  s.panes.delete('a');
+  await s.codex.close(b);
+  assert.deepEqual(s.client.of('thread/unsubscribe').map((x) => x.threadId), [THREAD, THREAD2]);
+  t.mock.timers.tick(2 * 60 * 1000);
+  assert.equal(s.client.stops, 0, 'not yet');
+  s.panes.delete('b');
+  t.mock.timers.tick(2 * 60 * 1000);
+  assert.equal(s.client.stops, 1, 'three quiet minutes with no Codex pane');
+});
+
+test('settings: a model the list lacks is refused, the effort follows the model, and what the server says never undoes a pick', async () => {
+  const s = setup({ table: { 'model/list': { data: [
+    { id: 'm1', model: 'm1', displayName: 'M1', isDefault: true, hidden: false, defaultReasoningEffort: 'low', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'ultra' }] },
+    { id: 'm2', model: 'm2', displayName: 'M2', isDefault: false, hidden: false, defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'medium' }, { reasoningEffort: 'high' }] },
+  ] } } });
+  const p = s.pane('p1');
+  await s.codex.open('r', p, null, null, {});
+  assert.equal(p.model, 'm1');
+  await s.codex.setModel(p, 'nope');
+  assert.equal(p.model, 'm1');
+  s.codex.setEffort(p, 'ultra');
+  assert.equal(p.effort, 'ultra');
+  s.codex.setEffort(p, 'high');
+  assert.equal(p.effort, 'ultra', 'm1 does not offer high');
+  await s.codex.setModel(p, 'm2');
+  assert.equal(p.model, 'm2');
+  assert.equal(p.effort, 'medium', 'ultra is not on m2\'s list: its own default');
+  // Picks travel with the first turn (startThread must not replace them with the server's answer).
+  await s.codex.send('r2', p, 'go', []);
+  const turn = s.client.of('turn/start')[0];
+  assert.equal(turn.model, 'm2');
+  assert.equal(turn.effort, 'medium');
+  assert.equal(p.model, 'm2');
+  assert.equal(s.client.of('thread/start')[0].model, 'm2');
+});
+
+test('the thread list: read once, cached, shaped like session rows, and read again on request', async () => {
+  const row = { id: THREAD, name: 'Named', preview: 'Fix the build', cwd: 'C:\\p', gitInfo: { branch: 'main' }, recencyAt: 10, originator: 'Codex Desktop' };
+  const s = setup({ table: { 'thread/list': (params) => ({ data: [row], nextCursor: null, seen: params }) } });
+  const shapeRows = (rows) => rows.map((r) => ({ ...r, archived: false }));
+  const t = createCodex({ emit: (e) => s.events.push(e), asks: s.asks, panes: s.panes, tools: () => ({}), openPage: () => {}, createClient: () => s.client, shapeRows, log: () => {} });
+  const first = await t.list({ reqId: 'l1' });
+  assert.equal(first.length, 1);
+  const ev = s.events.find((e) => e.ev === 'codexThreads');
+  assert.deepEqual(ev.items[0], { id: `codex:${THREAD}`, title: 'Named', firstPrompt: 'Fix the build', cwd: 'C:\\p', branch: 'main', lastModified: 10000, size: 0, codex: true, source: 'Codex Desktop', archived: false });
+  const asked = s.client.of('thread/list')[0];
+  assert.deepEqual(asked.sourceKinds, ['cli', 'vscode', 'exec', 'appServer', 'unknown'], 'threads the Codex app and the CLI made, and ours');
+  assert.equal(asked.sortKey, 'recency_at');
+  assert.equal(asked.useStateDbOnly, true, 'the first read is the quick one');
+  await t.list({ reqId: 'l2' });
+  assert.equal(s.client.of('thread/list').length, 1, 'cached for a while');
+  await t.list({ reqId: 'l3', refresh: true });
+  assert.equal(s.client.of('thread/list').length, 2);
+  assert.equal(s.client.of('thread/list')[1].useStateDbOnly, false, 'a refresh scans the rollouts');
+  assert.equal(t.cachedRows().length, 1);
+  // A failure is a list that says so, not a silence.
+  const bad = setup({ table: { 'thread/list': new Error('boom') } });
+  const t2 = createCodex({ emit: (e) => bad.events.push(e), asks: bad.asks, panes: bad.panes, tools: () => ({}), openPage: () => {}, createClient: () => bad.client, log: () => {} });
+  await t2.list({ reqId: 'x' });
+  assert.deepEqual(bad.events.find((e) => e.ev === 'codexThreads'), { ev: 'codexThreads', reqId: 'x', items: [], error: 'boom' });
+});
+
+test('opening a thread the server cannot find says so and leaves an empty Codex pane; the shared token is a pseudo pane', async () => {
+  const s = setup({ table: { 'thread/resume': Object.assign(new Error('no rollout found for thread id x'), { code: -32600 }) } });
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  assert.match(s.of('error')[0].message, /Codex could not open that conversation: no rollout found/);
+  assert.equal(s.of('opened')[0].sessionId, null);
+  assert.equal(s.of('opened')[0].kind, 'codex');
+  assert.equal(s.codex.byThread.size, 0, 'nothing is left registered for a thread that did not open');
+  assert.equal(CODEX_SHARED, 'codex-shared');
+});

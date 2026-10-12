@@ -11,6 +11,8 @@
  *   model, effort, mode, commands, close
  *   artifactGet                              when the engine has it (artifacts track)
  *   historyBefore, historyBlock              read only: more of a conversation it has open
+ *   codexModels, codexThreads                read only (2026-10-12): Codex's models and threads; a Codex pane uses the
+ *                                            ops above, with Codex's models, efforts and presets (CODEX_MODES) in them
  * Never billing, never the remote* ops (pairing, devices), never voice,
  * folders, Ask Claude or Dig deeper (they write files or spend outside a
  * conversation), and nothing that reaches the shell or the filesystem.
@@ -70,6 +72,9 @@ export const PHONE_OPS = Object.freeze([
   'historyBefore', 'historyBlock',
   // Whether its conversation moved on elsewhere, so the phone shows no stale transcript (2026-10-11).
   'historyCheck',
+  // Codex (2026-10-12, codex-panes.js): its model list (each model's own efforts) for the pickers, and the Codex threads for the
+  // Codex view of the list. Both read only; a Codex pane then uses the ops above (open, send, steer, interrupt, answer...).
+  'codexModels', 'codexThreads',
 ]);
 
 /** Ops that act on one pane (paneId required). */
@@ -85,6 +90,22 @@ export const BROADCAST_EVENTS = new Set(['folders', 'glass', 'index', 'meaning',
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const MODES = ['bypassPermissions', 'acceptEdits', 'plan', 'default'];
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/*
+ * Codex panes (2026-10-12). Their model, effort and permissions are Codex's, not Claude's: any model id the app-server
+ * lists, any effort a model offers, and the Codex app's three presets. A restricted phone (No shell, Chat only) gets
+ * read-only: the sandbox is the PC's enforcement, whatever the phone sends (the engine clamps again in codex-panes.js).
+ */
+export const CODEX_MODES = ['full-access', 'auto', 'read-only'];
+const CODEX_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
+const CODEX_EFFORT_RE = /^[a-z0-9][a-z0-9_-]{0,23}$/;
+const MEDIA_RE = /^[A-Za-z0-9][\w.+-]{0,60}\/[A-Za-z0-9][\w.+-]{0,60}$/;
+const MAX_FILES = 4;
+const FILE_NAME_RE = /[^\w.\- ()]+/g;
+/** The Codex presets a capability allows. */
+export function capCodexModes(cap) {
+  return cap === 'full' ? [...CODEX_MODES] : ['read-only'];
+}
 
 /* ---------- capabilities (what a phone may make Claude do) ---------- */
 
@@ -227,7 +248,8 @@ export function capPreToolUse(getCap) {
 const LOCAL_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const REQ_ID_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const DEVICE_RE = /^[A-Za-z0-9_-]{22}$/;
-const SESSION_RE = /^[A-Za-z0-9-]{8,80}$/;
+// A Codex thread is codex:<id> (2026-10-12); everything else is a bare id.
+const SESSION_RE = /^(?:codex:)?[A-Za-z0-9-]{8,80}$/;
 const MODEL_RE = /^claude-[a-z0-9.-]{1,60}$/;
 const MAX_TEXT = 200_000;
 const MAX_QUERY = 500;
@@ -281,6 +303,7 @@ const fail = (error, cmd) => ({ ok: false, error, reqId: typeof cmd?.reqId === '
  * @param {(askId: string) => (string|null)} [ctx.askPane]  the pane a pending question belongs to
  * @param {(cwd: string) => boolean} [ctx.knownCwd]  a folder some listed session ran in
  * @param {(deviceId: string) => string[]} [ctx.phoneSessions]  sessions open in this phone's panes
+ * @param {(paneId: string) => ('codex'|'claude')} [ctx.paneKind]  what a pane runs (2026-10-12): a Codex pane takes Codex's models, efforts and presets, and files
  * @param {string} [ctx.cap]  the phone's capability (CAPS); absent means 'full' (callers from before capabilities)
  * @returns {{ok: true, cmd: object} | {ok: false, error: string, reqId: string|null, paneId: string|null}}
  */
@@ -308,8 +331,16 @@ export function checkPhoneCommand(cmd, ctx) {
     }
   }
 
+  // What this pane runs, for the ops that carry a model, an effort, a mode or files.
+  const codexPane = paneId !== null && ctx.paneKind?.(paneId) === 'codex';
+
   switch (op) {
     case 'sessions':
+      break;
+    case 'codexModels':
+      break;
+    case 'codexThreads':
+      if (cmd.refresh !== undefined) out.refresh = cmd.refresh === true;
       break;
     case 'search':
       if (typeof cmd.query !== 'string') return fail('A search needs a query.', cmd);
@@ -328,11 +359,17 @@ export function checkPhoneCommand(cmd, ctx) {
       if (op === 'open') {
         if (cmd.warm !== undefined) out.warm = cmd.warm !== false;
         if (cmd.force !== undefined) out.force = cmd.force === true;
-        if (cmd.model != null) { if (!MODEL_RE.test(String(cmd.model))) return fail('Unknown model.', cmd); out.model = cmd.model; }
-        if (cmd.effort != null) { if (!EFFORTS.includes(cmd.effort)) return fail('Unknown effort.', cmd); out.effort = cmd.effort; }
+        // A Codex conversation: a codex: session, or a new one asked to be (kind). Its picks are Codex's.
+        const codexOpen = cmd.kind === 'codex' || (typeof sid === 'string' && sid.startsWith('codex:'));
+        if (codexOpen) out.kind = 'codex';
+        if (cmd.model != null) { if (!(codexOpen ? CODEX_MODEL_RE : MODEL_RE).test(String(cmd.model))) return fail('Unknown model.', cmd); out.model = cmd.model; }
+        if (cmd.effort != null) { if (!(codexOpen ? CODEX_EFFORT_RE.test(String(cmd.effort)) : EFFORTS.includes(cmd.effort))) return fail('Unknown effort.', cmd); out.effort = cmd.effort; }
         // Clamped, not refused: every phone page asks for a mode on open (an older one always for
         // bypassPermissions), and refusing would leave a restricted phone unable to open anything.
-        if (cmd.mode != null) { if (!MODES.includes(cmd.mode)) return fail('Unknown permission mode.', cmd); out.mode = clampMode(cap, cmd.mode); }
+        if (cmd.mode != null) {
+          if (codexOpen) { if (!CODEX_MODES.includes(cmd.mode)) return fail('Unknown permission mode.', cmd); out.mode = capCodexModes(cap).includes(cmd.mode) ? cmd.mode : capCodexModes(cap)[0]; }
+          else { if (!MODES.includes(cmd.mode)) return fail('Unknown permission mode.', cmd); out.mode = clampMode(cap, cmd.mode); }
+        }
       }
       break;
     }
@@ -348,8 +385,15 @@ export function checkPhoneCommand(cmd, ctx) {
       const images = cmd.images ?? [];
       if (!Array.isArray(images) || images.length > MAX_IMAGES) return fail(`At most ${MAX_IMAGES} images per message.`, cmd);
       const clean = [];
+      let files = 0;
       for (const im of images) {
-        if (!isObj(im) || !IMAGE_TYPES.has(im.media_type) || typeof im.data !== 'string' || im.data.length > MAX_IMAGE_B64 || !/^[A-Za-z0-9+/=]+$/.test(im.data)) return fail('An image could not be sent (PNG, JPEG, GIF or WebP, at most 6 MB).', cmd);
+        // A Codex pane also takes other files (2026-10-12): up to MAX_FILES, saved by the engine where Codex can read them.
+        if (codexPane && isObj(im) && !IMAGE_TYPES.has(im.media_type) && MEDIA_RE.test(String(im.media_type || 'application/octet-stream')) && typeof im.data === 'string' && im.data.length <= MAX_IMAGE_B64 && /^[A-Za-z0-9+/=]+$/.test(im.data)) {
+          if (++files > MAX_FILES) return fail(`At most ${MAX_FILES} files per message.`, cmd);
+          clean.push({ media_type: String(im.media_type || 'application/octet-stream'), data: im.data, name: String(im.name || 'file').replace(FILE_NAME_RE, '_').slice(0, 120) });
+          continue;
+        }
+        if (!isObj(im) || !IMAGE_TYPES.has(im.media_type) || typeof im.data !== 'string' || im.data.length > MAX_IMAGE_B64 || !/^[A-Za-z0-9+/=]+$/.test(im.data)) return fail(codexPane ? 'A file could not be sent (at most 6 MB).' : 'An image could not be sent (PNG, JPEG, GIF or WebP, at most 6 MB).', cmd);
         clean.push({ media_type: im.media_type, data: im.data });
       }
       if (!text.trim() && !clean.length) return fail('Nothing to send.', cmd);
@@ -382,14 +426,21 @@ export function checkPhoneCommand(cmd, ctx) {
       break;
     }
     case 'model':
-      if (!MODEL_RE.test(String(cmd.model))) return fail('Unknown model.', cmd);
+      if (!(codexPane ? CODEX_MODEL_RE : MODEL_RE).test(String(cmd.model))) return fail('Unknown model.', cmd);
       out.model = cmd.model;
       break;
     case 'effort':
-      if (!EFFORTS.includes(cmd.effort)) return fail('Unknown effort.', cmd);
+      if (!(codexPane ? CODEX_EFFORT_RE.test(String(cmd.effort)) : EFFORTS.includes(cmd.effort))) return fail('Unknown effort.', cmd);
       out.effort = cmd.effort;
       break;
     case 'mode':
+      // A Codex pane takes the Codex app's presets; only a Full phone may leave read-only (the PC's sandbox is what enforces it).
+      if (codexPane) {
+        if (!CODEX_MODES.includes(cmd.mode)) return fail('Unknown permission mode.', cmd);
+        if (!capCodexModes(cap).includes(cmd.mode)) return fail(`This phone is set to ${CAP_LABEL[cap] || cap} on the PC, so it stays read-only.`, cmd);
+        out.mode = cmd.mode;
+        break;
+      }
       if (!MODES.includes(cmd.mode)) return fail('Unknown permission mode.', cmd);
       // The capability decides (chat: plan only; noshell: no bypassPermissions).
       if (!capModes(cap).includes(cmd.mode)) return fail(capModeText(cap, cmd.mode), cmd);
@@ -474,6 +525,7 @@ export function phoneView(ev) {
   if ('voice' in ev) out = { ...out, voice: false };
   if (ev.ev === 'sessions' && Array.isArray(ev.items)) out = { ...out, items: ev.items.map(trimItem) };
   if ((ev.ev === 'search' || ev.ev === 'askSearch') && Array.isArray(ev.results)) out = { ...out, results: ev.results.map((r) => (r && r.item ? { ...r, item: trimItem(r.item) } : r)) };
+  if (ev.ev === 'codexThreads' && Array.isArray(ev.items)) out = { ...out, items: ev.items.map(trimItem) };
   return out;
 }
 
