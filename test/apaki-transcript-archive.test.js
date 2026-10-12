@@ -46,3 +46,35 @@ test('archive: copies every transcript (subagents too), gzips it, and only what 
     assert.ok(fs.existsSync(gz), 'a transcript Claude Code deleted stays in the archive');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+import { archivedMeta, archivedSessions, openArchived, restoreArchived } from '../apaki/engine/transcript-archive.js';
+
+test('archive: a conversation Claude Code deleted is listed, read from the archive, and restored where it was', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-arch2-'));
+  try {
+    const from = path.join(dir, 'projects');
+    const root = path.join(dir, 'archive');
+    const cache = path.join(dir, 'open');
+    const id = '0e7f4b4e-aaaa-4bbb-8ccc-000000000a01';
+    fs.mkdirSync(path.join(from, 'C--proj'), { recursive: true });
+    const live = path.join(from, 'C--proj', `${id}.jsonl`);
+    fs.writeFileSync(live, [
+      JSON.stringify({ type: 'user', cwd: 'C:\proj', sessionId: id, timestamp: '2026-09-01T10:00:00Z', message: { role: 'user', content: 'plan the release' } }),
+      JSON.stringify({ type: 'assistant', sessionId: id, timestamp: '2026-09-01T10:01:00Z', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } }),
+      JSON.stringify({ type: 'custom-title', customTitle: 'Release plan', sessionId: id }),
+      '',
+    ].join('\n'));
+    await archiveTranscripts({ from, root });
+    fs.rmSync(live); // Claude Code's 30-day cleanup
+    assert.deepEqual([...archivedSessions(root).keys()], [id]);
+    const meta = archivedMeta(id, { root });
+    assert.deepEqual({ title: meta.title, cwd: meta.cwd, firstPrompt: meta.firstPrompt, lastActive: meta.lastActive }, { title: 'Release plan', cwd: 'C:\proj', firstPrompt: 'plan the release', lastActive: Date.parse('2026-09-01T10:01:00Z') });
+    const readable = openArchived(id, { root, cache });
+    assert.match(fs.readFileSync(readable, 'utf8'), /plan the release/);
+    const back = restoreArchived(id, { root, to: from });
+    assert.equal(back, live, 'restored to the same place');
+    assert.match(fs.readFileSync(live, 'utf8'), /Release plan/);
+    assert.equal(restoreArchived(id, { root, to: from }), live, 'never overwrites a live transcript');
+    assert.equal(openArchived('nope', { root, cache }), null);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

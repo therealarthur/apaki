@@ -127,3 +127,89 @@ export async function archiveTranscripts({ from = projectsDir(), root = archiveR
   writeManifest(root, m);
   return res;
 }
+
+/* ---------- using the archive: list, open, restore (2026-10-12) ---------- */
+
+/** Top-level transcripts in the archive: session id -> manifest key ("<project dir>/<id>.jsonl"); subagents left out. */
+export function archivedSessions(root = archiveRoot()) {
+  const m = readManifest(root);
+  const out = new Map();
+  for (const key of Object.keys(m.files || {})) {
+    const parts = key.split('/');
+    if (parts.length !== 2 || !parts[1].endsWith('.jsonl')) continue;
+    out.set(parts[1].slice(0, -6), key);
+  }
+  return out;
+}
+
+/** The archive copy of a manifest key, decompressed to text. */
+function readArchived(root, key) {
+  return zlib.gunzipSync(fs.readFileSync(path.join(root, 'claude', `${key.split('/').join(path.sep)}.gz`))).toString('utf8');
+}
+
+/**
+ * A plain file to read an archived conversation from (HistoryStore reads files): decompressed once into
+ * <cache>/<id>.jsonl and again only when the archive copy is newer. Null when the archive has no copy.
+ */
+export function openArchived(id, { root = archiveRoot(), cache } = {}) {
+  const key = archivedSessions(root).get(id);
+  if (!key) return null;
+  const gz = path.join(root, 'claude', `${key.split('/').join(path.sep)}.gz`);
+  const file = path.join(cache, `${id}.jsonl`);
+  try {
+    if (fs.existsSync(file) && fs.statSync(file).mtimeMs >= fs.statSync(gz).mtimeMs) return file;
+    fs.mkdirSync(cache, { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, readArchived(root, key));
+    fs.renameSync(tmp, file);
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Puts an archived conversation back where Claude Code keeps it (same project folder), so it can be resumed.
+ * Never overwrites a live transcript. Returns the restored path, or null.
+ */
+export function restoreArchived(id, { root = archiveRoot(), to = projectsDir() } = {}) {
+  const key = archivedSessions(root).get(id);
+  if (!key) return null;
+  const dest = path.join(to, key.split('/').join(path.sep));
+  if (fs.existsSync(dest)) return dest;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const tmp = `${dest}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, readArchived(root, key));
+  fs.renameSync(tmp, dest);
+  return dest;
+}
+
+/**
+ * What the session list needs about an archived conversation whose live transcript is gone: title, folder, first
+ * prompt and the time of its last message, read from the copy once and kept in the manifest (meta).
+ */
+export function archivedMeta(id, { root = archiveRoot() } = {}) {
+  const m = readManifest(root);
+  const key = archivedSessions(root).get(id);
+  if (!key) return null;
+  const had = m.files[key]?.meta;
+  if (had) return had;
+  let text;
+  try { text = readArchived(root, key); } catch { return null; }
+  const meta = { title: null, cwd: '', firstPrompt: '', lastActive: 0 };
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    let j;
+    try { j = JSON.parse(line); } catch { continue; }
+    if (!meta.cwd && typeof j.cwd === 'string') meta.cwd = j.cwd;
+    if (j.type === 'custom-title' && j.customTitle) meta.title = String(j.customTitle).slice(0, 200);
+    else if (j.type === 'summary' && j.summary && !meta.title) meta.title = String(j.summary).slice(0, 200);
+    if ((j.type === 'user' || j.type === 'assistant') && !j.isSidechain && j.timestamp) {
+      const t = Date.parse(j.timestamp);
+      if (Number.isFinite(t) && t > meta.lastActive) meta.lastActive = t;
+      if (!meta.firstPrompt && j.type === 'user' && !j.isMeta && typeof j.message?.content === 'string') meta.firstPrompt = j.message.content.slice(0, 200);
+    }
+  }
+  if (m.files[key]) { m.files[key].meta = meta; try { writeManifest(root, m); } catch { /* read-only archive: fine */ } }
+  return meta;
+}

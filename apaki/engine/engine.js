@@ -113,7 +113,7 @@ import { createApakiTools } from './apaki-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createShell } from './shell-channel.js';
 import {
-  DEFAULT_APP_ID, HostServer, connectHost, createLifecycle, engineStamp, hostFile, noteSdkMessage, paneTurnBusy, paneWorking,
+  DEFAULT_APP_ID, HostServer, connectHost, createLifecycle, engineStamp, hostFile, latchDir, noteSdkMessage, paneTurnBusy, paneWorking,
   patchWorkspaceLeaves, restoreAsAttach, taskReplay,
 } from './host.js';
 import { startOpenServer } from './open-server.js';
@@ -125,6 +125,8 @@ import { COMPACT_CHOICES, COMPACT_DEFAULT, compactSettings, loadPrefs, normalize
 import { estimateEvent, lastUsage } from './context-estimate.js';
 // The session list's times: the last message, not the file's modified time (2026-10-11).
 import { LastActive } from './last-active.js';
+// Every conversation kept past Claude Code's 30-day cleanup, listed, opened and restored from D: (2026-10-12).
+import { archiveRoot, archiveTranscripts, archivedMeta, archivedSessions, openArchived, restoreArchived } from './transcript-archive.js';
 // What a phone shows of the desktop's tabs (2026-10-11).
 import { desktopTabs } from './desktop-tabs.js';
 import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
@@ -336,6 +338,8 @@ function compact(it, term, folderOf) {
     subagents: subagentCount(it.id),
     // Archived in Apaki's list (archive.js): hidden from All, In terminals and folders, shown under Archived.
     archived: archive.archived().has(it.id),
+    // Claude Code deleted its transcript; Apaki's transcript archive kept a copy (transcript-archive.js, 2026-10-12).
+    ...(it.archivedCopy ? { archivedCopy: true, restorable: true } : {}),
     // A turn is running in this engine (a pane here, a phone's pane, or one kept running in the background).
     running: [...panes.values()].some((p) => p.sessionId === it.id && (p.runner?.turnRunning || p.runner?.turnActive)),
   };
@@ -377,6 +381,16 @@ async function loadSessions() {
     const it = bareItem(id, file);
     if (it) byId.set(id, it);
   }
+  // Conversations Claude Code deleted after 30 days but Apaki's archive kept (2026-10-12): listed, marked.
+  try {
+    const live = transcriptMap();
+    for (const id of archivedNow().keys()) {
+      if (byId.has(id) || live.has(id)) continue;
+      const meta = archivedMeta(id);
+      if (!meta) continue;
+      byId.set(id, { id, title: meta.title || (meta.firstPrompt ? meta.firstPrompt.slice(0, 80) : 'Archived conversation'), cwd: meta.cwd || '', lastModified: meta.lastActive || 0, firstPrompt: meta.firstPrompt || '', archivedCopy: true });
+    }
+  } catch (e) { process.stderr.write(`archived sessions: ${e.message || e}\n`); }
   state.byId = byId;
   // Times and order follow the last real message, not the file's modified time (last-active.js, 2026-10-11).
   const files = transcriptMap();
@@ -512,10 +526,45 @@ function compactMessages(msgs, sessionId = null) {
  * cached; the SDK's getSessionMessages (above) stays the fallback for a
  * session whose file cannot be read.
  */
+// Where an archived conversation is decompressed to be read (transcript-archive.js openArchived).
+const ARCHIVE_OPEN_DIR = path.join(latchDir(), 'archive-open');
 const historyFileOf = (id) => {
   const known = state.files?.get(id);
-  return known && fs.existsSync(known) ? known : transcriptMap().get(id) || null;
+  if (known && fs.existsSync(known)) return known;
+  // Claude Code deleted it: read the archive copy instead (2026-10-12).
+  return transcriptMap().get(id) || openArchived(id, { cache: ARCHIVE_OPEN_DIR }) || null;
 };
+
+/*
+ * The transcript archive (2026-10-12): runs a minute after the engine starts and every 6 hours, copying only
+ * what changed since the last run (the first full run, 8,783 files, took 7 minutes; later runs take seconds).
+ * Its list of archived sessions is read at most once a minute for the session list.
+ */
+let archivedCache = { at: 0, map: new Map() };
+function archivedNow() {
+  if (Date.now() - archivedCache.at > 60 * 1000) {
+    try { archivedCache = { at: Date.now(), map: archivedSessions() }; } catch { archivedCache = { at: Date.now(), map: new Map() }; }
+  }
+  return archivedCache.map;
+}
+/** True when a conversation exists only in the archive (its live transcript is gone). */
+function archivedOnly(id) {
+  return Boolean(id) && !transcriptMap().has(id) && archivedNow().has(id);
+}
+let archiveRunning = false;
+async function runTranscriptArchive() {
+  if (archiveRunning || process.env.APAKI_NO_ARCHIVE) return;
+  archiveRunning = true;
+  try {
+    const r = await archiveTranscripts({ log: (line) => process.stderr.write(`${line}\n`) });
+    if (r.copied || r.failed) process.stderr.write(`apaki archive: ${r.copied} copied, ${r.failed} failed, ${r.skipped} unchanged (${archiveRoot()})\n`);
+    archivedCache.at = 0;
+  } catch (e) {
+    process.stderr.write(`apaki archive: ${e.message || e}\n`);
+  } finally {
+    archiveRunning = false;
+  }
+}
 const historyStore = new HistoryStore({ fileOf: historyFileOf, log: (line) => process.stderr.write(`${line}\n`) });
 
 /** Sends a pane its session's newest page of history ({ ev: 'history' }; earlier pages come with historyBefore). */
@@ -689,6 +738,8 @@ function dropStaleAsks(paneId, { olderThanMs = 0, questionsOnly = false, keepSub
  */
 async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   const p = getPane(paneId);
+  // Only in the archive: shown from it, and nothing starts until a message restores it (send, 2026-10-12).
+  if (archivedOnly(sessionId)) opts = { ...opts, warm: false };
   if (isCodexId(sessionId)) { emit({ ev: 'note', reqId, paneId: p.id, tone: 'warn', text: codexResumeHint(sessionId) }); return; }
   const other = sessionId ? paneWith(sessionId, p.id) : null;
   if (other && windowOf(other.id) === windowOf(p.id)) { emit({ ev: 'open_elsewhere', reqId, paneId: p.id, sessionId, otherPane: other.id }); return; }
@@ -813,6 +864,14 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
 
 async function send(reqId, paneId, text, images = []) {
   const p = getPane(paneId);
+  // A conversation only the archive still has goes back where Claude Code keeps it, then continues (2026-10-12).
+  if (p.sessionId && archivedOnly(p.sessionId)) {
+    const restored = (() => { try { return restoreArchived(p.sessionId); } catch { return null; } })();
+    if (restored) {
+      archivedCache.at = 0;
+      emit({ ev: 'note', paneId: p.id, tone: '', text: 'Restored from Apaki\'s archive (images were not kept); this conversation continues.' });
+    }
+  }
   if (!p.runner && p.sessionId) {
     // This pane lost its session to a takeover: never start a new one in its place.
     const holder = lockStolen(p.sessionId);
@@ -1807,6 +1866,9 @@ fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => {
 setTimeout(() => { authStatus(null).catch(() => {}); }, 1500).unref();
 
 emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer) });
+// The transcript archive: a minute after start, then every 6 hours (2026-10-12).
+setTimeout(() => { runTranscriptArchive(); }, 60 * 1000).unref();
+setInterval(() => { runTranscriptArchive(); }, 6 * 60 * 60 * 1000).unref();
 // The desktop's tabs from the saved workspace, so a phone sees them before the window sends any (or with it closed).
 sendDesktopTabs(loadWorkspace());
 // Keep the conversation indexes current in the background. The index server
