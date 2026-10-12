@@ -2600,6 +2600,8 @@ const settings = initSettings({
   button: $('settings'), sheet, send, theme: window.apakiTheme, themeUi: THEME_UI, indexText, warm: !WEB,
   // Auto-compact is the PC's: it applies to every Claude Code Apaki starts, and a phone cannot send that op (remote-policy.js).
   compact: !WEB,
+  // Freeing the Claude Code process of a hidden, idle conversation is the host's, on the PC (the same: a phone cannot send that op).
+  release: !WEB,
   sound: { on: soundOn, set: (on) => { setSoundOn(on); if (on) ding('done'); } },
 });
 // The Phone button is phone.js's (initPhone below fills it in); the glyph shows until that module loads.
@@ -3228,6 +3230,7 @@ await listen('engine', ({ payload: e }) => {
       break;
     case 'warmState': settings.handle(e); break;
     case 'autoCompact': settings.handle(e); break;
+    case 'releaseHidden': settings.handle(e); break;
     // The PC closed the pane this phone's pane follows (or no longer has it): the pane says so (pane.js followEnded). The answer to this
     // phone's own unfollow or close finds nothing (the pane left already, or follows no more).
     case 'closed': { const p = S.panes.get(e.paneId); if (p?.following) p.followEnded(); break; }

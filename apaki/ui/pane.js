@@ -1990,7 +1990,8 @@ Click for changes, commit, push, pull request, merge`;
       // Until Claude writes or runs something, the line shows a random thinking word, as Claude Code does.
       this.verb = pickVerb(this.verb);
       this.phase = this.verb;
-      this.tick = setInterval(() => this.showWorking(), 500);
+      // (A pane in a hidden tab has no one watching its seconds: it redraws them when it is shown, on the next beat.)
+      this.tick = setInterval(() => { if (this.isShown()) this.showWorking(); }, 500);
       this.showWorking();
     }
     this.host.changed(this);
