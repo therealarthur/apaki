@@ -10,14 +10,22 @@
  *   - typing latency: key press to the next frame, while other panes stream
  *   - how many CSS animations are running
  *
- *   node apaki/scripts/perf-bench.mjs [scenario=idle,busy,stream,blurred] [secs=20] [label=before] [out=<file.json>]
+ *   node apaki/scripts/perf-bench.mjs [scenario=idle,busy,stream,blurred,heavy] [secs=20] [label=before] [out=<file.json>]
+ *
+ * Other arguments: rings=<n> (n sidebar rows get a keep-warm ring; Arthur keeps about 19), turns=<n> (rounds of history per pane
+ * in heavy, 4 messages each; 600 = 2400 messages), streams=<n> and typing=0|1 (heavy), css=<rules> (injected after load, to
+ * try a change without editing app.css), trace=0 (skip the frame trace), profile=1 (a JS CPU profile: self and inclusive
+ * time), quiet=1 (table only), chromium=<exe>, playwright=<folder>. To compare with an older UI, extract it (git archive
+ * <commit> apaki), copy this file in and run it there: everything is relative to the apaki folder it sits in.
  *
  * Scenarios (all on the 3-tab "split" workspace at 1600x900):
  *   idle     one pane on screen, nothing running: the cost of the decoration alone
  *   busy     4 split panes, 3 of them working (glow, working line, thinking verb), nothing streaming
  *   stream   as busy, and the 3 working panes plus 2 panes in background tabs stream long markdown replies
  *            (300 characters a second each) while text is typed into the fourth pane
- *   blurred  as busy, after the window loses focus (window blur): decorative motion should be stopped
+ *   blurred  as busy, after the window loses focus (document.hasFocus false and blur): decorative motion should be stopped
+ *   heavy    Arthur's load: 3 tabs, 6 panes with 2400-message transcripts, 4 streaming at once (two in the visible tab,
+ *            two in a background tab), typing into a visible quiet pane about 8 keys a second
  *
  * Nothing here touches the machine's own Apaki, browsers or accounts: it starts its own Chromium in a
  * temporary profile and its own harness server, and stops both when it ends (by handle, never by name).
