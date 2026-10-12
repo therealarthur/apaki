@@ -914,12 +914,12 @@
       "product": "apaki",
       "upstream": ["chatgpt-desktop:feature:voice-dictation"],
       "status": "supported",
-      "surfaces": { "desktop": "supported", "phone": "n/a" },
-      "where": ["apaki/engine/engine.js", "apaki/ui/pane.js"],
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/mobile/ios/App/App/Info.plist", "apaki/ui/app.js", "apaki/ui/pane.js", "apaki/web/src/web.css"],
       "commits": ["68f8919"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "The mic button records 16 kHz mono in the window, the engine runs whisper.cpp (b5454 CPU build) with ggml-base.en. Phones never use it (remote-policy.js: never voice); the phone keyboard has its own dictation. Marked n/a on the phone as a decision to confirm with Arthur: equal functionality would be sending phone audio to the PC."
+      "notes": "The mic button records 16 kHz mono in the window, the engine runs whisper.cpp (b5454 CPU build) with ggml-base.en. Phones too since 2026-10-12 (Arthur: \"no mic button on the mobile app\"): the phone records in its own page, op transcribe sends the WAV (capped at about 85 s, remote-policy MAX_VOICE_B64) to the PC, and the PC's Whisper writes the text into that phone pane's box. Every access level; nothing leaves the PC. The mic shows only when the PC has Whisper and takes the op (an older PC does not)."
     },
     {
       "id": "glass-corner-card-and-billing-follow",

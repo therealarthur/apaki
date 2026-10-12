@@ -124,6 +124,10 @@ export const PHONE_OPS = Object.freeze([
   'rename', 'forkSession', 'archive', 'folder', 'askSearch', 'browserView',
   // A file the pane's Codex changed, in the viewer (the patch line's file name; the engine checks the path against the pane's own changes).
   'codexOpenFile',
+  // The phone's mic (Arthur, 2026-10-12: "no mic button on the mobile app"): the phone records, the PC's local Whisper turns it
+  // into text, and the text goes back into that phone pane's message box. Every access level: it only writes words into the
+  // phone's own box, and nothing leaves the PC. Capped in size below (about 85 seconds of 16 kHz speech).
+  'transcribe',
   // 2026-10-11 (the shared view): follow { reqId, paneId: <this phone's local id>, desktopPaneId } makes the phone's pane show a
   // desktop conversation pane without taking its session over; unfollow { paneId } ends it.
   'follow', 'unfollow',
@@ -137,7 +141,7 @@ export const PHONE_OPS = Object.freeze([
 export const WORKTREE_KINDS = Object.freeze(['create', 'remove', 'commit', 'push', 'pr', 'merge']);
 
 /** Ops that act on one pane (paneId required). */
-const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile', 'historyPrompts', 'follow', 'unfollow']);
+const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile', 'historyPrompts', 'follow', 'unfollow', 'transcribe']);
 
 /** Session-list actions that change what the PC keeps (2026-10-12): not for a Chat only phone. */
 export const SESSION_WRITE_OPS = Object.freeze(['rename', 'forkSession', 'archive', 'folder', 'pin']);
@@ -441,6 +445,8 @@ const MAX_PR_BODY = 20000;
 const MAX_COMMIT_PATHS = 200;
 // rename (engine.js rename keeps 200) and folder create (src/folders.js keeps 60).
 const MAX_TITLE = 200;
+// transcribe: the longest recording a phone may send, as base64 of a 16 kHz mono 16-bit WAV (about 85 seconds).
+export const MAX_VOICE_B64 = 3_700_000;
 const MAX_FOLDER_NAME = 60;
 
 /**
@@ -843,6 +849,11 @@ export function checkPhoneCommand(cmd, ctx) {
     case 'browserView':
       // Nothing but the pane: the engine shows the page that pane's own Claude opened (paneId checked above).
       break;
+    case 'transcribe':
+      // A WAV as base64, for the PC's Whisper; the text comes back to this phone pane only (paneId checked above).
+      if (typeof cmd.wav !== 'string' || !cmd.wav || cmd.wav.length > MAX_VOICE_B64 || !/^[A-Za-z0-9+/]+=*$/.test(cmd.wav)) return fail('That recording is too long or not audio.', cmd);
+      out.wav = cmd.wav;
+      break;
     // 2026-10-12: the session list's Details sheet and menu (session-info.js, pins.js).
     case 'sessionInfo':
       if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
@@ -899,14 +910,15 @@ const FIRST_PROMPT_CHARS = 200;
 const trimItem = (it) => (it && typeof it.firstPrompt === 'string' && it.firstPrompt.length > FIRST_PROMPT_CHARS ? { ...it, firstPrompt: it.firstPrompt.slice(0, FIRST_PROMPT_CHARS) } : it);
 
 /**
- * An event as a phone should see it: voice off (dictation is the phone
- * keyboard's job; the PC's Whisper is not reachable from a phone), and the
- * session list trimmed to what the phone shows.
+ * An event as a phone should see it: the session list trimmed to what the
+ * phone shows. Voice stays as the PC says (2026-10-12): a phone's mic goes to
+ * the PC's own Whisper through the transcribe op, so whether the PC has
+ * Whisper is what decides whether the phone shows its mic. (Until then voice
+ * was forced off here: "dictation is the phone keyboard's job".)
  */
 export function phoneView(ev) {
   if (!isObj(ev)) return ev;
   let out = ev;
-  if ('voice' in ev) out = { ...out, voice: false };
   // Never a window's queued messages (queue-hold.js): what a window typed and has not sent is private to it (2026-10-11).
   if (ev.ev === 'opened' && ('queue' in ev || 'queueSent' in ev)) { out = { ...out }; delete out.queue; delete out.queueSent; }
   if (ev.ev === 'sessions' && Array.isArray(ev.items)) out = { ...out, items: ev.items.map(trimItem) };

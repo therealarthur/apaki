@@ -27,8 +27,9 @@ const $ = (id) => document.getElementById(id);
 
 /** After a browserActivity line the page needs a moment to settle before the picture is worth taking. */
 export const REFRESH_QUIET_MS = 700;
-/** The PC did not answer a browserView within this long. */
-export const ANSWER_MS = 30_000;
+/** The PC did not answer a browserView within this long (12 s since 2026-10-12: the picture takes about a second; a spinner
+ * for half a minute read as broken). */
+export const ANSWER_MS = 12_000;
 
 const hostOf = (u) => { try { return new URL(u).host; } catch { return ''; } };
 
@@ -131,6 +132,13 @@ export function initBrowserView({ haptic = () => {} } = {}) {
   /** Asks the PC for the picture (one at a time; a request that comes while one is out is made once it returns). */
   function look() {
     if (!V.pane) return;
+    // An older Apaki on the PC does not take browserView at all (Arthur, 2026-10-12: "it just loads and never shows anything"):
+    // say so at once instead of waiting for an answer that cannot come.
+    if (window.__apakiLink?.supports && !window.__apakiLink.supports('op:browserView')) {
+      V.model = { kind: 'error', text: 'Apaki on your PC is an older version that cannot show its browser here. Restart Apaki on the PC to finish its update, then try again.' };
+      draw();
+      return;
+    }
     if (V.busy) { V.again = true; return; }
     V.busy = true;
     V.again = false;
@@ -185,6 +193,15 @@ export function initBrowserView({ haptic = () => {} } = {}) {
 
   // What the PC says: the picture, and what Claude is doing there.
   window.__TAURI__.event.listen('engine', ({ payload: ev }) => {
+    // A refusal comes back by request id, maybe without the pane (the PC's policy, or an op it does not have): show why.
+    if (ev && !root.hidden && ev.ev === 'error' && V.wait && ev.reqId === V.wait) {
+      clearTimeout(V.timer);
+      V.wait = null;
+      V.busy = false;
+      V.model = { kind: 'error', text: ev.message || 'The PC could not show its browser.' };
+      draw();
+      return;
+    }
     if (!ev || root.hidden || ev.paneId !== V.pane) return;
     if (ev.ev === 'browserView') {
       if (V.wait && ev.reqId && ev.reqId !== V.wait) return;

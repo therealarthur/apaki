@@ -2673,7 +2673,29 @@ function cameBack(p, kind) {
 const VOICE_MAX_MS = 120000;
 let rec = null;
 
+/** Speech to 16 kHz mono for Whisper (2026-10-12: iOS records at its own rate whatever the AudioContext asked). */
+function to16k(chunks, rate) {
+  if (rate === 16000) return chunks;
+  const n = chunks.reduce((s, c) => s + c.length, 0);
+  const all = new Float32Array(n);
+  let o = 0;
+  for (const c of chunks) { all.set(c, o); o += c.length; }
+  const ratio = rate / 16000;
+  const out = new Float32Array(Math.floor(n / ratio));
+  // Average each output sample's span of input samples: a cheap low-pass that keeps speech clear at 16 kHz.
+  for (let i = 0; i < out.length; i++) {
+    const a = Math.floor(i * ratio);
+    const b = Math.min(n, Math.floor((i + 1) * ratio));
+    let sum = 0;
+    for (let j = a; j < b; j++) sum += all[j];
+    out[i] = b > a ? sum / (b - a) : all[a] || 0;
+  }
+  return [out];
+}
+
 function wavFrom(chunks, rate) {
+  chunks = to16k(chunks, rate);
+  rate = 16000;
   const len = chunks.reduce((n, c) => n + c.length, 0);
   const buf = new ArrayBuffer(44 + len * 2);
   const v = new DataView(buf);
@@ -2693,14 +2715,21 @@ function wavFrom(chunks, rate) {
 async function startVoice(pane) {
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); } catch (e) { pane.note(`Microphone unavailable: ${e.message}`, 'error'); return; }
-  const ctx = new AudioContext({ sampleRate: 16000 });
+  // 16 kHz when the browser allows it; some iOS versions refuse that rate, and to16k resamples whatever comes.
+  let ctx;
+  try { ctx = new AudioContext({ sampleRate: 16000 }); } catch { ctx = new AudioContext(); }
+  // Made after an await, so iOS may start it suspended (2026-10-12, the phone's mic).
+  if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
   const src = ctx.createMediaStreamSource(stream);
   const proc = ctx.createScriptProcessor(4096, 1, 1);
   const chunks = [];
   proc.onaudioprocess = (ev) => chunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
   src.connect(proc); proc.connect(ctx.destination);
   const started = Date.now();
-  rec = { pane, stream, ctx, proc, chunks, started, timer: setInterval(() => { pane.setStatus(`Listening · ${Math.round((Date.now() - started) / 1000)}s · click the mic to stop`); if (Date.now() - started > VOICE_MAX_MS) stopVoice(); }, 250) };
+  rec = { pane, stream, ctx, proc, chunks, started, timer: setInterval(() => {
+    // The phone sends its recording to the PC (remote-policy MAX_VOICE_B64, about 85 s): stop a little before that.
+    if (WEB && Date.now() - started > 80000) { stopVoice(); return; }
+    pane.setStatus(`Listening · ${Math.round((Date.now() - started) / 1000)}s · click the mic to stop`); if (Date.now() - started > VOICE_MAX_MS) stopVoice(); }, 250) };
   pane.$.mic.classList.add('rec');
 }
 

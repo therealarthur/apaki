@@ -48,10 +48,13 @@ body.drawer-open .drawer-scrim { opacity: 1; pointer-events: auto; }
 :root[data-theme="dark"] .drawer-scrim { background: rgba(0, 0, 0, .55); }
 body.web .brand { height: 52px; }
 
-body.web .winctl, body.web .tabs-tools, body.web .grip, body.web .gutter, body.web .mic,
+body.web .winctl, body.web .tabs-tools, body.web .grip, body.web .gutter,
 body.web .dig-row, body.web .folder-add, body.web .folder-x, body.web .folder-chip, body.web #phone { display: none !important; }
 /* Ask Claude is a phone button since 2026-10-12, for a PC that takes the command (native.js sets body.can-ask); Dig deeper still runs from the PC. */
 body.web:not(.can-ask) .ask { display: none !important; }
+/* The mic, since 2026-10-12 ("no mic button on the mobile app"): the phone records, the PC's Whisper writes the words into
+   the box (op transcribe). pane.js hides it when the PC has no Whisper or is too old to take the op. */
+body.web .mic[hidden] { display: none !important; }
 
 /* One pane: with a split, only the focused pane shows. */
 body.web .stage { inset: 0; border-radius: 0; border-width: 1px 0 0; box-shadow: none; }
@@ -340,8 +343,8 @@ body.web.native .composer textarea { font-size: 16px; line-height: 1.4; }
    height as before (the field's line and the settings' line). .composer-row is only a wrapper here (display:
    contents), so its buttons take their places in the card's grid. */
 body.web.native .composer {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; column-gap: 4px;
-  grid-template-areas: "att att att" "attach text send" "chips chips chips";
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: end; column-gap: 4px;
+  grid-template-areas: "att att att att" "attach text mic send" "chips chips chips chips";
   padding: 6px 6px 4px;
 }
 body.web.native .composer > .attachments { grid-area: att; }
@@ -349,6 +352,9 @@ body.web.native .composer > textarea { grid-area: text; align-self: center; padd
 body.web.native .composer-row { display: contents; }
 body.web.native .composer-row > .icon-btn:not(.mic) { grid-area: attach; }
 body.web.native .composer-row > .send { grid-area: send; margin-bottom: 3px; }
+/* The mic beside send, the way Messages places it: round, a 44 px target. */
+body.web.native .composer-row > .mic { grid-area: mic; width: 44px; min-width: 44px; height: 44px; margin-bottom: -1px; border-radius: 50%; }
+body.web.native .composer-row > .mic.rec { color: var(--action-strong); background: var(--action-tint); }
 body.web.native .composer-row > .chips { grid-area: chips; flex-wrap: wrap; overflow: visible; row-gap: 2px; margin-top: 2px; -webkit-mask-image: none; mask-image: none; }
 body.web.native .send:not(.queue):not(.stop) { display: grid; place-items: center; width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; border-radius: 50%; font-size: 0; }
 body.web.native .send:not(.queue):not(.stop)::before {

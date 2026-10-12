@@ -2336,7 +2336,10 @@ Click for changes, commit, push, pull request, merge`;
   }
 
   setVoice(available) {
+    // On the phone the mic goes to the PC's Whisper (transcribe): only when the PC takes that op (2026-10-12).
+    if (window.apakiShell === 'web' && !window.__apakiLink?.supports?.('op:transcribe')) available = false;
     this.$.mic.disabled = !available;
+    this.$.mic.hidden = window.apakiShell === 'web' && !available;
     this.$.mic.title = available ? 'Dictate (local Whisper): click to start, click again to stop' : 'Voice needs whisper.cpp in Programs\\Myrlin Apaki\\voice';
   }
 

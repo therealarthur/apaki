@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  AskGate, BROADCAST_EVENTS, PHONE_OPS, SESSION_WRITE_OPS, capAllowsOp, checkPhoneCommand, routeEvent,
+  AskGate, BROADCAST_EVENTS, MAX_VOICE_B64, PHONE_OPS, SESSION_WRITE_OPS, capAllowsOp, checkPhoneCommand, routeEvent,
 } from '../apaki/engine/remote-policy.js';
 import { RemoteBridge } from '../apaki/engine/remote.js';
 import { createBrowserTools, jpegSize } from '../apaki/engine/browser-tools.js';
@@ -111,7 +111,8 @@ test('policy: the browser view needs a pane of this phone\'s own and Full access
     assert.match(r.error, /browser/);
   }
   // What stays out of reach of a phone, whatever its access.
-  for (const op of ['billing', 'billingOptions', 'digPrompt', 'stopSession', 'revealFolder', 'openExternal', 'browserTool', 'transcribe', 'places', 'listDir', 'mkdir', 'remoteStatus', 'exec']) {
+  // transcribe left this list on 2026-10-12: the phone's mic goes to the PC's Whisper (test below).
+  for (const op of ['billing', 'billingOptions', 'digPrompt', 'stopSession', 'revealFolder', 'openExternal', 'browserTool', 'places', 'listDir', 'mkdir', 'remoteStatus', 'exec']) {
     assert.ok(!PHONE_OPS.includes(op), op);
     assert.equal(ask({ op, reqId: 'r1', paneId: 'p1' }, 'full', { paneExists: () => true }).ok, false, op);
   }
@@ -282,4 +283,20 @@ test('wiring: the engine answers browserView through the pane\'s own browser too
   // Every op a phone may send has a handler in the engine (artifactGet is the one it checks for at run time).
   // unfollow is the exception (the shared view): it ends a registry entry in remote.js (endFollow) and never reaches the engine.
   for (const op of PHONE_OPS.filter((o) => o !== 'unfollow')) assert.match(engine, new RegExp(`\\n  ${op}: `), `engine.js handles ${op}`);
+});
+
+test('policy: a phone mic (transcribe) at every access level, for its own pane, base64 audio only, capped in size', () => {
+  assert.ok(PHONE_OPS.includes('transcribe'));
+  const mine = { paneExists: (id) => id === `phone:${DEV}:p1` };
+  const wav = 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=';
+  for (const cap of ['full', 'noshell', 'chat']) {
+    const r = ask({ op: 'transcribe', reqId: 'v1', paneId: 'p1', wav, extra: 'x' }, cap, mine);
+    assert.equal(r.ok, true, cap);
+    assert.deepEqual(r.cmd, { op: 'transcribe', reqId: `phone:${DEV}:v1`, paneId: `phone:${DEV}:p1`, wav }, 'only the fields the engine uses');
+  }
+  assert.equal(ask({ op: 'transcribe', paneId: 'p9', wav }, 'full', mine).ok, false, 'a pane that is not open');
+  assert.equal(ask({ op: 'transcribe', paneId: 'p1' }, 'full', mine).ok, false, 'no audio');
+  assert.equal(ask({ op: 'transcribe', paneId: 'p1', wav: 'not base64!' }, 'full', mine).ok, false, 'not base64');
+  assert.equal(ask({ op: 'transcribe', paneId: 'p1', wav: 'A'.repeat(MAX_VOICE_B64 + 4) }, 'full', mine).ok, false, 'too long');
+  assert.equal(ask({ op: 'transcribe', paneId: 'p1', wav: 'A'.repeat(MAX_VOICE_B64) }, 'full', mine).ok, true, 'the limit itself');
 });
