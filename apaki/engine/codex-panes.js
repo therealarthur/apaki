@@ -22,7 +22,7 @@
  *   ev codexThreads { reqId, items }            thread/list as session rows (the Codex view of the list)
  *   ev opened      gains kind: 'codex'
  *   ev artifact    via: 'codex-diff' for a turn's changes (a card, no viewer pops up)
- * Questions and approvals use the existing ask / answer / ask_gone events and sheets.
+ * Questions and approvals use the existing ask / answer / ask_gone events and the pane's inline cards (apaki/ui/askcard.js).
  *
  * Browser and viewer (item 5 of the plan): Apaki's show and browser tools reach every Codex thread, resumed ones
  * included, as the stdio MCP server "apaki" given to this app-server process alone with -c mcp_servers.apaki.* (no
@@ -200,7 +200,7 @@ export function createCodex(env) {
       const cx = p.codex;
       cx.loaded = false;
       cx.turnId = null;
-      for (const [id, a] of asks) if (a.paneId === p.id && a.codexRequestId !== undefined) { asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id }); }
+      for (const [id, a] of asks) if (a.paneId === p.id && a.codexRequestId !== undefined) { asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id, why: 'stopped' }); }
       if (p.busy && !info?.expected) {
         p.busy = false;
         p.inTurn = false;
@@ -1035,7 +1035,7 @@ export function createCodex(env) {
         break;
       case 'serverRequest/resolved':
         for (const [id, a] of asks) {
-          if (a.paneId === p.id && a.codexRequestId === params.requestId) { a.settled = true; asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id }); }
+          if (a.paneId === p.id && a.codexRequestId === params.requestId) { a.settled = true; asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id, why: 'resolved', by: 'Codex' }); }
         }
         break;
       case 'thread/closed':
@@ -1062,7 +1062,7 @@ export function createCodex(env) {
     p.inTurn = false;
     cx.turnId = null;
     // Anything still waiting on this turn is gone with it.
-    for (const [id, a] of [...asks]) if (a.paneId === p.id && a.codexRequestId !== undefined) { a.settled = true; asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id }); }
+    for (const [id, a] of [...asks]) if (a.paneId === p.id && a.codexRequestId !== undefined) { a.settled = true; asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id, why: 'turn' }); }
     emit({
       ev: 'result', reqId, paneId: p.id, sessionId: p.sessionId, subtype: failed ? 'error_during_execution' : turn.status === 'interrupted' ? 'error_during_execution' : 'success',
       isError: failed, durationMs: Number(turn.durationMs) || (cx.startedAt ? Date.now() - cx.startedAt : 0), usage: {}, cost: null, errors: why ? [why] : null, result: why, codex: true,
