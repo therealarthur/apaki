@@ -95,7 +95,8 @@ function pidAlive(pid) {
 let lockApp = process.env.LATCH_LOCK_APP || 'latch';
 export function setLockApp(app) { lockApp = app; }
 
-const APP_NAMES = { apaki: 'Myrlin Apaki', latch: 'latch', 'latch-relay': 'a latch terminal window' };
+// apaki-console and apaki-terminal (2026-10-12, apaki/engine/console.js): a pane's console, and an "Open in terminal" window.
+const APP_NAMES = { apaki: 'Myrlin Apaki', latch: 'latch', 'latch-relay': 'a latch terminal window', 'apaki-console': 'the console in Myrlin Apaki', 'apaki-terminal': 'a terminal window (Open in terminal)' };
 export const lockAppName = (app) => APP_NAMES[app] || 'another latch';
 
 /**
