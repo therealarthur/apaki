@@ -52,6 +52,41 @@ export function screenshotClip(view, max = SCREENSHOT_MAX_WIDTH) {
   return { x: Math.max(0, view.x || 0), y: Math.max(0, view.y || 0), width: w, height: h, scale: Math.floor(scale * 1000) / 1000 };
 }
 
+/**
+ * The six tools as plain specs (name, description, zod shape, annotations), for servers that are not the in-process
+ * SDK one: the stdio tool server a Codex process runs (apaki-mcp-stdio.mjs, 2026-10-12) lists these and forwards each
+ * call to the engine. The words match sdkTools() below (test/apaki-browser-outline.test.js checks that they do).
+ */
+export function browserToolSpecs() {
+  const RO = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
+  const ACT = { readOnlyHint: false, destructiveHint: false, openWorldHint: true };
+  const refArg = () => z.union([z.number().int(), z.string()]).describe('A ref number from browser_read, like 12.');
+  return [
+    {
+      name: 'browser_open', annotations: { title: 'Open in Apaki\'s browser', ...RO },
+      description: 'Open a web page in Apaki\'s built-in browser, beside this conversation, and wait for it to load. Use it to look at a local dev server you started or any site. It reuses this conversation\'s browser unless paneHint is "new" (another browser pane) or "tab" (a new tab). Then use browser_read.',
+      shape: { url: z.string().describe('An http(s) address, or file:/// for a local page that needs the network.'), paneHint: z.enum(['reuse', 'new', 'tab']).optional().describe('reuse (default), new, or tab') },
+    },
+    {
+      name: 'browser_read', annotations: { title: 'Read the page', ...RO },
+      description: 'Read the page in Apaki\'s browser as text: title, address, and an outline of headings, text, links, buttons and fields. Each link, button and field has [ref=N] for browser_click and browser_type. Long pages are cut; the end says the from= to read on.',
+      shape: { from: z.number().int().min(1).optional().describe('Outline line to start at, to read on after a cut.'), maxChars: z.number().int().min(2000).max(40000).optional().describe('Budget for the outline (default 12000).') },
+    },
+    {
+      name: 'browser_click', annotations: { title: 'Click in the page', ...ACT },
+      description: 'Click a link, button or other element in Apaki\'s browser by its ref from browser_read. Waits for a page it opens to load.',
+      shape: { ref: refArg() },
+    },
+    {
+      name: 'browser_type', annotations: { title: 'Type in the page', ...ACT },
+      description: 'Type into a field in Apaki\'s browser by its ref from browser_read. Replaces what the field holds. For a dropdown (select), text picks the option with that label. submit: true presses Enter after.',
+      shape: { ref: refArg(), text: z.string().describe('What to type (or the option to pick).'), submit: z.boolean().optional().describe('Press Enter after typing.') },
+    },
+    { name: 'browser_back', annotations: { title: 'Back', ...RO }, description: 'Go back to the previous page in Apaki\'s browser.', shape: {} },
+    { name: 'browser_screenshot', annotations: { title: 'Screenshot the page', ...RO }, description: 'See the page in Apaki\'s browser: a PNG of the part in view, at most 1280 px wide.', shape: {} },
+  ];
+}
+
 const short = (s, n = 70) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 const where = (st) => `${st.url}${st.title ? ` ("${short(st.title)}")` : ''}`;
 

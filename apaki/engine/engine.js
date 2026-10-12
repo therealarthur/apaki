@@ -94,6 +94,18 @@
  *   op answer      result { behavior: 'allow', always? } or { behavior: 'deny', message? } settles it once
  *   ev ask_gone    the call is over (the turn ended, Claude Code cancelled it): drop its sheet
  *
+ * Codex panes (2026-10-12, codex-panes.js; Arthur: a Codex pane matches OpenAI's Codex app as close to 1:1 as possible):
+ * a session id `codex:<thread id>`, or open with kind: 'codex' for a new conversation, makes the pane a Codex one. One
+ * `codex app-server` process (codex-client.js) serves them, started when something first needs it. The same ops work
+ * on it (open, attach, send, steer, interrupt, answer, model, effort, mode, contextUsage, commands, historyBefore,
+ * historyCheck, rename, close); its events are the ones a Claude pane draws, built from the protocol's items by
+ * codex-map.js, plus:
+ *   op codexModels -> ev codexModels { models: [{ id, name, efforts: [{ value, description }], defaultEffort, isDefault }], defaults, presets, account }
+ *   op codexThreads { refresh? } -> ev codexThreads { items }   the Codex threads on this PC as session rows (codex: true)
+ *   ev opened      also carries kind: 'codex'
+ *   mode           is one of the Codex app's presets: 'read-only' | 'auto' | 'full-access'
+ *   ev artifact    via: 'codex-diff' | 'codex-image': a card, no viewer pops up by itself
+ *
  *   op hostStatus -> ev host { pid, window, remoteOn, panes, lifecycle }
  *   op hostQuit { whenIdle: true } | { now: true } -> ev hostQuit { ok, pending, waiting }
  *   ev opened from attach also carries running (its Claude Code process is up)
@@ -134,6 +146,10 @@ import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } 
 import { liveLogin } from '../../src/auth.js';
 import { claudeBinary } from '../../src/launch.js';
 import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
+// Codex threads as panes, through one `codex app-server` process (2026-10-12).
+import { findCodex } from './codex-client.js';
+import { CODEX_SHARED, createCodex, isCodexPane } from './codex-panes.js';
+import { threadIdOf } from './codex-map.js';
 import { searchHybrid, startIndexServer, updateIndex, updateViaServer } from '../../src/deepindex.js';
 import { askSearch, digPrompt } from './asksearch.js';
 import * as folders from '../../src/folders.js';
@@ -237,9 +253,12 @@ const srcOf = (rec, rev) => (openServer ? openServer.artifactUrl(rec, rev) : nul
 
 function artifactEvent(p, rec, meta = {}) {
   return {
-    ev: 'artifact', paneId: p.id, sessionId: rec.sessionId, id: rec.id, title: rec.title, kind: rec.kind, rev: rec.rev,
+    // A Codex pane's id is codex:<thread>; the store keeps it as codex-<thread>, and the window asks for it by the pane's own id (artifactGet).
+    ev: 'artifact', paneId: p.id, sessionId: isCodexPane(p) && p.sessionId ? p.sessionId : rec.sessionId, id: rec.id, title: rec.title, kind: rec.kind, rev: rec.rev,
     path: store.fileOf(rec).file, src: srcOf(rec), ext: rec.ext, mime: rec.mime, size: rec.size, source: rec.source,
     revs: rec.revs.map((r) => ({ rev: r.rev, at: r.at, title: r.title, ext: r.ext })), via: meta.via || 'show', toolUseId: meta.toolUseId || null,
+    // A turn's changes or a picture Codex looked at (2026-10-12): a card with a line under the title; the viewer opens when asked.
+    ...(meta.sub ? { sub: meta.sub } : {}), ...(meta.open ? { open: true } : {}),
   };
 }
 
@@ -254,7 +273,7 @@ function toolsFor(p) {
     p.tools = createApakiTools({
       store,
       sessionId: () => p.runner?.sessionId || p.sessionId || null,
-      cwd: () => p.runner?.cwd || os.homedir(),
+      cwd: () => p.runner?.cwd || p.codex?.cwd || os.homedir(),
       onArtifact: (rec, meta) => emit(artifactEvent(p, rec, meta)),
       onOpenUrl: (o) => { openPage(p, o); },
       browser,
@@ -290,6 +309,12 @@ function browserEnv(p) {
 
 /** A URL a pane's BROWSER shim handed over: local files become artifacts, pages go to the window. */
 function openedByBrowser(paneId, url) {
+  // The shared Codex app-server has one token for every thread: the pane whose turn is running gets the link.
+  if (paneId === CODEX_SHARED) {
+    if (/^file:\/\//i.test(url)) codex.runTool('show', { kind: 'file', path: url }, {}).catch(() => {});
+    else codex.openedLink(url);
+    return;
+  }
   const p = panes.get(paneId);
   if (!p) return;
   if (/^file:\/\//i.test(url)) { toolsFor(p).show({ kind: 'file', path: url }, { via: 'BROWSER' }).catch(() => {}); return; }
@@ -298,13 +323,47 @@ function openedByBrowser(paneId, url) {
 
 /** An artifact the stdio tool server (apaki-mcp-stdio.mjs) stored for a pane: show it like an in-process one. */
 function shownByStdio(paneId, { id, sessionId }) {
-  const p = panes.get(paneId);
+  const p = paneId === CODEX_SHARED ? codex.pickPane() : panes.get(paneId);
   const rec = p ? store.record(id, sessionId) : null;
   if (rec) emit(artifactEvent(p, rec, { via: 'show' }));
 }
 
+/**
+ * One of Apaki's tools (show, browser_open...) called by the stdio tool server a Codex process runs (apaki-mcp-stdio.mjs,
+ * POST /tool): run for the pane the token belongs to, or for the Codex pane whose turn is running.
+ */
+async function toolFromStdio(paneId, tool, input, meta) {
+  if (paneId === CODEX_SHARED) return codex.runTool(tool, input, meta);
+  const p = panes.get(paneId);
+  if (!p) return { ok: false, text: 'That conversation is not open in Apaki.' };
+  const t = toolsFor(p);
+  if (tool === 'show') return t.show(input, { via: 'show' });
+  return t.browser ? t.browser.call(tool, input) : { ok: false, text: 'This window has no built-in browser.' };
+}
+
 let openServer = null;
-try { openServer = await startOpenServer({ store, onOpen: openedByBrowser, onShown: shownByStdio }); } catch (e) { process.stderr.write(`apaki: the localhost server did not start (${e.message}); artifacts show without the viewer\n`); }
+try { openServer = await startOpenServer({ store, onOpen: openedByBrowser, onShown: shownByStdio, onTool: toolFromStdio }); } catch (e) { process.stderr.write(`apaki: the localhost server did not start (${e.message}); artifacts show without the viewer\n`); }
+
+/*
+ * Codex panes (codex-panes.js). The app-server process gets Apaki's tool server and the BROWSER shim through its own
+ * command line only (-c overrides, no config file written); one token stands for every Codex thread.
+ */
+const MCP_SCRIPT = path.join(ENGINE_ROOT, 'apaki', 'engine', 'apaki-mcp-stdio.mjs');
+const codex = createCodex({
+  emit, asks: state.asks, panes, tools: (p) => toolsFor(p), openPage: (p, o) => { openPage(p, o); },
+  shared: () => (openServer && fs.existsSync(MCP_SCRIPT)
+    ? { node: process.execPath, mcpScript: MCP_SCRIPT, openUrl: openServer.openUrl, token: openServer.paneToken(CODEX_SHARED), shim: process.platform === 'win32' && fs.existsSync(OPEN_SHIM) ? OPEN_SHIM : null }
+    : null),
+  shapeRows: (rows) => { const folderOf = folders.folderOfSessions(); return rows.map((r) => compact(r, null, folderOf)); },
+  phoneCap: (paneId) => (parsePhoneId(paneId) ? phoneCap(paneId) : null),
+  activity: (p, msg) => paneActivity(p, { q: null }, msg),
+  // A turn ended on its own: the saved workspace learns it, and with no window connected the engine sends what was queued.
+  turnEnded: (p) => { markAway(p, { busy: false, s: p.sessionId || null, away: { at: new Date().toISOString(), sessionId: p.sessionId || null } }); turnEnded(p); },
+  attachDir: () => path.join(latchDir(), 'codex-attachments'),
+  log: (line) => process.stderr.write(`apaki: ${line}\n`),
+});
+// Whether Codex is installed here, so the window offers it; looked up once, without starting anything.
+const CODEX_FOUND = Boolean(findCodex());
 
 /** Opens a web page, or a stored artifact's file, outside Apaki (the system browser or default app). */
 function openOutside(target) {
@@ -408,6 +467,8 @@ async function sessions(reqId) {
   for (const [id, recs] of term) {
     if (!state.byId.has(id)) list.push(compact({ id, title: `New session (${recs[0].name || 'terminal'})`, cwd: recs[0].cwd, lastModified: recs[0].updatedAt }, recs[0], folderOf));
   }
+  // The Codex threads read the last time the Codex view asked (op codexThreads): listed with the rest, marked codex.
+  for (const row of codex.cachedRows()) list.push(compact(row, null, folderOf));
   emit({ ev: 'sessions', reqId, items: list, folders: folders.listFolders(), billing: billingInfo(), voice: voiceReady() });
 }
 
@@ -611,6 +672,8 @@ function billingInfo(p) {
 }
 
 async function closeRunner(p) {
+  // A Codex pane has no Claude Code process: stopping it interrupts a running turn and lets go of the thread (codex-panes.js).
+  if (isCodexPane(p)) { await codex.close(p); return; }
   const r = p.runner;
   p.runner = null;
   if (!r) return;
@@ -623,7 +686,7 @@ async function closeRunner(p) {
  * session was taken from it (no runner, a "Taken over" card) no longer counts.
  */
 function paneWith(sessionId, exceptId) {
-  for (const p of panes.values()) if (p.id !== exceptId && p.runner && p.sessionId && p.sessionId === sessionId) return p;
+  for (const p of panes.values()) if (p.id !== exceptId && (p.runner || isCodexPane(p)) && p.sessionId && p.sessionId === sessionId) return p;
   return null;
 }
 
@@ -652,9 +715,11 @@ async function takeFrom(other, taker) {
   }
   const r = other.runner;
   other.runner = null;
-  other.busy = false;
   // Interrupted for the takeover: what it had queued stays unsent, like after a Stop.
   other.userStopped = true;
+  // A Codex pane lets go of its thread (an interrupt first, if a turn runs); then it is no longer busy.
+  if (isCodexPane(other)) await codex.close(other);
+  other.busy = false;
   if (r) {
     if (r.running) await r.interrupt();
     await r.stop();
@@ -740,7 +805,11 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   const p = getPane(paneId);
   // Only in the archive: shown from it, and nothing starts until a message restores it (send, 2026-10-12).
   if (archivedOnly(sessionId)) opts = { ...opts, warm: false };
-  if (isCodexId(sessionId)) { emit({ ev: 'note', reqId, paneId: p.id, tone: 'warn', text: codexResumeHint(sessionId) }); return; }
+  // A Codex thread, or a new conversation asked to be Codex (2026-10-12): without the codex command the old hint stays.
+  const wantCodex = isCodexId(sessionId) || opts.kind === 'codex';
+  if (wantCodex && !CODEX_FOUND) { emit({ ev: 'note', reqId, paneId: p.id, tone: 'warn', text: sessionId ? `${codexResumeHint(sessionId)} (Codex is not installed on this PC, so Apaki cannot open it.)` : 'Codex is not installed on this PC (no codex command was found). Install it with npm install -g @openai/codex.' }); return; }
+  // The same Codex thread already open and working in this pane (a window that came back): it is kept, not restarted.
+  if (wantCodex && sessionId && isCodexPane(p) && p.sessionId === sessionId && p.busy) { await codex.attach(reqId, p); return; }
   const other = sessionId ? paneWith(sessionId, p.id) : null;
   if (other && windowOf(other.id) === windowOf(p.id)) { emit({ ev: 'open_elsewhere', reqId, paneId: p.id, sessionId, otherPane: other.id }); return; }
   if (other && !opts.force) {
@@ -752,6 +821,15 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   }
   if (other) await takeFrom(other, p);
   await closeRunner(p);
+  if (wantCodex) {
+    // Another conversation in this pane: what was queued for the old one no longer applies (as below for Claude).
+    if ((p.sessionId || null) !== (sessionId || null)) resetHeld(p);
+    p.createdHere = false;
+    p.sessionId = sessionId || null;
+    // The picks of a Claude pane are not Codex's: only what the window sends for this pane (model, effort, mode) counts.
+    await codex.open(reqId, p, sessionId || null, cwd || null, { model: opts.model, effort: opts.effort, mode: opts.mode, force: opts.force });
+    return;
+  }
   if (opts.model) p.model = opts.model;
   if (opts.effort) p.effort = opts.effort;
   if (opts.mode) p.mode = opts.mode;
@@ -864,6 +942,12 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
 
 async function send(reqId, paneId, text, images = []) {
   const p = getPane(paneId);
+  // A Codex thread whose pane let go of it (idle with no window, or taken over and taken back): open it again, then send.
+  if (!isCodexPane(p) && isCodexId(p.sessionId)) {
+    await open(null, p.id, p.sessionId, null, { warm: false });
+    if (!isCodexPane(p)) return;
+  }
+  if (isCodexPane(p)) { await codex.send(reqId, p, text, images); return; }
   // A conversation only the archive still has goes back where Claude Code keeps it, then continues (2026-10-12).
   if (p.sessionId && archivedOnly(p.sessionId)) {
     const restored = (() => { try { return restoreArchived(p.sessionId); } catch { return null; } })();
@@ -912,7 +996,9 @@ async function send(reqId, paneId, text, images = []) {
  */
 async function attach(reqId, paneId, sessionId, cwd) {
   const p = panes.get(String(paneId));
-  if (!p || !p.runner || (p.sessionId || null) !== (sessionId || null)) { await open(reqId, paneId, sessionId, cwd, { warm: false }); return; }
+  // A Codex pane that is still here: its state and history again, the server and its turn untouched.
+  if (p && isCodexPane(p) && (p.sessionId || null) === (sessionId || null)) { await codex.attach(reqId, p); return; }
+  if (!p || !p.runner || (p.sessionId || null) !== (sessionId || null)) { await open(reqId, paneId, sessionId, cwd, { warm: false, kind: isCodexId(sessionId) ? 'codex' : undefined }); return; }
   const info = p.sessionId ? await getSessionInfo(p.sessionId).catch(() => null) : null;
   // busy: a message sent here is still running (its result event follows, which clears it in the window);
   // turn: any turn is running, also one Claude started by itself (the window picks that up from its next
@@ -992,12 +1078,12 @@ const handlers = {
   search: (c) => search(c.reqId, String(c.query || '')),
   askSearch: (c) => askSearchOp(c.reqId, String(c.query || ''), c.paneId || null),
   digPrompt: (c) => digPromptOp(c.reqId, String(c.query || ''), Array.isArray(c.candidates) ? c.candidates : []),
-  open: (c) => open(c.reqId, c.paneId, c.sessionId || null, c.cwd || null, { warm: c.warm, model: c.model, effort: c.effort, mode: c.mode, force: c.force }),
+  open: (c) => open(c.reqId, c.paneId, c.sessionId || null, c.cwd || null, { warm: c.warm, model: c.model, effort: c.effort, mode: c.mode, force: c.force, kind: c.kind }),
   attach: (c) => attach(c.reqId, c.paneId, c.sessionId || null, c.cwd || null),
   send: (c) => send(c.reqId, c.paneId, String(c.text || ''), Array.isArray(c.images) ? c.images : []),
   close: (c) => closePane(c.reqId, c.paneId),
   // A Stop: the queue stays unsent after it (queue-hold.js), until the next message is sent.
-  interrupt: (c) => { const p = getPane(c.paneId); p.userStopped = true; return p.runner?.interrupt(); },
+  interrupt: (c) => { const p = getPane(c.paneId); p.userStopped = true; return isCodexPane(p) ? codex.interrupt(p) : p.runner?.interrupt(); },
   // The window's queued messages, kept here so they can go out with no window connected (queue-hold.js).
   // Never for a phone pane: remote-policy.js does not let a phone send it, and phone queues stay window-side.
   queueSet: (c) => {
@@ -1008,6 +1094,7 @@ const handlers = {
   contextUsage: async (c) => {
     const p = panes.get(String(c.paneId || ''));
     if (!p) { emit({ ev: 'context', reqId: c.reqId, paneId: c.paneId, none: true }); return; }
+    if (isCodexPane(p)) { codex.sendContext(p, c.reqId || null); return; }
     await sendContext(p, c.reqId || null).catch(() => emit({ ev: 'context', reqId: c.reqId, paneId: c.paneId, none: true }));
   },
   // Steer: add a message to the running turn without stopping it (Claude
@@ -1015,6 +1102,7 @@ const handlers = {
   // out as a normal message instead.
   steer: async (c) => {
     const p = getPane(c.paneId);
+    if (isCodexPane(p)) { await codex.steer(c, p); return; }
     const images = Array.isArray(c.images) ? c.images : [];
     const text = String(c.text || '');
     const content = images.length
@@ -1031,12 +1119,19 @@ const handlers = {
   answer: (c) => { const a = state.asks.get(c.askId); state.asks.delete(c.askId); if (a?.answer) a.answer(c.result || null); else a?.resolve(c.result || null); },
   model: async (c) => {
     const p = getPane(c.paneId);
+    // A Codex pane's model is one of Codex's (op codexModels); it never becomes the default for new Claude panes.
+    if (isCodexPane(p)) { await codex.setModel(p, String(c.model || '')); return; }
     p.model = c.model; if (!parsePhoneId(p.id)) defaults.model = c.model;
     await p.runner?.setModel(c.model);
     emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
   },
   mode: async (c) => {
     const p = getPane(c.paneId);
+    // A Codex pane's modes are the Codex app's presets (read-only, auto, full-access); a phone takes those its access allows.
+    if (isCodexPane(p)) {
+      if (!codex.setMode(p, String(c.mode || '')) && parsePhoneId(p.id)) emit({ ev: 'error', reqId: c.reqId, paneId: p.id, message: capModeText(phoneCap(p.id), c.mode), refused: true });
+      return;
+    }
     // A phone pane takes only the modes its phone's access allows (remote-policy.js refuses others first; this holds anyway).
     if (parsePhoneId(p.id) && !capModes(phoneCap(p.id)).includes(c.mode)) {
       emit({ ev: 'error', reqId: c.reqId, paneId: p.id, message: capModeText(phoneCap(p.id), c.mode), refused: true });
@@ -1049,6 +1144,7 @@ const handlers = {
   },
   effort: async (c) => {
     const p = getPane(c.paneId);
+    if (isCodexPane(p)) { codex.setEffort(p, String(c.effort || '')); return; }
     p.effort = c.effort; if (!parsePhoneId(p.id)) defaults.effort = c.effort;
     if (p.runner?.running) await p.runner.restart({ effort: c.effort });
     else if (p.runner) p.runner.effort = c.effort;
@@ -1160,6 +1256,11 @@ const handlers = {
     const id = String(c.sessionId || '');
     const title = String(c.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
     if (!id || !title) { emit({ ev: 'renamed', reqId: c.reqId, paneId: c.paneId || null, sessionId: id, ok: false, message: 'A name needs some text.' }); return; }
+    // A Codex thread is named by Codex itself (thread/name/set), so the Codex app shows the same name.
+    if (isCodexId(id)) {
+      try { await codex.rename(threadIdOf(id), title); emit({ ev: 'renamed', reqId: c.reqId, paneId: c.paneId || null, sessionId: id, title, ok: true }); } catch (e) { emit({ ev: 'renamed', reqId: c.reqId, paneId: c.paneId || null, sessionId: id, ok: false, message: e.message || String(e) }); }
+      return;
+    }
     await applyRename(id, title, { reqId: c.reqId, paneId: c.paneId || null });
   },
   // The footer's Glass card: read again now, or switch an account (Arthur picked it, so --user-asked).
@@ -1201,12 +1302,17 @@ const handlers = {
       ...keySections().map((s) => { const label = s.heading.replace(/\s+-\s+added\s+\S+\s*$/i, '').replace(/^Anthropic API Key\s*\((.*)\)$/i, '$1'); return { label, value: label }; }),
     ],
   }),
+  // Codex (2026-10-12, codex-panes.js): the model list with each model's own efforts and the account line (model/list),
+  // and the Codex threads on this PC for the list's Codex view (thread/list). Both start the app-server on first use.
+  codexModels: (c) => codex.models(c.reqId || null),
+  codexThreads: async (c) => { await codex.list({ refresh: c.refresh === true, reqId: c.reqId || null }); },
   // Commands come from a running Claude Code process. A pane that has not
   // started yet (restored, waiting for its first message) gets the list last
   // seen for its folder instead of starting a process just for the menu.
   commands: async (c) => {
     const p = getPane(c.paneId);
     const shape = (list) => list.map((x) => ({ name: x.name, description: x.description || '', argumentHint: x.argumentHint || '' }));
+    if (isCodexPane(p)) { emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: codex.commands() }); return; }
     if (!p.runner) { emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: [] }); return; }
     if (!p.runner.running) {
       const cached = state.commandsByCwd.get(p.runner.cwd) || [...state.commandsByCwd.values()][0] || [];
@@ -1246,6 +1352,7 @@ const handlers = {
   // before a send). Read only; a phone may ask for its own panes (remote-policy.js).
   historyCheck: async (c) => {
     const p = panes.get(String(c.paneId || ''));
+    if (p && isCodexPane(p)) { await codex.historyCheck(c, p); return; }
     const base = { ev: 'historyChecked', reqId: c.reqId || null, paneId: c.paneId || null };
     const sessionId = p?.sessionId || null;
     if (!p || !sessionId || (c.sessionId && c.sessionId !== sessionId)) { emit({ ...base, sessionId: c.sessionId || null, fresh: true }); return; }
@@ -1262,6 +1369,7 @@ const handlers = {
   // historyBefore { paneId, sessionId?, before, limit?, all? } -> historyPage { messages, total, hasMore, first, earlier }
   historyBefore: async (c) => {
     const p = panes.get(String(c.paneId || ''));
+    if (p && isCodexPane(p)) { await codex.historyBefore(c, p); return; }
     const base = { ev: 'historyPage', reqId: c.reqId || null, paneId: c.paneId || null, before: c.before || null };
     if (!p?.sessionId || (c.sessionId && c.sessionId !== p.sessionId)) { emit({ ...base, sessionId: c.sessionId || null, error: 'That conversation is not open in this pane.' }); return; }
     if (!c.before) { emit({ ...base, sessionId: p.sessionId, error: 'Which message to load before is missing.' }); return; }
@@ -1275,6 +1383,8 @@ const handlers = {
   historyBlock: async (c) => {
     const p = panes.get(String(c.paneId || ''));
     const base = { ev: 'historyBlock', reqId: c.reqId || null, paneId: c.paneId || null, ref: c.ref || null };
+    // Codex pages carry every block whole (codex-map.js cuts output at 20,000 characters, with no reference to fetch more).
+    if (p && isCodexPane(p)) { emit({ ...base, sessionId: p.sessionId, error: 'That part of a Codex conversation is already shown whole.' }); return; }
     if (!p?.sessionId || (c.sessionId && c.sessionId !== p.sessionId)) { emit({ ...base, sessionId: c.sessionId || null, error: 'That conversation is not open in this pane.' }); return; }
     const r = await historyStore.block(p.sessionId, c.ref).catch((e) => ({ error: e.message || String(e) }));
     emit({ ...base, sessionId: p.sessionId, ...r });
@@ -1294,6 +1404,7 @@ const handlers = {
   stopSession: (c) => {
     let n = 0;
     for (const p of panes.values()) {
+      if (isCodexPane(p) && p.sessionId === c.sessionId && p.busy) { p.userStopped = true; codex.interrupt(p); n += 1; continue; }
       if (p.sessionId !== c.sessionId || !(p.runner?.turnRunning || p.runner?.turnActive)) continue;
       p.userStopped = true;
       p.runner.interrupt();
@@ -1304,7 +1415,7 @@ const handlers = {
   // Fork: a new session with this one's conversation so far (fresh ids; the original is untouched).
   forkSession: async (c) => {
     try {
-      const r = await forkSession(String(c.sessionId));
+      const r = isCodexId(c.sessionId) ? { sessionId: await codex.fork(threadIdOf(c.sessionId)) } : await forkSession(String(c.sessionId));
       emit({ ev: 'forked', reqId: c.reqId, from: c.sessionId, sessionId: r.sessionId });
       await sessions(null);
     } catch (e) {
@@ -1414,6 +1525,8 @@ async function capChanged(deviceId) {
   for (const id of phonePanes(deviceId)) {
     const p = panes.get(id);
     if (!p) continue;
+    // A Codex pane takes the presets the access allows (codex-panes.js recap); it has no Claude Code process to restart.
+    if (isCodexPane(p)) { codex.recap(p); continue; }
     const o = capRunnerOptions(phoneCap(id), p.mode);
     p.mode = clampMode(phoneCap(id), p.mode);
     if (p.runner) {
@@ -1428,13 +1541,15 @@ async function capChanged(deviceId) {
 remote = createRemote({
   emit,
   dispatch: (c) => dispatch(c),
-  readyEvent: () => ({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: false }),
+  readyEvent: () => ({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: false, codex: CODEX_FOUND }),
   engine: {
     hasOp: (op) => typeof handlers[op] === 'function',
     paneExists: (id) => panes.has(id),
     paneCount: (deviceId) => phonePanes(deviceId).length,
     phonePanes,
-    paneInfo: (id) => { const p = panes.get(id); return p ? { sessionId: p.sessionId, running: Boolean(p.runner), busy: Boolean(p.busy), model: p.model, effort: p.effort, mode: p.mode } : null; },
+    paneInfo: (id) => { const p = panes.get(id); return p ? { sessionId: p.sessionId, running: Boolean(p.runner) || isCodexPane(p), busy: Boolean(p.busy), model: p.model, effort: p.effort, mode: p.mode, kind: isCodexPane(p) ? 'codex' : 'claude' } : null; },
+    // Whether a pane runs a Codex thread: its model, effort and mode are Codex's (remote-policy.js checks them against that).
+    paneKind: (id) => (isCodexPane(panes.get(id)) ? 'codex' : 'claude'),
     capChanged: (deviceId) => { capChanged(deviceId).catch((e) => process.stderr.write(`apaki: applying a phone's access: ${e.message}
 `)); },
     askPane: (askId) => state.asks.get(askId)?.paneId || null,
@@ -1473,6 +1588,7 @@ function shutdown(reason = 'stdin closed') {
     // Asked to stop now: running turns are interrupted, as closing the window did before the host.
     if (reason === 'quit-now') for (const p of panes.values()) if (p.runner?.running && paneTurnBusy(p)) await p.runner.interrupt();
     await Promise.all([...panes.values()].map((p) => closeRunner(p)));
+    await codex.shutdown();
     process.exit(0);
   })();
   return shuttingDown;
@@ -1865,7 +1981,7 @@ fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => {
 });
 setTimeout(() => { authStatus(null).catch(() => {}); }, 1500).unref();
 
-emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer) });
+emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND });
 // The transcript archive: a minute after start, then every 6 hours (2026-10-12).
 setTimeout(() => { runTranscriptArchive(); }, 60 * 1000).unref();
 setInterval(() => { runTranscriptArchive(); }, 6 * 60 * 60 * 1000).unref();
@@ -1971,7 +2087,7 @@ function hostWindowConnected(conn) {
   lifecycle?.windowConnected();
   const desk = [...panes.values()].filter((p) => !parsePhoneId(p.id));
   conn.send({
-    ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer),
+    ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND,
     host: { pid: process.pid, startedAt: host?.startedAt || null, panes: desk.length, running: desk.filter((p) => p.runner?.running).length, working: desk.filter((p) => paneWorking(p)).length },
   });
   // What changed while no window was connected: the index lines and keep-warm marks as last sent, Glass read now.
@@ -1992,7 +2108,7 @@ function hostView() {
   return {
     remoteOn: Boolean(remote?.state?.enabled),
     panes: [...panes.values()].map((p) => ({
-      id: p.id, sessionId: p.sessionId || null, phone: Boolean(parsePhoneId(p.id)), open: Boolean(p.runner), running: Boolean(p.runner?.running),
+      id: p.id, sessionId: p.sessionId || null, phone: Boolean(parsePhoneId(p.id)), open: Boolean(p.runner) || isCodexPane(p), running: Boolean(p.runner?.running) || (isCodexPane(p) && Boolean(p.busy)),
       busy: paneTurnBusy(p), working: paneWorking(p), tasks: p.bgTasks?.size || 0, asks: asksOf(p.id), lastActiveAt: p.lastActiveAt || 0,
     })),
   };

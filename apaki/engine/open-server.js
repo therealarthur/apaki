@@ -23,6 +23,12 @@
  *        server (apaki-mcp-stdio.mjs, for a later Codex tab) sends after it
  *        stored an artifact, so the pane shows it like an in-process show.
  *
+ *   POST /tool (same token, body {"tool", "input", "meta"?}) the stdio tool
+ *        server of a Codex process (2026-10-12): Apaki's show and browser tools
+ *        run in the engine, for the pane the token belongs to (a Codex process
+ *        has one token for all its threads: the engine picks the pane whose turn
+ *        runs). The answer is JSON {ok, text, image?, mimeType?}.
+ *
  * Idle cost is zero: a listening socket and nothing else. Requests whose Host
  * is not 127.0.0.1:<port> are refused (DNS rebinding).
  */
@@ -47,6 +53,8 @@ export const ARTIFACT_CSP = [
 
 const token = () => crypto.randomBytes(18).toString('base64url');
 const MAX_BODY = 64 * 1024;
+// A show call carries a whole page or report as text.
+const MAX_TOOL_BODY = 16 * 1024 * 1024;
 
 /**
  * Starts the server. `store` is an ArtifactStore; onOpen(paneId, url) is
@@ -54,7 +62,7 @@ const MAX_BODY = 64 * 1024;
  * for every artifact the stdio tool server stored. Resolves to
  * { port, base, uiToken, openUrl, shownUrl, artifactUrl(rec, rev), paneToken(paneId), forget(paneId), close() }.
  */
-export function startOpenServer({ store, onOpen = () => {}, onShown = () => {} } = {}) {
+export function startOpenServer({ store, onOpen = () => {}, onShown = () => {}, onTool = null } = {}) {
   const uiToken = token();
   const panes = new Map(); // token -> paneId
   const tokens = new Map(); // paneId -> token
@@ -64,6 +72,24 @@ export function startOpenServer({ store, onOpen = () => {}, onShown = () => {} }
     const deny = (code, text = '') => { res.writeHead(code, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }); res.end(text); };
     if (req.headers.host !== `127.0.0.1:${port}`) { deny(421, 'wrong host'); return; }
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
+
+    if (req.method === 'POST' && url.pathname === '/tool' && onTool) {
+      const paneId = panes.get(String(req.headers['x-apaki-token'] || ''));
+      if (!paneId) { deny(403, 'bad token'); return; }
+      let body = '';
+      req.setEncoding('utf8');
+      req.on('data', (d) => { body += d; if (body.length > MAX_TOOL_BODY) req.destroy(); });
+      req.on('end', async () => {
+        let j = null;
+        try { j = JSON.parse(body); } catch { j = null; }
+        if (!j || typeof j.tool !== 'string') { deny(400, 'need a tool'); return; }
+        let r;
+        try { r = await onTool(paneId, j.tool, j.input && typeof j.input === 'object' ? j.input : {}, j.meta && typeof j.meta === 'object' ? j.meta : {}); } catch (e) { r = { ok: false, text: String(e?.message || e) }; }
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ ok: Boolean(r?.ok), text: String(r?.text ?? ''), ...(r?.image ? { image: r.image, mimeType: r.mimeType || 'image/png' } : {}) }));
+      });
+      return;
+    }
 
     if (req.method === 'POST' && (url.pathname === '/open' || url.pathname === '/shown')) {
       const paneId = panes.get(String(req.headers['x-apaki-token'] || ''));
