@@ -93,7 +93,13 @@ body.web .theme-btn, body.web .sound { padding: 8px 12px; font-size: 13px; }
 body.web .sheet { width: calc(100vw - 20px); max-height: calc(var(--vvh, 100dvh) - 40px); padding: 18px 16px; }
 body.web .sheet .opt { padding: 13px 14px; }
 body.web .sheet .row button { padding: 12px 18px; }
-body.web .sheet input[type=text] { font-size: 16px; padding: 11px 12px; }
+body.web .sheet input[type=text], body.web .ask-card input[type=text], body.web .ask-card input[type=password] { font-size: 16px; padding: 11px 12px; }
+/* A question or approval in the pane (askcard.js, 2026-10-12): the same card as on the PC, with touch targets of 44 px. */
+body.web .ask-choice, body.web .ask-btn { min-height: 44px; }
+body.web .ask-choice { align-items: center; padding: 8px 10px; }
+body.web .ask-btn { height: auto; padding: 0 18px; }
+body.web .ask-other input { padding: 8px 2px; }
+body.web .ask-dock { margin-bottom: 6px; }
 body.web .menu-item { padding: 12px 12px; font-size: 15px; }
 body.web .takeover { margin-top: 6vh; padding: 20px 18px; }
 body.web .tk-row button { padding: 12px 16px; }
@@ -559,6 +565,9 @@ body.web.native.paged .chat-chrome.bar-on:not(.strip-on) { padding-bottom: 8px; 
 .ts-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ts-chip.busy .ts-t { color: var(--brand-strong); }
 .ts-chip.unread .ts-t { color: var(--good); }
+/* A tab with a question waiting for you, and the pane that asks among a tab's pages: the attention colour, as on the PC (askcard.js). */
+.ts-chip.waiting .ts-t { color: var(--action-strong); }
+.cn-wait { flex: none; font-weight: 700; color: var(--action-strong); }
 .ts-n { flex: none; font: 650 11px/1 var(--font-mono); color: var(--faint); }
 
 /* Where you are among the tab's panes: short segments, the lit one follows the finger (pager.js --on). */
@@ -566,6 +575,7 @@ body.web.native.paged .chat-chrome.bar-on:not(.strip-on) { padding-bottom: 8px; 
 .pager-bar[hidden] { display: none; }
 .pager-bar i { position: relative; width: 20px; height: 3px; border-radius: 2px; background: var(--hairline-strong); overflow: hidden; }
 .pager-bar i::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--brand-strong); opacity: var(--on, 0); }
+.pager-bar i.waiting { background: var(--action); }
 
 /* The pager. */
 body.web.native.paged .stage.on {

@@ -2481,35 +2481,137 @@ body.rail-collapsed .signin-card { left: 22px; }
    its input, a note for Claude, then Deny, Always allow and Allow once. Same sheet on the phone page (apaki/ui is shared).
    No dot, no stripe: notes are tinted fields. */
 .sheet:focus { outline: none; }
-.sheet .perm-sub { margin-top: 2px; font-size: var(--fs-small); color: var(--soft); }
-.sheet .perm-tool { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 6px; font-family: var(--font-mono); font-size: var(--fs-small); }
-.sheet .perm-name { font-weight: 700; color: var(--ink); }
-.sheet .perm-srv { color: var(--faint); overflow-wrap: anywhere; }
-.sheet .perm-body { display: grid; gap: 8px; }
-.sheet .perm-code, .sheet .perm-diff {
+:is(.sheet, .ask-card) .perm-sub { margin-top: 2px; font-size: var(--fs-small); color: var(--soft); }
+:is(.sheet, .ask-card) .perm-tool { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 6px; font-family: var(--font-mono); font-size: var(--fs-small); }
+:is(.sheet, .ask-card) .perm-name { font-weight: 700; color: var(--ink); }
+:is(.sheet, .ask-card) .perm-srv { color: var(--faint); overflow-wrap: anywhere; }
+:is(.sheet, .ask-card) .perm-body { display: grid; gap: 8px; }
+:is(.sheet, .ask-card) .perm-code, :is(.sheet, .ask-card) .perm-diff {
   margin: 0; max-height: 36vh; overflow: auto; padding: 9px 11px; background: var(--ground); border: 1px solid var(--hairline);
   border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--fs-small); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.sheet .perm-diff .more { display: block; color: var(--faint); }
-.sheet .perm-file { display: flex; justify-content: space-between; gap: 12px; font-family: var(--font-mono); font-size: var(--fs-small); color: var(--soft); overflow-wrap: anywhere; }
-.sheet .perm-meta, .sheet .perm-fine { font-size: var(--fs-micro); color: var(--faint); white-space: nowrap; }
-.sheet .perm-fine { white-space: normal; }
-.sheet .perm-rows { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 14px; font-size: var(--fs-small); }
-.sheet .perm-rows dt { color: var(--faint); }
-.sheet .perm-rows dd { margin: 0; font-family: var(--font-mono); font-size: var(--fs-small); overflow-wrap: anywhere; }
-.sheet .perm-text { font-size: var(--fs-small); color: var(--soft); white-space: pre-wrap; overflow-wrap: anywhere; }
-.sheet .perm-note { margin-top: 10px; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--tint); color: var(--soft); font-size: var(--fs-small); }
-.sheet .perm-note.warn { background: var(--action-tint); color: var(--action-strong); }
-.sheet .perm-say { margin-top: 12px; }
-.sheet .perm-always { margin-top: 10px; display: grid; gap: 2px; font-size: var(--fs-small); color: var(--soft); }
-.sheet .perm-always-h { font-size: var(--fs-small); font-weight: 650; color: var(--ink); }
-.sheet .perm-always-l { font-family: var(--font-mono); font-size: var(--fs-small); overflow-wrap: anywhere; }
+:is(.sheet, .ask-card) .perm-diff .more { display: block; color: var(--faint); }
+:is(.sheet, .ask-card) .perm-file { display: flex; justify-content: space-between; gap: 12px; font-family: var(--font-mono); font-size: var(--fs-small); color: var(--soft); overflow-wrap: anywhere; }
+:is(.sheet, .ask-card) .perm-meta, :is(.sheet, .ask-card) .perm-fine { font-size: var(--fs-micro); color: var(--faint); white-space: nowrap; }
+:is(.sheet, .ask-card) .perm-fine { white-space: normal; }
+:is(.sheet, .ask-card) .perm-rows { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 14px; font-size: var(--fs-small); }
+:is(.sheet, .ask-card) .perm-rows dt { color: var(--faint); }
+:is(.sheet, .ask-card) .perm-rows dd { margin: 0; font-family: var(--font-mono); font-size: var(--fs-small); overflow-wrap: anywhere; }
+:is(.sheet, .ask-card) .perm-text { font-size: var(--fs-small); color: var(--soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+:is(.sheet, .ask-card) .perm-note { margin-top: 10px; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--tint); color: var(--soft); font-size: var(--fs-small); }
+:is(.sheet, .ask-card) .perm-note.warn { background: var(--action-tint); color: var(--action-strong); }
+:is(.sheet, .ask-card) .perm-say { margin-top: 12px; }
+:is(.sheet, .ask-card) .perm-always { margin-top: 10px; display: grid; gap: 2px; font-size: var(--fs-small); color: var(--soft); }
+:is(.sheet, .ask-card) .perm-always-h { font-size: var(--fs-small); font-weight: 650; color: var(--ink); }
+:is(.sheet, .ask-card) .perm-always-l { font-family: var(--font-mono); font-size: var(--fs-small); overflow-wrap: anywhere; }
 .sheet .perm-row { flex-wrap: wrap; }
 .sheet .perm-keys { margin-top: 8px; text-align: right; font-size: var(--fs-micro); color: var(--faint); }
 @media (hover: none) { .sheet .perm-keys { display: none; } }
 @media (max-width: 560px) {
   .sheet .perm-row { flex-direction: column-reverse; }
   .sheet .perm-row button { width: 100%; }
+}
+
+/* ---------- questions and approvals in the pane (askcard.js, 2026-10-12) ----------
+   Arthur: "when askuserquestion type things come up, it should be shown in the pane and not lock the user from using
+   the app". A card docked above the pane's message box, in the spirit of Myrlin Glass: one strong line, quiet
+   secondary text, a soft filled row for what is chosen, colour only for meaning (the attention colour says a pane
+   waits for you). Numbered rows, as Claude Code's terminal draws them. No dot, no stripe down a side, type tokens only. */
+.ask-dock { pointer-events: auto; max-width: 856px; margin: 0 auto 8px; display: grid; gap: 6px; }
+.ask-dock:empty { display: none; }
+.ask-card {
+  display: flex; flex-direction: column; min-height: 0; max-height: var(--ask-max, 56vh);
+  padding: 10px 10px 8px; border-radius: 14px; outline: none;
+  background: hsla(var(--w), .88); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+  border: 1px solid var(--hairline-strong); box-shadow: 0 12px 32px -18px rgba(var(--shadow-rgb), .5);
+  animation: rise var(--dur-fast) var(--ease-out);
+  transition: border-color var(--dur-fast) var(--ease-hover), box-shadow var(--dur-fast) var(--ease-hover);
+}
+.ask-card:focus-within { border-color: hsla(var(--pearl-stop-blue), .55); box-shadow: 0 0 0 3px hsla(var(--pearl-stop-blue), .14), 0 14px 36px -18px rgba(var(--shadow-rgb), .55); }
+.ask-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 6px 4px; flex: none; }
+.ask-kick { font: 650 var(--fs-micro)/1.3 var(--font-display); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.ask-more { font: 500 var(--fs-micro)/1.3 var(--font-mono); color: var(--soft); white-space: nowrap; }
+.ask-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 6px; overscroll-behavior: contain; }
+.ask-h { margin: 2px 0; font: 650 var(--fs-body)/1.35 var(--font-display); letter-spacing: -.005em; color: var(--ink); overflow-wrap: anywhere; }
+.ask-msg { margin: 2px 0 6px; font-size: var(--fs-small); color: var(--soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-q + .ask-q { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+.ask-qh { margin-bottom: 1px; font: 600 var(--fs-micro)/1.3 var(--font-mono); color: var(--faint); }
+.ask-qm { font-size: var(--fs-small); color: var(--faint); }
+.ask-choices { display: grid; gap: 2px; margin-top: 6px; flex: none; }
+.ask-card > .ask-choices { margin-top: 8px; }
+.ask-choice {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; min-height: 34px; padding: 6px 8px; text-align: left;
+  border: 0; border-radius: 9px; background: none; color: var(--ink); cursor: pointer; font-size: var(--fs-small);
+  transition: background var(--dur-fast) var(--ease-hover);
+}
+.ask-choice:hover { background: var(--tint); }
+.ask-choice:focus-visible, button.ask-choice:focus { outline: none; background: var(--tint); box-shadow: 0 0 0 1.5px hsla(var(--pearl-stop-blue), .5); }
+.ask-choice.on { background: var(--brand-wash); }
+.ask-choice.on .ask-w { font-weight: 650; }
+.ask-n {
+  flex: none; display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; margin-top: 1px;
+  border: 1px solid var(--hairline-strong); border-radius: 6px; background: var(--ground);
+  font: 600 var(--fs-micro)/1 var(--font-mono); color: var(--soft);
+  transition: background var(--dur-fast) var(--ease-hover), border-color var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.ask-choice:hover .ask-n, button.ask-choice:focus .ask-n { border-color: var(--brand-soft); color: var(--brand-deep); }
+.ask-choice.on .ask-n { background: var(--fill); border-color: var(--fill); color: #fff; }
+/* Numbers belong to the question in play; the other questions keep their rows, quieter. */
+.ask-q:not(.cur) .ask-n { opacity: .4; }
+.ask-l { flex: 1; min-width: 0; display: grid; gap: 1px; line-height: 1.4; }
+.ask-w { font-weight: 560; overflow-wrap: anywhere; }
+.ask-l small { font-size: var(--fs-small); color: var(--soft); overflow-wrap: anywhere; }
+.ask-tick { flex: none; width: 15px; height: 15px; margin-top: 3px; fill: none; stroke: var(--brand-strong); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: 0; transition: opacity var(--dur-fast) var(--ease-hover); }
+.ask-choice.on .ask-tick { opacity: 1; }
+.ask-other { align-items: center; cursor: text; }
+.ask-other input { flex: 1; min-width: 0; padding: 3px 2px; border: 0; border-bottom: 1px solid var(--hairline-strong); border-radius: 0; background: transparent; color: var(--ink); font-size: var(--fs-small); outline: none; }
+.ask-other input:focus { border-bottom-color: var(--brand); }
+.ask-other.on { background: var(--brand-wash); }
+.ask-card .ask-say { flex: none; width: 100%; margin-top: 8px; padding: 7px 10px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); background: var(--ground); color: var(--ink); font-size: var(--fs-small); outline: none; }
+.ask-card .ask-say:focus { border-color: var(--brand); }
+.ask-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 0 6px; flex: none; }
+.ask-keys { min-width: 0; font-size: var(--fs-micro); color: var(--faint); }
+.ask-acts { display: flex; gap: 6px; margin-left: auto; flex: none; }
+.ask-btn { height: 30px; padding: 0 14px; border: 1px solid var(--hairline-strong); border-radius: 8px; background: var(--ground); color: var(--ink); font-size: var(--fs-small); font-weight: 600; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-hover), background var(--dur-fast) var(--ease-hover); }
+.ask-btn:hover { border-color: var(--brand); }
+.ask-btn.primary { background: var(--fill); border-color: var(--fill); color: #fff; }
+.ask-btn.primary:hover { background: var(--fill-hover); border-color: var(--fill-hover); }
+.ask-plan { margin: 6px 0 2px; padding: 2px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--ground); }
+/* The plan is read, not a reply: no reply mark in front, and its headings stay under the card's own line. */
+.ask-plan.turn-assistant::before { content: none; }
+.ask-plan.turn-assistant :is(h1, h2, h3, h4) { margin: 10px 0 4px; font-size: var(--fs-body); }
+.ask-plan.turn-assistant > :first-child { margin-top: 8px; }
+.ask-card .perm-tool { margin-top: 8px; }
+/* What the second choice saves, under its words: one quiet line, not a heading of its own. */
+.ask-choice .perm-always { display: block; margin: 1px 0 0; }
+.ask-choice .perm-always-h { font-weight: 500; color: var(--soft); }
+.ask-choice .perm-always-h::after { content: ': '; }
+.ask-choice .perm-always-l { color: var(--soft); font-family: var(--font-body); }
+.ask-choice .perm-always-l + .perm-always-l::before { content: ' · '; }
+/* A phone that only watches the PC pane: the question shows, its choices are off, one line says where to answer. */
+.ask-ro { flex: none; margin-top: 8px; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--tint); color: var(--soft); font-size: var(--fs-small); }
+.ask-card.ro .ask-choice, .ask-card.ro .ask-btn, .ask-card.ro .ask-say { opacity: .55; cursor: default; }
+.ask-card.ro .ask-choice:hover { background: none; }
+.ask-card.ro .ask-keys { display: none; }
+/* The line a settled card leaves (answered on a phone, the turn ended): quiet, and gone a few seconds after you saw it. */
+.ask-gone {
+  justify-self: center; max-width: 100%; padding: 6px 12px; border: 1px solid var(--hairline); border-radius: 10px;
+  background: hsla(var(--w), .82); color: var(--soft); font-size: var(--fs-small);
+  animation: rise var(--dur-fast) var(--ease-out); transition: opacity var(--dur-exit) var(--ease-hover);
+}
+.ask-gone.out { opacity: 0; }
+/* The pane that waits: words in its header, its title in the attention colour, its tab the same way (as unread is green). */
+.ask-wait { flex: none; height: 28px; padding: 0 9px; border: 0; border-radius: 8px; background: none; color: var(--action-strong); font: 650 var(--fs-small)/1 var(--font-body); white-space: nowrap; cursor: pointer; transition: background var(--dur-fast) var(--ease-hover); }
+.ask-wait:hover { background: var(--action-tint); }
+.ask-wait[hidden] { display: none; }
+.pane.waiting .pane-bar .title { color: var(--action-strong); }
+.stage.multi .pane.waiting { box-shadow: inset 0 0 0 1.5px hsla(16, 62%, 54%, .42); border-radius: 10px; }
+.tab.waiting .tab-t { color: var(--action-strong); font-weight: 650; }
+@container pane (max-width: 470px) { .ask-keys { display: none; } .ask-card { padding: 8px 6px 6px; } }
+@media (hover: none) { .ask-keys { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .ask-card, .ask-gone { animation: none; transition: none; }
+  .ask-choice, .ask-n, .ask-tick, .ask-btn, .ask-wait { transition: none; }
 }
 
 /* The todo checklist (todos.js, 2026-10-12): TodoWrite as Claude Code draws it. Done items struck through, the item being

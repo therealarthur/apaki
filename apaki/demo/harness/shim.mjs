@@ -61,8 +61,11 @@ function deliver(name, payload) {
 const shell = createBrowserShell({ emitBrowser: (ev) => deliver('browser', ev), emitEngine: (ev) => deliver('engine', ev) });
 const engine = createEngine({ send: (ev) => deliver('engine', ev), browser: shell, preset: q.get('ws') || 'base', now: () => Date.now() });
 
+const sent = [];
+
 async function invoke(cmd, args = {}) {
-  if (cmd === 'engine_send') { engine.handle(args.msg); return null; }
+  // The last ops the window sent, newest last, for a check from outside (window.__demo.sent: an answer, a send...).
+  if (cmd === 'engine_send') { sent.push(args.msg); if (sent.length > 200) sent.shift(); engine.handle(args.msg); return null; }
   if (cmd === 'browser') return shell.invoke(args.cmd, args.args || {});
   return null;
 }
@@ -119,6 +122,9 @@ window.__demo = {
   phoneScan: (name) => engine.control.phoneScan(name),
   autoTurn: (sessionId, script) => engine.control.autoTurn(sessionId, script),
   state: () => engine.control.state(),
+  /** One engine event, as if the engine sent it: an ask, an ask_gone (questions in the pane, askcard.js, 2026-10-12). */
+  emit: (ev) => deliver('engine', ev),
+  sent,
 };
 
 window.addEventListener('DOMContentLoaded', () => {
