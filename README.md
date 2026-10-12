@@ -76,6 +76,10 @@ Codex sessions are listed and searchable today, read-only. Opening them in panes
   <img src="apaki/docs/media/history-light.webp" alt="A long transcript with a Stop hook's feedback, an API retry and a usage warning shown as system lines">
 </picture>
 
+## Worktrees, one feature per branch
+
+Run several features at once, each in its own git worktree, without them stepping on each other. Starting a conversation, pick New worktree: Apaki suggests a branch name from your first message and creates the worktree, in Claude Code's own `.claude/worktrees` folder when the repository uses one, otherwise beside the repository in `<repo>.worktrees`. The pane header shows the branch and its changes against the base, for example `fix-checkout +42 -7`, and its menu views the diff in a pane, commits, pushes, opens a pull request with `gh`, merges into the base, or removes the worktree. Every action shows the exact git commands first, and Apaki refuses to remove a worktree that has uncommitted or unpushed work. A Worktrees filter in the sidebar lists them by repository and offers merged ones for cleanup in one prompt. The phone shows the same branches and diffs; its actions need Full access. ([WORKTREES.md](apaki/remote/WORKTREES.md))
+
 ## A browser pane that Claude drives
 
 <picture>
@@ -124,7 +128,6 @@ The web version of the phone client is code served by apaki.myrlin.io, so your P
 | | |
 |-|-|
 | Codex in panes | Codex threads next to Claude's, with Codex's own pickers, questions and approvals. [CODEX.md](apaki/remote/CODEX.md) |
-| Worktrees | Start a conversation in a new git worktree; see work by repository and branch; view changes, commit, push and open a pull request from the pane. [WORKTREES.md](apaki/remote/WORKTREES.md) |
 | Apaki Cloud | Any-browser sign-in that saves nothing, a Cloud button on the desktop listing your machines, and phone push when Claude asks or finishes. A paid option on our hosted relay; a relay you run gets every feature. [CLOUD.md](apaki/remote/CLOUD.md) |
 
 ## Install

@@ -15,7 +15,7 @@
  */
 
 import {
-  buildSessions, buildFolders, buildHistory, buildGlass, buildSubagents, buildAgentLines,
+  buildSessions, buildFolders, buildHistory, buildGlass, buildSubagents, buildAgentLines, handoffMessages,
   CONTEXT, CONTEXT_USED, COMMANDS, PRESETS, ID, DAY, HOUR, MIN,
 } from './data.mjs';
 import { Turn, TurnAborted, SCRIPTS } from './turns.mjs';
@@ -110,8 +110,30 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     return { ev: 'terminals', terminals };
   }
 
+  /*
+   * Sessions held in another window of the engine (2026-10-12, the handoff): on the phone, the desktop holds
+   * "Fix flaky checkout test", so opening it there answers locked with Take over here, and a forced open takes
+   * it (opened with tookOver), as engine.js open does. On the desktop, a session a phone took keeps growing in
+   * its transcript (grown: how many handoff messages are written), and its pane follows with historyCheck.
+   */
+  const held = new Map(Object.entries(start.held || {}));
+  const grown = new Map();
+  const revOf = (sessionId) => `r${grown.get(sessionId) || 0}`;
+  const historyOf = (sessionId) => {
+    const h = buildHistory(sessionId, NOW);
+    const more = grown.get(sessionId) ? handoffMessages(now(), grown.get(sessionId)) : [];
+    return { ...h, messages: [...h.messages, ...more] };
+  };
+
   function openPane(c, attached = false) {
     const s = sessions.find((x) => x.id === c.sessionId) || null;
+    if (s && held.has(s.id) && !c.force && !attached) {
+      const h = held.get(s.id);
+      later(60, { ev: 'locked', reqId: c.reqId, paneId: c.paneId, sessionId: s.id, holder: { name: h.name, app: h.app || 'apaki', at: new Date(now() - 4 * MIN).toISOString(), alive: true }, title: s.title, cwd: s.cwd });
+      return;
+    }
+    const tookOver = Boolean(s && held.has(s.id) && c.force);
+    if (tookOver) held.delete(s.id);
     const pane = panes.get(c.paneId) || { id: c.paneId, ctxAdd: 0, turn: null };
     pane.sessionId = s?.id || null;
     pane.cwd = s?.cwd || c.cwd || '';
@@ -120,14 +142,28 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
       ev: 'opened', reqId: c.reqId, paneId: pane.id, sessionId: pane.sessionId, cwd: pane.cwd, title: s?.title || 'New conversation',
       model: c.model || MODEL, effort: c.effort || 'high', mode: c.mode || 'acceptEdits', billing: billing(), terminal: [],
       ...(attached ? { attached: true, busy: Boolean(pane.turn) } : {}),
+      ...(tookOver ? { tookOver: true } : {}),
     });
     if (!s) return;
-    const h = buildHistory(s.id, NOW);
+    const h = historyOf(s.id);
     if (h.earlier) {
-      later(120, { ev: 'history', paneId: pane.id, sessionId: s.id, messages: h.messages, total: h.total, source: 'transcript', first: h.earlierCount, hasMore: true, earlier: h.earlierCount });
+      later(120, { ev: 'history', paneId: pane.id, sessionId: s.id, messages: h.messages, total: h.total, source: 'transcript', first: h.earlierCount, hasMore: true, earlier: h.earlierCount, rev: revOf(s.id) });
     } else {
-      later(120, { ev: 'history', paneId: pane.id, sessionId: s.id, messages: h.messages, total: h.messages.length });
+      later(120, { ev: 'history', paneId: pane.id, sessionId: s.id, messages: h.messages, total: h.messages.length, rev: revOf(s.id) });
     }
+  }
+
+  /** historyCheck { paneId, sessionId, rev }: the transcript moved on, so the conversation comes again (refresh). */
+  function historyCheck(c) {
+    const rev = revOf(c.sessionId);
+    // A pane that has no revision yet is still waiting for the history its open sent: nothing to refresh.
+    const fresh = Boolean(c.sessionId) && Boolean(c.rev) && c.rev !== rev;
+    if (fresh) {
+      const h = historyOf(c.sessionId);
+      const paging = h.earlier ? { total: h.total, source: 'transcript', first: h.earlierCount, hasMore: true, earlier: h.earlierCount } : { total: h.messages.length };
+      later(80, { ev: 'history', paneId: c.paneId, sessionId: c.sessionId, messages: h.messages, ...paging, rev, refresh: true });
+    }
+    later(fresh ? 100 : 40, { ev: 'historyChecked', reqId: c.reqId || null, paneId: c.paneId || null, fresh });
   }
 
   function contextEvent(pane, reqId = null) {
@@ -302,6 +338,7 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
         later(450, { ev: 'historyPage', paneId: c.paneId, sessionId: c.sessionId, before: c.before, first: 0, hasMore: false, earlier: 0, total: h.total || 0, messages: h.earlier || [] });
         break;
       }
+      case 'historyCheck': historyCheck(c); break;
       case 'search': search(c); break;
       case 'askSearch': askSearch(c); break;
       case 'glass': later(80, glassEvent(false)); break;
@@ -386,6 +423,8 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     later(190, terminalsEvent());
     later(220, { ev: 'auth', loggedIn: true, method: 'oauth', email: null, org: null, plan: 'max', viaKey: false });
     later(250, { ev: 'warm', sessions: sessions.filter((s) => s.warm).map((s) => s.id) });
+    // A phone hears the desktop's tabs (engine desktop-tabs.js), for "On your desktop" on its list.
+    if (start.desktopTabs) later(280, { ev: 'desktopTabs', tabs: start.desktopTabs });
   }
 
   /** What the scene runner drives from outside (window.__demo). */
@@ -402,6 +441,19 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
       const pane = [...panes.values()].find((p) => p.sessionId === sessionId);
       if (pane && !pane.turn) runTurn(pane, script || scriptFor(sessionId), '', true);
     },
+    /**
+     * A phone took this session over (2026-10-12, the handoff): the desktop pane that had it says so, as engine.js
+     * takeFrom does, and from then on follows the transcript (historyCheck).
+     */
+    takenBy(sessionId, name = "Maya's iPhone 16") {
+      const pane = [...panes.values()].find((p) => p.sessionId === sessionId);
+      if (!pane) return false;
+      pane.turn?.abort();
+      emit({ ev: 'taken_over', paneId: pane.id, sessionId, holder: { name: `${name} (phone)`, app: 'apaki-phone', at: new Date(now()).toISOString(), alive: true } });
+      return true;
+    },
+    /** Claude Code on the phone wrote this many of the handoff's messages to the transcript so far (data.mjs). */
+    transcriptGrew(sessionId, count) { grown.set(sessionId, count); },
     /** Which panes are open and what they run (for the scene runner to wait on). */
     state() { return { panes: [...panes.values()].map((p) => ({ id: p.id, sessionId: p.sessionId, busy: Boolean(p.turn) })) }; },
   };
