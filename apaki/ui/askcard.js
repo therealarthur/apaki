@@ -122,6 +122,7 @@ export function takeFocus({ web = false, paneFocused = false, where = 'none', dr
 export function goneNote(e, who = 'Claude') {
   const by = str(e?.by).replace(/\s+/g, ' ').trim().slice(0, 80);
   switch (e?.why) {
+    case 'answered': return `Answered on ${by || 'another screen'}.`;
     case 'taken': return `${by || 'Another window'} took this conversation, and the question went with it.`;
     case 'resolved': return `Settled in ${by || 'Codex'} before an answer came from here.`;
     case 'turn': return 'No longer needed: the turn ended.';
@@ -133,6 +134,9 @@ export function goneNote(e, who = 'Claude') {
     default: return by ? `Answered on ${by}.` : 'Settled elsewhere.';
   }
 }
+
+/** What a phone that only watches a PC pane (No shell or Chat only) reads on a card it cannot answer (the PC refuses it). */
+export const READ_ONLY_TEXT = 'Claude is asking a question on the PC. This phone can watch, not answer: answer it there, or take the conversation over here.';
 
 /** The quiet words above a card: who asks, and what. */
 export function kicker(entry) {
@@ -166,7 +170,9 @@ export class AskBoard {
     const paneId = str(e?.paneId);
     if (!askId || !paneId || this.where.has(askId)) return null;
     const kind = askKind(e);
-    const entry = { askId, paneId, kind, who, e, at: this.now(), armedAt: 0, ui: { cur: 0, picks: [], other: [], note: '' } };
+    // readOnly (2026-10-12, the shared view): a phone that follows a PC pane at No shell or Chat only sees the question
+    // but may not answer it (the PC refuses, remote-policy.js); its card shows it with every choice turned off.
+    const entry = { askId, paneId, kind, who, e, readOnly: Boolean(e.readOnly), at: this.now(), armedAt: 0, ui: { cur: 0, picks: [], other: [], note: '' } };
     if (kind === 'permission') {
       entry.view = permissionView(e);
       entry.choices = permissionChoices(entry.view);
@@ -191,13 +197,16 @@ export class AskBoard {
 
   count(paneId) { return this.panes.get(paneId)?.length || 0; }
 
+  /** What waits for an answer from this window in the pane (a read-only card waits for the PC, not for you). */
+  answerable(paneId) { return (this.panes.get(paneId) || []).filter((x) => !x.readOnly).length; }
+
   get(askId) {
     const paneId = this.where.get(askId);
     return paneId ? (this.panes.get(paneId) || []).find((x) => x.askId === askId) || null : null;
   }
 
-  /** The panes with something waiting, in the order they first asked. */
-  waiting() { return [...this.panes.entries()].filter(([, l]) => l.length).map(([id]) => id); }
+  /** The panes with something waiting for an answer from here, in the order they first asked. */
+  waiting() { return [...this.panes.entries()].filter(([, l]) => l.some((x) => !x.readOnly)).map(([id]) => id); }
 
   /** Takes an ask off the board; returns it with whether it was the one its pane showed. */
   remove(askId) {
@@ -247,6 +256,7 @@ export class AskBoard {
     if (a.act === 'leave') return { do: 'leave' };
     if (a.act === 'move') return { do: 'move', by: a.by };
     if (a.act === 'type') return { do: 'type' };
+    if (entry.readOnly) return null;
     const armed = this.armed(entry);
     if (entry.kind === 'permission') {
       const c = permissionKey({ ...k, target: k.target === 'card' ? 'other' : k.target, noteText: entry.ui.note, armed, defaultToNo: entry.view.defaultToNo, choices: entry.choices });
@@ -283,7 +293,7 @@ export class AskBoard {
    */
   choose(paneId, c = {}) {
     const entry = this.current(paneId);
-    if (!entry || (c.askId && c.askId !== entry.askId)) return null;
+    if (!entry || entry.readOnly || (c.askId && c.askId !== entry.askId)) return null;
     if (entry.kind === 'permission' || entry.kind === 'plan') return entry.choices.includes(c.k) ? this.decide(entry, c.k) : null;
     if (c.k === 'answer') return this.submit(entry);
     if (c.k === 'skip') return this.finish(entry, { behavior: 'deny', message: SKIP_TEXT });
@@ -294,7 +304,7 @@ export class AskBoard {
   /** Typing in the card: the note that goes with Deny or Keep planning, or question q's own answer. */
   setText(paneId, { note, q, text } = {}) {
     const entry = this.current(paneId);
-    if (!entry) return null;
+    if (!entry || entry.readOnly) return null;
     if (note !== undefined) { entry.ui.note = str(note); return { do: 'paint' }; }
     if (entry.kind !== 'questions' || !Number.isInteger(q) || !entry.model.questions[q]) return null;
     entry.ui.other[q] = str(text);
@@ -403,7 +413,8 @@ export function cardHtml(entry, { count = 1, leavesPlan = false } = {}) {
   const body = entry.kind === 'permission' ? permissionHtml(entry.view, { id: `${id}-h` })
     : entry.kind === 'plan' ? planHtml(entry, { id: `${id}-h`, leavesPlan })
       : questionsHtml(entry, { id });
-  return `<div class="ask-top"><span class="ask-kick">${esc(kicker(entry))}</span>${count > 1 ? `<span class="ask-more">${count - 1} more waiting</span>` : ''}</div>${body}`;
+  return `<div class="ask-top"><span class="ask-kick">${esc(kicker(entry))}</span>${count > 1 ? `<span class="ask-more">${count - 1} more waiting</span>` : ''}</div>${body}`
+    + (entry.readOnly ? `<div class="ask-ro">${esc(READ_ONLY_TEXT)}</div>` : '');
 }
 
 /* ---------- the window's side ---------- */
@@ -463,8 +474,9 @@ class AskView {
     const board = this.ctx.board;
     const entry = board.current(this.pane.id);
     const count = board.count(this.pane.id);
-    this.pane.el.classList.toggle('waiting', count > 0);
-    this.mark.hidden = !count;
+    const yours = board.answerable(this.pane.id);
+    this.pane.el.classList.toggle('waiting', yours > 0);
+    this.mark.hidden = !yours;
     if (!entry) {
       const had = this.card?.contains(document.activeElement);
       this.card?.remove();
@@ -477,16 +489,19 @@ class AskView {
     if (this.shown === entry.askId) { this.paint(entry, count); return; }
     const had = Boolean(this.card?.contains(document.activeElement)) || this.where() === 'pane';
     const card = document.createElement('section');
-    card.className = `ask-card ask-${entry.kind}`;
+    card.className = `ask-card ask-${entry.kind}${entry.readOnly ? ' ro' : ''}`;
     card.tabIndex = -1;
     card.dataset.ask = entry.askId;
     card.setAttribute('role', 'group');
     card.setAttribute('aria-label', kicker(entry));
     card.innerHTML = cardHtml(entry, { count, leavesPlan: entry.kind === 'plan' && this.pane.mode === 'plan' });
+    // A card this phone may only watch: the question and its choices show, nothing in it can be pressed or typed in.
+    if (entry.readOnly) for (const c of card.querySelectorAll('button, input')) c.disabled = true;
     if (this.card) this.card.replaceWith(card); else this.dock.append(card);
     this.card = card;
     this.shown = entry.askId;
     this.fit();
+    if (entry.readOnly) return;
     const draft = this.pane.$?.input?.value || '';
     if (had || takeFocus({ web: this.ctx.web, paneFocused: this.ctx.isFocusedPane(this.pane), where: this.where(), draft, typedAgo: Date.now() - this.typedAt })) this.focus();
   }
@@ -530,7 +545,7 @@ class AskView {
    */
   focus() {
     const entry = this.ctx.board.current(this.pane.id);
-    if (!entry || !this.card) return false;
+    if (!entry || !this.card || entry.readOnly) return false;
     let target = this.card;
     if (entry.kind === 'permission' && entry.view.defaultToNo) target = this.card.querySelector('[data-k=deny]') || target;
     if (entry.kind === 'questions') {
@@ -539,7 +554,6 @@ class AskView {
     }
     this.ctx.board.arm(this.pane.id);
     target.focus({ preventScroll: true });
-    this.card.scrollIntoView?.({ block: 'nearest' });
     return true;
   }
 
@@ -647,7 +661,7 @@ class AskView {
  *   onChange(pane)          something waits or stopped waiting: the tabs, the badge and the title follow
  *   onAnswered(pane, act)   an answer went (the plan approval switches the pane out of plan mode)
  *   web                     the phone page
- * Returns { board, ask, gone, reset, count, focus, drop }.
+ * Returns { board, ask, gone, reset, count, waiting, pending, focus, drop }.
  */
 export function createAsks({ send, isFocusedPane = () => false, onChange = () => {}, onAnswered = () => {}, web = false } = {}) {
   const board = new AskBoard();
@@ -668,14 +682,14 @@ export function createAsks({ send, isFocusedPane = () => false, onChange = () =>
   };
   return {
     board,
-    /** An ask event for `pane`: true when it is new (ding), false for a repeat or a pane that is not here. */
+    /** An ask event for `pane`: its entry when it is new (ding), null for a repeat or a pane that is not here. */
     ask(e, pane) {
-      if (!pane?.el || pane.isViewer) return false;
+      if (!pane?.el || pane.isViewer) return null;
       const entry = board.add(e, { who: pane.kind === 'codex' ? 'Codex' : 'Claude' });
-      if (!entry) return false;
+      if (!entry) return null;
       viewOf(pane).render();
       onChange(pane);
-      return true;
+      return entry;
     },
     /** ask_gone: the card goes, with its line when it was the one on screen. */
     gone(e, pane = null) {
@@ -696,6 +710,10 @@ export function createAsks({ send, isFocusedPane = () => false, onChange = () =>
       onChange(pane);
     },
     count: (paneId) => board.count(paneId),
+    /** How many asks of the pane wait for an answer from this window (the tab's mark, the badge, the header's words). */
+    waiting: (paneId) => board.answerable(paneId),
+    /** Every ask waiting for an answer from here, as [askId, paneId] (the session list's "waiting" rows, app.js S.waiting). */
+    pending: () => [...board.where.entries()].filter(([id]) => !board.get(id)?.readOnly),
     /** Gives the pane's card the keyboard; false when it has none. */
     focus: (pane) => Boolean(pane && board.count(pane.id) && views.get(pane.id)?.focus()),
     /** The pane closed: its asks are settled by the engine (ask_gone 'closed'); forget them here. */

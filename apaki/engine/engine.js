@@ -104,8 +104,8 @@
  * Questions inline (2026-10-12, apaki/ui/askcard.js; Arthur: "when askuserquestion type things come up, it should be
  * shown in the pane and not lock the user from using the app"): the window draws each ask as a card in its pane, and
  * ask_gone says why it went, so that pane can say so in one quiet line:
- *   ev ask_gone    gains why: 'turn' | 'again' | 'stopped' | 'cancelled' | 'taken' | 'resolved' | 'closed', and
- *                  by (the window that took the conversation, for 'taken')
+ *   ev ask_gone    gains why: 'answered' | 'turn' | 'again' | 'stopped' | 'cancelled' | 'taken' | 'resolved' | 'closed',
+ *                  and by (who answered: a phone's name or 'the PC'; the window that took the conversation, for 'taken')
  *
  * Codex panes (2026-10-12, codex-panes.js; Arthur: a Codex pane matches OpenAI's Codex app as close to 1:1 as possible):
  * a session id `codex:<thread id>`, or open with kind: 'codex' for a new conversation, makes the pane a Codex one. One
@@ -1528,7 +1528,8 @@ const handlers = {
     // The first answer wins (2026-10-11, the shared view): the question may be on screen in the window and on phones that follow
     // its pane, so whoever did not answer has its sheet taken away the way a stale question's is (ask_gone). Nothing extra is sent
     // for a pane nobody else watches, so the window's own answers behave as before.
-    if (a && (c.follower || remote?.followerNames?.(a.paneId)?.length)) emit({ ev: 'ask_gone', askId: c.askId, paneId: a.paneId });
+    // why/by (2026-10-12, askcard.js): the other side's card leaves "Answered on <phone>." or "Answered on the PC."
+    if (a && (c.follower || remote?.followerNames?.(a.paneId)?.length)) emit({ ev: 'ask_gone', askId: c.askId, paneId: a.paneId, why: 'answered', by: typeof c.follower === 'string' && c.follower ? c.follower : 'the PC' });
   },
   model: async (c) => {
     const p = getPane(c.paneId);
