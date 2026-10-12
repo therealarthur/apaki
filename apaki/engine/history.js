@@ -672,6 +672,29 @@ export function buildHistory(entries, ops = []) {
  * before it. { messages, total, hasMore, first, earlier, compactions }, or
  * { gone: true } when `before` is no longer in the conversation.
  */
+/*
+ * Your prompts across the whole conversation (2026-10-11, Arthur: "still im seeing 13 of 13 messages when i know
+ * much more messages have been sent in a chat"): the pane's "You asked N of M" pin counted only the prompts loaded
+ * on screen. A page now says how many prompts come before it and how many there are in all, counted the way the
+ * pane draws them (a user message with words; not tool results, command wrappers or reminders).
+ */
+const NOT_A_PROMPT = /^\s*<(command-|local-command-|system-reminder)/;
+export function isPromptItem(it) {
+  if (!it || it.type !== 'user' || it.parent_tool_use_id) return false;
+  const c = it.message?.content;
+  if (typeof c === 'string') return Boolean(c.trim()) && !NOT_A_PROMPT.test(c);
+  if (!Array.isArray(c)) return false;
+  return c.some((b) => (b?.type === 'text' && b.text?.trim() && !NOT_A_PROMPT.test(b.text)) || b?.type === 'image');
+}
+/** Prompts before each item index (cached on the built history): before[i] = prompts in items[0..i). */
+function promptsBefore(h) {
+  if (h.promptsBefore && h.promptsBefore.length === h.items.length + 1) return h.promptsBefore;
+  const out = new Int32Array(h.items.length + 1);
+  for (let i = 0; i < h.items.length; i++) out[i + 1] = out[i] + (isPromptItem(h.items[i]) ? 1 : 0);
+  h.promptsBefore = out;
+  return out;
+}
+
 export function pageOf(h, { before = null, limit = PAGE, all = false } = {}) {
   const n = h.items.length;
   let end = n;
@@ -682,7 +705,8 @@ export function pageOf(h, { before = null, limit = PAGE, all = false } = {}) {
   }
   let start = all ? 0 : Math.max(0, end - Math.max(1, Math.floor(limit) || PAGE));
   while (start > 0 && resultsOnly(h.items[start])) start -= 1;
-  return { messages: h.items.slice(start, end), total: n, hasMore: start > 0, first: h.items[start]?.uuid ?? null, earlier: start, compactions: h.compactions };
+  const pb = promptsBefore(h);
+  return { messages: h.items.slice(start, end), total: n, hasMore: start > 0, first: h.items[start]?.uuid ?? null, earlier: start, compactions: h.compactions, prompts: { before: pb[start], total: pb[n] } };
 }
 
 /* ---------- reading the file ---------- */

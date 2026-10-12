@@ -434,7 +434,10 @@ export class Pane {
       const mid = (lo + hi) >> 1;
       if (turns[mid].getBoundingClientRect().bottom < edge) { hit = mid; lo = mid + 1; } else hi = mid - 1;
     }
-    return hit < 0 ? null : { el: turns[hit], n: hit + 1, of: turns.length };
+    // Counted over the whole conversation: the prompts before the first one loaded here come from the engine
+    // (history prompts.before, 2026-10-11), so "N of M" is your real place, not "13 of 13" of a loaded page.
+    const before = Math.max(0, this.promptsBefore || 0);
+    return hit < 0 ? null : { el: turns[hit], n: before + hit + 1, of: before + turns.length };
   }
 
   updatePin() {
@@ -838,6 +841,8 @@ export class Pane {
     if (!e.refresh && e.rev && e.rev === this.historyRev && e.sessionId === this.historyShownFor && this.$.T.childElementCount > 0) return;
     // The transcript's revision as drawn here, for checkDrift (2026-10-11).
     this.historyRev = e.rev || null;
+    // Your prompts before the first one drawn (pinnedTurn counts the whole conversation).
+    this.promptsBefore = e.prompts?.before || 0;
     this.historyShownFor = e.sessionId || this.sessionId || null;
     // A refresh (the conversation moved on elsewhere): keep the takeover card and, unless you were at the end, your place.
     const card = e.refresh ? this.$.T.querySelector(':scope > .takeover') : null;
@@ -1010,6 +1015,8 @@ export class Pane {
     // Whatever the browser's own scroll anchoring did, the message you were reading stays put.
     if (anchor) g.scrollTop += anchor.getBoundingClientRect().top - y0;
     Object.assign(h, { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total: e.total ?? h.total, loaded: h.loaded + (e.messages || []).length });
+    // Earlier prompts are on screen now: fewer come before the first one drawn (the pin's "N of M", 2026-10-11).
+    if (e.prompts && Number.isFinite(e.prompts.before)) { this.promptsBefore = e.prompts.before; this._pinKey = ''; this.updatePin?.(); }
     this.historyCut = h.hasMore ? { shown: h.loaded, total: h.total, paged: true } : null;
     this.renderLoader();
     this.renderArtifactsButton();

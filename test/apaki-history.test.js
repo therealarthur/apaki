@@ -200,3 +200,27 @@ test('policy: a phone may page its own open conversation and fetch its blocks, n
   // Allowed for a chat-only phone too: it only reads what that phone already has open.
   assert.equal(checkPhoneCommand({ op: 'historyBlock', paneId: 'p1', ref: `${U}:0` }, { ...ctx, cap: 'chat' }).ok, true);
 });
+
+/* ---------- your prompts across the whole conversation (2026-10-11: the pin said "13 of 13") ---------- */
+
+import { isPromptItem, pageOf as pageOfForPrompts } from '../apaki/engine/history.js';
+
+test('history: pages say how many of your prompts come before them and how many there are in all', () => {
+  const items = [];
+  for (let i = 0; i < 50; i++) {
+    items.push({ type: 'user', uuid: `u${i}`, message: { role: 'user', content: `question ${i}` } });
+    items.push({ type: 'assistant', uuid: `a${i}`, message: { role: 'assistant', content: [{ type: 'tool_use', id: `t${i}`, name: 'Read', input: {} }] } });
+    items.push({ type: 'user', uuid: `r${i}`, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: 'x' }] } });
+    items.push({ type: 'user', uuid: `c${i}`, message: { role: 'user', content: '<local-command-stdout>noise</local-command-stdout>' } });
+  }
+  const h = { items, index: new Map(items.map((it, i) => [it.uuid, i])), compactions: 0 };
+  const newest = pageOfForPrompts(h, { limit: 40 });
+  assert.deepEqual(newest.prompts, { before: 40, total: 50 }, 'the newest 40 items hold the last 10 prompts');
+  const earlier = pageOfForPrompts(h, { before: newest.first, limit: 40 });
+  assert.equal(earlier.prompts.before, 30);
+  assert.equal(earlier.prompts.total, 50);
+  assert.equal(isPromptItem(items[0]), true);
+  assert.equal(isPromptItem(items[2]), false, 'a tool result is not a prompt');
+  assert.equal(isPromptItem(items[3]), false, 'command output is not a prompt');
+  assert.equal(isPromptItem({ type: 'user', message: { content: [{ type: 'image' }] } }), true, 'an image you sent counts');
+});
