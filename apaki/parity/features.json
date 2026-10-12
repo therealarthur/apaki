@@ -1883,6 +1883,32 @@
       "notes": "History pages by thread/turns/list (newest first, eight turns a request, itemsView full; rollouts reach 1.3 GB so thread/read with turns is never used). Load earlier, scroll near the top and Load all work as for Claude; the loader says how many messages are loaded (the server gives no total). The drift check compares the thread's updatedAt."
     },
     {
+      "id": "prompt-pin-exact-and-list",
+      "title": "Your prompts: an exact \"N of M\" pin and a list of every prompt, Claude and Codex",
+      "product": "apaki",
+      "upstream": ["codex:client-request:thread/turns/list"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/history.js", "apaki/engine/codex-history.js", "apaki/engine/codex-map.js", "apaki/ui/pane.js", "test/apaki-prompts.test.js"],
+      "commits": ["06c6166"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": { "codex": "0.161.0" },
+      "notes": "2026-10-12, Arthur: the prompt list \"is 100% accurate\". One rule (history.js promptOf) marks every user message as a prompt or not; the pane draws a bubble for exactly those and pages count exactly those (system reminders, task notifications, local commands, hook output, bash mode and interruptions are not prompts; skill commands are, as /name args). A Codex page counts the prompts before it from the turn summaries (itemsView summary); steered messages count once their turn loads, and the pin says M+ until the count arrives. N of M opens the list of every prompt (op historyPrompts); picking one that is not loaded loads back to it in one page (historyBefore until). Pages load ahead of the reader, 1.5 screens from the top. Checked in a real browser on a 600 prompt synthetic conversation; the phone shares pane.js and the op is allowed by remote-policy.js."
+    },
+    {
+      "id": "codex-list-times-and-search-rows",
+      "title": "Codex threads: last message times in the list, one row per thread in search",
+      "product": "codex",
+      "upstream": ["codex:client-request:thread/list"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/last-active.js", "apaki/engine/codex-panes.js", "apaki/engine/codex-rollouts.js", "apaki/engine/engine.js", "test/apaki-codex-rollouts.test.js"],
+      "commits": ["7046804"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": { "codex": "0.161.0" },
+      "notes": "2026-10-12 parity audit (CODEX.md). A row's time is its last message, read from the rollout's tail (recencyAt is when the last turn started; the file's time moves with token counts). A search or Ask Claude hit on a Codex thread shows the Codex view's row (its name and time) instead of a separate \"Codex: first prompt\" row; the no-index quick filter matches Codex threads too."
+    },
+    {
       "id": "codex-request-user-input",
       "title": "Codex question sheet (request_user_input), same as Claude's AskUserQuestion",
       "product": "codex",
