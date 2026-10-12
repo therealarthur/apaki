@@ -166,6 +166,7 @@ const handlers = {
   'model/list': () => ({ data: MODELS.filter((m) => !m.hidden), nextCursor: null }),
   'config/read': () => ({ config: CONFIG, origins: {} }),
   'account/read': () => ({ account: { type: 'chatgpt', email: 'someone@example.com', planType: 'pro' }, requiresOpenaiAuth: true }),
+  'account/rateLimits/read': () => ({ rateLimits: { limitId: 'codex', primary: { usedPercent: 29, windowDurationMins: 300, resetsAt: NOW + 3600 }, secondary: { usedPercent: 33, windowDurationMins: 10080, resetsAt: NOW + 5 * 86400 }, planType: 'pro', rateLimitReachedType: null } }),
   'thread/list': (p) => ({ data: [...threads.values()].filter(() => !p.archived), nextCursor: null }),
   'thread/read': (p) => ({ thread: threads.get(p.threadId) || (() => { throw Object.assign(new Error('thread not found'), { code: -32600 }); })() }),
   'thread/resume': (p) => {

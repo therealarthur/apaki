@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  CARD_ONLY_VIA, CODEX_LOCAL, CODEX_MODES, codexFooter, codexMode, earlierText, effortNames, findModel, isCodexId, modelLabel, patchArgs, patchHtml, patchLines, pickMode, pickModel,
+  CARD_ONLY_VIA, CODEX_LOCAL, usageText, usageWorst, CODEX_MODES, codexFooter, codexMode, earlierText, effortNames, findModel, isCodexId, modelLabel, patchArgs, patchHtml, patchLines, pickMode, pickModel,
 } from '../apaki/ui/codex.js';
 import { approvalAsk } from '../apaki/engine/codex-map.js';
 import { effortGrid, EFFORTS } from '../apaki/ui/menu.js';
@@ -185,4 +185,13 @@ test('the phone builds with the Codex pane: the shared modules ship, nothing of 
     assert.ok(names.some((n) => n.endsWith('codex.js')), 'codex.js ships with the page');
     assert.ok(names.some((n) => n.endsWith('permission.js')));
   } finally { fsx.rmSync(out, { recursive: true, force: true }); }
+});
+
+test('plan usage: a line for the tooltip, the worst window beside the name, nothing without numbers', () => {
+  const limits = [{ label: '5-hour', usedPercent: 29.4, resetsAt: 1 }, { label: 'Weekly', usedPercent: 63, resetsAt: 2 }];
+  assert.equal(usageText(limits), '5-hour 29% used, Weekly 63% used');
+  assert.equal(usageWorst(limits), '63% used');
+  assert.equal(usageText([]), '');
+  assert.equal(usageWorst(undefined), '');
+  assert.equal(usageWorst([{ label: 'x', usedPercent: 'many' }]), '');
 });

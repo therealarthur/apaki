@@ -23,7 +23,7 @@ import { SHOW_TOOL, artifactCard, kindGlyph, kindLabel, linkCard, parseOpened, p
 // TodoWrite as a live checklist (todos.js, 2026-10-12).
 import { continuesList, hasTodos, normalizeTodos, paintTodos, sameTodos } from './todos.js';
 // A Codex pane is this same pane with the Codex app's pickers, patches and footer (codex.js, 2026-10-12).
-import { CODEX_LOCAL, CODEX_MODES, codexFooter, codexMode, earlierText, effortNames, findModel, isCodexId, modelLabel, patchArgs, patchHtml, pickMode, pickModel } from './codex.js';
+import { CODEX_LOCAL, CODEX_MODES, codexFooter, codexMode, earlierText, effortNames, findModel, isCodexId, modelLabel, patchArgs, patchHtml, pickMode, pickModel, usageText, usageWorst } from './codex.js';
 // The branch label in the header when the conversation's folder is in a git repository (worktree.js, 2026-10-12).
 import { GLYPH_WORKTREE, branchLabel, branchName, changeText, relPath, tooltip, trouble } from './worktree.js';
 
@@ -419,9 +419,11 @@ Click for changes, commit, push, pull request, merge`;
     if (!b) return;
     // A key says so beside its name (Arthur, 2026-10-09): it bills per token, a subscription does not.
     const key = b.isKey ? '<span class="key-tag" aria-label="(API key)">API key</span>' : '';
-    this.$.billing.innerHTML = `<span class="bn">${esc(b.name)}</span>${key}${b.follow && !/glass/i.test(b.name) ? '<span class="src">Glass</span>' : ''}`;
+    // A Codex account says how much of its plan's windows is used (the server's numbers, kept current by the engine).
+    const used = this.kind === 'codex' ? usageWorst(b.limits) : '';
+    this.$.billing.innerHTML = `<span class="bn">${esc(b.name)}</span>${key}${b.follow && !/glass/i.test(b.name) ? '<span class="src">Glass</span>' : used ? `<span class="src">${esc(used)}</span>` : ''}`;
     this.$.billing.title = this.kind === 'codex'
-      ? `Codex bills ${b.name}${b.isKey ? ' (API key, billed per token)' : ''}. Myrlin Glass switches the signed-in account.`
+      ? `Codex bills ${b.name}${b.isKey ? ' (API key, billed per token)' : ''}.${usageText(b.limits) ? ` Plan usage: ${usageText(b.limits)}.` : ''} Myrlin Glass switches the signed-in account.`
       : `Billing: ${b.name}${b.isKey ? ' (API key, billed per token)' : ''}${b.follow ? ' (follows Myrlin Glass)' : ''} · click to change`;
   }
 
@@ -447,6 +449,9 @@ Click for changes, commit, push, pull request, merge`;
   }
 
   /** The meter in the settings line: a thin bar and the percentage, warmer as the window fills. */
+  /** The name of what runs this conversation, for the lines that say who is working. */
+  agentName() { return this.kind === 'codex' ? 'Codex' : 'Claude'; }
+
   renderContext() {
     const b = this.$.ctx;
     const c = this.ctx;
@@ -459,9 +464,9 @@ Click for changes, commit, push, pull request, merge`;
     b.classList.toggle('warm', pct >= 70 && pct < 88);
     b.classList.toggle('full', pct >= 88);
     const k = (n) => (n == null ? '?' : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-    const auto = typeof c.autoCompact === 'number' ? ` Claude Code compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off: Compact now (click) summarizes it when you choose.' : '';
+    const auto = typeof c.autoCompact === 'number' ? ` ${this.kind === 'codex' ? 'Codex' : 'Claude Code'} compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off: Compact now (click) summarizes it when you choose.' : '';
     b.title = c.estimate
-      ? `Context: about ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens (${pct}%) at the last reply, from the transcript; exact once Claude runs here.`
+      ? `Context: about ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens (${pct}%) at the last reply, from the transcript; exact once ${this.agentName()} runs here.`
       : `Context: ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens used (${pct}%).${auto} Click for the breakdown.`;
     b.classList.toggle('estimate', Boolean(c.estimate));
     b.setAttribute('aria-label', `Context ${pct}% used`);
@@ -475,7 +480,7 @@ Click for changes, commit, push, pull request, merge`;
     const items = [{ heading: `Context ${Math.round(c.percentage)}% · ${k(c.totalTokens || 0)} of ${k(c.maxTokens || 0)}` }];
     for (const u of c.used || []) items.push({ label: u.name, hint: `${k(u.tokens)} tokens`, value: null, disabled: true });
     items.push({ divider: true });
-    items.push({ label: 'Compact now', hint: 'summarize the conversation to free the window', value: 'compact', disabled: this.busy ? 'Wait until Claude finishes' : false });
+    items.push({ label: 'Compact now', hint: 'summarize the conversation to free the window', value: 'compact', disabled: this.busy ? `Wait until ${this.agentName()} finishes` : false });
     items.push({ label: 'Measure again', value: 'refresh' });
     menu(this.$.ctx, items, {
       width: 300,
@@ -1680,7 +1685,8 @@ Click for changes, commit, push, pull request, merge`;
     b.textContent = { send: 'Send', queue: 'Queue', stop: 'Stop' }[mode];
     b.classList.toggle('stop', mode === 'stop');
     b.classList.toggle('queue', mode === 'queue');
-    b.title = { send: 'Send (Enter)', queue: 'Queue this for when Claude finishes (Enter). Ctrl+Enter steers it in now', stop: 'Stop Claude (Esc)' }[mode];
+    const who = this.agentName();
+    b.title = { send: 'Send (Enter)', queue: `Queue this for when ${who} finishes (Enter). Ctrl+Enter steers it in now`, stop: `Stop ${who} (Esc)` }[mode];
   }
 
   /** Stops the running turn. Queued messages stay; they do not go out on their own after a stop. */
@@ -1747,13 +1753,13 @@ Click for changes, commit, push, pull request, merge`;
     // While Claude works: Steer adds the message to the current work now.
     // After a stop (nothing to steer): Send starts a new turn with it.
     const act = this.busy ? 'Steer' : 'Send';
-    const actTip = this.busy ? 'Add this to what Claude is doing now, without stopping it (Ctrl+Enter in the box does the same)' : 'Send this now';
+    const actTip = this.busy ? `Add this to what ${this.agentName()} is doing now, without stopping it (Ctrl+Enter in the box does the same)` : 'Send this now';
     // Rebuilt only when something changed: a row replaced between press and release swallows the click
     // (2026-10-10, "the steer button doesnt work").
     const sig = `${this.busy}|${this.queue.map((it) => `${it.id}:${it.text.length}:${it.attachments.length}`).join(',')}`;
     if (sig === this.queueSig && box.childElementCount) return;
     this.queueSig = sig;
-    box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? 'Sends when Claude finishes · Steer or Ctrl+Enter adds it now' : 'Not sent: Claude was stopped'}</span></div>`
+    box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? `Sends when ${this.agentName()} finishes · Steer or Ctrl+Enter adds it now` : `Not sent: ${this.agentName()} was stopped`}</span></div>`
       + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} ${it.attachments.every((a) => a.url) ? 'image' : 'file'}${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" data-q="act" title="${actTip}">${act}</button><button class="q-edit" data-q="edit" title="Put it back in the message box to change it (Up arrow in an empty box does the same)">Edit</button><button class="q-x" data-q="x" title="Remove" aria-label="Remove">×</button></div>`).join('');
     // One listener for the whole list (set once), reading the row and the button at click time.
     if (!box.dataset.wired) {
@@ -2009,7 +2015,7 @@ Click for changes, commit, push, pull request, merge`;
         // Re-attached (the background host kept this Claude Code process running): nothing was cut off.
         if (this.crashNote && e.attached) this.crashNote = false;
         if (this.crashNote) { this.openNotes.push([this.kind === 'codex' ? 'Apaki closed while Codex was working here, and its Codex process stopped with it. Everything it did until then is above; send a message to carry on.' : 'Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
-        if (this.turnStoppedNote) { this.openNotes.push(['The engine restarted while Claude was working here, and that turn stopped. Everything until then is above; send a message to carry on.', 'warn']); this.turnStoppedNote = false; }
+        if (this.turnStoppedNote) { this.openNotes.push([`The engine restarted while ${this.agentName()} was working here, and that turn stopped. Everything until then is above; send a message to carry on.`, 'warn']); this.turnStoppedNote = false; }
         if (e.sessionId !== this.sessionId || e.reset) this.liveTasks.clear();
         this.renderTasksButton();
         if (!e.sessionId) this.flushOpenNotes();
@@ -2056,7 +2062,7 @@ Click for changes, commit, push, pull request, merge`;
         if (this.busy && !it.steerRetried) { it.steerRetried = true; setTimeout(() => (this.busy ? this.steerItem(e.qid, it) : this.sendNow(it.text, it.attachments)), 1000); break; }
         if (this.busy) {
           this.queue.unshift(it); this.renderQueue(); this.syncQueue();
-          this.note('Could not add that to the running turn; it goes out as soon as Claude finishes.', 'warn');
+          this.note(`Could not add that to the running turn; it goes out as soon as ${this.agentName()} finishes.`, 'warn');
           break;
         }
         this.sendNow(it.text, it.attachments);

@@ -436,14 +436,36 @@ export function limitEvents(snapshot) {
   return out;
 }
 
+/**
+ * The same snapshot as the billing chip's usage list: [{ label: '5-hour' | 'Weekly', usedPercent, resetsAt }] with resetsAt
+ * as the server gives it (seconds since the epoch). A window of six hours or less is the 5-hour one; anything longer is the
+ * weekly one, as in limitEvents.
+ */
+export function limitsOf(snapshot) {
+  const out = [];
+  for (const w of [snapshot?.primary, snapshot?.secondary]) {
+    if (!isObj(w) || !Number.isFinite(w.usedPercent)) continue;
+    const mins = Number(w.windowDurationMins) || 0;
+    out.push({ label: mins && mins <= 360 ? '5-hour' : 'Weekly', usedPercent: Math.max(0, Math.min(100, Math.round(w.usedPercent))), resetsAt: Number(w.resetsAt) || null });
+  }
+  return out;
+}
+
 /* ---------- the context meter ---------- */
+
+/** The percent of the window at which Codex compacts on its own, from the configured token limit; null when not set. */
+function autoCompactOf(win, limit) {
+  const l = Number(limit);
+  return win && Number.isFinite(l) && l > 0 ? Math.min(100, Math.round((100 * l) / win)) : null;
+}
 
 /**
  * thread/tokenUsage/updated as the pane's context event: how full the model's window is after the last call, and where
  * the tokens went. `last` is the latest call (what is in the window now); `total` is the whole thread's spend.
- * No window size (the server did not say) gives no percentage, and the meter stays hidden.
+ * No window size (the server did not say) gives no percentage, and the meter stays hidden. autoCompactLimit is the
+ * user's Codex setting model_auto_compact_token_limit (tokens), shown as the percent of the window where Codex compacts.
  */
-export function contextFromUsage(usage, { model = null, threadId = null } = {}) {
+export function contextFromUsage(usage, { model = null, threadId = null, autoCompactLimit = null } = {}) {
   const last = usage?.last || {};
   const win = Number(usage?.modelContextWindow) || null;
   const total = Number(last.totalTokens) || 0;
@@ -457,7 +479,7 @@ export function contextFromUsage(usage, { model = null, threadId = null } = {}) 
     { name: 'Output', tokens: output },
     { name: 'Reasoning', tokens: reasoning },
   ].filter((u) => u.tokens > 0);
-  return { percentage: win && total ? Math.min(100, Math.round((100 * total) / win)) : null, totalTokens: total || null, maxTokens: win, autoCompact: null, model, sessionId: threadId ? codexId(threadId) : null, used, codex: true };
+  return { percentage: win && total ? Math.min(100, Math.round((100 * total) / win)) : null, totalTokens: total || null, maxTokens: win, autoCompact: autoCompactOf(win, autoCompactLimit), model, sessionId: threadId ? codexId(threadId) : null, used, codex: true };
 }
 
 /* ---------- what is sent to the model ---------- */

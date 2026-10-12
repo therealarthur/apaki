@@ -462,3 +462,36 @@ test('/init is an ordinary turn with an AGENTS.md prompt; /mention attaches a fi
   await third;
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('the context meter follows thread/tokenUsage/updated, with the percent where the user\'s own auto-compact setting compacts', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const s = setup({ table: { 'config/read': { config: { model: 'm1', model_auto_compact_token_limit: 9000 } } } });
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  s.client.emit('notification', 'thread/tokenUsage/updated', { threadId: THREAD, turnId: 'T', tokenUsage: { total: { totalTokens: 9000 }, last: { totalTokens: 1500, inputTokens: 1500 }, modelContextWindow: 10000 } });
+  t.mock.timers.tick(300);
+  const ctx = s.of('context').at(-1);
+  assert.equal(ctx.percentage, 15);
+  assert.equal(ctx.autoCompact, 90);
+});
+
+test('the billing chip carries the plan windows: read when the account is, and refreshed by account/rateLimits/updated; a key has none', async () => {
+  const win = (p, mins) => ({ usedPercent: p, windowDurationMins: mins, resetsAt: 1000 });
+  const s = setup({ table: { 'account/rateLimits/read': { rateLimits: { primary: win(29, 300), secondary: win(33, 10080) } } } });
+  const p = s.pane('p1');
+  s.pane('p2').kind = 'claude';
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  s.codex.models('m1');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(s.of('codexModels').at(-1).account.limits.map((l) => [l.label, l.usedPercent]), [['5-hour', 29], ['Weekly', 33]]);
+  s.client.emit('notification', 'account/rateLimits/updated', { rateLimits: { primary: win(41, 300), secondary: win(33, 10080) } });
+  const b = s.of('billing').at(-1);
+  assert.equal(b.paneId, 'p1', 'only Codex panes hear it');
+  assert.equal(b.limits[0].usedPercent, 41);
+  assert.equal(b.name, 'ChatGPT Pro');
+  // An API key has no plan windows.
+  const k = setup({ table: { 'account/read': { account: { type: 'apiKey' } } } });
+  k.codex.models('m2');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(k.of('codexModels').at(-1).account.limits, []);
+});

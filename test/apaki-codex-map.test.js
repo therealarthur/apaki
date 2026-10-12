@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  PRESETS, approvalAsk, approvalReply, capPresets, clampPreset, codexId, contextFromUsage, effortFor, elicitationAsk, elicitationReply, friendlyError, hookMessage, isCodexSessionId,
+  PRESETS, approvalAsk, approvalReply, capPresets, clampPreset, codexId, contextFromUsage, limitsOf, effortFor, elicitationAsk, elicitationReply, friendlyError, hookMessage, isCodexSessionId,
   limitEvents, normalizeModels, plainCommand, presetOf, questionAsk, questionReply, reasoningText, rerouteMessage, threadIdOf, threadPermissions, threadRow, threadTitle, todoWriteOf,
   toolResultOf, toolUseOf, turnInput, turnPermissions, turnsToMessages, userInputText,
 } from '../apaki/engine/codex-map.js';
@@ -200,6 +200,12 @@ test('context: the last call over the window; no window, no percentage', () => {
   assert.deepEqual(c.used, [{ name: 'Input', tokens: 200 }, { name: 'Cached input', tokens: 1000 }, { name: 'Output', tokens: 250 }, { name: 'Reasoning', tokens: 50 }]);
   assert.equal(contextFromUsage({ ...usage, modelContextWindow: null }).percentage, null);
   assert.equal(contextFromUsage({ ...usage, last: { totalTokens: 99999 } }).percentage, 100);
+  // The user's own auto-compact setting shows as the percent of the window where Codex compacts; unset or nonsense shows nothing.
+  assert.equal(c.autoCompact, null);
+  assert.equal(contextFromUsage(usage, { autoCompactLimit: 9000 }).autoCompact, 90);
+  assert.equal(contextFromUsage(usage, { autoCompactLimit: 20000 }).autoCompact, 100);
+  assert.equal(contextFromUsage(usage, { autoCompactLimit: 'x' }).autoCompact, null);
+  assert.equal(contextFromUsage({ ...usage, modelContextWindow: null }, { autoCompactLimit: 9000 }).autoCompact, null);
 });
 
 test('turn input: text, pictures as data URLs, other files as mentions of where they were saved', () => {
@@ -305,4 +311,12 @@ test('elicitation: a tool-call approval is a permission sheet, a form the questi
   assert.equal(elicitationAsk({ serverName: 's', mode: 'url', url: 'javascript:alert(1)' }), null, 'only web addresses');
   assert.equal(elicitationAsk({ serverName: 's', mode: 'openai/userVerification', challenge: 'c' }), null);
   assert.equal(elicitationAsk(null), null);
+});
+
+test('limitsOf: the plan windows as the chip lists them', () => {
+  assert.deepEqual(limitsOf({ primary: { usedPercent: 29.4, windowDurationMins: 300, resetsAt: 100 }, secondary: { usedPercent: 140, windowDurationMins: 10080, resetsAt: 200 } }), [
+    { label: '5-hour', usedPercent: 29, resetsAt: 100 }, { label: 'Weekly', usedPercent: 100, resetsAt: 200 },
+  ]);
+  assert.deepEqual(limitsOf({ primary: { usedPercent: 'x' }, secondary: null }), []);
+  assert.deepEqual(limitsOf(null), []);
 });

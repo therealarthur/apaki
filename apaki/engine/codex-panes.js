@@ -39,7 +39,7 @@ import { CodexHistory, PAGE as HISTORY_PAGE } from './codex-history.js';
 import { createRolloutScanner } from './codex-rollouts.js';
 import {
   DEFAULT_PRESET, PRESET_NAMES, approvalAsk, approvalReply, assistantMessage, capPresets, clampPreset, codexId, contextFromUsage, effortFor, elicitationAsk, elicitationReply, friendlyError, hookMessage,
-  informational, isPreset, limitEvents, messageStart, normalizeModels, presetOf, questionAsk, questionReply, reasoningText, rerouteMessage, streamEvent, textDelta, textStart, threadIdOf, threadPermissions, threadRow,
+  informational, isPreset, limitEvents, limitsOf, messageStart, normalizeModels, presetOf, questionAsk, questionReply, reasoningText, rerouteMessage, streamEvent, textDelta, textStart, threadIdOf, threadPermissions, threadRow,
   threadTitle, todoWriteOf, toolOutput, toolResultMessage, toolResultOf, toolUseOf, turnInput, turnPermissions,
 } from './codex-map.js';
 
@@ -212,6 +212,10 @@ export function createCodex(env) {
     }
     if (!shared.account) {
       try { shared.account = (await c.request('account/read', {}))?.account || {}; } catch { shared.account = {}; }
+      // What is left of the plan's windows, for the billing chip (only a ChatGPT sign-in has them).
+      if (shared.account.type === 'chatgpt') {
+        try { shared.limits = limitsOf((await c.request('account/rateLimits/read', {}))?.rateLimits); } catch { shared.limits = []; }
+      } else shared.limits = [];
     }
     return shared;
   }
@@ -219,9 +223,9 @@ export function createCodex(env) {
   /** The account line the billing chip shows ("ChatGPT Pro"): Codex bills the signed-in ChatGPT account or an API key. */
   function billingOf() {
     const a = shared.account || {};
-    if (a.type === 'apiKey') return { name: 'API key', source: 'codex', follow: false, isKey: true };
+    if (a.type === 'apiKey') return { name: 'API key', source: 'codex', follow: false, isKey: true, limits: [] };
     const plan = a.planType ? String(a.planType).replace(/^./, (c) => c.toUpperCase()) : '';
-    return { name: a.type === 'chatgpt' ? `ChatGPT${plan ? ` ${plan}` : ''}` : 'Codex', source: 'codex', follow: false, isKey: false };
+    return { name: a.type === 'chatgpt' ? `ChatGPT${plan ? ` ${plan}` : ''}` : 'Codex', source: 'codex', follow: false, isKey: false, limits: shared.limits || [] };
   }
 
   const modelOf = (id) => shared.models?.find((m) => m.id === id) || null;
@@ -668,7 +672,7 @@ export function createCodex(env) {
   function sendContext(p, reqId = null) {
     const cx = p.codex;
     if (!cx?.usage) { if (reqId) emit({ ev: 'context', reqId, paneId: p.id, none: true }); return; }
-    emit({ ev: 'context', reqId, paneId: p.id, ...contextFromUsage(cx.usage, { model: p.model, threadId: cx.threadId }) });
+    emit({ ev: 'context', reqId, paneId: p.id, ...contextFromUsage(cx.usage, { model: p.model, threadId: cx.threadId, autoCompactLimit: shared.config?.model_auto_compact_token_limit }) });
   }
 
   function contextSoon(p) {
@@ -761,6 +765,9 @@ export function createCodex(env) {
         loadShared().then(() => { for (const p of panes.values()) if (isCodexPane(p)) emit({ ev: 'billing', paneId: p.id, ...billingOf() }); }).catch(() => {});
         return;
       case 'account/rateLimits/updated':
+        // The chip's usage line follows the server's numbers (the warnings below say it when it matters).
+        shared.limits = limitsOf(params?.rateLimits);
+        for (const p of panes.values()) if (isCodexPane(p)) emit({ ev: 'billing', paneId: p.id, ...billingOf() });
         for (const msg of limitEvents(params?.rateLimits)) for (const p of panes.values()) if (isCodexPane(p) && p.codex.threadId) sdk(p, msg);
         return;
       case 'warning':

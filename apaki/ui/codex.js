@@ -39,6 +39,20 @@ export const CODEX_LOCAL = Object.freeze([
   { name: 'fork', description: 'Fork this conversation into a new one' },
 ]);
 
+/**
+ * The plan's usage windows the engine sends with the account (billing.limits, from account/rateLimits): one line for the
+ * chip's tooltip, and the worst window's percentage for the small word beside the account name. Both empty when the
+ * server did not say (an API key has none).
+ */
+export function usageText(limits) {
+  const rows = (Array.isArray(limits) ? limits : []).filter((l) => l && Number.isFinite(l.usedPercent));
+  return rows.map((l) => `${l.label} ${Math.round(l.usedPercent)}% used`).join(', ');
+}
+export function usageWorst(limits) {
+  const rows = (Array.isArray(limits) ? limits : []).filter((l) => l && Number.isFinite(l.usedPercent));
+  return rows.length ? `${Math.round(Math.max(...rows.map((l) => l.usedPercent)))}% used` : '';
+}
+
 /** The model a model id names, or null. */
 export const findModel = (models, id) => (Array.isArray(models) ? models.find((m) => m.id === id) || null : null);
 
