@@ -70,9 +70,11 @@ export const DEV_INSTRUCTIONS = [
 export const COMMANDS = Object.freeze([
   { name: 'compact', description: 'Summarize the conversation to free the context window', argumentHint: '' },
   { name: 'status', description: 'Model, effort, permissions, folder and thread id', argumentHint: '' },
-  { name: 'review', description: 'Review the uncommitted changes in this folder', argumentHint: '' },
+  { name: 'review', description: 'Review the uncommitted changes, a branch, a commit, or what you describe', argumentHint: '[branch <name> | commit <sha> | instructions]' },
   { name: 'diff', description: 'Show what this conversation changed in its last turn', argumentHint: '' },
   { name: 'mcp', description: 'List the tool servers this thread can use', argumentHint: '' },
+  { name: 'goal', description: 'Set, show or clear the goal Codex keeps working toward', argumentHint: '[what to get done | clear]' },
+  { name: 'revert', description: 'Take the last exchange out of this conversation (files stay as they are)', argumentHint: '' },
   { name: 'init', description: 'Have Codex write an AGENTS.md for this folder', argumentHint: '' },
   { name: 'mention', description: 'Attach a file to your next message', argumentHint: '<file>' },
 ]);
@@ -87,6 +89,20 @@ export const INIT_PROMPT = [
 
 /** True for a pane that runs a Codex thread. */
 export const isCodexPane = (p) => p?.kind === 'codex';
+
+/**
+ * What /review is asked to look at: nothing after the word means the uncommitted changes; "branch main" the changes
+ * against that base branch; "commit abc123" one commit; anything else is read as the review instructions.
+ */
+export function reviewTarget(arg) {
+  const a = String(arg || '').trim();
+  if (!a) return { type: 'uncommittedChanges' };
+  let m = /^(?:branch|base)\s+(\S+)$/i.exec(a);
+  if (m) return { type: 'baseBranch', branch: m[1] };
+  m = /^commit\s+([0-9a-f]{6,40})$/i.exec(a);
+  if (m) return { type: 'commit', sha: m[1] };
+  return { type: 'custom', instructions: a };
+}
 
 /**
  * The `-c key=value` overrides for the app-server process (and only for it): Apaki's tool server, and the variables a
@@ -299,7 +315,7 @@ export function createCodex(env) {
     return {
       threadId: null, turnId: null, loaded: false, cwd: '', touched: { model: false, effort: false, mode: false },
       items: new Map(), blocks: new Map(), blockSeq: 0, out: new Map(), sentIds: new Set(), reqByTurn: new Map(), planSeq: 0,
-      usage: null, mentions: [], contextTimer: null, startedAt: 0, diffs: new Map(), lastDiffTurn: null, compactWait: null, opts,
+      usage: null, mentions: [], goalStatus: null, contextTimer: null, startedAt: 0, diffs: new Map(), lastDiffTurn: null, compactWait: null, opts,
     };
   }
 
@@ -518,10 +534,11 @@ export function createCodex(env) {
   async function send(reqId, p, text, attachments = []) {
     const cx = p.codex;
     const body = String(text || '').trim();
-    const slash = /^\/(compact|status|review|diff|mcp)\b\s*$/i.exec(body);
+    const slash = /^\/(compact|status|diff|mcp|revert)\b\s*$/i.exec(body);
     if (slash && !attachments.length) { await slashCommand(reqId, p, slash[1].toLowerCase()); return; }
-    const mention = /^\/mention\b\s*(.*)$/is.exec(body);
-    if (mention && !attachments.length) { await slashCommand(reqId, p, 'mention', mention[1]); return; }
+    // The commands that take words after them.
+    const withArg = /^\/(mention|review|goal)\b\s*(.*)$/is.exec(body);
+    if (withArg && !attachments.length) { await slashCommand(reqId, p, withArg[1].toLowerCase(), withArg[2]); return; }
     // /init is an ordinary turn with Codex's own kind of prompt.
     if (/^\/init\s*$/i.test(body) && !attachments.length) text = INIT_PROMPT;
     try {
@@ -653,11 +670,46 @@ export function createCodex(env) {
         if (p.busy && !cx.turnId) { p.busy = false; p.inTurn = false; done(); turnEnded(p, { status: 'completed' }); }
         return;
       }
+      // What changes the thread itself follows the phone rules the session menu has: Chat only reads, it does not rewrite.
+      const changes = name === 'revert' || (name === 'goal' && String(arg || '').trim());
+      if (changes && phoneCap(p.id) === 'chat') { note(p, 'This phone is set to Chat only on the PC, which cannot change the conversation itself.', 'warn'); done(); return; }
+      if (name === 'revert') {
+        // thread/revert drops the newest turn (and any after it) from the thread's history; what Codex changed on disk stays.
+        if (p.busy) { note(p, 'Wait until Codex finishes, or stop it first.', 'warn'); done(); return; }
+        const last = await rpc('thread/turns/list', { threadId: cx.threadId, limit: 1, sortDirection: 'desc', itemsView: 'summary' });
+        const turn = (Array.isArray(last?.data) ? last.data : [])[0];
+        if (!turn?.id) { note(p, 'There is nothing to take out yet.'); done(); return; }
+        await rpc('thread/revert', { threadId: cx.threadId, beforeTurnId: turn.id });
+        cx.usage = null;
+        await sendHistory(p, { refresh: true });
+        note(p, 'The last exchange is out of this conversation. Files Codex changed stay as they are.');
+        shared.rowsAt = 0;
+        done();
+        return;
+      }
+      if (name === 'goal') {
+        const a = String(arg || '').trim();
+        if (!a) {
+          const r = await rpc('thread/goal/get', { threadId: cx.threadId });
+          cx.goalStatus = r?.goal?.status || null;
+          note(p, r?.goal ? goalLine(r.goal) : 'No goal is set. /goal followed by what you want done sets one.');
+        } else if (/^(clear|off|none)$/i.test(a)) {
+          await rpc('thread/goal/clear', { threadId: cx.threadId });
+          cx.goalStatus = null;
+          note(p, 'The goal is cleared.');
+        } else {
+          const r = await rpc('thread/goal/set', { threadId: cx.threadId, objective: a, origin: 'user' });
+          cx.goalStatus = r?.goal?.status || cx.goalStatus;
+          note(p, r?.goal ? goalLine(r.goal) : 'The goal is set.');
+        }
+        done();
+        return;
+      }
       if (name === 'review') {
         p.busy = true;
         p.inTurn = true;
         cx.startedAt = Date.now();
-        const r = await rpc('review/start', { threadId: cx.threadId, target: { type: 'uncommittedChanges' }, delivery: 'inline' });
+        const r = await rpc('review/start', { threadId: cx.threadId, target: reviewTarget(arg), delivery: 'inline' });
         if (r?.turn?.id) { cx.turnId = cx.turnId || r.turn.id; cx.reqByTurn.set(r.turn.id, reqId); }
       }
     } catch (e) {
@@ -665,6 +717,13 @@ export function createCodex(env) {
       p.inTurn = false;
       emit({ ev: 'error', reqId, paneId: p.id, message: e.message || String(e) });
     }
+  }
+
+  /** One line saying what the thread's goal is and where it stands. */
+  function goalLine(g) {
+    const state = { active: 'working toward it', paused: 'paused', blocked: 'blocked', usageLimited: 'stopped by a usage limit', budgetLimited: 'stopped at its token budget', complete: 'done' }[g?.status] || g?.status || 'set';
+    const k = Number(g?.tokensUsed) >= 1000 ? `, ${Math.round(Number(g.tokensUsed) / 1000)}k tokens used` : '';
+    return `Goal: ${g?.objective || '(none)'} (${state}${k}).`;
   }
 
   /* ---------- the context meter ---------- */
@@ -834,6 +893,13 @@ export function createCodex(env) {
       case 'model/rerouted': sdk(p, rerouteMessage(params)); break;
       case 'thread/name/updated':
         if (params.threadName) { p.codexTitle = params.threadName; emit({ ev: 'renamed', paneId: p.id, sessionId: p.sessionId, title: params.threadName, ok: true }); shared.rowsAt = 0; }
+        break;
+      // A goal Codex moved on its own (done, blocked, out of budget, or changed in the Codex app): said once per change of state.
+      case 'thread/goal/updated':
+        if (params.goal && params.goal.status !== cx.goalStatus) { cx.goalStatus = params.goal.status; note(p, goalLine(params.goal)); }
+        break;
+      case 'thread/goal/cleared':
+        if (cx.goalStatus) { cx.goalStatus = null; note(p, 'The goal was cleared.'); }
         break;
       case 'thread/compacted':
       case 'context/compacted':

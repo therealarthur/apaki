@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { CODEX_SHARED, createCodex, isCodexPane } from '../apaki/engine/codex-panes.js';
+import { CODEX_SHARED, createCodex, isCodexPane, reviewTarget } from '../apaki/engine/codex-panes.js';
 
 const THREAD = '01a00000-0000-7000-8000-000000000001';
 const THREAD2 = '01a00000-0000-7000-8000-000000000002';
@@ -494,4 +494,80 @@ test('the billing chip carries the plan windows: read when the account is, and r
   k.codex.models('m2');
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(k.of('codexModels').at(-1).account.limits, []);
+});
+
+test('/review takes a branch, a commit or instructions; with nothing it reviews the uncommitted changes', async () => {
+  assert.deepEqual(reviewTarget(''), { type: 'uncommittedChanges' });
+  assert.deepEqual(reviewTarget('branch main'), { type: 'baseBranch', branch: 'main' });
+  assert.deepEqual(reviewTarget('base origin/dev'), { type: 'baseBranch', branch: 'origin/dev' });
+  assert.deepEqual(reviewTarget('commit 3fa9c0d'), { type: 'commit', sha: '3fa9c0d' });
+  assert.deepEqual(reviewTarget('commit nothex'), { type: 'custom', instructions: 'commit nothex' });
+  assert.deepEqual(reviewTarget('look at the error handling'), { type: 'custom', instructions: 'look at the error handling' });
+  const s = setup({ table: { 'review/start': () => ({ turn: { id: 'RT' } }) } });
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  s.codex.send('rv', p, '/review branch main', []);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(s.client.of('review/start')[0], { threadId: THREAD, target: { type: 'baseBranch', branch: 'main' }, delivery: 'inline' });
+  assert.equal(p.busy, true, 'a review is a turn');
+});
+
+test('/revert takes the newest turn out of the thread and redraws it; /goal sets, shows and clears, and says when Codex moves the goal', async () => {
+  const goal = { threadId: THREAD, objective: 'ship it', status: 'active', tokensUsed: 5200 };
+  const s = setup({ table: {
+    'thread/turns/list': (params) => (params.limit === 1 ? { data: [{ id: 'TURN9', status: 'completed', items: [] }], nextCursor: null } : { data: [], nextCursor: null }),
+    'thread/revert': { thread: thread() },
+    'thread/goal/set': () => ({ goal }), 'thread/goal/get': () => ({ goal }), 'thread/goal/clear': {},
+  } });
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  const notes = () => s.of('note').map((n) => n.text);
+  await s.codex.send('v1', p, '/revert', []);
+  assert.deepEqual(s.client.of('thread/revert')[0], { threadId: THREAD, beforeTurnId: 'TURN9' });
+  assert.match(notes().at(-1), /Files Codex changed stay/);
+  assert.ok(s.of('history').length >= 1, 'the pane is drawn again from the server');
+  // nothing to take out
+  const empty = setup({ table: { 'thread/turns/list': { data: [], nextCursor: null } } });
+  const q = empty.pane('p1');
+  await empty.codex.open('r', q, `codex:${THREAD}`, null, {});
+  await empty.codex.send('v2', q, '/revert', []);
+  assert.equal(empty.client.of('thread/revert').length, 0);
+  assert.match(empty.of('note').at(-1).text, /nothing to take out/);
+  // a running turn is never reverted under its feet
+  p.busy = true;
+  await s.codex.send('v3', p, '/revert', []);
+  assert.equal(s.client.of('thread/revert').length, 1);
+  p.busy = false;
+  // goals
+  await s.codex.send('g1', p, '/goal ship it', []);
+  assert.deepEqual(s.client.of('thread/goal/set')[0], { threadId: THREAD, objective: 'ship it', origin: 'user' });
+  assert.match(notes().at(-1), /Goal: ship it \(working toward it, 5k tokens used\)/);
+  s.client.emit('notification', 'thread/goal/updated', { threadId: THREAD, goal });
+  assert.equal(s.of('note').filter((n) => /Goal:/.test(n.text)).length, 1, 'no repeat for a state it already said');
+  s.client.emit('notification', 'thread/goal/updated', { threadId: THREAD, goal: { ...goal, status: 'complete' } });
+  assert.match(notes().at(-1), /\(done/);
+  await s.codex.send('g2', p, '/goal', []);
+  assert.match(notes().at(-1), /Goal: ship it/);
+  await s.codex.send('g3', p, '/goal clear', []);
+  assert.equal(s.client.of('thread/goal/clear').length, 1);
+  assert.match(notes().at(-1), /cleared/);
+});
+
+test('a Chat only phone may read the goal but cannot set it or take a turn out of the thread; No shell may', async () => {
+  const goal = { threadId: THREAD, objective: 'ship it', status: 'active' };
+  const table = { 'thread/turns/list': { data: [{ id: 'T9', items: [] }], nextCursor: null }, 'thread/revert': { thread: thread() }, 'thread/goal/set': () => ({ goal }), 'thread/goal/get': () => ({ goal }) };
+  const chat = setup({ cap: 'chat', table });
+  const p = chat.pane('phone:AAAAAAAAAAAAAAAAAAAAAA:c1');
+  await chat.codex.open('r', p, `codex:${THREAD}`, null, {});
+  await chat.codex.send('a', p, '/revert', []);
+  await chat.codex.send('b', p, '/goal ship it', []);
+  assert.equal(chat.client.of('thread/revert').length + chat.client.of('thread/goal/set').length, 0);
+  assert.match(chat.of('note').at(-1).text, /Chat only/);
+  await chat.codex.send('c', p, '/goal', []);
+  assert.match(chat.of('note').at(-1).text, /Goal: ship it/);
+  const open = setup({ cap: 'noshell', table });
+  const q = open.pane('phone:AAAAAAAAAAAAAAAAAAAAAA:c1');
+  await open.codex.open('r', q, `codex:${THREAD}`, null, {});
+  await open.codex.send('d', q, '/revert', []);
+  assert.equal(open.client.of('thread/revert').length, 1);
 });

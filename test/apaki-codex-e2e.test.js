@@ -515,7 +515,7 @@ ${JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'use
   const p = await codexPane(w, h, 'c11', { sessionId: SMALL });
   w.send({ op: 'commands', reqId: 'cm', paneId: 'c11' });
   const cmds = await waitFor(w, 'commands', (m) => m.ev === 'commands' && m.paneId === 'c11');
-  assert.deepEqual(cmds.commands.map((c) => c.name), ['compact', 'status', 'review', 'diff', 'mcp', 'init', 'mention']);
+  assert.deepEqual(cmds.commands.map((c) => c.name), ['compact', 'status', 'review', 'diff', 'mcp', 'goal', 'revert', 'init', 'mention']);
 
   let mark = p.mark();
   await p.result(p.send('/status'));
@@ -527,6 +527,18 @@ ${JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'use
   await p.result(p.send('/compact'));
   assert.equal(h.requests('thread/compact/start').length, 1);
   assert.ok(p.sdk(mark).some((m) => m.subtype === 'compact_boundary'));
+
+  // /revert: the newest turn leaves the thread (the fake drops it from its history) and the pane is drawn again.
+  mark = p.mark();
+  await p.result(p.send('/revert'));
+  assert.equal(h.requests('thread/revert').length, 1);
+  assert.match(h.requests('thread/revert')[0].beforeTurnId, /^01a00000-/);
+  await waitFor(w, 'the redrawn history', (m) => m.ev === 'history' && m.paneId === 'c11' && w.events.indexOf(m) >= mark);
+  // /goal sets one for the thread
+  mark = p.mark();
+  await p.result(p.send('/goal tests green'));
+  assert.equal(h.requests('thread/goal/set')[0].objective, 'tests green');
+  assert.match(w.events.slice(mark).find((m) => m.ev === 'note' && m.paneId === 'c11').text, /Goal: tests green/);
 
   w.send({ op: 'rename', reqId: 'rn', sessionId: SMALL, title: 'Renamed in Apaki', paneId: 'c11' });
   const renamed = await waitFor(w, 'renamed', (m) => m.ev === 'renamed' && m.sessionId === SMALL && m.ok);

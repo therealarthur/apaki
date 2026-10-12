@@ -58,6 +58,7 @@ const threads = new Map([[ids.small, thread(ids.small, { name: 'Small thread' })
 
 /** History the turns/list answers with: small = one turn of every item kind; big = 200 turns of a question and an answer (400 messages: more than one page). */
 const hist = new Map();
+const goals = new Map();
 hist.set(ids.small, [{
   id: '01a00000-0000-7000-8000-0000000000a1', status: 'completed', startedAt: NOW - 600, completedAt: NOW - 590, durationMs: 10000, error: null, itemsView: 'full',
   items: [
@@ -214,6 +215,20 @@ const handlers = {
     return {};
   },
   'mcpServerStatus/list': () => ({ data: [{ name: 'apaki', authStatus: 'unsupported', tools: { show: {} } }], nextCursor: null }),
+  'thread/revert': (p) => {
+    const turns = hist.get(p.threadId) || [];
+    const at = turns.findIndex((t) => t.id === p.beforeTurnId);
+    if (at < 0) throw Object.assign(new Error('turn not found'), { code: -32600 });
+    hist.set(p.threadId, turns.slice(0, at));
+    return { thread: { ...threads.get(p.threadId), turns: [] }, turnsBackwardsCursor: null, itemsBackwardsCursor: null };
+  },
+  'thread/goal/get': (p) => ({ goal: goals.get(p.threadId) || null }),
+  'thread/goal/set': (p) => {
+    const g = { threadId: p.threadId, objective: p.objective, status: p.status || 'active', tokenBudget: p.tokenBudget ?? null, tokensUsed: 0, timeUsedSeconds: 0, createdAt: NOW, updatedAt: NOW };
+    goals.set(p.threadId, g);
+    return { goal: g };
+  },
+  'thread/goal/clear': (p) => ({ cleared: goals.delete(p.threadId) }),
   'review/start': (p) => ({ turn: { id: 'review-turn', items: [], status: 'inProgress' }, reviewThreadId: p.threadId }),
 };
 
