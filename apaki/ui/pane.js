@@ -29,6 +29,13 @@ import { GLYPH_WORKTREE, branchLabel, branchName, changeText, relPath, tooltip, 
 import { setTip } from './tooltip.js';
 // Every streaming reply in the window is painted by one painter (streampaint.js, 2026-10-12, input lag).
 import { createStreamPainter } from './streampaint.js';
+// Older messages of a long conversation are folded into chunks the browser can skip (chunks.js, pane.js sealOld).
+import { planChunks } from './chunks.js';
+
+// How many nodes at the end of a transcript stay open, and the size of a chunk (sealOld). SEAL_STAYS: nodes that stay loose.
+const SEAL_KEEP = 48;
+const SEAL_SIZE = 24;
+const SEAL_STAYS = '.hist-more, .arch-line, .hist-err, .takeover, .empty, .chunk';
 
 const painter = createStreamPainter();
 // A key press slows the stream updates for a moment, so typing never waits behind a paint.
@@ -746,6 +753,7 @@ Click for changes, commit, push, pull request, merge`;
     this._hadBox = this.hasBox();
     // Shown again after being hidden: replies that kept collecting text are drawn now, in one go (flushUnpainted).
     if (this._hadBox && had === false) this.flushUnpainted();
+    if (this._hadBox && had === false && this._sealPending && !this._sealAt) this._sealAt = requestAnimationFrame(() => this.sealOld());
     if (!this._hadBox || had !== false) return;
     const want = this.scrollMemo || { atEnd: true, top: 0 };
     const g = this.$.ground;
@@ -767,9 +775,69 @@ Click for changes, commit, push, pull request, merge`;
     this._pinRaf = requestAnimationFrame(() => { this._pinRaf = 0; this.updatePin(); });
   }
 
+  /** Your messages in the conversation, top to bottom. Older ones sit inside chunks (sealOld), so not only direct children. */
+  userTurns() {
+    return this.$.T.querySelectorAll('.turn-user');
+  }
+
+  /* ---------- long conversations: chunks (2026-10-12, input lag) ---------- */
+
+  // Thousands of top-level blocks made every update (a streamed word, a tool result, a composer resize) cost the browser
+  // a walk over all of them: about 7 ms per update in a 2400-message pane, per streaming pane per frame. Older
+  // messages are wrapped in groups of about SEAL_SIZE in a `.chunk` box that app.css gives content-visibility: auto and
+  // the height measured here, so what is off screen is skipped and the transcript has a hundred blocks, not thousands.
+  // The last SEAL_KEEP nodes stay open. Nothing is removed or rewritten: nodes are moved into a box, so every reference
+  // (tools, the todo card, links) stays valid, find-in-pane still walks all the text, and the pin counts through chunks.
+
+  /** Folds the older messages into chunks, when the pane has a box to measure in. Safe to call often. */
+  sealOld() {
+    this._sealAt = 0;
+    const T = this.$.T;
+    if (this._prepending || this._replaying || T.childElementCount < SEAL_KEEP + SEAL_SIZE) return;
+    // A pane in a background tab has no box to measure: it folds when it is shown (settleScroll).
+    if (!this.hasBox()) { this._sealPending = true; return; }
+    this._sealPending = false;
+    const kids = [...T.children];
+    const kinds = kids.map((n) => (n.classList.contains('turn-user') ? 'turn' : n.matches(SEAL_STAYS) ? 'skip' : 'item'));
+    const ranges = planChunks(kinds, { keep: SEAL_KEEP, size: SEAL_SIZE });
+    if (!ranges.length) return;
+    const g = this.$.ground;
+    const atEnd = g.scrollHeight - g.scrollTop - g.clientHeight < 40;
+    // The reader's place: the first node below the top edge of the conversation, and how far down it is.
+    const edge = g.getBoundingClientRect().top;
+    let anchor = null;
+    for (const n of kids) { if (n.getBoundingClientRect().bottom > edge) { anchor = n; break; } }
+    const y0 = anchor ? anchor.getBoundingClientRect().top : 0;
+    // Wrap first, measure, then switch the skipping on (a chunk that is skipped has no height to measure).
+    const made = ranges.map(([a, b]) => {
+      const c = document.createElement('div');
+      c.className = 'chunk';
+      kids[a].before(c);
+      c.append(...kids.slice(a, b));
+      return c;
+    });
+    const heights = made.map((c) => c.getBoundingClientRect().height);
+    // The remembered size is the content box's (a skipped chunk keeps its padding on top of it), so the padding comes off.
+    const pad = parseFloat(getComputedStyle(made[0]).paddingBottom) || 0;
+    made.forEach((c, i) => { c.style.containIntrinsicSize = `auto ${Math.max(1, Math.round(heights[i] - pad))}px`; c.classList.add('cv'); });
+    // Margins no longer collapse across a chunk's edge (app.css .chunk offsets that); keep the reader where they were.
+    if (atEnd) g.scrollTop = g.scrollHeight;
+    else if (anchor?.isConnected) g.scrollTop += anchor.getBoundingClientRect().top - y0;
+    this.chunkCount = (this.chunkCount || 0) + made.length;
+    this._sealedKids = T.childElementCount - SEAL_KEEP;
+  }
+
+  /** Folds soon (a frame later), once the transcript has grown enough beyond what is folded. Cheap to call after every update. */
+  sealSoon() {
+    // The transcript was cleared and drawn again (a refresh, another conversation): count from the start.
+    if (this.$.T.childElementCount < (this._sealedKids || 0) + SEAL_KEEP) this._sealedKids = 0;
+    if (this._sealAt || this.$.T.childElementCount < SEAL_KEEP + SEAL_SIZE * 2 + (this._sealedKids || 0)) return;
+    this._sealAt = requestAnimationFrame(() => this.sealOld());
+  }
+
   /** Your last message scrolled out above the top edge ({ el, n, of }), or null. */
   pinnedTurn() {
-    const turns = this.$.T.querySelectorAll(':scope > .turn-user');
+    const turns = this.userTurns();
     if (!turns.length) return null;
     // Not laid out (display: none, a hidden tab): every box measures 0, which read as "scrolled past" (2026-10-12).
     // No pin until it shows; the ground's ResizeObserver asks again then.
@@ -777,12 +845,24 @@ Click for changes, commit, push, pull request, merge`;
     if (!box.height) return null;
     const edge = box.top + 6;
     // Turns run top to bottom, so the last one above the edge is a binary search away.
+    // A turn inside a chunk (sealOld) is placed by its chunk's box first: a chunk wholly above or below the edge says
+    // so for all its turns, and only the chunk the edge runs through is asked turn by turn (asking a skipped chunk's
+    // turn makes the browser lay that chunk out). The answer is the same as asking every turn.
+    const above = (t) => {
+      const c = t.parentElement;
+      if (c && c.classList.contains('chunk')) {
+        const r = c.getBoundingClientRect();
+        if (r.bottom < edge) return true;
+        if (r.top >= edge) return false;
+      }
+      return t.getBoundingClientRect().bottom < edge;
+    };
     let lo = 0;
     let hi = turns.length - 1;
     let hit = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (turns[mid].getBoundingClientRect().bottom < edge) { hit = mid; lo = mid + 1; } else hi = mid - 1;
+      if (above(turns[mid])) { hit = mid; lo = mid + 1; } else hi = mid - 1;
     }
     // Counted over the whole conversation: the prompts before the first one loaded here come from the engine
     // (history prompts.before, 2026-10-11), so "N of M" is your real place, not "13 of 13" of a loaded page.
@@ -831,7 +911,7 @@ Click for changes, commit, push, pull request, merge`;
 
   /** The prompts drawn here, as the list shows them (a conversation the engine has no transcript of yet). */
   domPrompts() {
-    return [...this.$.T.querySelectorAll(':scope > .turn-user')].map((u, i) => ({ id: u.dataset.mid || `dom-${i}`, text: [...u.childNodes].filter((x) => x.nodeType === Node.TEXT_NODE).map((x) => x.textContent).join('').trim(), images: u.querySelectorAll('.imgs > *').length }));
+    return [...this.userTurns()].map((u, i) => ({ id: u.dataset.mid || `dom-${i}`, text: [...u.childNodes].filter((x) => x.nodeType === Node.TEXT_NODE).map((x) => x.textContent).join('').trim(), images: u.querySelectorAll('.imgs > *').length }));
   }
 
   /** ev historyPrompts: the menu. Prompts typed here since the engine read the transcript are added from the screen. */
@@ -841,7 +921,7 @@ Click for changes, commit, push, pull request, merge`;
     this._promptListReq = null;
     if (e.error) { this.note(e.error, 'warn'); return; }
     const list = Array.isArray(e.prompts) ? e.prompts.slice() : [];
-    const drawn = this.$.T.querySelectorAll(':scope > .turn-user').length + Math.max(0, this.promptsBefore || 0);
+    const drawn = this.userTurns().length + Math.max(0, this.promptsBefore || 0);
     if (drawn > list.length) list.push(...this.domPrompts().slice(list.length - drawn));
     this.showPromptList(want.anchor, list, want.current);
   }
@@ -862,10 +942,10 @@ Click for changes, commit, push, pull request, merge`;
    */
   async jumpToPrompt(p, i) {
     const find = () => {
-      if (p?.id) { const hit = this.$.T.querySelector(`:scope > .turn-user[data-mid="${CSS.escape(p.id)}"]`); if (hit) return hit; }
+      if (p?.id) { const hit = this.$.T.querySelector(`.turn-user[data-mid="${CSS.escape(p.id)}"]`); if (hit) return hit; }
       // By its place: the prompts before the loaded ones are counted (promptsBefore), the rest are drawn in order.
       const k = i - Math.max(0, this.promptsBefore || 0);
-      const turns = this.$.T.querySelectorAll(':scope > .turn-user');
+      const turns = this.userTurns();
       return k >= 0 && k < turns.length && this.promptsKnown !== false ? turns[k] : null;
     };
     let el = find();
@@ -967,7 +1047,7 @@ Click for changes, commit, push, pull request, merge`;
       a._raf = 0;
       if (!this.isShown()) { (this._unpainted ||= new Set()).add(a); return; }
       this.drawStream(a);
-    }, (this._settleStream ||= () => this.scrollDown()));
+    }, (this._settleStream ||= () => { this.scrollDown(); this.sealSoon(); }));
   }
 
   /** The reply as it is now: the finished blocks stay where they are, the tail after the last safe cut is parsed again. */
@@ -1482,6 +1562,9 @@ Click for changes, commit, push, pull request, merge`;
     if (paged) requestAnimationFrame(() => this.maybeLoadEarlier());
     if (card) { this.$.T.append(card); this.scrollDown(atEnd); }
     if (e.refresh && !atEnd) g.scrollTop = keepTop;
+    // A long conversation: the older messages are folded into chunks a frame later (sealOld).
+    this._sealedKids = 0;
+    this.sealSoon();
   }
 
   /* ---------- no drift (2026-10-11) ---------- */
@@ -1663,6 +1746,9 @@ Click for changes, commit, push, pull request, merge`;
     this.renderArtifactsButton();
     for (const r of waits) r(true);
     requestAnimationFrame(() => this.maybeLoadEarlier());
+    // The earlier page is on top of whatever is already folded: it folds too.
+    this._sealedKids = 0;
+    this.sealSoon();
   }
 
   /** One block in full from the transcript (historyBlock), shared by everything waiting for the same one. */

@@ -1710,6 +1710,12 @@ input.rename {
 /* When a message was written, faint, on hover: above-right of your message,
    below-right of Claude's, in the space between messages. */
 .turn-user { position: relative; }
+/* Chunks of older messages (pane.js sealOld, 2026-10-12, input lag). The pane measures a chunk before it turns
+   skipping on, and gives it that height, so the page is the same height whether a chunk is drawn or skipped. A chunk
+   keeps its children's margins inside it (they no longer collapse into the next block), so its foot gets room for the
+   hover time of the last message and a negative margin that takes the doubled gap back. */
+.chunk { contain: layout style; padding-bottom: 8px; margin-bottom: -18px; }
+.chunk.cv { content-visibility: auto; }
 .turn-user[data-ts]::after, .turn-assistant[data-ts]::after {
   content: attr(data-ts); position: absolute; right: 4px; pointer-events: none; white-space: nowrap;
   font: 500 var(--fs-micro)/1 var(--font-mono); letter-spacing: .01em; color: var(--faint);

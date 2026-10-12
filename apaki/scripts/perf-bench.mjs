@@ -222,9 +222,21 @@ function summariseTrace(events, seconds) {
       byName[e.name] = (byName[e.name] || 0) + (e.dur || 0);
     }
   }
+  // What the heavy events were about: style recalcs (elements touched) and layouts (objects dirty of all), per second.
+  const rc = events.filter((e) => e.ph === 'X' && e.name === 'UpdateLayoutTree' && e.args?.elementCount != null);
+  const lay = events.filter((e) => e.ph === 'X' && e.name === 'Layout' && e.args?.beginData);
+  const detail = {
+    recalcs: rc.length / seconds,
+    recalcMeanElements: rc.length ? Math.round(rc.reduce((a, e) => a + e.args.elementCount, 0) / rc.length) : 0,
+    recalcMeanMs: rc.length ? r1(rc.reduce((a, e) => a + (e.dur || 0), 0) / rc.length / 1000) : 0,
+    layouts: lay.length / seconds,
+    layoutMeanDirty: lay.length ? Math.round(lay.reduce((a, e) => a + (e.args.beginData.dirtyObjects || 0), 0) / lay.length) : 0,
+    layoutMeanTotal: lay.length ? Math.round(lay.reduce((a, e) => a + (e.args.beginData.totalObjects || 0), 0) / lay.length) : 0,
+    layoutMeanMs: lay.length ? r1(lay.reduce((a, e) => a + (e.dur || 0), 0) / lay.length / 1000) : 0,
+  };
   const busyMs = Object.entries(busy).map(([k, us]) => [k, r1(us / 1000 / seconds)]).filter(([, v]) => v >= 1).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const top = Object.entries(byName).map(([k, us]) => [k, r1(us / 1000 / seconds)]).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  return { fps: r1(swaps / seconds), mainFrames: r1(begin / seconds), drawFrame: r1(drawFrames / seconds), busyMsPerSec: busyMs, mainEventsMsPerSec: top };
+  return { detail, fps: r1(swaps / seconds), mainFrames: r1(begin / seconds), drawFrame: r1(drawFrames / seconds), busyMsPerSec: busyMs, mainEventsMsPerSec: top };
 }
 
 async function processTimes(cdp) {
@@ -381,6 +393,21 @@ async function measure(browser, page, { seconds, typing = false, trace = true, t
       const key = `${f.functionName || '(anon)'} ${String(f.url).split('/').pop()}:${f.lineNumber + 1}`;
       self.set(key, (self.get(key) || 0) + (dt[i] || 0));
     });
+    // Inclusive time: every function on a sample's stack gets the sample's time once.
+    const parent = new Map();
+    for (const n of profile.nodes) for (const c of n.children || []) parent.set(c, n.id);
+    const incl = new Map();
+    profile.samples.forEach((id, i) => {
+      const seen = new Set();
+      for (let cur = id; cur != null; cur = parent.get(cur)) {
+        const f = byId.get(cur).callFrame;
+        const key = `${f.functionName || '(anon)'} ${String(f.url).split('/').pop()}:${f.lineNumber + 1}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        incl.set(key, (incl.get(key) || 0) + (dt[i] || 0));
+      }
+    });
+    out.profileInclusive = [...incl.entries()].filter(([k]) => !/^\(root\)|^\(program\)|^\(idle\)/.test(k)).sort((a, b) => b[1] - a[1]).slice(0, 22).map(([k, us]) => [k, r1(us / 1000 / 6)]);
     out.profile = [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14).map(([k, us]) => [k, r1(us / 1000 / 6)]);
     await pcdp.send('Profiler.disable');
   }
