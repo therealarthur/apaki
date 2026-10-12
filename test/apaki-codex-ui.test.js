@@ -35,7 +35,7 @@ test('Codex presets: the three of the Codex app, most open first, each with a wo
   for (const m of CODEX_MODES) { assert.ok(m.label && m.short && m.mark && m.hint); assert.ok(m.hint.length <= 40, `${m.value} hint is short enough for the menu`); }
   assert.equal(codexMode('full-access').label, 'Full access');
   assert.equal(codexMode('bypassPermissions').value, 'auto', 'an unknown value reads as the middle preset');
-  assert.deepEqual(CODEX_LOCAL.map((c) => c.name), ['new', 'resume', 'model', 'effort', 'approvals', 'folder']);
+  assert.deepEqual(CODEX_LOCAL.map((c) => c.name), ['new', 'resume', 'model', 'effort', 'approvals', 'folder', 'fork']);
   assert.equal(isCodexId('codex:abc'), true);
   assert.equal(isCodexId('abc'), false);
 });

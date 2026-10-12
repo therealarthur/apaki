@@ -1683,7 +1683,7 @@ function sessionMenu(s, e) {
     { divider: true },
     { value: 'rename', label: 'Rename…', hint: 'saved in the session' },
     ...(WEB ? [] : [{ value: 'fork', label: 'Fork into a new conversation', hint: 'a copy to take elsewhere' }]),
-    ...(WEB ? [] : [s.archived ? { value: 'unarchive', label: 'Unarchive', hint: 'back in the lists' } : { value: 'archive', label: 'Archive', hint: 'hide it; nothing is deleted' }]),
+    ...(WEB ? [] : [s.codexArchived ? { value: null, label: 'Archived in Codex', hint: 'unarchive it in the Codex app', disabled: 'Archived in the Codex app; unarchive it there' } : s.archived ? { value: 'unarchive', label: 'Unarchive', hint: 'back in the lists' } : { value: 'archive', label: 'Archive', hint: 'hide it; nothing is deleted' }]),
     { divider: true },
     { value: 'copy-id', label: 'Copy session id' },
     { value: 'copy-resume', label: 'Copy resume command', hint: s.codex ? 'codex resume' : 'claude --resume' },
@@ -1795,7 +1795,7 @@ function phoneSessionMenu(s, at, { pane = null } = {}) {
   const edits = [
     gated('rename', { value: 'rename', label: 'Rename…', hint: 'saved in the session' }),
     ...(s.id && !s.archivedCopy ? [gated('forkSession', { value: 'fork', label: 'Fork into a new conversation', hint: 'makes a copy' })] : []),
-    ...(s.id ? [gated('archive', s.archived ? { value: 'unarchive', label: 'Unarchive', hint: 'back in the lists' } : { value: 'archive', label: 'Archive', hint: 'hide it; nothing is deleted' })] : []),
+    ...(s.id ? [gated('archive', s.codexArchived ? { value: null, label: 'Archived in Codex', hint: 'unarchive it in the Codex app', disabled: 'Archived in the Codex app; unarchive it there' } : s.archived ? { value: 'unarchive', label: 'Unarchive', hint: 'back in the lists' } : { value: 'archive', label: 'Archive', hint: 'hide it; nothing is deleted' })] : []),
   ].filter(Boolean);
   if (edits.length) items.push({ divider: true }, ...edits);
   if (s.id) items.push({ divider: true }, { value: 'copy-id', label: 'Copy session id' }, { value: 'copy-resume', label: 'Copy resume command', hint: s.codex ? 'codex resume' : 'claude --resume' });

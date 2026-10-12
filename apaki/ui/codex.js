@@ -28,7 +28,7 @@ export const CODEX_MODES = Object.freeze([
 
 export const codexMode = (value) => CODEX_MODES.find((m) => m.value === value) || CODEX_MODES[1];
 
-/** What the pane's slash menu offers on its own for a Codex thread (the engine adds compact, status, review, diff, mcp). */
+/** What the pane's slash menu offers on its own for a Codex thread (the engine adds compact, status, review, diff, mcp, init, mention). */
 export const CODEX_LOCAL = Object.freeze([
   { name: 'new', description: 'Start a new conversation in this pane' },
   { name: 'resume', description: 'Find a conversation to open (words to search for)' },
@@ -36,6 +36,7 @@ export const CODEX_LOCAL = Object.freeze([
   { name: 'effort', description: 'Set the reasoning effort the model offers' },
   { name: 'approvals', description: 'Permissions: full-access, auto, read-only' },
   { name: 'folder', description: 'Move this conversation to a folder (name)' },
+  { name: 'fork', description: 'Fork this conversation into a new one' },
 ]);
 
 /** The model a model id names, or null. */

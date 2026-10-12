@@ -51,7 +51,7 @@ async function startHost(t, extraEnv = {}) {
     APAKI_REMOTE_DIR: path.join(dir, 'remote'), LATCH_GLASS_CLI: path.join(dir, 'no-glass.exe'), LATCH_LIVE_LOGIN_FILE: path.join(dir, 'no-login.json'),
     CLAUDE_CREDENTIALS_FILE: path.join(dir, 'no-credentials.md'), APAKI_VOICE_DIR: path.join(dir, 'voice'), LATCH_NO_INDEX: '1', LATCH_WARM_NO_KEEPER: '1',
     APAKI_SHELL_FEATURES: 'browser', APAKI_HOST_TICK_MS: '100', APAKI_HOST_IDLE_MS: '60000', APAKI_HOST_EXIT_MS: '60000', APAKI_NO_ARCHIVE: '1',
-    APAKI_CODEX_BIN: FAKE, FAKE_CODEX_LOG: log, FAKE_CODEX_CWD: dir, ...extraEnv,
+    APAKI_CODEX_BIN: FAKE, FAKE_CODEX_LOG: log, FAKE_CODEX_CWD: dir, CODEX_HOME: path.join(dir, 'codex-home'), ...extraEnv,
   };
   const child = spawn(process.execPath, [ENGINE, '--host'], { cwd: ROOT, env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
   let stderr = '';
@@ -489,10 +489,25 @@ test('a window that comes back to a running Codex pane attaches: same turn, hist
 
 test('slash commands, rename and the thread list', { timeout: 90000 }, async (t) => {
   const h = await startHost(t);
+  // Two rollout files the fake server does not list, one active and one archived: the Codex view lists them too (read only).
+  const ROLL = '01a00000-0000-7000-8000-0000000000aa';
+  const ROLL_OLD = '01a00000-0000-7000-8000-0000000000bb';
+  const day = path.join(h.dir, 'codex-home', 'sessions', '2026', '10', '12');
+  fs.mkdirSync(day, { recursive: true });
+  fs.mkdirSync(path.join(h.dir, 'codex-home', 'archived_sessions'), { recursive: true });
+  const rollout = (id, text) => `${JSON.stringify({ type: 'session_meta', payload: { id, cwd: 'C:\old\proj', timestamp: '2026-10-12T01:02:03Z' } })}
+${JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })}
+`;
+  fs.writeFileSync(path.join(day, `rollout-2026-10-12T01-02-03-${ROLL}.jsonl`), rollout(ROLL, 'Explain the retry schedule'));
+  fs.writeFileSync(path.join(h.dir, 'codex-home', 'archived_sessions', `rollout-2026-09-01T01-02-03-${ROLL_OLD}.jsonl`), rollout(ROLL_OLD, 'An archived thread'));
   const w = await windowOf(h);
   w.send({ op: 'codexThreads', reqId: 'l1' });
   const list = await waitFor(w, 'codexThreads', (m) => m.ev === 'codexThreads' && m.reqId === 'l1', 20000);
-  assert.deepEqual(list.items.map((i) => i.id), [SMALL, BIG]);
+  const rolled = list.items.filter((i) => i.id === `codex:${ROLL}` || i.id === `codex:${ROLL_OLD}`);
+  assert.deepEqual(rolled.map((i) => i.id).sort(), [`codex:${ROLL}`, `codex:${ROLL_OLD}`]);
+  assert.equal(rolled.find((i) => i.id === `codex:${ROLL}`).title, 'Explain the retry schedule');
+  assert.equal(rolled.find((i) => i.id === `codex:${ROLL_OLD}`).archived, true, 'archived in Codex lists under Archived');
+  assert.deepEqual(list.items.filter((i) => !rolled.includes(i)).map((i) => i.id), [SMALL, BIG]);
   assert.equal(list.items[0].codex, true);
   assert.equal(list.items[0].title, 'Small thread');
   assert.equal(list.items[0].archived, false, 'rows carry the fields every session row has');
@@ -500,7 +515,7 @@ test('slash commands, rename and the thread list', { timeout: 90000 }, async (t)
   const p = await codexPane(w, h, 'c11', { sessionId: SMALL });
   w.send({ op: 'commands', reqId: 'cm', paneId: 'c11' });
   const cmds = await waitFor(w, 'commands', (m) => m.ev === 'commands' && m.paneId === 'c11');
-  assert.deepEqual(cmds.commands.map((c) => c.name), ['compact', 'status', 'review', 'diff', 'mcp']);
+  assert.deepEqual(cmds.commands.map((c) => c.name), ['compact', 'status', 'review', 'diff', 'mcp', 'init', 'mention']);
 
   let mark = p.mark();
   await p.result(p.send('/status'));

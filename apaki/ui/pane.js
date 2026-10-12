@@ -1644,6 +1644,8 @@ Click for changes, commit, push, pull request, merge`;
         return true;
       }
       case 'folder': if (arg && this.sessionId) this.send('folder', { action: 'create', name: arg, sessionId: this.sessionId }); return true;
+      // A copy of the thread to take elsewhere (the engine answers 'forked' and the window opens it).
+      case 'fork': if (this.sessionId) this.send('forkSession', { sessionId: this.sessionId }); else this.note('Send a message first; there is nothing to fork yet.'); return true;
       default: return false;
     }
   }

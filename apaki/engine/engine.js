@@ -404,7 +404,9 @@ function compact(it, term, folderOf) {
     headless: Boolean(it.headless), bare: Boolean(it.bare), warm: state.warm.has(it.id),
     subagents: subagentCount(it.id),
     // Archived in Apaki's list (archive.js): hidden from All, In terminals and folders, shown under Archived.
-    archived: archive.archived().has(it.id),
+    archived: archive.archived().has(it.id) || Boolean(it.codexArchived),
+    // A Codex thread whose rollout sits in ~/.codex/archived_sessions: archived in Codex, so Apaki lists it under Archived too.
+    ...(it.codexArchived ? { codexArchived: true } : {}),
     // Claude Code deleted its transcript; Apaki's transcript archive kept a copy (transcript-archive.js, 2026-10-12).
     ...(it.archivedCopy ? { archivedCopy: true, restorable: true } : {}),
     // A turn is running in this engine (a pane here, a phone's pane, or one kept running in the background).

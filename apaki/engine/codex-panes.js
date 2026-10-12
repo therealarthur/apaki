@@ -36,6 +36,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { CodexAppServer, tomlList, tomlString, tomlTable } from './codex-client.js';
 import { CodexHistory, PAGE as HISTORY_PAGE } from './codex-history.js';
+import { createRolloutScanner } from './codex-rollouts.js';
 import {
   DEFAULT_PRESET, PRESET_NAMES, approvalAsk, approvalReply, assistantMessage, capPresets, clampPreset, codexId, contextFromUsage, effortFor, elicitationAsk, elicitationReply, friendlyError, hookMessage,
   informational, isPreset, limitEvents, messageStart, normalizeModels, presetOf, questionAsk, questionReply, reasoningText, rerouteMessage, streamEvent, textDelta, textStart, threadIdOf, threadPermissions, threadRow,
@@ -72,7 +73,17 @@ export const COMMANDS = Object.freeze([
   { name: 'review', description: 'Review the uncommitted changes in this folder', argumentHint: '' },
   { name: 'diff', description: 'Show what this conversation changed in its last turn', argumentHint: '' },
   { name: 'mcp', description: 'List the tool servers this thread can use', argumentHint: '' },
+  { name: 'init', description: 'Have Codex write an AGENTS.md for this folder', argumentHint: '' },
+  { name: 'mention', description: 'Attach a file to your next message', argumentHint: '<file>' },
 ]);
+
+/** What /init asks (Codex's own /init is a prompt too): an AGENTS.md, the file Codex reads at the start of every thread. */
+export const INIT_PROMPT = [
+  'Write an AGENTS.md at the root of this repository, the guide a new contributor (or a coding agent) reads first.',
+  'Look at the repository before writing: its layout, build, test and lint commands, coding style, commit and pull request habits.',
+  'Keep it short and concrete: one heading per topic (project layout, build and test, style, commits and pull requests, anything that surprises a newcomer), real commands in code spans, no filler.',
+  'If an AGENTS.md already exists, improve it and keep what is true in it. Do not change any other file.',
+].join(' ');
 
 /** True for a pane that runs a Codex thread. */
 export const isCodexPane = (p) => p?.kind === 'codex';
@@ -131,6 +142,7 @@ export function createCodex(env) {
   const shape = (rows) => (env.shapeRows ? env.shapeRows(rows) : rows);
   const activity = env.activity || (() => {});
   const turnEnded = env.turnEnded || (() => {});
+  const rollouts = createRolloutScanner({ home: env.home || undefined, roots: env.rolloutRoots || null });
   const byThread = new Map();
   const shared = { models: null, config: null, account: null, rows: null, rowsAt: 0, idle: null };
   let client = null;
@@ -250,14 +262,19 @@ export function createCodex(env) {
         cursor = r?.nextCursor || null;
         if (!cursor) break;
       }
+      // Rollout files the server did not list (read only; codex-rollouts.js).
+      try { rows.push(...await rollouts.rows(new Set(rows.map((r) => r.id)))); } catch (e) { log(`codex rollout scan failed: ${e.message}`); }
       shared.rows = rows;
       shared.rowsAt = Date.now();
       emit({ ev: 'codexThreads', reqId, items: shape(rows) });
       touchIdle();
       return rows;
     } catch (e) {
-      emit({ ev: 'codexThreads', reqId, items: shape(shared.rows || []), error: e.message || String(e) });
-      return shared.rows || [];
+      // The server would not start or answer: the rollout files still say which threads exist.
+      let rows = shared.rows || [];
+      try { rows = [...rows, ...await rollouts.rows(new Set(rows.map((r) => r.id)))]; } catch { /* nothing more to show */ }
+      emit({ ev: 'codexThreads', reqId, items: shape(rows), error: e.message || String(e) });
+      return rows;
     }
   }
 
@@ -278,7 +295,7 @@ export function createCodex(env) {
     return {
       threadId: null, turnId: null, loaded: false, cwd: '', touched: { model: false, effort: false, mode: false },
       items: new Map(), blocks: new Map(), blockSeq: 0, out: new Map(), sentIds: new Set(), reqByTurn: new Map(), planSeq: 0,
-      usage: null, contextTimer: null, startedAt: 0, diffs: new Map(), lastDiffTurn: null, compactWait: null, opts,
+      usage: null, mentions: [], contextTimer: null, startedAt: 0, diffs: new Map(), lastDiffTurn: null, compactWait: null, opts,
     };
   }
 
@@ -499,11 +516,17 @@ export function createCodex(env) {
     const body = String(text || '').trim();
     const slash = /^\/(compact|status|review|diff|mcp)\b\s*$/i.exec(body);
     if (slash && !attachments.length) { await slashCommand(reqId, p, slash[1].toLowerCase()); return; }
+    const mention = /^\/mention\b\s*(.*)$/is.exec(body);
+    if (mention && !attachments.length) { await slashCommand(reqId, p, 'mention', mention[1]); return; }
+    // /init is an ordinary turn with Codex's own kind of prompt.
+    if (/^\/init\s*$/i.test(body) && !attachments.length) text = INIT_PROMPT;
     try {
       await ensureLoaded(p);
       const { images, files } = split(attachments);
       const saved = saveFiles(p, files);
-      const input = turnInput(text, images, saved);
+      // Files /mention attached ride with this message, once.
+      const input = turnInput(text, images, [...saved, ...(cx.mentions || [])]);
+      cx.mentions = [];
       if (!input.length) { emit({ ev: 'result', reqId, paneId: p.id, sessionId: p.sessionId, subtype: 'success', isError: false, durationMs: 0, usage: {}, cost: null, errors: null, result: null, codex: true }); return; }
       const clientId = `apaki-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       cx.sentIds.add(clientId);
@@ -576,12 +599,26 @@ export function createCodex(env) {
 
   /* ---------- slash commands ---------- */
 
-  async function slashCommand(reqId, p, name) {
+  async function slashCommand(reqId, p, name, arg = '') {
     const cx = p.codex;
     const done = (extra = {}) => emit({ ev: 'result', reqId, paneId: p.id, sessionId: p.sessionId, subtype: 'success', isError: false, durationMs: 0, usage: {}, cost: null, errors: null, result: null, codex: true, quiet: true, ...extra });
     try {
       if (name === 'status') {
         note(p, `Model ${p.model || '?'}, effort ${p.effort || '?'}, ${({ 'read-only': 'read only', auto: 'auto (edits inside the workspace)', 'full-access': 'full access' })[p.mode] || p.mode}. Folder ${cx.cwd || '?'}. Thread ${cx.threadId || '(starts with your first message)'}.`);
+        done();
+        return;
+      }
+      if (name === 'mention') {
+        // The file goes to the model as a mention item with the next message (what the Codex app's @ does). Only the path
+        // is looked at here: nothing is read or changed.
+        const raw = String(arg || '').trim().replace(/^["']|["']$/g, '').replace(/^@/, '');
+        if (!raw) { note(p, 'Name a file to attach to your next message, for example /mention src/app.ts'); done(); return; }
+        const file = path.resolve(cx.cwd || os.homedir(), raw);
+        let isFile = false;
+        try { isFile = fs.statSync(file).isFile(); } catch { isFile = false; }
+        if (!isFile) { note(p, `There is no file at ${file}.`, 'warn'); done(); return; }
+        cx.mentions = [...(cx.mentions || []).filter((m) => m.path !== file), { name: path.basename(file), path: file }];
+        note(p, `${path.basename(file)} goes with your next message.`);
         done();
         return;
       }

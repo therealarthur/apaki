@@ -50,7 +50,7 @@ const thread = (id = THREAD) => ({ id, name: 'A thread', preview: 'p', cwd: 'C:\
 const resumed = (id = THREAD) => ({ thread: thread(id), model: 'm1', reasoningEffort: 'low', cwd: 'C:\\proj', approvalPolicy: 'never', sandbox: { type: 'dangerFullAccess' } });
 
 /** A Codex module over a mock client, with the engine's side faked: events, asks, panes, Apaki's tools. */
-function setup({ cap = null, table = {}, attachDir = null } = {}) {
+function setup({ cap = null, table = {}, attachDir = null, rolloutRoots = [] } = {}) {
   const events = [];
   const asks = new Map();
   const panes = new Map();
@@ -69,7 +69,7 @@ function setup({ cap = null, table = {}, attachDir = null } = {}) {
     emit: (ev) => events.push(ev), asks, panes,
     tools: (p) => ({ show: async (input, meta) => { shows.push({ paneId: p.id, input, meta }); return { ok: true, text: 'shown' }; }, browser }),
     openPage: (p, o) => events.push({ ev: 'openPage', paneId: p.id, ...o }),
-    createClient: () => client,
+    createClient: () => client, rolloutRoots,
     phoneCap: (id) => (id.startsWith('phone:') ? cap : null),
     attachDir: () => attachDir,
     activity: (p, msg) => activity.push(msg),
@@ -117,7 +117,7 @@ test('a phone whose access is lowered while its pane is open drops to read-only 
   const events = [];
   const panes = new Map();
   const client = new MockClient({ 'model/list': MODELS, 'config/read': {}, 'account/read': {}, 'thread/resume': () => resumed(), 'thread/turns/list': { data: [] }, 'thread/read': { thread: thread() } });
-  const codex = createCodex({ emit: (e) => events.push(e), asks: new Map(), panes, tools: () => ({}), openPage: () => {}, createClient: () => client, phoneCap: () => cap, log: () => {} });
+  const codex = createCodex({ emit: (e) => events.push(e), asks: new Map(), panes, tools: () => ({}), openPage: () => {}, createClient: () => client, rolloutRoots: [], phoneCap: () => cap, log: () => {} });
   const p = { id: PHONE };
   panes.set(PHONE, p);
   await codex.open('r', p, `codex:${THREAD}`, null, {});
@@ -369,7 +369,7 @@ test('the thread list: read once, cached, shaped like session rows, and read aga
   const row = { id: THREAD, name: 'Named', preview: 'Fix the build', cwd: 'C:\\p', gitInfo: { branch: 'main' }, recencyAt: 10, originator: 'Codex Desktop' };
   const s = setup({ table: { 'thread/list': (params) => ({ data: [row], nextCursor: null, seen: params }) } });
   const shapeRows = (rows) => rows.map((r) => ({ ...r, archived: false }));
-  const t = createCodex({ emit: (e) => s.events.push(e), asks: s.asks, panes: s.panes, tools: () => ({}), openPage: () => {}, createClient: () => s.client, shapeRows, log: () => {} });
+  const t = createCodex({ emit: (e) => s.events.push(e), asks: s.asks, panes: s.panes, tools: () => ({}), openPage: () => {}, createClient: () => s.client, shapeRows, rolloutRoots: [], log: () => {} });
   const first = await t.list({ reqId: 'l1' });
   assert.equal(first.length, 1);
   const ev = s.events.find((e) => e.ev === 'codexThreads');
@@ -386,7 +386,7 @@ test('the thread list: read once, cached, shaped like session rows, and read aga
   assert.equal(t.cachedRows().length, 1);
   // A failure is a list that says so, not a silence.
   const bad = setup({ table: { 'thread/list': new Error('boom') } });
-  const t2 = createCodex({ emit: (e) => bad.events.push(e), asks: bad.asks, panes: bad.panes, tools: () => ({}), openPage: () => {}, createClient: () => bad.client, log: () => {} });
+  const t2 = createCodex({ emit: (e) => bad.events.push(e), asks: bad.asks, panes: bad.panes, tools: () => ({}), openPage: () => {}, createClient: () => bad.client, rolloutRoots: [], log: () => {} });
   await t2.list({ reqId: 'x' });
   assert.deepEqual(bad.events.find((e) => e.ev === 'codexThreads'), { ev: 'codexThreads', reqId: 'x', items: [], error: 'boom' });
 });
@@ -422,4 +422,43 @@ test('a tool server that fails to start for a thread is said once on that pane; 
   assert.equal(warnings().length, 1);
   assert.match(warnings()[0].content, /ENOENT/);
   assert.equal(warnings()[0].level, 'warning');
+});
+
+test('/init is an ordinary turn with an AGENTS.md prompt; /mention attaches a file to the next message once, and says when there is no such file', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-mention-'));
+  const file = path.join(dir, 'notes.md');
+  fs.writeFileSync(file, 'x');
+  const s = setup({ table: { 'thread/resume': () => ({ ...resumed(), cwd: dir }) } });
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  const notes = () => s.of('note').map((n) => n.text);
+  // /init
+  const initDone = s.codex.send('i1', p, '/init', []);
+  await new Promise((r) => setImmediate(r));
+  const first = s.client.of('turn/start')[0];
+  assert.match(first.input[0].text, /AGENTS\.md/);
+  s.client.emit('notification', 'turn/completed', { threadId: THREAD, turn: { id: 'T1', status: 'completed' } });
+  await initDone;
+  // /mention: nothing named, a file that is not there, then a real one (relative to the thread's folder)
+  await s.codex.send('m0', p, '/mention', []);
+  assert.match(notes().at(-1), /Name a file/);
+  await s.codex.send('m1', p, '/mention nope.md', []);
+  assert.match(notes().at(-1), /no file at/);
+  await s.codex.send('m2', p, '/mention notes.md', []);
+  assert.match(notes().at(-1), /notes\.md goes with your next message/);
+  assert.equal(s.client.of('turn/start').length, 1, 'a mention is not a message to the model');
+  const next = s.codex.send('m3', p, 'summarize it', []);
+  await new Promise((r) => setImmediate(r));
+  const second = s.client.of('turn/start')[1];
+  assert.deepEqual(second.input.map((i) => i.type), ['text', 'mention']);
+  assert.deepEqual([second.input[1].name, second.input[1].path], ['notes.md', file]);
+  s.client.emit('notification', 'turn/completed', { threadId: THREAD, turn: { id: 'T2', status: 'completed' } });
+  await next;
+  // once only
+  const third = s.codex.send('m4', p, 'and now?', []);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(s.client.of('turn/start')[2].input.map((i) => i.type), ['text']);
+  s.client.emit('notification', 'turn/completed', { threadId: THREAD, turn: { id: 'T3', status: 'completed' } });
+  await third;
+  fs.rmSync(dir, { recursive: true, force: true });
 });
