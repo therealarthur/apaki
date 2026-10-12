@@ -2847,3 +2847,104 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
 .tt-meter.estimate i { opacity: .55; }
 @media (prefers-reduced-motion: reduce) { .tt.in { animation: none; } }
 .tt-keys { white-space: nowrap; }
+
+/* ---------- the session list, compact, and folders that open in place (2026-10-12, sessionlist.js) ----------
+   Arthur: rows like the ChatGPT app's, one line each (the name, cut, and the last message's time), more on the row in
+   the focused pane, on hover and in Details; folders open and close in place. Calm and dense: colour only where it
+   means something (working is the brand blue, waiting for you the action orange), no pills, nothing down a left edge. */
+
+:is(.sessions, .folder-sess) li.srow {
+  position: relative; padding: 0 3px 0 10px; margin: 0 0 1px; border-radius: 8px; border: 1px solid transparent; box-shadow: none;
+}
+:is(.sessions, .folder-sess) li.srow:hover { background: hsla(var(--w), .78); }
+:is(.sessions, .folder-sess) li.srow.on { background: hsl(var(--w)); border-color: var(--hairline-strong); box-shadow: 0 1px 3px rgba(var(--shadow-rgb), .1); }
+:is(.sessions, .folder-sess) li.srow.shown { border-color: var(--hairline); }
+:is(.sessions, .folder-sess) li.srow.menu-open { background: hsla(var(--w), .9); border-color: var(--hairline-strong); }
+:is(.sessions, .folder-sess) li.srow:focus-visible, .folder-row:focus-visible { outline: 2px solid hsla(var(--pearl-stop-blue), .55); outline-offset: -2px; }
+.srow .sr-line { display: flex; align-items: center; gap: 6px; min-height: 30px; }
+:is(.sessions, .folder-sess) .srow .t {
+  flex: 1; min-width: 0; display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font: 560 var(--fs-small)/1.35 var(--font-body); letter-spacing: -.003em; color: var(--ink);
+}
+:is(.sessions, .folder-sess) .srow.on .t { font-weight: 680; }
+.srow .t input.rename { width: 100%; }
+
+/* The time at the right; the ... button takes its place under the pointer, the keyboard or an open menu. */
+.srow .sr-end { flex: none; display: grid; align-items: center; justify-items: end; min-width: 26px; height: 24px; }
+.srow .sr-time, .srow .sr-more { grid-area: 1 / 1; }
+.srow .sr-time { padding-right: 5px; font: 500 var(--fs-micro)/1 var(--font-mono); color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; transition: opacity var(--dur-fast) var(--ease-hover); }
+.srow.on .sr-time { color: var(--soft); }
+.srow .sr-more {
+  display: grid; place-items: center; width: 26px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: none;
+  color: var(--soft); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-hover), background var(--dur-fast) var(--ease-hover);
+}
+.srow .sr-more svg { width: 14px; height: 14px; fill: currentColor; }
+.srow .sr-more:hover { background: var(--tint-deep); color: var(--ink); }
+.srow:hover .sr-more, .srow:focus-visible .sr-more, .srow.menu-open .sr-more { opacity: 1; pointer-events: auto; }
+.srow:hover .sr-time, .srow:focus-visible .sr-time, .srow.menu-open .sr-time { opacity: 0; }
+
+/* State, quiet: small glyphs before the name, and the word Codex. */
+.srow .sr-s { flex: none; display: grid; place-items: center; width: 14px; height: 14px; color: var(--faint); }
+.srow .sr-s svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.srow .sr-working { color: var(--brand-strong); }
+.srow .sr-working svg { stroke-width: 1.8; animation: sr-spin 1s linear infinite; }
+.srow .sr-waiting { color: var(--action-strong); }
+.srow .sr-terminal { color: var(--soft); }
+.srow .sr-w { flex: none; font: 700 var(--fs-micro)/1 var(--font-body); letter-spacing: .03em; color: var(--soft); }
+@keyframes sr-spin { to { transform: rotate(360deg); } }
+
+/* The one more line: folder, branch, model, size, and the subagents button. It eases open (grid rows, not height). */
+.srow .sr-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 180ms var(--ease-out); }
+.srow .sr-detail-in { min-height: 0; overflow: hidden; display: flex; align-items: center; gap: 8px; }
+.srow.on .sr-detail, .srow:focus-visible .sr-detail, .srow.subs-open .sr-detail, .srow.menu-open .sr-detail { grid-template-rows: 1fr; }
+:is(.sessions, .folder-sess) .srow .m { flex: 1; min-width: 0; margin: 0; padding: 0 0 7px; font: 500 var(--fs-micro)/1.35 var(--font-mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.sessions, .folder-sess) .srow .m:empty { display: none; }
+.srow .sr-detail-in .subs-n { flex: none; margin: 0 4px 7px 0; padding: 1px 7px 1px 5px; }
+:is(.sessions, .folder-sess) .srow .snip, :is(.sessions, .folder-sess) .srow .why { margin: -2px 6px 7px 0; }
+
+/* Recency headings: small, sentence case, out of the way. */
+.sessions li.sr-group {
+  padding: 14px 10px 4px; margin: 0; border: 0; border-radius: 0; background: none; cursor: default;
+  font: 650 var(--fs-micro)/1.2 var(--font-body); letter-spacing: .02em; color: var(--faint);
+}
+.sessions li.sr-group:first-child { padding-top: 2px; }
+.sessions li.sr-group:hover { background: none; }
+
+/* Folders: a tree. The chevron turns, the sessions ease open under the row, several can be open. */
+.rail-folders .folder-list { max-height: 46vh; }
+.folder-list > li.folder { margin: 0; padding: 0; }
+.folder-row .chev { width: 10px; height: 10px; margin-right: -2px; flex: none; fill: none; stroke: var(--faint); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--dur-fast) var(--ease-out); }
+.folder.open > .folder-row .chev { transform: rotate(90deg); stroke: var(--soft); }
+.folder.drop > .folder-row { border-color: var(--brand); background: var(--brand-wash); }
+.folder-kids { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 200ms var(--ease-out); }
+.folder.open > .folder-kids { grid-template-rows: 1fr; }
+.folder-sess { min-height: 0; overflow: hidden; list-style: none; margin: 0; padding: 0 0 0 14px; }
+.folder.open > .folder-kids > .folder-sess { padding-bottom: 4px; }
+.folder-sess li.sub-row { list-style: none; }
+.folder-note { list-style: none; padding: 3px 10px 6px; font-size: var(--fs-small); color: var(--faint); }
+.folder-note .link-btn { padding: 2px 4px; font-size: var(--fs-small); }
+
+/* The menu stays inside the window (the session menu is long), scrolling when it must. */
+.menu { max-height: calc(100vh - 16px); overflow-y: auto; }
+
+/* Details: a sheet of label and value rows in sections, copy buttons beside ids and paths. */
+.sheet .sd-title { margin: 0 0 2px; overflow-wrap: anywhere; }
+.sheet .sd-note { margin: 10px 0 0; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--action-tint); color: var(--action-strong); font-size: var(--fs-small); }
+.sheet .sd-sec { margin-top: 14px; }
+.sheet .sd-h { margin: 0 0 6px; font: 800 var(--fs-micro)/1.2 var(--font-display); font-stretch: 112%; letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
+.sheet .sd-rows { margin: 0; display: grid; grid-template-columns: minmax(96px, max-content) minmax(0, 1fr); gap: 5px 16px; font-size: var(--fs-small); }
+.sheet .sd-rows dt { color: var(--faint); }
+.sheet .sd-rows dd { margin: 0; display: flex; align-items: baseline; gap: 8px; min-width: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.sheet .sd-rows dd .sd-v { min-width: 0; overflow-wrap: anywhere; }
+.sheet .sd-rows dd.mono .sd-v { font: 500 var(--fs-small)/1.45 var(--font-mono); }
+.sheet .sd-rows dd.long .sd-v { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--soft); }
+.sheet .sd-rows dd.pending .sd-v { color: var(--faint); }
+.sheet .sd-acts { flex: none; display: flex; gap: 4px; margin-left: auto; }
+.sheet .sd-btn { padding: 1px 7px; border: 1px solid var(--hairline-strong); border-radius: 6px; background: var(--ground); cursor: pointer; font: 600 var(--fs-micro)/1.5 var(--font-body); color: var(--soft); }
+.sheet .sd-btn:hover { color: var(--brand-deep); border-color: var(--brand-soft); }
+.sheet .sd-row { flex-wrap: wrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .srow .sr-working svg { animation: none; }
+  .srow .sr-detail, .folder-kids, .folder-row .chev, .srow .sr-time, .srow .sr-more { transition: none; }
+}
