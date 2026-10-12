@@ -414,6 +414,12 @@ PRESETS['phone-pair'] = () => PRESETS.base();
 PRESETS.search = () => PRESETS.base();
 // The phone client (phone.html, 2026-10-12): the same lived-in PC; the phone starts on its sessions list.
 PRESETS.phone = () => PRESETS.base();
+// The phone's Browser view (2026-10-12): the flaky-checkout conversation plays a browser visit, as the engine reports it.
+PRESETS['phone-browser'] = () => {
+  const p = PRESETS.base();
+  p.scripts = { [ID.flaky]: ['browse-phone'] };
+  return p;
+};
 
 PRESETS.history = () => {
   const p = PRESETS.base();

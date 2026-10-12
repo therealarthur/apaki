@@ -80,7 +80,8 @@ export function openFind(pane) {
   if (!root) return;
   const bar = document.createElement('div');
   bar.className = 'find-bar';
-  bar.innerHTML = `<span class="fb-i">${ICON.find}</span><input type="text" spellcheck="false" placeholder="Find in ${pane.isTask ? 'this task' : pane.isViewer ? 'this artifact' : 'this conversation'}" aria-label="Find"><span class="fb-n" aria-live="polite"></span>
+  // enterkeyhint and the off switches are for a phone's keyboard (2026-10-12): a Search key that steps to the next match.
+  bar.innerHTML = `<span class="fb-i">${ICON.find}</span><input type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" enterkeyhint="search" placeholder="Find in ${pane.isTask ? 'this task' : pane.isViewer ? 'this artifact' : 'this conversation'}" aria-label="Find"><span class="fb-n" aria-live="polite"></span>
     <button class="fb-case" title="Match case" aria-pressed="false">Aa</button><button class="fb-prev" title="Previous (Shift+Enter)">${ICON.up}</button><button class="fb-next" title="Next (Enter)">${ICON.down}</button><button class="fb-x" title="Close (Esc)">${ICON.close}</button>
     <div class="fb-note" hidden></div>`;
   pane.el.append(bar);
@@ -140,7 +141,8 @@ export function openFind(pane) {
     bar.remove();
     pane.el.classList.remove('finding', 'find-cut');
     pane.find = null;
-    pane.$?.input?.focus({ preventScroll: true });
+    // Not on the phone (2026-10-12): the message box would take the keyboard right back after Done.
+    if (!document.body.classList.contains('native')) pane.$?.input?.focus({ preventScroll: true });
   };
 
   // New text while the bar is open (a reply streaming in): search it too, keeping your place.
@@ -164,6 +166,9 @@ export function openFind(pane) {
   const caseBtn = bar.querySelector('.fb-case');
   caseBtn.onclick = () => { matchCase = !matchCase; caseBtn.classList.toggle('on', matchCase); caseBtn.setAttribute('aria-pressed', String(matchCase)); run(); input.focus(); };
   bar.addEventListener('pointerdown', (e) => e.stopPropagation());
+  // Previous, Next and Aa keep the keyboard on the search box (2026-10-12): on a phone a tap on a button would drop it
+  // after every step; on a desktop it keeps typing where it was.
+  for (const b of bar.querySelectorAll('button')) b.addEventListener('mousedown', (e) => e.preventDefault());
   // Search all: load the whole conversation first, then search it from the first match below.
   note.addEventListener('click', async (e) => {
     if (!e.target.closest('.fb-all')) return;

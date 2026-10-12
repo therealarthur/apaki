@@ -610,6 +610,9 @@ export class Pane {
   addTool(block) {
     // Apaki's show tool is drawn as a card the user can open again later.
     if (block.name === SHOW_TOOL) { this.addShowCard(block); return; }
+    // Claude used Apaki's browser here (2026-10-12): the phone page lights its Browser button for this conversation
+    // (pager.js, browserview.js). Marked once, also when the conversation is drawn from history.
+    if (block.name.startsWith(BROWSER_TOOL)) this.markBrowser();
     // A TodoWrite call is a checklist, not a tool line (an input without a list, or an empty one with nothing to clear, stays a line).
     if (block.name === 'TodoWrite' && hasTodos(block.input) && (normalizeTodos(block.input).length || this.liveTodoCard())) { this.addTodos(block); return; }
     const d = el('details', 'tool');
@@ -866,7 +869,16 @@ export class Pane {
     this.placeArtifact({ id: e.id, rev: e.rev, title: e.title, kind: e.kind, sub: via }, e.toolUseId ? this.tools.get(e.toolUseId) : null);
   }
 
+  /** Marks that this conversation has a page in the PC's built-in browser (the phone's Browser button, 2026-10-12). Once. */
+  markBrowser() {
+    if (!this.el?.dataset || this.el.dataset.browser === '1') return;
+    this.el.dataset.browser = '1';
+    this.el.dispatchEvent?.(new CustomEvent('apaki:browser-used', { bubbles: true }));
+  }
+
   onOpenUrl(e) {
+    // The page went to the PC's built-in browser (browserId): this conversation has one a phone can look at.
+    if (e.browserId) this.markBrowser();
     const tool = e.toolUseId ? this.tools.get(e.toolUseId) : null;
     if (tool?.classList.contains('art-card')) { this.placeLink({ url: e.url, title: e.title, reason: e.reason, toolUseId: e.toolUseId }, tool); return; }
     this.clearEmpty();

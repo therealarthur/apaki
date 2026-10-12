@@ -44,6 +44,8 @@ Track B part 2, 2026-10-09 (Claude Code, Opus 5.5, for Arthur).
   desktop window's tabs and panes (the engine's `desktopTabs` event, which
   `shim.js onDesktopTabs` keeps), the tab in front first; a conversation opens
   here the way a tap in the session list does, other panes are quiet rows.
+- `src/browserview.js` (2026-10-12): the page Claude opened in the PC's browser,
+  as a read-only picture in a sheet (see "Phone parity" below).
 - `src/shell.html`: the pairing card, the reconnect line and the drawer scrim,
   put into Apaki's `index.html` by the build.
 - `src/sw.js`, `src/manifest.webmanifest`, `icons/`: the installable PWA.
@@ -136,11 +138,48 @@ marker from the conversation never appears in it.
 Deploying is a separate, explicit step: `apaki/web/dist` is static files for
 any static host (HTTPS is required for WebCrypto and the service worker).
 
+## Phone parity (2026-10-12)
+
+Arthur: every desktop feature also works on the phone; the ledger is
+`apaki/parity` (features.json, a status per surface). The gaps this closed:
+
+- **Session menu.** A long press on a row of the list (native.js turns it into
+  the contextmenu event app.js listens for) and the ... button in the
+  conversation bar (pager.js, event `apaki:pane-menu`) open a sheet: Find in
+  conversation, Open, Open in a new pane (beside the tab's others), Stop (this
+  phone's own turn), Close, Rename, Fork, Archive, Copy session id, Copy resume
+  command, Move to folder, New folder. Rename and New folder ask in a sheet
+  (the desktop edits in place). Show folder and stopping a turn on the PC stay
+  on the PC. Rename, Fork, Archive and folders need Full or No shell access and
+  a PC that takes the op (the hello's `ops`, `link.supports('op:rename')`);
+  Chat only sees them dimmed with the reason.
+- **Search by meaning and Ask Claude.** Search by meaning was already on the
+  phone (the `search` op and the `meaning` broadcast). Ask Claude is a button
+  under the search box (body `can-ask`, set by native.js when the PC takes
+  `askSearch`); its answer lists the sessions that fit with a reason each.
+  Dig deeper stays on the PC.
+- **Find in conversation.** The desktop's find bar (find.js), full width under
+  the conversation bar: big targets, Previous and Next keep the keyboard, the
+  Search key steps, no case toggle.
+- **The PC's browser page.** The browser is a WebView2 on the PC, so a live
+  page cannot run here. A Browser button appears in the conversation bar once
+  Claude has used Apaki's browser there (pane.js `markBrowser`), for Full
+  access; it opens `browserview.js`: a read-only sheet with the page's title and
+  address, one JPEG of the part in view (engine op `browserView`), what Claude
+  just did, and Refresh. It refreshes by itself a moment after each
+  browserActivity line, so it follows Claude through the page. A web page link
+  card's Open opens a public address in the phone's own browser, and a page
+  that only exists on the PC (localhost, a LAN address) as this view.
+- **Background tabs.** A tab that was drawn while hidden (display: none) opened
+  scrolled to the top. pane.js now keeps where the reader is while a pane has
+  no box and puts them there when it gets one; the desktop shares the fix.
+
 ## What a phone cannot do
 
-Change billing, pair or remove phones, use the PC's dictation, edit folders,
-or run Ask Claude or Dig deeper: the engine refuses those commands from a
-phone (apaki/engine/remote-policy.js). Within its conversations a phone has
-the same Claude Code a desktop pane has, with the permission mode the pane is
-set to, so Claude can run commands and edit files there as on the PC (see
-apaki/SECURITY.md).
+Change billing, pair or remove phones, use the PC's dictation, rename or
+delete folders, choose where a new conversation starts (the PC's folders), run
+Dig deeper, or stop a conversation that runs in another window: the engine
+refuses those commands from a phone (apaki/engine/remote-policy.js). Within its
+conversations a phone has the same Claude Code a desktop pane has, with the
+permission mode the pane is set to, so Claude can run commands and edit files
+there as on the PC (see apaki/SECURITY.md).
