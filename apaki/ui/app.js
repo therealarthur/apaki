@@ -1292,7 +1292,8 @@ function viewList() {
   const term = live.filter((s) => s.terminal).length;
   const codex = live.filter((s) => s.codex).length;
   return [
-    { id: 'all', label: 'All', n: live.length - (S.codexAvailable ? codex : 0) },
+    // Codex threads are in All with Claude's, under the same recency headings (2026-10-12); the Codex view shows them alone.
+    { id: 'all', label: 'All', n: live.length },
     { id: 'terminal', label: 'In terminals', n: term },
     // Codex threads (2026-10-12): their own view, next to Claude's, read from the Codex app-server when it is opened.
     ...(S.codexAvailable ? [{ id: 'codex', label: 'Codex', n: codex }] : []),
@@ -2102,8 +2103,9 @@ function inView(s) {
   if (S.view === 'archived') return Boolean(s.archived);
   if (s.archived) return false;
   if (S.view === 'codex') return Boolean(s.codex);
-  // Codex threads have their own view; a search shows its hits wherever they are (every agent's), a folder shows what is in it.
-  if (s.codex && S.view === 'all' && !S.results && S.codexAvailable) return false;
+  // Codex threads are listed in All with Claude's (2026-10-12, Arthur: integrated exactly like Claude's; the engine lists
+  // them from their rollouts at startup, codex-list.js), marked Codex; the Codex view shows them alone, a search shows
+  // its hits wherever they are (every agent's), a folder shows what is in it.
   if (S.view === 'all') return true;
   if (S.view === 'terminal') return Boolean(s.terminal);
   if (S.view === 'worktrees') return wtc.inLinked(s.cwd);

@@ -28,7 +28,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 
 import { codexPromptText } from '../../src/codex.js';
-import { isPromptItem } from './history.js';
+import { isPromptItem, promptOf } from './history.js';
 import { rolloutRoots } from './codex-rollouts.js';
 
 /** A Claude Code session id, or a Codex one (codex:<thread id>). */
@@ -74,6 +74,10 @@ export async function scanClaude(file) {
   const usage = new Map(); // API message id -> its usage (the last line of a message carries the final numbers)
   const replied = new Set();
   const models = new Set();
+  // A local command's run (history.js localCommandRuns): a caveat meta line, the command's record, its output lines.
+  // 0: none, 1: after a caveat, 2: after the record. Its record is not a prompt; a slash command Claude answers is.
+  let localRun = 0;
+  const lastText = (c) => (Array.isArray(c) ? [...c].reverse().find((b) => b?.type === 'text')?.text : typeof c === 'string' ? c : '') || '';
   await eachLine(file, (j) => {
     out.lines += 1;
     const t = timeOf(j.timestamp);
@@ -89,16 +93,22 @@ export async function scanClaude(file) {
     if (t && t > out.lastActive) out.lastActive = t;
     const m = j.message && typeof j.message === 'object' ? j.message : {};
     if (j.type === 'user') {
-      if (j.isMeta || j.isCompactSummary) return;
-      if (isPromptItem({ type: 'user', message: { content: m.content } })) {
+      const tail = lastText(m.content);
+      if (j.isMeta) { if (tail.startsWith('<local-command-caveat>')) localRun = 1; return; }
+      if (j.isCompactSummary) return;
+      let local = false;
+      if (localRun === 1 && tail.startsWith('<command-name>')) { local = true; localRun = 2; }
+      else if (localRun === 2 && (tail.startsWith('<local-command-stdout>') || tail.startsWith('<local-command-stderr>'))) local = true;
+      else localRun = 0;
+      // The pane's own rule (history.js promptOf, 2026-10-12): your words, pictures, a slash command Claude answers.
+      const p = promptOf({ type: 'user', message: { content: m.content } }, { localRun: local });
+      if (p) {
         out.prompts += 1;
-        if (!out.firstPrompt) {
-          const text = typeof m.content === 'string' ? m.content : (m.content || []).filter((b) => b?.type === 'text').map((b) => b.text).join(' ');
-          out.firstPrompt = text.replace(/\s+/g, ' ').trim().slice(0, 200);
-        }
+        if (!out.firstPrompt && p.text) out.firstPrompt = p.text.replace(/\s+/g, ' ').trim().slice(0, 200);
       }
       return;
     }
+    localRun = 0;
     const id = str(m.id) || str(j.uuid);
     if (Array.isArray(m.content)) out.toolCalls += m.content.filter((b) => b?.type === 'tool_use' || b?.type === 'server_tool_use').length;
     if (hasText(m.content) && !replied.has(id)) { replied.add(id); out.replies += 1; }
@@ -279,8 +289,10 @@ export function historyMarkdown(items = [], meta = {}) {
     const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [];
     if (it.type === 'user') {
       if (!isPromptItem(it)) continue;
-      const text = blocks.filter((b) => b?.type === 'text').map((b) => String(b.text || '')).join('\n\n').trim();
-      const images = blocks.filter((b) => b?.type === 'image' || b?.type === 'image_marker').length;
+      // The prompt as the pane shows it (history.js marks it: reminders out, a slash command as "/name args").
+      const p = it.prompt || promptOf(it);
+      const text = (p?.text ?? blocks.filter((b) => b?.type === 'text').map((b) => String(b.text || '')).join('\n\n')).trim();
+      const images = p?.images ?? blocks.filter((b) => b?.type === 'image' || b?.type === 'image_marker').length;
       out.push(`## You${it.at ? ` (${iso(timeOf(it.at))})` : ''}`, '', text || '', ...(images ? ['', `*${images} image${images === 1 ? '' : 's'} attached*`] : []), '');
       who = 'you';
       continue;

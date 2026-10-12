@@ -157,6 +157,7 @@ import { estimateEvent, lastUsage } from './context-estimate.js';
 import { LastActive } from './last-active.js';
 // The session list's Details, Pin to top, Export as Markdown and Open in a terminal (2026-10-12).
 import * as pins from './pins.js';
+import { createCodexList } from './codex-list.js';
 import { SESSION_ID_RE, codexMarkdown, diskSize, exportName, findRollout, freePath, historyMarkdown, resumeCommand, scanClaude, scanCodex } from './session-info.js';
 // Every conversation kept past Claude Code's 30-day cleanup, listed, opened and restored from D: (2026-10-12).
 import { archiveRoot, archiveTranscripts, archivedMeta, archivedSessions, openArchived, restoreArchived } from './transcript-archive.js';
@@ -388,6 +389,27 @@ const codex = createCodex({
 // Whether Codex is installed here, so the window offers it; looked up once, without starting anything.
 const CODEX_FOUND = Boolean(findCodex());
 
+/*
+ * Codex threads in the main session list from the start (2026-10-12, codex-list.js; Arthur: Codex sessions integrated
+ * exactly like Claude's). Read from the rollout files, read only, without starting the app-server; what was read is kept
+ * in latch/codex-list.json so a restart reads only new or changed rollouts. A background pass that changed the rows
+ * sends the list again (at most every 2 s, from what is loaded: the Claude list is not read again for it).
+ */
+let codexListTimer = null;
+const codexList = CODEX_FOUND && !process.env.APAKI_NO_CODEX_LIST
+  ? createCodexList({
+    cacheFile: path.join(latchDir(), 'codex-list.json'),
+    log: (line) => process.stderr.write(`apaki: ${line}\n`),
+    onChange: () => {
+      if (codexListTimer) return;
+      codexListTimer = setTimeout(() => { codexListTimer = null; if (state.items) emitSessions(null); }, 2000);
+      codexListTimer.unref?.();
+    },
+  })
+  : null;
+/** The Codex rows of the list now: the Codex view's (app-server) rows over the rollouts' (no I/O). */
+const codexRowsNow = () => (codexList ? codexList.rows(codex.cachedRows()) : codex.cachedRows());
+
 /** Opens a web page, or a stored artifact's file, outside Apaki (the system browser or default app). */
 function openOutside(target) {
   const [cmd, args] = process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', target]]
@@ -489,14 +511,22 @@ async function loadSessions() {
 
 async function sessions(reqId) {
   const term = await loadSessions();
+  emitSessions(reqId, term);
+  // Codex threads: a background pass over the rollouts (codex-list.js), at most every 30 s; a change sends the list again.
+  codexList?.refresh();
+}
+
+/** Sends the session list as last loaded (term: the terminal sessions), with the Codex rows as they are now. */
+function emitSessions(reqId, term = terminalSessions()) {
   const folderOf = folders.folderOfSessions();
   const list = state.items.map((it) => compact(it, term.get(it.id)?.[0], folderOf));
   // Open in a terminal right now, even before Claude Code wrote a transcript.
   for (const [id, recs] of term) {
     if (!state.byId.has(id)) list.push(compact({ id, title: `New session (${recs[0].name || 'terminal'})`, cwd: recs[0].cwd, lastModified: recs[0].updatedAt }, recs[0], folderOf));
   }
-  // The Codex threads read the last time the Codex view asked (op codexThreads): listed with the rest, marked codex.
-  for (const row of codex.cachedRows()) list.push(compact(row, null, folderOf));
+  // The Codex threads, from the start (2026-10-12, codex-list.js: the rollouts, read only, with the Codex view's rows over
+  // them): listed with the rest, marked codex.
+  for (const row of codexRowsNow()) list.push(compact(row, null, folderOf));
   emit({ ev: 'sessions', reqId, items: list, folders: folders.listFolders(), billing: billingInfo(), voice: voiceReady() });
 }
 
@@ -528,11 +558,11 @@ async function search(reqId, query) {
  * name, its last message) and in search. A thread the Codex view has listed now shows as that row; any other one gets
  * its first prompt as the title and its last message time from the rollout (last-active.js).
  */
-function codexRowsById() { return new Map(codex.cachedRows().map((r) => [r.id, r])); }
+function codexRowsById() { return new Map(codexRowsNow().map((r) => [r.id, r])); }
 
 /** The Codex view's rows, with the fields the quick filter (src/picker.js filterItems) matches on. */
 function codexSearchRows() {
-  return codex.cachedRows().map((r) => ({ ...r, titleLower: String(r.title || '').toLowerCase(), hay: [r.id, r.title, r.firstPrompt, r.cwd].join(' ').toLowerCase() }));
+  return codexRowsNow().map((r) => ({ ...r, titleLower: String(r.title || '').toLowerCase(), hay: [r.id, r.title, r.firstPrompt, r.cwd].join(' ').toLowerCase() }));
 }
 
 /** A search hit on a Codex thread as a list row. */
@@ -585,7 +615,7 @@ function digPromptOp(reqId, query, candidateIds = []) {
 
 /** The list record of a session (Claude Code, a Codex thread the Codex view read, or a terminal's new session), or null. */
 function listItemOf(id) {
-  return state.byId?.get(id) || codex.cachedRows().find((r) => r.id === id) || null;
+  return state.byId?.get(id) || codexRowsNow().find((r) => r.id === id) || null;
 }
 
 /**

@@ -2887,14 +2887,14 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
 .srow:hover .sr-more, .srow:focus-visible .sr-more, .srow.menu-open .sr-more { opacity: 1; pointer-events: auto; }
 .srow:hover .sr-time, .srow:focus-visible .sr-time, .srow.menu-open .sr-time { opacity: 0; }
 
-/* State, quiet: small glyphs before the name, and the word Codex. */
+/* State, quiet: small glyphs before the name (working, waiting, terminal, Codex, archived copy, pinned, worktree). */
 .srow .sr-s { flex: none; display: grid; place-items: center; width: 14px; height: 14px; color: var(--faint); }
 .srow .sr-s svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .srow .sr-working { color: var(--brand-strong); }
 .srow .sr-working svg { stroke-width: 1.8; animation: sr-spin 1s linear infinite; }
 .srow .sr-waiting { color: var(--action-strong); }
 .srow .sr-terminal { color: var(--soft); }
-.srow .sr-w { flex: none; font: 700 var(--fs-micro)/1 var(--font-body); letter-spacing: .03em; color: var(--soft); }
+.srow .sr-codex { color: var(--soft); }
 @keyframes sr-spin { to { transform: rotate(360deg); } }
 
 /* The one more line: folder, branch, model, size, and the subagents button. It eases open (grid rows, not height). */

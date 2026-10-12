@@ -173,17 +173,17 @@ export const GLYPH = Object.freeze({
   waiting: '<svg class="sg sg-waiting" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H8l-3 2.5v-2.5H3A1.5 1.5 0 0 1 1.5 10V5A1.5 1.5 0 0 1 3 3.5z"/><path d="M6.6 6.2a1.5 1.5 0 1 1 2 1.4c-.4.2-.6.5-.6.9M8 9.6v.1"/></svg>',
   terminal: '<svg class="sg sg-terminal" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2"/><path d="M4.6 6.4 6.6 8l-2 1.6M8.2 10h3"/></svg>',
   'archived-copy': '<svg class="sg sg-archived" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="3" rx="1"/><path d="M3 6v6.5c0 .6.4 1 1 1h8c.6 0 1-.4 1-1V6M6.5 8.8h3"/></svg>',
+  // The small Codex mark (2026-10-12): a hexagon with a prompt chevron, apart from the terminal's rectangle.
+  codex: '<svg class="sg sg-codex" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.7 13.5 4.85v6.3L8 14.3 2.5 11.15v-6.3z"/><path d="M6.5 5.9 8.7 8l-2.2 2.1"/></svg>',
   pinned: '<svg class="sg sg-pinned" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.6 2.2 13.8 6.4l-1.6.6-2.4 2.4.2 3-1.2 1.2-2.4-2.4L3.6 14l-.6-.6 2.8-2.8-2.4-2.4 1.2-1.2 3 .2L10 4.8z"/></svg>',
   more: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.6" cy="8" r="1.15"/><circle cx="8" cy="8" r="1.15"/><circle cx="12.4" cy="8" r="1.15"/></svg>',
   chevron: '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>',
   folder: '<svg class="fi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5c0-.8.7-1.5 1.5-1.5h3l1.5 1.5h4.5c.8 0 1.5.7 1.5 1.5v5.5c0 .8-.7 1.5-1.5 1.5h-9c-.8 0-1.5-.7-1.5-1.5z"/></svg>',
 });
 
-/** The state marks of a row as HTML: glyphs with their words for screen readers, and the word "Codex". */
+/** The state marks of a row as HTML: small glyphs (Codex's too), with their words for screen readers. */
 export function statesHtml(states) {
-  return states.map((x) => (x.k === 'codex'
-    ? '<span class="sr-w sr-codex">Codex</span>'
-    : `<span class="sr-s sr-${x.k}" role="img" aria-label="${esc(x.label)}">${GLYPH[x.k] || ''}</span>`)).join('');
+  return states.map((x) => `<span class="sr-s sr-${x.k}" role="img" aria-label="${esc(x.label)}">${GLYPH[x.k] || ''}</span>`).join('');
 }
 
 /**

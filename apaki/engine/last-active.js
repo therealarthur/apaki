@@ -55,19 +55,18 @@ export function lastMessageAt(text) {
  * (2026-10-12: the session list's hover card names the model a conversation last used, read from the same tail).
  */
 export function lastMessageInfo(text) {
+  // The time is lastMessageAt's (a Claude Code transcript or a Codex rollout); the model is the last reply's, or for a
+  // Codex rollout the last turn_context's.
+  const at = lastMessageAt(text);
   const lines = String(text).split('\n');
-  let at = null;
   let model = null;
-  for (let i = lines.length - 1; i >= 0 && (at === null || model === null); i--) {
+  for (let i = lines.length - 1; i >= 0 && model === null; i--) {
     const line = lines[i];
-    if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')) continue;
-    if (at !== null && !line.includes('"model"')) continue;
+    if (!line.includes('"model"') || !(line.includes('"type":"assistant"') || line.includes('"type":"turn_context"'))) continue;
     let j;
     try { j = JSON.parse(line); } catch { continue; }
-    if ((j.type !== 'user' && j.type !== 'assistant') || j.isSidechain) continue;
-    if (at === null) { const t = Date.parse(j.timestamp); if (Number.isFinite(t)) at = t; }
-    const m = j.type === 'assistant' ? j.message?.model : null;
-    if (model === null && typeof m === 'string' && m && m !== '<synthetic>') model = m;
+    const m = j.type === 'assistant' && !j.isSidechain ? j.message?.model : j.type === 'turn_context' ? j.payload?.model : null;
+    if (typeof m === 'string' && m && m !== '<synthetic>') model = m;
   }
   return { at, model };
 }
