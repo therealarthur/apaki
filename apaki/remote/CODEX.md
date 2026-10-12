@@ -178,3 +178,63 @@ on this PC that sends nothing billable.
 - Not seen live: a real turn (none was started on a real account), so how the
   model uses the tools, the exact elicitation payloads and a Glass swap while
   the server runs are known from the schema and the fake server only.
+
+## Parity audit (2026-10-12)
+
+Arthur, 2026-10-12: "we just want to integrate codex/chatgpt sessions where
+theyre searchable and can be displayed, used, etc the same way claude sessiosn
+can be, side by side in the same tab if possible". Checked end to end against
+the code, the tests and, where it reads only, the real index and rollouts.
+
+Listed (title and time)
+- Title: the thread's `name` (Codex's own auto title or a rename), else its
+  first prompt (`preview`). The Codex app does the same (confirmed in the
+  codex source: its sidebar shows `name`, then `preview`). OK, unchanged.
+- Time: FIXED. Rows used the server's `recencyAt`, which is when the last turn
+  started (a two hour turn showed two hours too early), and rollout-only rows
+  the file's time, which token counts move. Now every row's time is its last
+  message, read from the rollout's tail like Claude's (last-active.js reads
+  rollout message lines; codex-rollouts.js keeps each thread's file; the
+  thread's own `path` first). The file's time stays as `fileModified`. Test:
+  `apaki-codex-rollouts`.
+
+Found by search
+- Keyword index (index/src/main.rs): Codex rollouts in `sessions` and
+  `archived_sessions` are indexed (prompts, replies, tools, results; Codex's
+  injected instructions left out). Checked on this PC with the built
+  latch-index: a word from Codex work returned 30 Codex threads of 40 hits.
+- Meaning index: `all_transcripts` includes both Codex folders and
+  semantic.rs handles `codex:` sessions. Read in the code, not re-measured.
+- Engine: FIXED. A Codex hit became a row titled "Codex: <first prompt>" with
+  the file's time, so the same thread read differently in search and in the
+  Codex view. A hit now shows the Codex view's row (its name and last message
+  time); a thread the view has not listed gets its first prompt and its last
+  message time. Ask Claude's results (itemFor) the same. With no index (the
+  quick filter), Codex threads the Codex view has read are matched too; before,
+  only Claude sessions were.
+
+Opened, side by side, the session's actions
+- Open, a new tab (Ctrl+click), split (Shift+click, or drag a row onto a pane
+  edge), the empty pane's Claude Code or Codex choice: one path for both kinds
+  (app.js openFromRail, dropSession; pane.js open sets the kind from the row).
+  Covered by `apaki-codex-e2e` on the engine side; the window paths read only.
+- Rename (thread/name/set, so the Codex app shows it too), fork (thread/fork),
+  archive (Apaki's own flag; a thread archived in the Codex app is marked and
+  stays read only here), folders (by session id, the same store as Claude's),
+  the right-click menu and the phone's menu (the same items; resume command
+  says `codex resume`): unchanged, each covered by the existing tests.
+- Phone: the same ops through remote-policy.js (codexModels, codexThreads,
+  codexOpenFile; the Codex presets clamped by the phone's access).
+
+The prompt list (the pin): FIXED for both kinds, see history.js promptOf and
+codex-history.js. A Codex page counts the prompts before it from the turn
+summaries (thread/turns/list itemsView summary: each turn's first user
+message, from the server's index); a steered message counts once its turn
+loads, and the pin says "M+" until the count arrives. Test: `apaki-prompts`.
+
+Left as is
+- The main list shows Codex threads only after the Codex view has read them
+  once (the server starts on first need); search reaches all of them through
+  the index either way.
+- Rollout-only threads (the server does not list them) keep their first prompt
+  as the title; a name the Codex app gave them is not read from the rollout.

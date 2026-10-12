@@ -37,6 +37,7 @@ import path from 'node:path';
 import { CodexAppServer, tomlList, tomlString, tomlTable } from './codex-client.js';
 import { CodexHistory, PAGE as HISTORY_PAGE } from './codex-history.js';
 import { createRolloutScanner } from './codex-rollouts.js';
+import { LastActive } from './last-active.js';
 import {
   DEFAULT_PRESET, PRESET_NAMES, approvalAsk, approvalReply, assistantMessage, capPresets, clampPreset, codexId, contextFromUsage, effortFor, elicitationAsk, elicitationReply, friendlyError, hookMessage,
   informational, isPreset, limitEvents, limitsOf, messageStart, normalizeModels, presetOf, questionAsk, questionReply, reasoningText, rerouteMessage, streamEvent, textDelta, textStart, threadIdOf, threadPermissions, threadRow,
@@ -168,6 +169,8 @@ export function createCodex(env) {
   const activity = env.activity || (() => {});
   const turnEnded = env.turnEnded || (() => {});
   const rollouts = createRolloutScanner({ home: env.home || undefined, roots: env.rolloutRoots || null });
+  // The list's times: each thread's last message, read from its rollout's tail once per file version (last-active.js).
+  const lastActive = new LastActive();
   const byThread = new Map();
   const shared = { models: null, config: null, account: null, rows: null, rowsAt: 0, idle: null, skills: new Map() };
   let client = null;
@@ -284,15 +287,22 @@ export function createCodex(env) {
       const c = getClient();
       await c.ensure();
       const rows = [];
+      const files = new Map();
       let cursor = null;
       for (let i = 0; i < 3; i++) {
         const r = await c.request('thread/list', { limit: 100, sortKey: 'recency_at', sourceKinds: ['cli', 'vscode', 'exec', 'appServer', 'unknown'], useStateDbOnly: i === 0 && !refresh, ...(cursor ? { cursor } : {}) });
-        rows.push(...(Array.isArray(r?.data) ? r.data : []).map(threadRow));
+        const data = Array.isArray(r?.data) ? r.data : [];
+        rows.push(...data.map(threadRow));
+        for (const t of data) if (typeof t?.path === 'string' && t.path) files.set(codexId(t.id), t.path);
         cursor = r?.nextCursor || null;
         if (!cursor) break;
       }
       // Rollout files the server did not list (read only; codex-rollouts.js).
       try { rows.push(...await rollouts.rows(new Set(rows.map((r) => r.id)))); } catch (e) { log(`codex rollout scan failed: ${e.message}`); }
+      // Each thread's time is its last message (2026-10-12, as Claude's list does: last-active.js), not the server's
+      // recency time, which is when its last turn started, nor the file's, which token counts and renames move.
+      for (const [id, f] of rollouts.paths?.() || []) if (!files.has(id)) files.set(id, f);
+      await lastActive.apply(rows, files).catch((e) => log(`codex last active: ${e.message || e}`));
       shared.rows = rows;
       shared.rowsAt = Date.now();
       emit({ ev: 'codexThreads', reqId, items: shape(rows) });
@@ -421,6 +431,8 @@ export function createCodex(env) {
       const page = await history.firstPage(threadId, { limit: HISTORY_PAGE });
       trackFromMessages(p, page.messages);
       emit({ ev: 'history', reqId, paneId: p.id, sessionId: p.sessionId, ...page, rev, ...(refresh ? { refresh: true } : {}) });
+      // More turns than the page holds: how many prompts come before it, from the turn summaries (pin "N of M").
+      if (page.hasMore && !page.prompts) countPrompts(p, threadId);
     } catch (e) {
       note(p, `Codex could not read this conversation's history: ${e.message || e}`, 'warn');
     }
@@ -488,12 +500,36 @@ export function createCodex(env) {
     if (!threadId || (c.sessionId && c.sessionId !== p.sessionId)) { emit({ ...base, sessionId: c.sessionId || null, error: 'That conversation is not open in this pane.' }); return; }
     const limit = Math.min(5000, Math.max(1, Math.floor(Number(c.limit)) || HISTORY_PAGE));
     try {
-      const page = await history.pageBefore(threadId, String(c.before), { limit, all: c.all === true });
+      const page = await history.pageBefore(threadId, String(c.before), { limit, all: c.all === true, until: typeof c.until === 'string' ? c.until : null });
       trackFromMessages(p, page.messages);
       emit({ ...base, sessionId: p.sessionId, ...page });
     } catch (e) {
       emit({ ...base, sessionId: p.sessionId, error: `Codex could not read the rest of this conversation: ${e.message || e}` });
     }
+  }
+
+  /*
+   * Your prompts across the whole thread (2026-10-12, codex-history.js): the count before the loaded pages arrives
+   * a moment after the first page (ev historyCount), and the full list on request (op historyPrompts).
+   */
+
+  /** Counts the prompts before the loaded pages in the background; the pane's pin takes it when it still shows that page. */
+  function countPrompts(p, threadId) {
+    history.promptCount(threadId).then((r) => {
+      if (!r || p.codex?.threadId !== threadId) return;
+      emit({ ev: 'historyCount', paneId: p.id, sessionId: p.sessionId, first: r.first, prompts: { before: r.before, total: r.total } });
+    }).catch((e) => log(`codex prompt count: ${e.message || e}`));
+  }
+
+  /** op historyPrompts: every prompt of the thread, oldest first. */
+  async function prompts(c, p) {
+    const base = { ev: 'historyPrompts', reqId: c.reqId || null, paneId: p.id, sessionId: p.sessionId };
+    const threadId = p.codex?.threadId;
+    if (!threadId) { emit({ ...base, prompts: [], total: 0 }); return; }
+    try {
+      const r = await history.promptList(threadId);
+      emit({ ...base, ...(r || { prompts: [], total: 0 }) });
+    } catch (e) { emit({ ...base, error: `Codex could not list this conversation's prompts: ${e.message || e}` }); }
   }
 
   async function historyCheck(c, p) {
@@ -1200,6 +1236,7 @@ export function createCodex(env) {
   return {
     isCodexPane, open, attach, send, steer, openFile, interrupt, setModel, setEffort, setMode, models, list, sendContext, historyBefore, historyCheck, sendHistory,
     runTool, openedLink, pickPane, release, close, rename, fork, recap, shutdown, touchIdle, rpc, commands: () => COMMANDS.map((c) => ({ ...c })), commandsFor,
+    prompts,
     /** The thread rows read by the last list() (empty until the Codex view asks). */
     cachedRows: () => shared.rows || [],
     /** Tests: the client and the panes by thread. */

@@ -92,6 +92,8 @@ export const PHONE_OPS = Object.freeze([
   // 2026-10-10 (history.js): read only, the rest of a conversation open in one of this phone's panes:
   // earlier pages, and one cut tool result, thinking block, summary or image in full.
   'historyBefore', 'historyBlock',
+  // The list of your prompts in a conversation it has open (2026-10-12, the pin's list), read only.
+  'historyPrompts',
   // Whether its conversation moved on elsewhere, so the phone shows no stale transcript (2026-10-11).
   'historyCheck',
   // Codex (2026-10-12, codex-panes.js): its model list (each model's own efforts) for the pickers, and the Codex threads for the
@@ -112,7 +114,7 @@ export const PHONE_OPS = Object.freeze([
 export const WORKTREE_KINDS = Object.freeze(['create', 'remove', 'commit', 'push', 'pr', 'merge']);
 
 /** Ops that act on one pane (paneId required). */
-const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile']);
+const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile', 'historyPrompts']);
 
 /** Session-list actions that change what the PC keeps (2026-10-12): not for a Chat only phone. */
 export const SESSION_WRITE_OPS = Object.freeze(['rename', 'forkSession', 'archive', 'folder']);
@@ -564,6 +566,13 @@ export function checkPhoneCommand(cmd, ctx) {
       if (cmd.content !== undefined) out.content = Boolean(cmd.content);
       break;
     }
+    case 'historyPrompts': {
+      // Read only, like historyBefore: the prompts of the conversation open in this phone's own pane (2026-10-12).
+      const sid = cmd.sessionId ?? null;
+      if (sid !== null && (typeof sid !== 'string' || !SESSION_RE.test(sid) || !(ctx.phoneSessions?.(deviceId) || []).includes(sid))) return fail('Open that conversation first.', cmd);
+      if (sid) out.sessionId = sid;
+      break;
+    }
     case 'historyBefore':
     case 'historyBlock': {
       // Read only. The pane must be this phone's and open (checked above); the engine reads only the
@@ -576,6 +585,8 @@ export function checkPhoneCommand(cmd, ctx) {
         out.before = cmd.before;
         if (cmd.limit != null) { if (!Number.isInteger(cmd.limit) || cmd.limit < 1 || cmd.limit > MAX_HISTORY_PAGE) return fail('Bad page size.', cmd); out.limit = cmd.limit; }
         if (cmd.all !== undefined) out.all = cmd.all === true;
+        // 2026-10-12: a prompt picked in the pin's list (a message id, Claude's or Codex's) the page reaches back to.
+        if (cmd.until != null) { if (typeof cmd.until !== 'string' || !/^[\w:.-]{1,120}$/.test(cmd.until)) return fail('Bad message id.', cmd); out.until = cmd.until; }
       } else {
         if (typeof cmd.ref !== 'string' || !HISTORY_REF_RE.test(cmd.ref)) return fail('Bad message part.', cmd);
         out.ref = cmd.ref;
