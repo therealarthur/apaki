@@ -494,24 +494,50 @@ async function search(reqId, query) {
   const t0 = Date.now();
   const res = await searchHybrid(query, { limit: 80 });
   if (!res) {
-    const quick = filterItems(state.items, query).map((it) => ({ item: compact(it, term.get(it.id)?.[0], folderOf), kind: null, snippet: '' }));
+    // No index: the titles and folders of the Claude sessions and of the Codex threads the Codex view has read (2026-10-12).
+    const quick = filterItems([...state.items, ...codexSearchRows()], query).map((it) => ({ item: compact(it, term.get(it.id)?.[0], folderOf), kind: null, snippet: '' }));
     emit({ ev: 'search', reqId, query, elapsed: Date.now() - t0, deep: false, results: quick });
     return;
   }
   const results = [];
   for (const hit of res.sessions) {
     let it = state.byId.get(hit.session);
-    if (!it && isCodexId(hit.session)) it = codexItem(hit);
+    if (!it && isCodexId(hit.session)) it = await codexHitItem(hit);
     if (!it) it = { id: hit.session, title: '(session hidden from the list)', cwd: '', lastModified: Date.parse(hit.latest || '') || 0 };
     results.push({ item: compact(it, term.get(it.id)?.[0], folderOf), kind: hit.kind, snippet: hit.snippet, hits: hit.hits, sources: hit.sources || ['words'] });
   }
   emit({ ev: 'search', reqId, query, elapsed: res.elapsed_ms, total: res.total_hits, deep: true, semantic: Boolean(res.semantic), terms: res.terms || null, results });
 }
 
+/*
+ * Codex threads in search results (2026-10-12, parity audit; CODEX.md): a hit used to become codexItem's row, titled
+ * "Codex: <first prompt>" with the rollout file's time, so the same thread read differently in the Codex view (its
+ * name, its last message) and in search. A thread the Codex view has listed now shows as that row; any other one gets
+ * its first prompt as the title and its last message time from the rollout (last-active.js).
+ */
+function codexRowsById() { return new Map(codex.cachedRows().map((r) => [r.id, r])); }
+
+/** The Codex view's rows, with the fields the quick filter (src/picker.js filterItems) matches on. */
+function codexSearchRows() {
+  return codex.cachedRows().map((r) => ({ ...r, titleLower: String(r.title || '').toLowerCase(), hay: [r.id, r.title, r.firstPrompt, r.cwd].join(' ').toLowerCase() }));
+}
+
+/** A search hit on a Codex thread as a list row. */
+async function codexHitItem(hit) {
+  const row = codexRowsById().get(hit.session);
+  if (row) return row;
+  const it = codexItem(hit);
+  it.title = it.title.replace(/^Codex: /, '');
+  const at = hit.file ? await lastActive.lastActive(hit.file).catch(() => null) : null;
+  if (at) it.lastModified = at;
+  return it;
+}
+
 /** A list item for a session the list does not show (hidden headless, Codex). */
 function itemFor(id, hit) {
   if (state.byId.get(id)) return state.byId.get(id);
-  if (isCodexId(id) && hit) return codexItem(hit);
+  if (isCodexId(id)) { const row = codexRowsById().get(id); if (row) return row; }
+  if (isCodexId(id) && hit) return { ...codexItem(hit), title: codexItem(hit).title.replace(/^Codex: /, '') };
   return { id, title: '(session hidden from the list)', cwd: '', lastModified: Date.parse(hit?.latest || '') || 0 };
 }
 

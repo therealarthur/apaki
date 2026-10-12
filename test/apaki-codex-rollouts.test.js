@@ -27,7 +27,10 @@ function world() {
   fs.mkdirSync(day, { recursive: true });
   fs.mkdirSync(path.join(home, 'archived_sessions'), { recursive: true });
   const file = (dir, stamp, id, lines) => { const f = path.join(dir, `rollout-${stamp}-${id}.jsonl`); fs.writeFileSync(f, `${lines.join('\n')}\n`); return f; };
-  const a = file(day, '2026-10-12T01-02-03', A, [meta(A, 'C:\proj\a'), user('# AGENTS.md instructions for C:\proj\a'), user('Explain the retry schedule')]);
+  // The last message at 01:05, then bookkeeping a minute later (a token count): the time is the message's.
+  const reply = JSON.stringify({ timestamp: '2026-10-12T01:05:00Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'It backs off.' }] } });
+  const count = JSON.stringify({ timestamp: '2026-10-12T01:06:00Z', type: 'event_msg', payload: { type: 'token_count' } });
+  const a = file(day, '2026-10-12T01-02-03', A, [meta(A, 'C:\proj\a'), user('# AGENTS.md instructions for C:\proj\a'), user('Explain the retry schedule'), reply, count]);
   const b = file(path.join(home, 'archived_sessions'), '2026-09-01T01-02-03', B, [meta(B, 'C:\proj\b'), user('Old archived thread')]);
   fs.writeFileSync(path.join(day, 'notes.txt'), 'not a rollout');
   fs.writeFileSync(path.join(day, 'rollout-broken.jsonl'), 'x');
@@ -83,6 +86,10 @@ test('the Codex module lists them after the server rows, and still lists them wh
   const ok = await mk(server).list({ reqId: 'l1', refresh: true });
   assert.equal(ok[0].id, `codex:${C}`, 'the server rows come first');
   assert.deepEqual(ok.slice(1).map((r) => r.id).sort(), [`codex:${A}`, `codex:${B}`]);
+  // 2026-10-12: a row's time is its thread's last message (the rollout's last message line), not the file's time.
+  const a = ok.find((r) => r.id === `codex:${A}`);
+  assert.equal(a.lastModified, Date.parse('2026-10-12T01:05:00Z'));
+  assert.ok(a.fileModified > a.lastModified, 'the file\'s own time is kept apart');
   const dead = { ...server, ensure: async () => { throw new Error('codex not installed'); } };
   events.length = 0;
   await mk(dead).list({ reqId: 'l2', refresh: true });

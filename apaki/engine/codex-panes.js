@@ -37,6 +37,7 @@ import path from 'node:path';
 import { CodexAppServer, tomlList, tomlString, tomlTable } from './codex-client.js';
 import { CodexHistory, PAGE as HISTORY_PAGE } from './codex-history.js';
 import { createRolloutScanner } from './codex-rollouts.js';
+import { LastActive } from './last-active.js';
 import {
   DEFAULT_PRESET, PRESET_NAMES, approvalAsk, approvalReply, assistantMessage, capPresets, clampPreset, codexId, contextFromUsage, effortFor, elicitationAsk, elicitationReply, friendlyError, hookMessage,
   informational, isPreset, limitEvents, limitsOf, messageStart, normalizeModels, presetOf, questionAsk, questionReply, reasoningText, rerouteMessage, streamEvent, textDelta, textStart, threadIdOf, threadPermissions, threadRow,
@@ -168,6 +169,8 @@ export function createCodex(env) {
   const activity = env.activity || (() => {});
   const turnEnded = env.turnEnded || (() => {});
   const rollouts = createRolloutScanner({ home: env.home || undefined, roots: env.rolloutRoots || null });
+  // The list's times: each thread's last message, read from its rollout's tail once per file version (last-active.js).
+  const lastActive = new LastActive();
   const byThread = new Map();
   const shared = { models: null, config: null, account: null, rows: null, rowsAt: 0, idle: null, skills: new Map() };
   let client = null;
@@ -284,15 +287,22 @@ export function createCodex(env) {
       const c = getClient();
       await c.ensure();
       const rows = [];
+      const files = new Map();
       let cursor = null;
       for (let i = 0; i < 3; i++) {
         const r = await c.request('thread/list', { limit: 100, sortKey: 'recency_at', sourceKinds: ['cli', 'vscode', 'exec', 'appServer', 'unknown'], useStateDbOnly: i === 0 && !refresh, ...(cursor ? { cursor } : {}) });
-        rows.push(...(Array.isArray(r?.data) ? r.data : []).map(threadRow));
+        const data = Array.isArray(r?.data) ? r.data : [];
+        rows.push(...data.map(threadRow));
+        for (const t of data) if (typeof t?.path === 'string' && t.path) files.set(codexId(t.id), t.path);
         cursor = r?.nextCursor || null;
         if (!cursor) break;
       }
       // Rollout files the server did not list (read only; codex-rollouts.js).
       try { rows.push(...await rollouts.rows(new Set(rows.map((r) => r.id)))); } catch (e) { log(`codex rollout scan failed: ${e.message}`); }
+      // Each thread's time is its last message (2026-10-12, as Claude's list does: last-active.js), not the server's
+      // recency time, which is when its last turn started, nor the file's, which token counts and renames move.
+      for (const [id, f] of rollouts.paths?.() || []) if (!files.has(id)) files.set(id, f);
+      await lastActive.apply(rows, files).catch((e) => log(`codex last active: ${e.message || e}`));
       shared.rows = rows;
       shared.rowsAt = Date.now();
       emit({ ev: 'codexThreads', reqId, items: shape(rows) });
