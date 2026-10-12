@@ -5,3 +5,7 @@ relay/site/** -text
 
 # The iOS pipeline's shell scripts run on the Mac and on a GitHub macOS runner: LF only, even when checked out on Windows.
 apaki/mobile/scripts/*.sh text eol=lf
+
+# Parity snapshots are compared byte for byte with their canonical form (test/apaki-parity.test.js): LF only,
+# or a fresh checkout on Windows (an agent worktree) fails that test (2026-10-12).
+apaki/parity/snapshots/** text eol=lf
