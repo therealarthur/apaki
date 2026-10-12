@@ -32,6 +32,9 @@
 
 import { esc, md } from './markdown.js';
 
+// The phone build (apaki/web): artifacts come as content, never from the PC's local server (2026-10-12).
+const ON_PHONE = typeof window !== 'undefined' && window.apakiShell === 'web';
+
 export const SHOW_TOOL = 'mcp__apaki__show';
 
 const KIND_LABEL = { html: 'HTML', markdown: 'Markdown', svg: 'SVG', image: 'Image', pdf: 'PDF', text: 'Text', file: 'File', url: 'Web page' };
@@ -212,7 +215,8 @@ export class ArtifactPane {
 
   load(rev = null) {
     this.reqId = `${this.id}-${++viewerSeq}`;
-    this.host.send('artifactGet', { reqId: this.reqId, paneId: this.id, id: this.art.id, sessionId: this.art.sessionId, rev, content: 'text' });
+    // On the phone every kind comes as content (images and PDFs as base64): the PC's artifact server is not reachable there.
+    this.host.send('artifactGet', { reqId: this.reqId, paneId: this.id, id: this.art.id, sessionId: this.art.sessionId, rev, content: ON_PHONE ? true : 'text' });
   }
 
   /**
@@ -223,7 +227,8 @@ export class ArtifactPane {
     const same = art.id === this.art.id && art.sessionId === this.art.sessionId;
     this.art = { ...(same ? this.art : {}), ...art };
     if (art.sourcePane) this.sourcePane = art.sourcePane;
-    if (art.src) this.render({ ...art, latest: art.rev }); else this.load(art.rev || null);
+    // The phone draws from content only (its src is the PC's 127.0.0.1 server), so it always loads.
+    if (art.src && !ON_PHONE) this.render({ ...art, latest: art.rev }); else this.load(art.rev || null);
   }
 
   renderHead() {
@@ -254,6 +259,7 @@ export class ArtifactPane {
     const kind = a.kind;
     body.className = `art-body k-${kind}`;
     this.el.dataset.kind = kind;
+    if (ON_PHONE) { this.renderOnPhone(a); this.host.changed(this); return; }
     if (!a.src && kind !== 'markdown' && kind !== 'text') { this.fail('Apaki\'s artifact server is not running; reopen this once the engine is back.'); return; }
     if (kind === 'html') {
       const f = el('iframe', 'art-frame');
@@ -295,6 +301,59 @@ export class ArtifactPane {
     this.host.changed(this);
   }
 
+  /**
+   * The phone (2026-10-12): every kind from the content the PC sent. HTML runs in sandbox.html, a page of the phone build
+   * loaded in a sandboxed frame (an origin of its own: it cannot reach this page, its keys or its storage), whose own CSP
+   * allows the artifact's scripts and no network, the way the desktop runs it with no network. Images and SVG as data URLs
+   * (an SVG in an img runs nothing); a PDF opens in the phone's own viewer.
+   */
+  renderOnPhone(a) {
+    const body = this.$.body;
+    const kind = a.kind;
+    if (a.content == null) { this.load(a.rev); return; }
+    const b64 = a.encoding === 'base64';
+    if (kind === 'html') {
+      const f = el('iframe', 'art-frame');
+      f.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals');
+      f.setAttribute('referrerpolicy', 'no-referrer');
+      f.title = a.title || 'Artifact';
+      const html = b64 ? atob(a.content) : String(a.content);
+      f.onload = () => f.contentWindow?.postMessage({ apakiArtifact: html }, '*');
+      f.src = 'sandbox.html';
+      body.replaceChildren(f);
+    } else if (kind === 'image' || kind === 'svg') {
+      const fig = el('figure', 'art-figure');
+      const img = el('img');
+      img.alt = a.title || '';
+      img.decoding = 'async';
+      img.src = b64 ? `data:${a.mime || 'image/png'};base64,${a.content}` : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(String(a.content))}`;
+      img.onload = () => { fig.dataset.size = `${img.naturalWidth}×${img.naturalHeight}`; };
+      fig.onclick = () => fig.classList.toggle('actual');
+      fig.append(img);
+      body.replaceChildren(fig);
+    } else if (kind === 'pdf') {
+      const box = el('div', 'art-missing');
+      box.innerHTML = `<div class="tk-kicker">PDF</div><p>${esc(a.title || 'Document')}, ${esc(fmtSize(a.size))}</p>`;
+      const open = el('button', 'btn', 'Open');
+      open.onclick = () => {
+        const bin = atob(String(a.content));
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        window.open(URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })), '_blank');
+      };
+      box.append(open);
+      body.replaceChildren(box);
+    } else if (kind === 'markdown') {
+      const doc = el('article', 'art-doc turn-assistant', md(String(a.content)));
+      for (const link of doc.querySelectorAll('a[href]')) link.onclick = (e) => { e.preventDefault(); this.host.openUrl(link.href, this); };
+      body.replaceChildren(doc);
+    } else {
+      const pre = el('pre', 'art-code');
+      pre.textContent = (b64 ? `(binary, ${fmtSize(a.size)})` : String(a.content)).slice(0, 2_000_000);
+      body.replaceChildren(pre);
+    }
+  }
+
   fail(text) {
     this.$.body.className = 'art-body';
     this.$.body.innerHTML = `<div class="art-missing"><div class="tk-kicker">Not available</div><p>${esc(text)}</p></div>`;
@@ -302,6 +361,8 @@ export class ArtifactPane {
 
   /** Engine events addressed to this viewer. */
   handle(e) {
+    // A refusal from the PC (its policy, or an engine without the op) ends the wait with the reason, not an endless spinner.
+    if (e.ev === 'error' && e.reqId && e.reqId === this.reqId) { this.fail(e.message || 'The PC could not send this artifact.'); return; }
     if (e.ev !== 'artifactContent' || e.reqId !== this.reqId) return;
     if (e.error) { this.fail(e.error); return; }
     this.render(e);

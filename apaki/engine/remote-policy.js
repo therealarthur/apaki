@@ -542,7 +542,10 @@ export function checkPhoneCommand(cmd, ctx) {
       // A pane that follows a desktop pane never turns into a conversation of its own by an open: that is the takeover this avoids.
       if (followed) return fail(FOLLOWING_TEXT, cmd);
       if (!exists && (ctx.paneCount?.(deviceId) ?? 0) >= MAX_PHONE_PANES) return fail(`A phone can have ${MAX_PHONE_PANES} conversations open at once. Close one first.`, cmd);
-    } else if (!exists && op !== 'close') {
+    } else if (!exists && op !== 'close' && op !== 'artifactGet') {
+      // artifactGet: the pane is the phone's artifact viewer, a screen of the phone only, so the PC never has it; its id only
+      // routes the answer back. What it may read is still checked below (a conversation this phone has open). 2026-10-12:
+      // this refusal left every artifact on the phone loading forever (Arthur: "The artifacts are not loading").
       return fail('That pane is not open on the PC.', cmd);
     }
     // Ops on a follower act on the desktop pane it follows (artifactGet and close stay on the phone's own pane id).

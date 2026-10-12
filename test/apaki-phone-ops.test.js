@@ -300,3 +300,28 @@ test('policy: a phone mic (transcribe) at every access level, for its own pane, 
   assert.equal(ask({ op: 'transcribe', paneId: 'p1', wav: 'A'.repeat(MAX_VOICE_B64 + 4) }, 'full', mine).ok, false, 'too long');
   assert.equal(ask({ op: 'transcribe', paneId: 'p1', wav: 'A'.repeat(MAX_VOICE_B64) }, 'full', mine).ok, true, 'the limit itself');
 });
+
+test('policy: an artifact viewer on the phone is not a PC pane; its id routes the answer, the open conversation authorises', () => {
+  const sessions = { phoneSessions: () => [SID], paneExists: () => false, hasOp: (op) => op === 'artifactGet' };
+  const r = ask({ op: 'artifactGet', reqId: 'a1', paneId: 'v1abc', id: 'art-1', sessionId: SID, content: true }, 'chat', sessions);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.cmd.paneId, `phone:${DEV}:v1abc`, 'the answer goes back to the phone');
+  assert.equal(r.cmd.content, true);
+  assert.equal(ask({ op: 'artifactGet', paneId: 'v1abc', id: 'art-1', sessionId: '0e7f4b4e-9999-2222-3333-444455556666' }, 'full', sessions).ok, false, 'a conversation the phone has not open');
+  assert.equal(ask({ op: 'artifactGet', paneId: 'bad id!', id: 'art-1', sessionId: SID }, 'full', sessions).ok, false, 'a malformed pane id');
+});
+
+test('phone build: HTML artifacts run in sandbox.html, a framed page of the build with no network; the page may frame only itself', () => {
+  const sandbox = read('../apaki/web/src/sandbox.html');
+  assert.match(sandbox, /connect-src 'none'/);
+  assert.match(sandbox, /default-src 'none'/);
+  assert.match(sandbox, /e\.source !== window\.parent/);
+  const build = read('../apaki/scripts/build-web.mjs');
+  assert.match(build, /'sandbox\.html'\]/);
+  assert.match(build, /"frame-src 'self'"/);
+  const viewer = read('../apaki/ui/artifacts.js');
+  assert.match(viewer, /setAttribute\('sandbox', 'allow-scripts allow-forms allow-modals'\)/);
+  assert.doesNotMatch(viewer.slice(viewer.indexOf('renderOnPhone(a) {')), /^\s*f\.setAttribute\('sandbox', '[^']*allow-same-origin/m, 'never the same origin');
+  const headers = read('../relay/site/_headers');
+  assert.match(headers, /\/v\/\*\/sandbox\.html\n {2}! X-Frame-Options\n {2}Content-Security-Policy: frame-ancestors 'self'/);
+});

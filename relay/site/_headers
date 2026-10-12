@@ -52,3 +52,9 @@
   Cache-Control: public, max-age=0, must-revalidate, no-transform
 /privacy/*
   Cache-Control: public, max-age=0, must-revalidate, no-transform
+
+# The phone page's artifact sandbox (apaki/web/src/sandbox.html, 2026-10-12) must be framable by the phone page itself;
+# every other file keeps X-Frame-Options: DENY from /* above.
+/v/*/sandbox.html
+  ! X-Frame-Options
+  Content-Security-Policy: frame-ancestors 'self'
