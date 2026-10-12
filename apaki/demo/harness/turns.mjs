@@ -15,6 +15,8 @@
  * Browser side (the harness page). No real Claude, no network, no files.
  */
 
+import { HANDOFF } from './data.mjs';
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const clock = () => performance.now();
 
@@ -211,6 +213,19 @@ const SCRIPTS = {
       '10 of 10 runs passed\nrun 1: 1 passed (1.4s)\nrun 2: 1 passed (1.3s)\nrun 3: 1 passed (1.3s)\nrun 4: 1 passed (1.4s)\nrun 5: 1 passed (1.3s)\nrun 6: 1 passed (1.3s)\nrun 7: 1 passed (1.4s)\nrun 8: 1 passed (1.3s)\nrun 9: 1 passed (1.3s)\nrun 10: 1 passed (1.4s)', { run: 1500 });
     await t.say('### Fixed\n\nThe banner now waits for the order id. `useOrder` sets `confirmed` only after `api.pay` returns, so the page can no longer show a confirmation without an order number.\n\n- ten runs in a row, ten passes (it failed one in five before)\n- the subagent found no way for a retry to create a second order id\n\nWant me to open the pull request?', { cps: 170 });
     t.finish({ cost: 0.318, cached: 52_800, fresh: 3_900 });
+  },
+
+  /**
+   * The handoff (2026-10-12): the phone took "Fix flaky checkout test" over from the desktop and asks for the fix.
+   * The desktop pane follows the same turn from the transcript (data.mjs HANDOFF, handoffMessages).
+   */
+  async handoff(t) {
+    await t.think(350);
+    await t.say(HANDOFF.lead, { cps: 200 });
+    await t.tool('Edit', HANDOFF.edit, HANDOFF.editResult, { run: 450 });
+    await t.tool('Bash', HANDOFF.bash, HANDOFF.bashResult, { run: 1000 });
+    await t.say(HANDOFF.reply, { cps: 220 });
+    t.finish({ cost: 0.094, cached: 61_200, fresh: 2_400 });
   },
 
   /** The message queued during flaky-fix goes out as the next turn. */

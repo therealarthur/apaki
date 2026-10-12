@@ -28,9 +28,13 @@
  *   waitFor(fn, arg, timeout)    waits in the page until fn(arg) is truthy
  *   evaluate(fn, arg)            runs a function in the page
  *   still(label, opts)           a PNG (only in a stills run); { cursor: true } keeps the pointer in it
+ *
+ * Paired scenes (2026-10-12): a scene with `pair: { device, ws }` runs on two pages at once, the desktop window
+ * and the phone client, recorded together and cut at the same instant, so the page can play both in step. Its
+ * run(s, p) gets a director for each; s.begin() marks the start for both.
  */
 
-import { ID } from './harness/data.mjs';
+import { HANDOFF, ID } from './harness/data.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOUSE_FRAME_MS = 9;
@@ -334,11 +338,13 @@ export const SCENES = {
 
   'phone-pair': {
     title: 'Pair a phone',
-    shows: 'The Phone sheet: pair with a QR code, approve the phone that scanned it by its code, and see it connected among the paired phones.',
+    shows: 'The Phone sheet: pair with a QR code, approve the phone that scanned it by its code, and see it connected among the paired phones. In step, the phone (2026-10-12): its Connect screen, the same six digits, then the PC\'s sessions.',
     ws: 'phone-pair',
     hero: 'qr',
-    async run(s) {
+    pair: { device: 'phone', ws: 'pair-phone', hero: 'code' },
+    async run(s, p) {
       await s.waitFor(() => document.querySelector('#phone'));
+      if (p) await p.waitFor(() => document.querySelector('#pairScreen:not([hidden]) .pair-steps'));
       await s.begin();
       await s.pause(500);
       await s.click('#phone', { ms: 900 });
@@ -346,18 +352,87 @@ export const SCENES = {
       await s.pause(1300);
       await s.click('.phone-sheet [data-k="pair"]', { ms: 800 });
       await s.waitFor(() => document.querySelector('.phone-sheet .ph-qr svg'));
-      await s.pause(1500);
+      await s.pause(900);
+      // The phone's camera opened the link: it reaches the PC through the relay.
+      if (p) await p.evaluate(() => window.__demo.phone.pairing('reaching'));
+      await s.pause(600);
       await s.still('qr');
       await s.pause(500);
       await s.evaluate(() => window.__demo.phoneScan());
+      if (p) await p.evaluate(() => window.__demo.phone.pairing('code', '482913'));
       await s.waitFor(() => document.querySelector('.phone-sheet .ph-code'));
       await s.pause(1400);
       await s.still('approve');
+      if (p) await p.still('code');
       await s.click('.phone-sheet [data-k="allow"]', { ms: 800 });
+      if (p) await p.evaluate(() => window.__demo.phone.pairing('done'));
       await s.waitFor(() => document.querySelector('.phone-sheet .ph-done'));
       await s.pause(1500);
       await s.still('paired');
+      if (p) await p.still('connected');
       await s.pause(500);
+    },
+  },
+
+  /**
+   * The handoff (2026-10-12, the home page's hero): four sessions work in one tab on the PC; the phone opens the
+   * one in the top right from "On your desktop", takes it over, and asks for the fix. The desktop pane says the
+   * phone took it, and follows the conversation from the transcript as Claude Code writes it (every 5 s, as the
+   * real pane does), so the phone's message and Claude's reply show up on the PC too. Nothing here is planned
+   * work: a phone that only watches a desktop pane (follow) is not built on the PC side, so it is not shown.
+   */
+  handoff: {
+    title: 'Handoff: the phone picks up a desktop session',
+    shows: 'Four working panes on the PC; the phone takes over the top right one from On your desktop and asks for the fix; the PC pane says the phone has it and follows the turn from the transcript.',
+    ws: 'handoff',
+    pair: { device: 'phone', ws: 'handoff-phone', hero: 'reply' },
+    hero: 'followed',
+    maxSeconds: 19,
+    async run(s, p) {
+      const flaky = ID.flaky;
+      await s.waitFor(() => document.querySelectorAll('.stage.on .pane').length >= 3);
+      // The other two work for the whole clip (started before it, so they are mid-turn when it begins).
+      await s.evaluate((ids) => { for (const id of ids) window.__demo.autoTurn(id); }, [ID.invoices, ID.review]);
+      await s.evaluate(() => window.__demo.cursor(false));
+      if (p) await p.waitFor(() => document.querySelectorAll('.desk-row.go').length >= 3);
+      await s.pause(1600);
+      await s.begin();
+      await s.pause(900);
+      if (!p) { await s.pause(9000); await s.still('followed'); return; }
+      await p.still('list');
+      await p.click('.desk-row.go:has-text("Fix flaky checkout test")', { ms: 550, hold: 140 });
+      await p.waitFor(() => document.querySelector('.pane.focused .tk-go'));
+      await p.pause(1000);
+      // Take over here on the phone; on the PC, at the same moment, the pane that had it says so. That pane looks
+      // at the transcript every 5 s from now, so the phone's turn is timed to be written just before its second look.
+      await p.click('.pane.focused .tk-go', { ms: 450, hold: 140 });
+      await s.evaluate((id) => window.__demo.engine.takenBy(id), flaky);
+      s.note('taken over');
+      await p.waitFor(() => document.querySelectorAll('.pane.focused .turn-assistant').length > 0);
+      await p.pause(300);
+      await p.click('.pane.focused textarea', { ms: 300, hold: 110 });
+      await p.type(HANDOFF.prompt, { ms: 30 });
+      await p.pause(150);
+      const tools = await p.evaluate(() => document.querySelectorAll('.pane.focused .tool').length);
+      await p.click('.pane.focused .send', { ms: 300, hold: 110 });
+      // What Claude Code on the phone has written to the transcript so far, for the desktop pane's next look.
+      const grew = (n) => s.evaluate(({ id, k }) => window.__demo.engine.transcriptGrew(id, k), { id: flaky, k: n });
+      await grew(1);
+      s.note('sent');
+      await p.waitFor((n) => document.querySelectorAll('.pane.focused .tool').length > n, tools, 15000);
+      await grew(3);
+      await p.waitFor((t) => [...document.querySelectorAll('.pane.focused .tool .sum')].some((x) => x.textContent.includes(t)), '10 of 10 runs passed', 15000);
+      await grew(5);
+      const r = replyDone('ten passes');
+      await p.waitFor(r.fn, r.text, 15000);
+      await grew(6);
+      s.note('reply written');
+      await p.still('reply');
+      // The desktop pane looks again within 5 s and shows the reply above its Taken over card.
+      await s.waitFor((t) => [...document.querySelectorAll('.pane .turn-assistant')].some((x) => x.textContent.includes(t)), 'ten passes', 12000);
+      await s.pause(900);
+      await s.still('followed');
+      await s.pause(300);
     },
   },
 
@@ -464,11 +539,18 @@ export const sceneNames = () => Object.keys(SCENES);
  * Runs one scene on a page that has the harness open (its workspace chosen by the address).
  * Returns { name, beganAt, endedAt, seconds, log } with wall-clock times, for trimming a recording.
  */
-export async function runScene(page, name, { stills = false, onStill = null } = {}) {
+export async function runScene(page, name, { stills = false, onStill = null, pairPage = null, onPairStill = null } = {}) {
   const scene = SCENES[name];
   if (!scene) throw new Error(`no scene called ${name}`);
   const s = new Director(page, { stills, onStill });
-  await scene.run(s);
+  // A paired scene's phone (2026-10-12): its own director, starting when the desktop's does.
+  const p = pairPage ? new Director(pairPage, { stills, onStill: onPairStill }) : null;
+  if (p) {
+    p.pos = { x: 300, y: 600 };
+    const begin = s.begin.bind(s);
+    s.begin = async () => { await begin(); p.beganAt = s.beganAt; p.t0 = s.t0; };
+  }
+  await scene.run(s, p);
   const endedAt = Date.now();
-  return { name, beganAt: s.beganAt, endedAt, seconds: s.beganAt == null ? 0 : (endedAt - s.beganAt) / 1000, log: s.log, hero: scene.hero };
+  return { name, beganAt: s.beganAt, endedAt, seconds: s.beganAt == null ? 0 : (endedAt - s.beganAt) / 1000, log: s.log, pairLog: p?.log || null, hero: scene.hero };
 }

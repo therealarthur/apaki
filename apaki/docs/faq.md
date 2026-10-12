@@ -64,7 +64,7 @@ Yes, on your own Cloudflare account; the free plan is enough for a few people. S
 Codex threads open as panes next to Claude's, with Codex's own model and effort pickers, its three permission presets (full access included), questions, approvals, plans, diffs and the same viewer and browser tools. A new conversation can start as either from the empty pane, and the sidebar has a Codex view. Apaki runs its own `codex app-server`, the protocol the Codex app uses, so threads are the same ones the Codex app shows. What is still open is listed in [remote/CODEX.md](../remote/CODEX.md).
 
 **Worktrees?**
-Coming: start a conversation in a new git worktree, see work by repository and branch, and view changes, commit, push or open a pull request from the pane, on the desktop and the phone ([remote/WORKTREES.md](../remote/WORKTREES.md)).
+Yes, since 2026-10-12. Pick New worktree when you start a conversation; the pane header then shows the branch and its changes, with View changes, Commit, Push, Open PR, Merge and Remove in its menu. Remove refuses a worktree with uncommitted or unpushed work. The phone shows the same; its actions need Full access ([remote/WORKTREES.md](../remote/WORKTREES.md)).
 
 **Notifications?**
 Today Apaki plays a sound when a session finishes or needs an answer, and shows a count of ready tabs on the taskbar. OS notifications and phone push are planned.

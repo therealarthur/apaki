@@ -20,6 +20,15 @@
         ],
         "createdAt": "2026-10-12T05:08:59.595Z",
         "reason": "Claude (2026-10-12): light theme tints every elevation shadow with the palette navy on purpose (--shadow-rgb 44,53,120); dark theme switches --shadow-rgb to black, so no colored glow sits on a dark surface"
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "apaki/web/src/web.css"
+        ],
+        "createdAt": "2026-10-12T06:37:39.140Z",
+        "reason": "Claude (2026-10-12): the three padding-bottom transitions lift sheets and the conversation stack above the iPhone keyboard in step with its own animation (--kb-ms); the padding must change layout so content is not hidden under the keyboard, and it runs once per keyboard open or close"
       }
     ]
   }

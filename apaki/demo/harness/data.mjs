@@ -145,6 +145,43 @@ I would fix the hook so the banner only shows once the order exists, and leave t
   ];
 }
 
+/**
+ * The handoff (2026-10-12, for the home page's hero): the turn a phone runs in "Fix flaky checkout test" after
+ * taking it over from the desktop. The phone plays it live (turns.mjs, script "handoff"); the desktop pane that
+ * lost the session reads the same turn from the transcript as Claude Code writes it (engine.mjs historyCheck,
+ * handoffMessages below), the way the real pane follows a conversation that moved to a phone.
+ */
+export const HANDOFF = {
+  prompt: 'Fix the hook, then run the test ten times',
+  lead: 'Moving `confirmed` below `setOrder` in `useOrder`, so the banner waits for the order id.',
+  edit: {
+    file_path: 'src/components/Checkout/useOrder.ts',
+    old_string: ["    setStatus('confirmed'); // runs before the order id is set", '    setOrder(await api.pay(cart));'].join('\n'),
+    new_string: ['    const created = await api.pay(cart);', '    setOrder(created);', "    setStatus('confirmed'); // after the id exists"].join('\n'),
+  },
+  editResult: 'The file src/components/Checkout/useOrder.ts has been updated.',
+  bash: { command: 'for i in 1 2 3 4 5 6 7 8 9 10; do npx playwright test checkout.spec.ts -x || break; done', description: 'Run the checkout test ten times' },
+  bashResult: ['10 of 10 runs passed', ...Array.from({ length: 10 }, (_, i) => `run ${i + 1}: 1 passed (1.${i % 3 ? 3 : 4}s)`)].join('\n'),
+  reply: 'Fixed. The banner now waits for the order id: ten runs in a row, ten passes, where it failed about one run in five before.',
+};
+
+/**
+ * The handoff turn as transcript messages, the first `count` of them as Claude Code has written them so far:
+ * 1 the prompt, 3 the edit and its result, 5 the test run and its result, 6 the reply.
+ */
+export function handoffMessages(now, count) {
+  const { u, a, result, use, text } = kit(now);
+  const all = [
+    u(14_000, HANDOFF.prompt),
+    a(12_000, [text(HANDOFF.lead), use('toolu_h1', 'Edit', HANDOFF.edit)]),
+    result(11_000, 'toolu_h1', HANDOFF.editResult),
+    a(9_000, [use('toolu_h2', 'Bash', HANDOFF.bash)]),
+    result(5_000, 'toolu_h2', HANDOFF.bashResult),
+    a(2_000, HANDOFF.reply),
+  ];
+  return all.slice(0, Math.max(0, Math.min(all.length, count)));
+}
+
 /** The long conversation for the history scene: tool calls, a diff, a subagent, and what Claude Code says itself. */
 function uploadsHistory(now) {
   const { u, a, result, use, text, think, notice } = kit(now);
@@ -430,6 +467,20 @@ PRESETS.codex = () => {
   return p;
 };
 
+// Git worktrees (2026-10-12): conversations in the worktrees of two invented repositories, the sidebar on its Worktrees view.
+PRESETS.worktrees = () => {
+  const p = PRESETS.base();
+  const web = `${CWD.web}.worktrees`;
+  p.worktrees = true;
+  p.tabs = [
+    { focused: 'pa1', root: leaf('pa1', ID.flaky, { title: 'Fix flaky checkout test', cwd: `${web}\\fix-flaky-checkout` }) },
+    { focused: 'pa2', root: leaf('pa2', ID.uploads, { title: 'Move image uploads to signed URLs', cwd: `${web}\\signed-uploads`, model: 'claude-sonnet-5-5', effort: 'xhigh' }) },
+    { focused: 'pa3', root: leaf('pa3', ID.darkmode, { title: 'Dark mode for the settings screen', cwd: CWD.mobile, model: 'claude-sonnet-5-5' }) },
+  ];
+  p.rail = { view: 'worktrees', expanded: [], scroll: 0, width: 352, collapsed: false };
+  return p;
+};
+
 PRESETS.history = () => {
   const p = PRESETS.base();
   p.tabs = [p.tabs[1], p.tabs[0], p.tabs[2]];
@@ -441,6 +492,73 @@ PRESETS.browser = () => {
   p.scripts = { [ID.flaky]: ['browse-checkout'] };
   return p;
 };
+
+/**
+ * The handoff (2026-10-12): the desktop has one tab of three sessions, the sidebar folded away. "Fix flaky
+ * checkout test" (the left column, focused) is the one you were in; it is idle, the two on the right work.
+ */
+const HANDOFF_ROOT = {
+  type: 'split', dir: 'row', sizes: [0.5, 0.5], children: [
+    leaf('ph1', ID.flaky, { title: 'Fix flaky checkout test', cwd: CWD.web }),
+    { type: 'split', dir: 'col', sizes: [0.5, 0.5], children: [
+      leaf('ph2', ID.invoices, { title: 'Migrate invoices to the new tax API', cwd: CWD.billing }),
+      leaf('ph3', ID.review, { title: 'Review PR 482: rate limiter for the public API', cwd: CWD.billing }),
+    ] },
+  ],
+};
+const HANDOFF_BUSY = [ID.invoices, ID.review];
+
+PRESETS.handoff = () => ({
+  active: 0,
+  tabs: [{ focused: 'ph1', root: HANDOFF_ROOT }],
+  scripts: { [ID.invoices]: ['background-invoices'], [ID.review]: ['background-review'] },
+  rail: { view: 'all', expanded: [], scroll: 0, width: 352, collapsed: true },
+  // Scenes start these right away (scenes.mjs), so the grid is working when the clip begins.
+  busy: HANDOFF_BUSY,
+});
+
+/**
+ * What a phone hears about that desktop (engine desktopTabs): the same tab, its three panes in layout order,
+ * which ones work and which one has focus, as apaki/engine/desktop-tabs.js sends it.
+ */
+const handoffDesktopTabs = () => [{
+  index: 0, active: true,
+  panes: [
+    { kind: 'session', sessionId: ID.flaky, title: 'Fix flaky checkout test', busy: false, focused: true },
+    { kind: 'session', sessionId: ID.invoices, title: 'Migrate invoices to the new tax API', busy: true, focused: false },
+    { kind: 'session', sessionId: ID.review, title: 'Review PR 482: rate limiter for the public API', busy: true, focused: false },
+  ],
+}];
+
+/**
+ * The phone in the handoff: nothing open of its own yet; it lists the desktop's tab, and the desktop holds
+ * "Fix flaky checkout test" (held), so opening it on the phone asks to take it over, as the real engine does.
+ */
+PRESETS['handoff-phone'] = () => ({
+  active: 0,
+  tabs: [],
+  scripts: { [ID.flaky]: ['handoff'] },
+  rail: { view: 'all', expanded: [], scroll: 0, width: 352, collapsed: false },
+  desktopTabs: handoffDesktopTabs(),
+  held: { [ID.flaky]: { name: 'Apaki on this PC', app: 'apaki' } },
+});
+
+/**
+ * The phone in the pairing scene: nothing paired yet, so it starts on its own "Connect to your PC" screen
+ * (phone-boot.mjs); once the PC allows it, its list shows the desktop of the base preset.
+ */
+PRESETS['pair-phone'] = () => ({
+  active: 0,
+  tabs: [],
+  scripts: {},
+  rail: { view: 'all', expanded: [], scroll: 0, width: 352, collapsed: false },
+  desktopTabs: [
+    { index: 0, active: true, panes: [{ kind: 'session', sessionId: ID.flaky, title: 'Fix flaky checkout test', busy: false, focused: true }] },
+    { index: 1, active: false, panes: [{ kind: 'session', sessionId: ID.uploads, title: 'Move image uploads to signed URLs', busy: false, focused: true }] },
+    { index: 2, active: false, panes: [{ kind: 'session', sessionId: ID.darkmode, title: 'Dark mode for the settings screen', busy: false, focused: true }] },
+  ],
+  phoneStart: 'welcome',
+});
 
 PRESETS.split = () => {
   const p = PRESETS.base();

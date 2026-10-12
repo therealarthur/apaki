@@ -13,6 +13,9 @@
  *   historyBefore, historyBlock              read only: more of a conversation it has open
  *   codexModels, codexThreads                read only (2026-10-12): Codex's models and threads; a Codex pane uses the
  *                                            ops above, with Codex's models, efforts and presets (CODEX_MODES) in them
+ *   worktrees, worktreeDiff                  read only: repositories, branches, change counts, diffs (2026-10-12)
+ *   worktreePlan, worktreeRun                git and gh on the PC (create, remove, commit, push, pull request,
+ *                                            merge); Full access only, folders the PC already lists only
  * Never billing, never the remote* ops (pairing, devices), never voice,
  * folders, Ask Claude or Dig deeper (they write files or spend outside a
  * conversation), and nothing that reaches the shell or the filesystem.
@@ -75,7 +78,15 @@ export const PHONE_OPS = Object.freeze([
   // Codex (2026-10-12, codex-panes.js): its model list (each model's own efforts) for the pickers, and the Codex threads for the
   // Codex view of the list. Both read only; a Codex pane then uses the ops above (open, send, steer, interrupt, answer...).
   'codexModels', 'codexThreads',
+  // Git worktrees (2026-10-12, worktrees.js; WORKTREES.md): looking at repositories, branches and diffs is allowed at every
+  // access level (the same files are readable through Claude in plan mode); planning or running an action (create, remove,
+  // commit, push, pull request, merge) needs Full, like running commands from the phone. Not here on purpose:
+  // worktreeTerminal, which opens a window on the PC.
+  'worktrees', 'worktreeDiff', 'worktreePlan', 'worktreeRun',
 ]);
+
+/** What worktreePlan and worktreeRun can be asked to do (worktrees.js KINDS; test/apaki-worktrees-engine.test.js keeps the lists equal). */
+export const WORKTREE_KINDS = Object.freeze(['create', 'remove', 'commit', 'push', 'pr', 'merge']);
 
 /** Ops that act on one pane (paneId required). */
 const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck']);
@@ -85,7 +96,8 @@ export const MAX_PHONE_PANES = 6;
 
 /** Events every connected phone gets, besides those for its own panes and requests. */
 // desktopTabs (2026-10-11): the desktop's tabs and their panes, so a phone shows them (engine desktop-tabs.js).
-export const BROADCAST_EVENTS = new Set(['folders', 'glass', 'index', 'meaning', 'desktopTabs']);
+// worktrees (2026-10-12): the repositories and worktrees with their change counts (engine worktrees.js), cached for later phones.
+export const BROADCAST_EVENTS = new Set(['folders', 'glass', 'index', 'meaning', 'desktopTabs', 'worktrees']);
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const MODES = ['bypassPermissions', 'acceptEdits', 'plan', 'default'];
@@ -195,6 +207,11 @@ export function capModeText(cap, mode) {
   return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, so it cannot use ${mode === 'bypassPermissions' ? 'Bypass permissions' : String(mode).slice(0, 40)}.`;
 }
 
+/** Why a worktree action was refused for a phone below Full access (the PC owner can change it in the Phone sheet). */
+export function capWorktreeText(cap) {
+  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, so it can look at worktrees and their changes but not create, commit, push, merge or remove them. The person can change the phone's access in Apaki's Phone sheet on the PC.`;
+}
+
 /** The line a restricted phone pane shows when it opens (null for 'full', whose mode chip says enough). */
 export function capNote(cap) {
   if (cap === 'noshell') return 'This phone is set to No shell on the PC: Claude can read, search and answer here, but cannot run commands, edit files, use the browser or use tools other programs added.';
@@ -260,6 +277,12 @@ const MAX_IMAGE_B64 = 8 * 1024 * 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HISTORY_REF_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:(\d{1,5}|s)(?::\d{1,5})?$/i;
 const MAX_HISTORY_PAGE = 5000;
+// worktreePlan and worktreeRun: the longest folder, branch name, commit message, pull request description and file list a phone may send.
+const MAX_PATH_CHARS = 1024;
+const MAX_BRANCH = 120;
+const MAX_COMMIT_MESSAGE = 5000;
+const MAX_PR_BODY = 20000;
+const MAX_COMMIT_PATHS = 200;
 
 /** The engine pane id of a phone's pane. */
 export function phonePaneId(deviceId, local) {
@@ -301,7 +324,7 @@ const fail = (error, cmd) => ({ ok: false, error, reqId: typeof cmd?.reqId === '
  * @param {(paneId: string) => boolean} [ctx.paneExists]
  * @param {(deviceId: string) => number} [ctx.paneCount]  panes this phone has in the engine
  * @param {(askId: string) => (string|null)} [ctx.askPane]  the pane a pending question belongs to
- * @param {(cwd: string) => boolean} [ctx.knownCwd]  a folder some listed session ran in
+ * @param {(cwd: string) => boolean} [ctx.knownCwd]  a folder some listed session ran in, or a worktree the engine lists (worktrees.js)
  * @param {(deviceId: string) => string[]} [ctx.phoneSessions]  sessions open in this phone's panes
  * @param {(paneId: string) => ('codex'|'claude')} [ctx.paneKind]  what a pane runs (2026-10-12): a Codex pane takes Codex's models, efforts and presets, and files
  * @param {string} [ctx.cap]  the phone's capability (CAPS); absent means 'full' (callers from before capabilities)
@@ -473,6 +496,56 @@ export function checkPhoneCommand(cmd, ctx) {
         if (typeof cmd.ref !== 'string' || !HISTORY_REF_RE.test(cmd.ref)) return fail('Bad message part.', cmd);
         out.ref = cmd.ref;
       }
+      break;
+    }
+    case 'worktrees': {
+      // Which folder the phone is looking at: one the PC already knows (a session's folder or a worktree), else the whole list.
+      out.cwd = typeof cmd.cwd === 'string' && cmd.cwd.length <= MAX_PATH_CHARS && ctx.knownCwd?.(cmd.cwd) ? cmd.cwd : null;
+      if (cmd.full === true && out.cwd) out.full = true;
+      if (cmd.refresh === true) out.refresh = true;
+      break;
+    }
+    case 'worktreeDiff': {
+      // Read only, and only a folder the PC already lists: a phone cannot point git at an arbitrary path.
+      if (typeof cmd.path !== 'string' || cmd.path.length > MAX_PATH_CHARS || !ctx.knownCwd?.(cmd.path)) return fail('That folder is not one of the PC\'s worktrees.', cmd);
+      out.path = cmd.path;
+      out.scope = cmd.scope === 'head' ? 'head' : 'base';
+      break;
+    }
+    case 'worktreePlan':
+    case 'worktreeRun': {
+      // Running git on the PC is the shell-level power Full access gives; No shell and Chat only get a plain refusal.
+      if (cap !== 'full') return fail(capWorktreeText(cap), cmd);
+      if (!WORKTREE_KINDS.includes(cmd.kind)) return fail('That worktree action does not exist.', cmd);
+      const where = cmd.kind === 'create' ? cmd.repo : cmd.path;
+      if (typeof where !== 'string' || where.length > MAX_PATH_CHARS || !ctx.knownCwd?.(where)) return fail('That folder is not one of the PC\'s worktrees.', cmd);
+      out.kind = cmd.kind;
+      if (cmd.kind === 'create') out.repo = where; else out.path = where;
+      const text = (v, max, what, { required = false } = {}) => {
+        if (v == null || v === '') return required ? `Missing ${what}.` : null;
+        return typeof v === 'string' && v.length <= max ? null : `Bad ${what}.`;
+      };
+      let bad = null;
+      if (cmd.kind === 'create') {
+        bad = text(cmd.branch, MAX_BRANCH, 'branch name', { required: true }) || text(cmd.base, MAX_BRANCH, 'base branch');
+        out.branch = cmd.branch; out.base = cmd.base || undefined; out.useExisting = cmd.useExisting === true;
+      } else if (cmd.kind === 'remove') {
+        out.deleteBranch = cmd.deleteBranch === true;
+      } else if (cmd.kind === 'commit') {
+        bad = text(cmd.message, MAX_COMMIT_MESSAGE, 'commit message');
+        out.message = cmd.message || '';
+        if (cmd.paths != null) {
+          if (!Array.isArray(cmd.paths) || cmd.paths.length > MAX_COMMIT_PATHS || cmd.paths.some((x) => typeof x !== 'string' || x.length > MAX_PATH_CHARS)) bad = 'Bad file list.';
+          else out.paths = cmd.paths;
+        }
+      } else if (cmd.kind === 'pr') {
+        bad = text(cmd.title, 300, 'title') || text(cmd.body, MAX_PR_BODY, 'description') || text(cmd.base, MAX_BRANCH, 'base branch');
+        out.title = cmd.title || ''; out.body = cmd.body || ''; out.base = cmd.base || undefined; out.draft = cmd.draft === true;
+      } else if (cmd.kind === 'merge') {
+        bad = text(cmd.into, MAX_BRANCH, 'branch to merge into');
+        out.into = cmd.into || undefined;
+      }
+      if (bad) return fail(bad, cmd);
       break;
     }
     case 'historyCheck': {

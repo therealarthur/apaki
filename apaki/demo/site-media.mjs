@@ -34,7 +34,8 @@ const THEMES = ['light', 'dark'];
 
 /** Which still is each clip's poster (the moment that says the most when nothing plays). */
 const CLIPS = {
-  split: 'grid',
+  // The hero (2026-10-12): the PC and the phone in step (scenes.mjs "handoff"), each with its own poster.
+  handoff: 'followed',
   sessions: 'overview',
   search: 'results',
   steer: 'steered',
@@ -42,7 +43,15 @@ const CLIPS = {
   'glass-swap': 'panel',
   browser: 'browsing',
   'phone-pair': 'approve',
-  phone: null, // the phone's clip is 390x844; its stills are made below at 780 px
+};
+
+/**
+ * The phone halves of paired scenes (2026-10-12): clip "<scene>-phone-<theme>.mp4" (390x844) and, as its
+ * poster, the still "<scene>-phone-<label>" at 780 px, written as "<scene>-phone-<theme>.webp".
+ */
+const PHONE_CLIPS = {
+  handoff: 'reply',
+  'phone-pair': 'code',
 };
 
 /**
@@ -95,7 +104,12 @@ function site() {
       webp(src, path.join(SITE, `${scene}-${theme}-1200.webp`), 1200, 80);
       webp(src, path.join(SITE, `${scene}-${theme}-2000.webp`), 2000, 78);
     }
-    for (const label of ['list', 'reply']) webp(still(`phone-${label}`, theme), path.join(SITE, `phone-${label}-${theme}.webp`), 780, 82);
+    for (const [scene, label] of Object.entries(PHONE_CLIPS)) {
+      const mp4 = path.join(SITE, `${scene}-phone-${theme}.mp4`);
+      fs.copyFileSync(clip(`${scene}-phone`, theme), mp4);
+      note(mp4);
+      webp(still(`${scene}-phone-${label}`, theme), path.join(SITE, `${scene}-phone-${theme}.webp`), 780, 82);
+    }
     for (const [name, from, x, y, w, h] of CROPS) webp(still(from, theme), path.join(SITE, `${name}-${theme}.webp`), null, 86, [x, y, w, h]);
   }
   // The link preview (assets/og.jpg) and the README's wordmark are drawn by brand-images.mjs, which needs a browser.

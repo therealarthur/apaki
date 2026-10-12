@@ -1,85 +1,170 @@
-# claude-latch
+<!--
+  Myrlin Apaki's README, the front page of github.com/therealarthur/apaki. Written 2026-10-12 by Claude Code
+  (Opus 5.5) for Arthur, moved to the repository root when the repository went public the same day.
+  Images: apaki/docs/media (made by apaki/demo/site-media.mjs and brand-images.mjs from the demo harness, invented data).
+  The terminal companion latch, which this repository started as, is described in LATCH.md.
+-->
 
-`latch` continues Claude Code conversations on Platform (API) credits instead of your subscription.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apaki/docs/media/wordmark-dark.png">
+    <img src="apaki/docs/media/wordmark-light.png" alt="Myrlin Apaki" width="360">
+  </picture>
+</p>
 
-**Default (in a terminal): a full-screen app** built with Ink, the library Claude Code's own TUI uses.
-- **Picker:** a search box, a two-line row per session (title, then age · folder · size · branch, and "open in N windows"), a preview of the first and latest prompts, Ctrl+F to search inside every conversation, Tab for sessions open in a window, Ctrl+A to include headless sessions.
-- **Chat:** Claude Code's layout over the Agent SDK. Streamed replies with markdown, `⏺ Tool(args)` lines with `⎿` results, red/green diffs for edits, todo lists, subagent progress under Task, the spinner with time and tokens, a rounded prompt box (`\` or Alt+Enter for new lines, ↑↓ history), Shift+Tab through default / accept edits / plan / bypass, Esc to interrupt, and real dialogs for permissions, AskUserQuestion and plan approval. The last 12 turns of the session show on open.
-- **Commands:** the `/` menu lists everything Claude Code has here (about 140: built-ins, your skills, the GSD / superpowers / impeccable plugins, custom commands). Those run in Claude Code. The interactive-only built-ins are done by latch: /help /clear /resume /model /effort /status /cost /mcp /agents /key /reload /exit.
-- Tools, MCP servers, hooks, CLAUDE.md and settings load exactly as in Claude Code (`claude_code` system prompt, all setting sources). Questions and plan approval are answered through a PreToolUse hook, because the SDK skips the permission callback in bypass mode.
+<p align="center"><b>Every Claude Code session on your PC, in one window.</b><br>
+Free, open source, and yours to run.</p>
 
-`--relay` opens the real Claude Code TUI instead. Interactive Claude Code is refused on these credits (`billing_error`) while headless runs are accepted, so in that mode the prompt-relay hook runs each message as a headless `claude -p --resume` on the key, and the reply arrives as a hook notice after the run. `--lite` is the line-based UI, also used for piped input.
+<p align="center">
+  <a href="https://apaki.myrlin.io">Website</a> ·
+  <a href="https://github.com/therealarthur/apaki/releases">Download for Windows</a> ·
+  <a href="https://apaki.myrlin.io/app/">Web app</a> ·
+  <a href="apaki/docs/self-hosting.md">Self-host</a> ·
+  <a href="apaki/docs/security.md">Security</a> ·
+  <a href="apaki/docs/faq.md">FAQ</a>
+</p>
 
-## Use
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="apaki/docs/media/hero-dark.webp">
+  <img src="apaki/docs/media/hero-light.webp" alt="Apaki with four Claude Code conversations in a grid, three of them writing replies at once">
+</picture>
+
+Apaki is a desktop app for Claude Code on Windows. It lists every Claude Code session on your PC, including the ones running in terminals, and opens them in tabs of up to six panes. Myrlin Glass is built in, so you can see how much each Claude and Codex account has left and switch with a click. Claude gets a browser pane of its own. And your phone can pick up the same sessions through an end to end encrypted relay, which you can run yourself.
+
+Underneath, it is the real Claude Code: Apaki drives it through Anthropic's Agent SDK with Claude Code's own system prompt and every settings source, so your `CLAUDE.md`, skills, plugins, hooks, MCP servers and slash commands behave as they do in a terminal. Sessions stay in Claude Code's own files. Open one in Apaki, continue it in a terminal with `/resume`, and come back.
+
+Every picture on this page is the real app running on made-up demo data ([how it is recorded](apaki/demo/README.md)).
+
+## Myrlin Glass, built in
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="apaki/docs/media/glass-swap-dark.webp">
+  <img src="apaki/docs/media/glass-swap-light.webp" alt="Opening the Myrlin Glass panel and switching Claude to a team subscription, then to an API key" width="760">
+</picture>
+
+The card at the bottom of the sidebar shows the live Claude and Codex accounts, each with what it has left. Click to switch subscriptions, or move a conversation to an Anthropic API key when a limit is close. The conversation keeps its context: it continues in the same Claude Code session file on the key, so nothing forks, and you can move it back. When Glass switches by itself, open conversations follow it before their next message.
+
+Billing is per conversation, so one pane can run on your subscription while another runs on a key. For API-key sessions Apaki can also keep the prompt cache warm while you are away, with a daily cap. Measured on Opus 5.5, 68 minutes after the first turn: the next turn of a kept-warm conversation cost $0.125 and read 62,518 tokens from cache; the same conversation left alone had to write 59,314 tokens again and cost $0.478.
+
+## Every session on the PC, found for you
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="apaki/docs/media/sessions-dark.webp">
+  <img src="apaki/docs/media/sessions-light.webp" alt="A search for payment page randomly failing, with the matching sessions found by meaning">
+</picture>
+
+Apaki reads Claude Code's transcripts, so the list has everything: sessions you started in a terminal, headless runs (`claude -p`), workers. A session open in a terminal window shows up within about two seconds, marked working or waiting. Search finds sessions by words and by meaning, with a local index and a local embedding model; nothing is uploaded. When you cannot remember which session it was, Ask Claude reads the best matches and says why each one fits.
+
+Codex threads are listed (a Codex view in the sidebar), searchable, and open as panes next to Claude's, with Codex's own model and effort pickers, permission presets, questions and approvals ([CODEX.md](apaki/remote/CODEX.md) says what is done and what is not).
+
+## Tabs, panes, and a Claude that listens while it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="apaki/docs/media/steer-dark.webp">
+  <img src="apaki/docs/media/steer-light.webp" alt="A message queued, then another steered into the running turn while a subagent works" width="760">
+</picture>
+
+- Up to six panes per tab. Shift-click a session to open it beside the others, or drag it onto a pane's edge.
+- Each pane has its own model, effort and permission mode, with questions and plan approvals as real dialogs.
+- Enter queues your next message while Claude works; Ctrl+Enter steers it into the running turn.
+- What Claude Code reports shows in the conversation: hook output, API retries, usage warnings, compaction.
+- A Tasks button lists each conversation's subagents and background shells and opens any of them live.
+- Close the window and the sessions keep running. The workspace (tabs, splits, drafts, queued messages, scroll positions) is saved as you work and comes back exactly as it was after a crash.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="apaki/docs/media/history-dark.webp">
+  <img src="apaki/docs/media/history-light.webp" alt="A long transcript with a Stop hook's feedback, an API retry and a usage warning shown as system lines">
+</picture>
+
+## Worktrees, one feature per branch
+
+Run several features at once, each in its own git worktree, without them stepping on each other. Starting a conversation, pick New worktree: Apaki suggests a branch name from your first message and creates the worktree, in Claude Code's own `.claude/worktrees` folder when the repository uses one, otherwise beside the repository in `<repo>.worktrees`. The pane header shows the branch and its changes against the base, for example `fix-checkout +42 -7`, and its menu views the diff in a pane, commits, pushes, opens a pull request with `gh`, merges into the base, or removes the worktree. Every action shows the exact git commands first, and Apaki refuses to remove a worktree that has uncommitted or unpushed work. A Worktrees filter in the sidebar lists them by repository and offers merged ones for cleanup in one prompt. The phone shows the same branches and diffs; its actions need Full access. ([WORKTREES.md](apaki/remote/WORKTREES.md))
+
+## A browser pane that Claude drives
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="apaki/docs/media/browser-dark.webp">
+  <img src="apaki/docs/media/browser-light.webp" alt="A conversation on the left and a checkout page in Apaki's browser pane on the right, with Claude typing into it">
+</picture>
+
+Ask Claude to try a page and it opens beside the conversation instead of in another Chrome tab. Claude reads it as an outline with numbered links, buttons and fields, then clicks, types, goes back and takes screenshots, and you watch the same page. Pages in the pane have no access to the app or your sessions. When Claude or a tool tries to open your system browser (`vite --open`, Python's `webbrowser`), the page opens in Apaki. Documents, SVG, images and PDFs that Claude wants to show you open in a viewer with every revision kept.
+
+## Your sessions on your phone
+
+<table>
+  <tr>
+    <td width="68%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="apaki/docs/media/phone-pair-dark.webp">
+        <img src="apaki/docs/media/phone-pair-light.webp" alt="Apaki's Phone sheet: a phone asks to connect and both screens show the code 482 913">
+      </picture>
+    </td>
+    <td width="32%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="apaki/docs/media/phone-loop-dark.webp">
+        <img src="apaki/docs/media/phone-loop-light.webp" alt="The Apaki phone app: opening a session and sending a message to Claude Code on the PC">
+      </picture>
+    </td>
+  </tr>
+</table>
+
+Open the Phone sheet and scan its code with the Apaki iPhone app or your phone's camera. Both screens show the same six digits; you allow the phone on the PC, and it stays paired until you remove it. The phone gets the session list, the conversations and the same Claude Code that runs on the PC.
+
+- Free, with no account. End to end encrypted between the phone and the PC.
+- You decide on the PC what each phone may do: Full, No shell, or Chat only. The PC enforces it. Billing, account switching and pairing stay on the PC.
+- Optional Apaki account: a passkey, with no email and no password. Sign in on another phone and your PCs are there, once you allow it on the PC.
+- Coming with Apaki Cloud: sign in from any browser with your phone's passkey, with nothing saved in that browser and an automatic sign-out after 30 minutes without input ([CLOUD.md](apaki/remote/CLOUD.md)).
+
+## What the relay can and cannot see
+
+The relay forwards sealed frames between your phone and your PC. It cannot read your prompts, replies, files or session list, cannot change them without the connection failing, and cannot pair a phone or connect to your PC (the PC only ever makes one outgoing connection). Your Claude and Codex logins never leave the PC. The relay does see IP addresses, connection times and how much data moves.
+
+The web version of the phone client is code served by apaki.myrlin.io, so your PC checks it: before it shows a pairing code it builds that page from its own code and compares every file with what the site serves, and it checks again every hour while phone access is on. The iPhone app carries its own copy of the code. If you would rather not trust our site, run your own relay.
+
+[Security in plain words](apaki/docs/security.md) · [The full security review](apaki/SECURITY.md) · [The protocol](apaki/remote/PROTOCOL.md)
+
+## Coming next
+
+| | |
+|-|-|
+| Apaki Cloud | Any-browser sign-in that saves nothing, a Cloud button on the desktop listing your machines, and phone push when Claude asks or finishes. A paid option on our hosted relay; a relay you run gets every feature. [CLOUD.md](apaki/remote/CLOUD.md) |
+
+## Install
+
+- **Windows:** [the releases page](https://github.com/therealarthur/apaki/releases), or build the package from source ([apaki/docs/contributing.md](apaki/docs/contributing.md)). The package carries Claude Code, Node and Myrlin Glass; sign in with Claude Code's own login (`claude auth login`, offered at the end of the install) or use an Anthropic API key. WebView2 is part of Windows 11 and is installed if it is missing.
+- **iPhone:** in TestFlight, by invite for now. The App Store comes later.
+- **Any phone browser:** [apaki.myrlin.io/app](https://apaki.myrlin.io/app/), then pair it from the Phone sheet on your PC.
+
+## Run your own relay
+
+The relay is one Cloudflare Worker, and the free plan is enough for a few people. [docs/self-hosting.md](apaki/docs/self-hosting.md) walks through it; the reference is [relay/README.md](relay/README.md).
 
 ```
+cd relay
 npm install
-npm link            # puts `latch` on PATH
-
-latch               # searchable picker of all sessions (see below)
-latch ground truth  # the picker, already searching for "ground truth"
-latch 636fe0ce      # open a session by id prefix
-latch -c            # latest session started in this folder
-latch -n            # new session in this folder
-latch -l            # list recent sessions
-latch <id> --dry-run   # print the Claude Code command, folder and billing, then stop
+node ../apaki/scripts/build-web.mjs --release --relay wss://relay.example.com
+npx wrangler deploy --env=""
 ```
 
-Defaults: `--model claude-opus-5-5`, `--effort xhigh`, and `--dangerously-skip-permissions`. Override with `-m`, `-e`, or `--mode acceptEdits|default|plan`. Your PreToolUse hooks still run in skip-permissions mode, so the guards in `~/.claude/settings.json` still block what they block.
+Then start Apaki with `APAKI_RELAY_URL=wss://relay.example.com` and `APAKI_WEB_URL=https://relay.example.com/`.
 
-## Finding a session
+## Build from source and contribute
 
-`latch` with no session id opens a full-screen picker. Type to filter: every word must appear in a session's title, first prompt, folder, id or branch, and title matches rank first. **Ctrl+F** searches inside the conversations themselves, only in what was said (your prompts and Claude's replies, at word starts), skipping injected context and tool output; it shows a progress count and a snippet of the matching message. Sessions open in a running Claude Code window are marked `open` (`open ×2` when in two). The bottom pane shows the selected session's id, folder, size, age, first prompt and latest prompt.
+See [docs/contributing.md](apaki/docs/contributing.md): how the repository is laid out, how to run the tests, how to package the Windows app, and how the recordings above are made.
 
-Keys: Up/Down (Ctrl+P/N), PgUp/PgDn, **Enter** opens, **Tab** open sessions only, **Ctrl+A** include headless sessions, Ctrl+U clears, Esc clears the search or quits, Ctrl+C quits. Piped input falls back to a numbered list.
+## More reading
 
-**Deep search.** With `index/` built (`cd index && cargo build --release`), typing also searches the `latch-index` full-text index of every transcript on the machine, subagent and workflow runs included: prompts, replies, tool calls and tool output. Results come in relevance order, each labelled with where the match was (`you:`, `claude:`, `tool output:`, `subagent …`). The index updates itself when the picker opens (well under a second after the first build). Without the binary, Ctrl+F scans the files instead.
+- [FEATURES.md](FEATURES.md): everything that is built, in more detail
+- [LATCH.md](LATCH.md): latch, the terminal companion this repository started as (continue a Claude Code session on an API key)
+- [docs/faq.md](apaki/docs/faq.md): questions people ask
+- [SECURITY.md](apaki/SECURITY.md), [remote/PROTOCOL.md](apaki/remote/PROTOCOL.md), [remote/ACCOUNTS.md](apaki/remote/ACCOUNTS.md), [remote/ENROLL.md](apaki/remote/ENROLL.md): the security review and the protocols
+- [mobile/README.md](apaki/mobile/README.md): the iPhone and Android apps
+- [demo/README.md](apaki/demo/README.md): the demo harness that records the real UI on invented data
 
-**Views and folders.** Left/Right switches between **All**, **Open in terminal** and one view per folder. *Open in terminal* imports every session open in a Claude Code terminal window right now, from Claude Code's live records in `~/.claude/sessions`, refreshed every 2 seconds, with the window's name and busy/idle status; those sessions also lead the All view. **Ctrl+G** files the selected session in a folder (or a new one, or out of its folder); a session sits in one folder at a time. In a folder view, **Ctrl+R** renames it and **Ctrl+D** deletes it (its sessions are untouched). Folders live in `~/.claude/latch/folders.json`.
+## License
 
-## Billing
+Everything in this repository is under the [Apache License 2.0](LICENSE), except the relay and the account service in `relay/`, which are under the [GNU Affero General Public License v3.0](relay/LICENSE). In short: use, change and ship the app freely; if you run a changed copy of the relay as a service for others, publish your changes to it. (Arthur, 2026-10-12, as the market research in [apaki/docs/research/2026-10-11-market.md](apaki/docs/research/2026-10-11-market.md) suggested.)
 
-First match wins:
+---
 
-1. `--sub`: the live Claude Code login, whatever it is.
-2. `--key <words>`: the `Anthropic API Key (...)` section of `~/.claude/credentials.md` whose heading contains the words.
-3. The live login, when Myrlin Glass has switched it to an API key.
-4. The default vault key (`LATCH_DEFAULT_KEY`, else "Arthur's Org").
-
-latch never gives the window itself an API key; any inherited `ANTHROPIC_API_KEY` (this PC has a Machine-scope corporate one) is removed. It sets `PROMPT_RELAY_FORCE=1` and `PROMPT_RELAY_KEY_WORDS` on the window, and the relay hook bills each headless run to that key. `--sub` skips the relay and lets the window answer on your subscription.
-
-Limits of the relayed window: a reply appears when its run finishes (no live streaming), and a headless run cannot stop for questions or approvals, so the model asks in its reply instead. Window commands (`/status`, `/model`, `/resume`...) stay local; other slash commands and skills are relayed. `/model` and `/effort` picked in the window apply to the relayed turns that follow.
-
-## One window per session
-
-A Claude Code window keeps its conversation in memory, so two windows on one session fork it. latch warns when the session changed in the last two minutes, and only one latch can hold a session at a time (`--force` takes it over). To go back to your subscription, exit and run `claude --resume <id>`.
-
-## Lite mode
-
-`latch --lite` runs its own readline UI over the Agent SDK instead of the Claude Code TUI: streamed markdown, one line per tool call and result, inline approvals, a per-turn footer with cache and cost. Before each message it checks whether anything else wrote to the session and reloads from disk first. `/help` lists its commands (`/model`, `/mode`, `/effort`, `/key`, `/reload`, `/session`, `/exit`); other `/` commands go to Claude Code. Piped input works for scripted runs.
-
-## Files
-
-- `bin/latch.js`: arguments, the launch or lite wiring.
-- `src/picker.js`: the searchable session picker.
-- `src/launch.js`: starting the native Claude Code binary with the session, flags and key.
-- `src/auth.js`: credential choice and the child environment.
-- `src/sessions.js`: transcript facts and the owner lock.
-- `src/runner.js`, `src/tui.js`, `src/render.js`: lite mode.
-
-Runtime files live in `~/.claude/latch/`: `locks/` (one file per attached session) and `latch.log` (lite mode's Claude Code stderr, keys masked).
-
-## Artifacts in Myrlin Apaki
-
-Claude running inside Apaki (the desktop app in `apaki/`) can show the user things in Apaki itself, with nothing installed or written to any settings file. The Apaki engine passes everything per pane through Agent SDK options (latch's own runner passes none of them):
-
-- An in-process MCP server `apaki` with one tool, `show` (`mcp__apaki__show`): `html`, `markdown`, `svg`, `image`, `file` (any local html, md, image, pdf, text or code file) or `url`. Pass `id` again to update it; every show is a revision. Stored in `~/.claude/latch/artifacts/<session>/` (`apaki/engine/artifacts.js`).
-- A short paragraph appended to Claude Code's system prompt saying the tool exists.
-- PreToolUse / PostToolUse hooks on Bash and PowerShell (`apaki/engine/open-catch.js`, `apaki-tools.js`): `start x.html`, `Start-Process http://...`, `explorer`, `open`, `xdg-open`, `python -m webbrowser`, `rundll32 url.dll` and friends are denied with "Opened in Apaki instead: ..." and shown in Apaki; in a longer command only the open step is cut out. `npm start`, `Start-Sleep`, starting programs and git are left alone.
-- `BROWSER` pointing at `apaki/bin/apaki-open.cmd`, which hands URLs to the engine's 127.0.0.1 server (random port, a token per pane), so `vite --open`, Python's webbrowser and gh open in Apaki too.
-
-The window shows artifacts in a viewer pane beside the conversation (a sandboxed iframe for HTML: scripts, forms and alerts only, never same-origin, served with a CSP that blocks all network) and a card in the transcript, rebuilt from history when a session is reopened. Web pages get a link card for now. `apaki/engine/apaki-mcp-stdio.mjs` is the same tools (show and the browser tools) as a stdio server: the Codex process a Codex pane runs gets it through `-c mcp_servers.apaki.*` on its own command line, and it forwards every call to the engine. No-cost check of the viewer: `node apaki/scripts/cdp-artifacts.mjs <out-prefix> <cdp port>`.
-
-## Test
-
-`npm test` runs the unit tests: rendering, credential choice and env scrub, transcript parsing, lock, outside-change detection, Claude Code arguments, key-approval lookup, and for Apaki the layout tree, the "open this" matcher, the artifact store and server, the show tool through a real MCP client, the hooks, the BROWSER shim and the stdio tool server.
+Apaki is a Myrlin Labs project. It is independent and not affiliated with or endorsed by Anthropic or OpenAI. Claude and Claude Code are trademarks of Anthropic.

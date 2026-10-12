@@ -1283,13 +1283,13 @@
         "claude-desktop:feature:worktrees",
         "chatgpt-desktop:feature:local-or-worktree-per-thread"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/WORKTREES.md"],
-      "commits": ["1f39c21"],
+      "status": "partial",
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/engine/worktrees.js", "apaki/engine/engine.js", "apaki/ui/worktree.js", "test/apaki-worktrees.test.js", "apaki/remote/WORKTREES.md"],
+      "commits": ["1f39c21", "6102642", "5ad1800"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0", "claude-desktop": "2.31226.1.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "git worktree list --porcelain per repo, cached, refreshed on change and every 30 s; EnterWorktree tool uses in a transcript move the session to that worktree. Build order step 1 (engine, tests on temp repos)."
+      "notes": "Built 2026-10-12. findRepo reads .git, gitdir and commondir from files, so a repository with no linked worktree costs no git process; one with linked worktrees gets the porcelain worktree list and, per worktree, lines added and removed against its base, files, ahead and behind, unpushed commits and whether it is merged. Refreshed every 30 s while a window or phone is connected, and shortly after a turn ends or a pane opens. The base is the repository's default branch, or the one a worktree Apaki made came from (kept in ~/.claude/latch/apaki-worktrees.json, never in the repository). A session maps to its worktree by its folder, in the window and on the phone alike (worktree.js wtFor: the deepest worktree wins, because the main checkout's folder contains the ones Claude Code keeps under .claude/worktrees). Not built: EnterWorktree tool uses in a transcript do not yet move a session to that worktree (no transcript with a real use was found to check the format against). Codex threads are build order step 5."
     },
     {
       "id": "worktree-create-remove-guarded",
@@ -1306,13 +1306,13 @@
         "claude-desktop:feature:worktrees",
         "chatgpt-desktop:feature:local-or-worktree-per-thread"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "n/a" },
-      "where": ["apaki/remote/WORKTREES.md"],
-      "commits": ["1f39c21"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/worktrees.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "test/apaki-worktrees.test.js", "test/apaki-worktrees-engine.test.js", "apaki/remote/WORKTREES.md"],
+      "commits": ["1f39c21", "6102642", "5ad1800"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0", "claude-desktop": "2.31226.1.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Location follows Claude Code's worktree convention when it has one, else <repo>.worktrees/<branch>. Remove refuses dirty or unpushed worktrees with the reason; merge stops on conflicts. Every git action shows the command and diff first and runs with the user's own git and gh."
+      "notes": "Built 2026-10-12. Engine ops worktreePlan and worktreeRun, kinds create, remove, commit, push, pr and merge: the plan shows the exact commands that will run (made from the same argument lists), warnings and blockers, and the engine plans again when it runs, so a client never decides what is safe. Location follows Claude Code's .claude/worktrees when the repository has one, else <repo>.worktrees/<branch>. Remove refuses the main checkout and any dirty, locked, unpushed or in-use worktree, never forces, and deletes a branch only with the safe delete once it is merged. Phone: allowed with Full access only, for folders the PC already lists; No shell and Chat only see the actions dimmed with the reason (remote-policy.js worktreePlan and worktreeRun)."
     },
     {
       "id": "worktree-new-on-start",
@@ -1329,13 +1329,13 @@
         "claude-desktop:feature:worktrees",
         "chatgpt-desktop:feature:local-or-worktree-per-thread"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/ui/startfolder.js", "apaki/remote/WORKTREES.md"],
-      "commits": ["1f39c21"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/startfolder.js", "apaki/ui/pane.js", "apaki/ui/worktree.js", "apaki/ui/app.js", "test/apaki-worktrees-ui.test.js", "apaki/remote/WORKTREES.md"],
+      "commits": ["1f39c21", "6102642", "5ad1800"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0", "claude-desktop": "2.31226.1.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "This folder or New worktree; branch name suggested from the first message (editable), base branch defaults to the repo's default. The phone's new-conversation flow offers it too."
+      "notes": "Built 2026-10-12. The Starts in sheet opens on This folder or New worktree; New worktree picks a repository and a base branch (default the repository's), the pane then starts in a worktree it makes on its first message: the branch is suggested from that message (editable), the command is shown, and Create it and send makes it. Phone: the same sheet. A phone cannot browse the PC's disks (the places and listDir ops are not in PHONE_OPS), so This folder lists the folders the PC already knows, which also makes the Starts in button work on the phone for the first time."
     },
     {
       "id": "worktree-sidebar-grouping-and-filter",
@@ -1352,13 +1352,13 @@
         "claude-desktop:feature:worktrees",
         "chatgpt-desktop:feature:local-or-worktree-per-thread"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/ui/app.js", "apaki/remote/WORKTREES.md"],
-      "commits": ["1f39c21"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/app.js", "apaki/ui/worktree.js", "apaki/ui/app.css", "apaki/web/src/web.css", "test/apaki-worktrees-ui.test.js", "apaki/remote/WORKTREES.md"],
+      "commits": ["1f39c21", "6102642", "5ad1800"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0", "claude-desktop": "2.31226.1.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "A worktree row shows the branch name and +added -removed vs its base; color only for trouble (conflicts, behind the base). Filter joins All and In terminals. The phone list groups by repo and worktree with the same labels."
+      "notes": "Built 2026-10-12. A Worktrees filter joins All and In terminals: repositories with linked worktrees, the main checkout first, then the worktree with the newest conversation, conversations nested under their worktree (six, then Show more). A row shows the branch name and the change count; colour only for conflicts, a branch behind its base and a folder that is gone; hover shows New conversation here and the menu (always shown on the phone). A conversation in a linked worktree names its branch in the All view. Same code on the phone's list, with touch sizes."
     },
     {
       "id": "worktree-pane-branch-label-and-actions",
@@ -1375,13 +1375,13 @@
         "claude-desktop:feature:worktrees",
         "chatgpt-desktop:feature:local-or-worktree-per-thread"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/ui/pane.js", "apaki/remote/WORKTREES.md"],
-      "commits": ["1f39c21"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/pane.js", "apaki/ui/worktree.js", "apaki/ui/index.html", "apaki/web/src/pager.js", "test/apaki-worktrees-ui.test.js", "apaki/remote/WORKTREES.md"],
+      "commits": ["1f39c21", "6102642", "5ad1800"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0", "claude-desktop": "2.31226.1.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "The folder line becomes a branch label (\"fix-checkout +42 -7\") with a worktree glyph when not the main checkout. Phone actions follow the access level: No shell and Chat only cannot commit, merge or remove."
+      "notes": "Built 2026-10-12. The folder line gains a branch label (\"fix-checkout +42 -7\", a worktree glyph when it is not the main checkout) whose menu has View changes, New conversation here, Commit, Push, Open pull request (gh), Merge into the base, New worktree, Open folder, Open terminal and Remove worktree (refused with the reason shown). Every git action opens one sheet that shows the commands first. Phone: the nav row shows the same label and a tap opens the same menu. Below Full access the git actions are listed but dimmed with the reason. Open folder and Open terminal are desktop only: they open a window on the PC (the phone's session menu hides Show folder for the same reason)."
     },
     {
       "id": "worktree-diff-viewer",
@@ -1401,13 +1401,13 @@
         "chatgpt-desktop:feature:side-panel",
         "claude-desktop:feature:diff-view"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/ui/artifacts.js", "apaki/remote/WORKTREES.md"],
-      "commits": ["1f39c21", "ff15a79"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/diff.js", "apaki/ui/worktree.js", "apaki/engine/worktrees.js", "test/apaki-worktrees.test.js", "test/apaki-worktrees-ui.test.js", "apaki/remote/WORKTREES.md"],
+      "commits": ["1f39c21", "ff15a79", "6102642", "5ad1800"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0", "claude-desktop": "2.31226.1.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Also the consolidated review pane the market research ranks P1 (Claude VS Code #33932 204 thumbs-up, Codex #2998 235). Opens full screen on the phone. Today only inline red and green diffs in the conversation exist."
+      "notes": "Built 2026-10-12. A viewer pane (View changes): per file patches of everything since the branch left its base plus uncommitted work and new files, or only what is not committed, with a Commit button; saved and restored with the tab, read again when the engine reports different numbers for the folder. Big files are cut and say so. Reads through worktreeDiff, which is read only and open at every phone access level. Opens as a page in the phone's pager like any viewer. Also the consolidated review pane the market research ranks P1 (Claude VS Code #33932 204 thumbs-up, Codex #2998 235)."
     },
     {
       "id": "worktree-tab-tooltip-and-new-tab",
@@ -1424,13 +1424,13 @@
         "claude-desktop:feature:worktrees",
         "chatgpt-desktop:feature:local-or-worktree-per-thread"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "n/a" },
-      "where": ["apaki/ui/app.js", "apaki/remote/WORKTREES.md"],
-      "commits": ["1f39c21"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "n/a" },
+      "where": ["apaki/ui/app.js", "apaki/ui/worktree.js", "test/apaki-worktrees-ui.test.js", "apaki/remote/WORKTREES.md"],
+      "commits": ["1f39c21", "6102642", "5ad1800"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0", "claude-desktop": "2.31226.1.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Desktop tab bar only."
+      "notes": "Built 2026-10-12. A tab whose conversations all work in one worktree names its branch in its tooltip; a right-click on the + adds New tab in a new worktree. Desktop tab bar only: the phone has no hover and no + button, and starts a conversation in a new worktree from its Starts in sheet instead (worktree-new-on-start)."
     },
     {
       "id": "worktree-cleanup-merged",
@@ -1447,13 +1447,13 @@
         "claude-desktop:feature:worktrees",
         "chatgpt-desktop:feature:local-or-worktree-per-thread"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/WORKTREES.md"],
-      "commits": ["1f39c21"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/worktree.js", "apaki/engine/worktrees.js", "test/apaki-worktrees-ui.test.js", "apaki/remote/WORKTREES.md"],
+      "commits": ["1f39c21", "6102642", "5ad1800"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0", "claude-desktop": "2.31226.1.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Build order step 4 (commit, push, PR, merge flows) precedes it."
+      "notes": "Built 2026-10-12. A row at the top of the Worktrees view, \"N merged worktrees can go\", opens one sheet listing them; each removal is planned again by the engine (so a worktree that gained work since is kept) and the merged branch goes with it. Offered only when a branch is inside the base, had work of its own, and the worktree is clean and unlocked. Same on the phone."
     },
     {
       "id": "worktree-codex-threads",
@@ -1478,13 +1478,13 @@
       "title": "Phone shows the same repo and worktree grouping, branch label, diff viewer and New worktree",
       "product": "apaki",
       "upstream": [],
-      "status": "planned",
-      "surfaces": { "desktop": "n/a", "phone": "planned" },
-      "where": ["apaki/remote/WORKTREES.md", "apaki/engine/remote-policy.js"],
-      "commits": ["1f39c21"],
+      "status": "supported",
+      "surfaces": { "desktop": "n/a", "phone": "supported" },
+      "where": ["apaki/remote/WORKTREES.md", "apaki/engine/remote-policy.js", "apaki/web/src/pager.js", "apaki/web/src/web.css", "test/apaki-worktrees-engine.test.js", "test/apaki-worktrees-ui.test.js"],
+      "commits": ["1f39c21", "6102642", "5ad1800"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": {  },
-      "notes": "Arthur 2026-10-11: \"make sure we're updating the app alongside the desktop app so all functionality is equal across the board\". The phone-side half of every worktree-* entry above, plus the policy rule that actions follow the phone's access level (new ops need a PHONE_OPS and capability decision). Build order step 3."
+      "notes": "Arthur 2026-10-11: \"make sure we're updating the app alongside the desktop app so all functionality is equal across the board\". Built 2026-10-12 for steps 1 to 4. The window and the phone page run the same app.js, pane.js and worktree.js; the phone adds its nav-row label and touch sizes. Policy (remote-policy.js): PHONE_OPS gains worktrees and worktreeDiff (read only, every access level) and worktreePlan and worktreeRun (Full access only, create names its repository and never a place to put it, every folder must be one the PC already lists, every field is bounded); worktreeTerminal is not a phone op. The worktrees event is a broadcast, cached for phones that connect later. Desktop only by nature: Open folder, Open terminal, the + menu and the tab tooltip."
     },
     {
       "id": "codex-app-server-client",

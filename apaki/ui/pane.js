@@ -24,6 +24,8 @@ import { SHOW_TOOL, artifactCard, kindGlyph, kindLabel, linkCard, parseOpened, p
 import { continuesList, hasTodos, normalizeTodos, paintTodos, sameTodos } from './todos.js';
 // A Codex pane is this same pane with the Codex app's pickers, patches and footer (codex.js, 2026-10-12).
 import { CODEX_LOCAL, CODEX_MODES, codexFooter, codexMode, earlierText, effortNames, findModel, isCodexId, modelLabel, patchArgs, patchHtml, pickMode, pickModel } from './codex.js';
+// The branch label in the header when the conversation's folder is in a git repository (worktree.js, 2026-10-12).
+import { GLYPH_WORKTREE, branchLabel, branchName, changeText, relPath, tooltip, trouble } from './worktree.js';
 
 // Images go in at most this many pixels on the long edge (the API's sweet
 // spot, and under the 2000 px limit that breaks a session).
@@ -157,7 +159,7 @@ export class Pane {
       title: q('.title'), cwd: q('.cwd'), T: q('.transcript'), ground: q('.ground'), input: q('textarea'),
       send: q('.send'), status: q('.status'), slash: q('.slash'), attachments: q('.attachments'), composer: q('.composer'),
       file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
-      folder: q('.folder-chip'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'), ctx: q('.chip-btn.ctx'),
+      folder: q('.folder-chip'), wt: q('.wt-btn'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'), ctx: q('.chip-btn.ctx'),
       statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
       pin: q('.prompt-pin'), artReopen: q('.art-reopen'), tasksBtn: q('.tasks-btn'), kindMark: q('.kind-mark'),
     };
@@ -205,6 +207,8 @@ export class Pane {
     this.$.effort.onclick = () => (this.kind === 'codex' ? this.codexMenu('effort') : menu(this.$.effort, EFFORTS.map((value) => ({ value, html: `${effortGrid(value)}<span class="ml">${value}</span>`, hint: EFFORT_HINTS[value], checked: value === this.effort })), { onPick: (v) => this.setEffort(v), width: 250 }));
     this.$.mode.onclick = () => (this.kind === 'codex' ? this.codexMenu('mode') : menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 }));
     this.$.folder.onclick = () => this.host.folderMenu(this, this.$.folder);
+    // The branch label: changes, commit, push, pull request, merge, remove (worktree.js paneMenu).
+    this.$.wt.onclick = () => this.host.worktreeMenu?.(this, this.$.wt);
     this.$.billing.onclick = () => (this.kind === 'codex' ? this.note('Codex bills the ChatGPT account (or API key) it is signed in with. Myrlin Glass switches that account.') : this.send('billingOptions'));
     if (this.$.ctx) this.$.ctx.onclick = () => this.contextMenu();
     this.$.close.onclick = () => this.host.close(this);
@@ -343,18 +347,66 @@ export class Pane {
   }
 
   setCwdLine() {
-    this.$.cwd.textContent = `${short(this.cwd)}${this.sessionId ? `  ·  ${this.sessionId}` : ''}`;
+    // In a git repository the folder line gains a branch label (worktree.js); a new conversation waiting for its worktree has none yet.
+    const f = this.pendingWorktree ? null : (this.host.worktreeFor?.(this) || null);
+    this.wt = f;
+    this.renderWorktree(f);
+    // Under the label the line is only what is left of the folder (below the worktree's root) and the session id.
+    const rest = f && this.sessionId ? [relPath(this.cwd, f.wt.path), this.sessionId].filter(Boolean).join('  ·  ') : null;
+    this.$.cwd.textContent = rest ?? (this.pendingWorktree ? this.startPathText() : `${short(this.cwd)}${this.sessionId ? `  ·  ${this.sessionId}` : ''}`);
     // Until the first message the folder can still change: say so, and let a click do it.
     const open = !this.sessionId;
     this.$.cwd.classList.toggle('pickable', open);
     this.$.cwd.title = open ? 'Folder this conversation starts in · click to change' : this.cwd;
     const start = this.$.T.querySelector('.start-path');
-    if (start) start.textContent = short(this.cwd) || '~';
+    if (start) start.textContent = this.startPathText();
+  }
+
+  /** Where a new conversation starts, in words: its folder, or the worktree it is about to make. */
+  startPathText() {
+    const p = this.pendingWorktree;
+    return p ? `new worktree of ${p.name || short(p.repo)}` : (short(this.cwd) || '~');
+  }
+
+  /**
+   * The branch label (2026-10-12): the branch, a worktree glyph when it is not the main checkout, the lines added and
+   * removed against its base, and in the one colour trouble gets, conflicts or being behind. Hidden outside a repository.
+   */
+  renderWorktree(f) {
+    const b = this.$.wt;
+    if (!b) return;
+    if (!f) { if (!b.hidden) { b.hidden = true; b.textContent = ''; delete b.dataset.key; } return; }
+    const { wt, repo } = f;
+    const tr = trouble(wt);
+    const counts = changeText(wt);
+    const key = [wt.path, branchName(wt), counts, tr, wt.main ? 'm' : 'w'].join('|');
+    b.hidden = false;
+    if (b.dataset.key === key) return;
+    b.dataset.key = key;
+    b.classList.toggle('trouble', Boolean(tr));
+    b.innerHTML = `${wt.main ? '' : GLYPH_WORKTREE}<span class="wt-b">${esc(branchName(wt))}</span>${counts ? `<span class="wt-n">${esc(counts)}</span>` : ''}${tr ? `<span class="wt-t">${esc(tr)}</span>` : ''}`;
+    b.title = `${tooltip(repo, wt)}
+Click for changes, commit, push, pull request, merge`;
+    b.setAttribute('aria-label', `Branch ${branchLabel(wt)}${tr ? `, ${tr}` : ''}. Open its menu`);
+  }
+
+  /**
+   * This new conversation will start in a worktree it makes (worktree.js makeFor), not in a folder: the first message names
+   * the branch, shows the git command and creates it. The pane's folder is the repository until then.
+   */
+  setPendingWorktree(p) {
+    if (this.sessionId || this.busy) return;
+    this.pendingWorktree = p;
+    this.cwd = p.repo;
+    this.setCwdLine();
+    this.open(null, { warm: false });
+    this.host.changed(this);
   }
 
   /** Starts this new conversation in another folder (only before its first message). */
   setStartFolder(dir) {
     if (this.sessionId || this.busy) return;
+    this.pendingWorktree = null;
     this.cwd = dir;
     this.setCwdLine();
     this.open(null, { warm: true });
@@ -520,7 +572,7 @@ export class Pane {
     const peach = new Set();
     while (peach.size < 2) peach.add(Math.floor(Math.random() * 40));
     const cells = Array.from({ length: 40 }, (_, i) => `<i${peach.has(i) ? ' class="pk"' : ''} style="--d:${(-Math.random() * 9).toFixed(2)}s"></i>`).join('');
-    this.$.T.append(el('div', 'empty', `<div class="empty-grid rand" aria-hidden="true">${cells}</div><h3>New conversation</h3><p>${this.kind === 'codex' ? 'It becomes a Codex thread with your first message.' : 'It becomes a Claude Code session with your first message.'}</p>${this.host.codexAvailable?.() ? `<div class="kind-pick" role="group" aria-label="Start with"><button data-kind="claude" aria-pressed="${this.kind !== 'codex'}">Claude Code</button><button data-kind="codex" aria-pressed="${this.kind === 'codex'}">Codex</button></div>` : ''}<button class="start-in" title="Choose the folder this conversation starts in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.6 0-1.2-.5-1.2-1.2z"/></svg><span class="start-label">Starts in</span><span class="start-path">${esc(short(this.cwd) || '~')}</span><span class="start-change">Change</span></button><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
+    this.$.T.append(el('div', 'empty', `<div class="empty-grid rand" aria-hidden="true">${cells}</div><h3>New conversation</h3><p>${this.kind === 'codex' ? 'It becomes a Codex thread with your first message.' : 'It becomes a Claude Code session with your first message.'}</p>${this.host.codexAvailable?.() ? `<div class="kind-pick" role="group" aria-label="Start with"><button data-kind="claude" aria-pressed="${this.kind !== 'codex'}">Claude Code</button><button data-kind="codex" aria-pressed="${this.kind === 'codex'}">Codex</button></div>` : ''}<button class="start-in" title="Choose the folder this conversation starts in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.6 0-1.2-.5-1.2-1.2z"/></svg><span class="start-label">Starts in</span><span class="start-path">${esc(this.startPathText())}</span><span class="start-change">Change</span></button><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
   }
 
   /* ---------- transcript ---------- */
@@ -1736,6 +1788,14 @@ export class Pane {
     if (!text && !this.attachments.length) return;
     this.hideSlash();
     if (text.startsWith('/') && !this.attachments.length && this.localCommand(text)) { input.value = ''; this.autosize(); return; }
+    // A conversation that starts in a new worktree: this first message names the branch, the sheet shows the command and
+    // creates it, and then the message goes (it stays in the box until then, and if the sheet is cancelled).
+    if (this.pendingWorktree && !this.sessionId && !this.busy) {
+      if (this.makingWorktree) return;
+      this.makingWorktree = true;
+      Promise.resolve(this.host.makeWorktree?.(this, text)).catch(() => false).then((ok) => { this.makingWorktree = false; if (ok) this.submit({ steer, checked: true }); });
+      return;
+    }
     const attachments = this.attachments;
     this.attachments = [];
     this.renderAttachments();

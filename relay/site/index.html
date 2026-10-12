@@ -1,13 +1,14 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <!-- impeccable-disable marquee -- the only infinite horizontal animations here are the pearl background's slow drift (the desktop app's own background) and, on the home page, the security diagram's packet moving along its lane; neither scrolls content, and both stop under prefers-reduced-motion (2026-10-12) -->
   <meta charset="utf-8">
   <!--
     The product home page of Myrlin Apaki at apaki.myrlin.io (relay/site, served as static files by the
     relay Worker). Written by hand on 2026-10-12 by Claude Code (Opus 5.5) for Arthur; a phone page release
     (apaki/scripts/build-web.mjs --release) no longer touches it, it rewrites /app/ instead.
     Every recording on it shows Apaki's real window on invented demo data (apaki/demo, node apaki/demo/capture.mjs).
-    PLACEHOLDER(Arthur): the links marked PLACEHOLDER below (GitHub releases, TestFlight, the public repository).
+    The repository is public at github.com/therealarthur/apaki (2026-10-12); Download goes to its releases page.
   -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -51,8 +52,7 @@
         <a href="#self-host">Self-host</a>
       </nav>
       <div class="head-actions">
-        <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-        <a class="head-link" href="https://github.com/therealarthur/claude-latch">GitHub</a>
+        <a class="head-link" href="https://github.com/therealarthur/apaki">GitHub</a>
         <a class="btn btn-small" href="app/">Open the web app</a>
       </div>
     </div>
@@ -73,58 +73,56 @@
         <div class="hero-right">
         <p class="hero-sub">Apaki finds your sessions, switches accounts with Myrlin Glass, gives Claude a browser pane of its own, and puts your sessions on your phone through an encrypted relay. It is free and open source, and you can run the relay yourself.</p>
         <div class="hero-actions">
-          <!-- PLACEHOLDER(Arthur): GitHub releases of the public repository. -->
-          <a class="btn btn-primary" href="https://github.com/therealarthur/claude-latch/releases/latest">Download for Windows</a>
+          <a class="btn btn-primary" href="https://github.com/therealarthur/apaki/releases">Download for Windows</a>
           <a class="btn btn-secondary" href="app/">Open the web app</a>
         </div>
-        <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-        <p class="hero-fine">For Claude Code on Windows. iPhone app in TestFlight. Codex sessions are listed today; Codex panes are coming. <a href="https://github.com/therealarthur/claude-latch">Read the source</a>.</p>
+        <p class="hero-fine">For Claude Code on Windows. iPhone app in TestFlight. Codex sessions are listed today; Codex panes are coming. <a href="https://github.com/therealarthur/apaki">Read the source</a>.</p>
         </div>
         </div>
 
-        <div class="hero-stage">
-          <div class="player window window-hero" data-play-at="0.12" role="group" aria-label="Recording: four Claude Code conversations working side by side in one tab">
+        <!-- The PC and the phone, recorded in step (apaki/demo scenes.mjs "handoff"): the phone takes over the session
+             on the left at 3.8 s; the PC pane says so and keeps up from the transcript. data-link-at lights both. -->
+        <div class="hero-stage player" data-together data-play-at="0.12" data-link-at="3.8" role="group" aria-label="Recording: the PC and a phone at the same moment. The phone opens the session on the left of the PC from its list of what is on the desktop, takes it over, and asks Claude for the fix; the pane on the PC says the phone took it and shows the same message and reply.">
+          <div class="window window-hero">
             <div class="clip is-current">
               <picture>
-                <source media="(prefers-color-scheme: dark)" srcset="assets/media/split-dark-1200.webp 1200w, assets/media/split-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
-                <img src="assets/media/split-light-1200.webp" srcset="assets/media/split-light-1200.webp 1200w, assets/media/split-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="Apaki with four Claude Code conversations in a grid, three of them writing replies at once" fetchpriority="high" decoding="async">
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/handoff-dark-1200.webp 1200w, assets/media/handoff-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
+                <img src="assets/media/handoff-light-1200.webp" srcset="assets/media/handoff-light-1200.webp 1200w, assets/media/handoff-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="Apaki on the PC with three conversations; the one on the left says Maya's iPhone 16 took this session, and shows the message sent from the phone and Claude's reply" fetchpriority="high" decoding="async">
               </picture>
-              <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/split-light.mp4" data-dark="assets/media/split-dark.mp4"></video>
+              <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/handoff-light.mp4" data-dark="assets/media/handoff-dark.mp4"></video>
             </div>
-            <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+            <span class="link-ring link-ring-left" aria-hidden="true"></span>
+            <button class="clip-toggle" type="button" hidden aria-label="Pause the recordings"></button>
           </div>
 
-
           <div class="float float-phone">
-            <div class="phone player" data-play-at="0.3" role="group" aria-label="Recording: Apaki on a phone, opening a session and sending a message to Claude Code on the PC">
+            <div class="phone">
               <div class="phone-screen">
                 <div class="clip is-current">
                   <picture>
-                    <source media="(prefers-color-scheme: dark)" srcset="assets/media/phone-list-dark.webp">
-                    <img src="assets/media/phone-list-light.webp" width="780" height="1688" alt="The Apaki phone app: the PC's sessions as a list, with Myrlin Glass at the bottom" decoding="async">
+                    <source media="(prefers-color-scheme: dark)" srcset="assets/media/handoff-phone-dark.webp">
+                    <img src="assets/media/handoff-phone-light.webp" width="780" height="1688" alt="The same conversation in the Apaki phone app, with the message sent from the phone and Claude's reply" decoding="async">
                   </picture>
-                  <video muted playsinline preload="none" width="390" height="844" aria-hidden="true" data-light="assets/media/phone-light.mp4" data-dark="assets/media/phone-dark.mp4"></video>
+                  <video muted playsinline preload="none" width="390" height="844" aria-hidden="true" data-light="assets/media/handoff-phone-light.mp4" data-dark="assets/media/handoff-phone-dark.mp4"></video>
                 </div>
               </div>
-              <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
             </div>
           </div>
         </div>
-        <p class="stage-note">Recorded from the real app on made-up demo data.</p>
+        <p class="stage-note">The phone picks up the session on the left of the PC. The PC says the phone has it and keeps up with the conversation. Recorded in step from the real app, on made-up demo data.</p>
       </div>
     </section>
 
     <!-- ===== Open source ===== -->
-    <section class="band" id="self-host" aria-labelledby="oss-title">
+    <section class="band sec sec-cut-y g-ink-lattice on-dark" id="self-host" aria-labelledby="oss-title">
       <div class="wrap band-grid">
         <div class="band-copy" data-reveal>
           <h2 id="oss-title">Open source, and yours to run</h2>
           <p>The desktop app, the phone app and the relay live in one public repository. Apaki needs no account, and pairing a phone through our hosted relay costs nothing.</p>
           <p>If you would rather not depend on us at all, the relay is a single Cloudflare Worker. Deploy it to your own account (the free plan is enough for a few people), point Apaki at it with two settings, and the phone page comes from your server instead of ours.</p>
           <p class="links">
-            <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/self-hosting.md">Self-hosting guide</a>
-            <a href="https://github.com/therealarthur/claude-latch/blob/master/relay/README.md">The relay's README</a>
+            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/self-hosting.md">Self-hosting guide</a>
+            <a href="https://github.com/therealarthur/apaki/blob/master/relay/README.md">The relay's README</a>
           </p>
         </div>
         <figure class="code-card" data-reveal="2">
@@ -143,7 +141,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
     </section>
 
     <!-- ===== Glass ===== -->
-    <section class="feature" id="glass" aria-labelledby="glass-title">
+    <section class="feature sec sec-cut-top g-lilac-dome" id="glass" aria-labelledby="glass-title">
       <div class="wrap">
         <div class="feature-head" data-reveal>
           <div>
@@ -172,7 +170,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
     </section>
 
     <!-- ===== Sessions ===== -->
-    <section class="feature" id="sessions" aria-labelledby="sessions-title">
+    <section class="feature sec g-rings" id="sessions" aria-labelledby="sessions-title">
       <div class="wrap">
         <div class="feature-head" data-reveal>
           <div>
@@ -221,7 +219,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
     </section>
 
     <!-- ===== Tabs and panes ===== -->
-    <section class="feature" id="panes" aria-labelledby="panes-title">
+    <section class="feature sec sec-cut-y g-warm-field" id="panes" aria-labelledby="panes-title">
       <div class="wrap">
         <div class="feature-head" data-reveal>
           <div>
@@ -264,7 +262,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
     </section>
 
     <!-- ===== Browser ===== -->
-    <section class="feature" id="browser" aria-labelledby="browser-title">
+    <section class="feature sec g-orbs" id="browser" aria-labelledby="browser-title">
       <div class="wrap">
         <div class="feature-head" data-reveal>
           <div>
@@ -293,32 +291,36 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
     </section>
 
     <!-- ===== Phone ===== -->
-    <section class="feature feature-phone" id="phone" aria-labelledby="phone-title">
+    <section class="feature feature-phone sec sec-cut-top g-sky-bowl" id="phone" aria-labelledby="phone-title">
       <div class="wrap">
         <div class="phone-head" data-reveal>
           <h2 id="phone-title">Pick up the same sessions on your phone</h2>
           <p>Open the Phone sheet on your PC and scan its code with the Apaki iPhone app or your phone's camera. Both screens show the same six digits; you allow the phone on the PC, and it stays paired until you remove it. The phone gets the session list, the conversations and the same Claude Code that runs on the PC.</p>
         </div>
-        <div class="phone-grid">
+        <!-- Recorded in step (scenes.mjs "phone-pair" with its phone): the same six digits on both screens. -->
+        <div class="phone-grid player" data-together role="group" aria-label="Recording: pairing, the PC and the phone at the same moment. The PC shows a QR code; the phone that opened it shows the code 482 913, the PC shows the same code with Allow, and once allowed the phone lists the PC's sessions.">
           <div class="phone-desk" data-reveal>
-            <div class="player window" role="group" aria-label="Recording: pairing a phone from Apaki's Phone sheet with a QR code and a six digit code">
+            <div class="window">
               <div class="clip is-current">
                 <picture>
                   <source media="(prefers-color-scheme: dark)" srcset="assets/media/phone-pair-dark-1200.webp 1200w, assets/media/phone-pair-dark-2000.webp 2000w" sizes="(min-width: 1240px) 860px, 94vw">
-                  <img src="assets/media/phone-pair-light-1200.webp" srcset="assets/media/phone-pair-light-1200.webp 1200w, assets/media/phone-pair-light-2000.webp 2000w" sizes="(min-width: 1240px) 860px, 94vw" width="1440" height="900" alt="Apaki's Phone sheet: a phone asks to connect, both screens show the code 482 913, with Deny and Allow" loading="lazy" decoding="async">
+                  <img src="assets/media/phone-pair-light-1200.webp" srcset="assets/media/phone-pair-light-1200.webp 1200w, assets/media/phone-pair-light-2000.webp 2000w" sizes="(min-width: 1240px) 860px, 94vw" width="1440" height="900" alt="Apaki's Phone sheet on the PC: Maya's iPhone 16 wants to connect, with the code 482 913, Deny and Allow" loading="lazy" decoding="async">
                 </picture>
                 <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/phone-pair-light.mp4" data-dark="assets/media/phone-pair-dark.mp4"></video>
               </div>
-              <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+              <button class="clip-toggle" type="button" hidden aria-label="Pause the recordings"></button>
             </div>
           </div>
           <div class="phone-side" data-reveal="2">
             <div class="phone">
               <div class="phone-screen">
-                <picture>
-                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/phone-reply-dark.webp">
-                  <img src="assets/media/phone-reply-light.webp" width="780" height="1688" alt="A conversation in the Apaki phone app: Claude reads the code and explains the fix it is about to make" loading="lazy" decoding="async">
-                </picture>
+                <div class="clip is-current">
+                  <picture>
+                    <source media="(prefers-color-scheme: dark)" srcset="assets/media/phone-pair-phone-dark.webp">
+                    <img src="assets/media/phone-pair-phone-light.webp" width="780" height="1688" alt="The phone at the same moment: Check the code, 482 913, Studio PC shows a code too" loading="lazy" decoding="async">
+                  </picture>
+                  <video muted playsinline preload="none" width="390" height="844" aria-hidden="true" data-light="assets/media/phone-pair-phone-light.mp4" data-dark="assets/media/phone-pair-phone-dark.mp4"></video>
+                </div>
               </div>
             </div>
           </div>
@@ -326,6 +328,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
         <ul class="points points-grid" data-reveal>
           <li>Free, with no account. The connection is end to end encrypted between the phone and the PC.</li>
           <li>You choose on the PC what each phone may do: Full, No shell, or Chat only. The PC enforces it whatever the phone sends, and billing, accounts and pairing stay on the PC.</li>
+          <li>On the phone, your desktop's tabs are listed first. Open one the PC is using and the phone takes it over; the pane on the PC says so and keeps up with the conversation.</li>
           <li>An Apaki account is optional: a passkey, with no email and no password. Sign in on another phone and your PCs are listed there, once you allow it on the PC.</li>
           <li><span class="soon">Coming</span> Sign in from any browser with your phone's passkey. Nothing is saved in that browser, and it signs out after 30 minutes without input (you can choose 5 to 240 minutes).</li>
         </ul>
@@ -333,7 +336,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
     </section>
 
     <!-- ===== Security ===== -->
-    <section class="feature feature-security" id="security" aria-labelledby="security-title">
+    <section class="feature feature-security sec sec-cut-top g-violet-dots on-dark" id="security" aria-labelledby="security-title">
       <div class="wrap">
         <div class="security-head" data-reveal>
           <h2 id="security-title">Nobody in between can read it, including us</h2>
@@ -385,17 +388,16 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
           <p><strong>Where the trust sits.</strong> The phone web page is code that apaki.myrlin.io serves, as with any web app. Before your PC shows a pairing code, it builds that page from its own code and checks that the site serves exactly that, and while phone access is on it checks again every hour. The iPhone app carries its own copy of the code and loads none of it from our site. If you would rather not trust our site at all, run your own relay and page.</p>
           <p class="fine">P-256 key exchange, AES-256-GCM, fresh keys for every connection. The one-time pairing secret travels only in the part of the QR link after #, which browsers never send to a server. Claude Code itself still talks to Anthropic as it always does; this encryption covers the path between your phone and your PC.</p>
           <p class="links">
-            <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/security.md">Security in plain words</a>
-            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/SECURITY.md">The full security review</a>
-            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/remote/PROTOCOL.md">The protocol</a>
+            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/security.md">Security in plain words</a>
+            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/SECURITY.md">The full security review</a>
+            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/remote/PROTOCOL.md">The protocol</a>
           </p>
         </div>
       </div>
     </section>
 
     <!-- ===== Coming ===== -->
-    <section class="feature" id="next" aria-labelledby="next-title">
+    <section class="feature sec g-blobs" id="next" aria-labelledby="next-title">
       <div class="wrap">
         <div class="section-head" data-reveal>
           <h2 id="next-title">Coming next</h2>
@@ -421,7 +423,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
     </section>
 
     <!-- ===== Download ===== -->
-    <section class="feature" id="download" aria-labelledby="download-title">
+    <section class="feature sec sec-cut-top g-glow-notch" id="download" aria-labelledby="download-title">
       <div class="wrap">
         <div class="section-head" data-reveal>
           <h2 id="download-title">Get Apaki</h2>
@@ -431,8 +433,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
             <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="4" y="6" width="24" height="16" rx="2.5"/><path d="M12 26h8M16 22v4"/></svg>
             <h3>Apaki for Windows</h3>
             <p>The desktop app, with Claude Code and Myrlin Glass in the package. Sign in with Claude Code's own login, or use an Anthropic API key.</p>
-            <!-- PLACEHOLDER(Arthur): GitHub releases of the public repository. -->
-            <a class="btn btn-primary" href="https://github.com/therealarthur/claude-latch/releases/latest">Download for Windows</a>
+            <a class="btn btn-primary" href="https://github.com/therealarthur/apaki/releases">Download for Windows</a>
           </article>
           <article class="card card-get" data-reveal="2">
             <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="10" y="3" width="12" height="26" rx="2.5"/><path d="M14.5 25.5h3"/></svg>
@@ -456,8 +457,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
       <div class="wrap faq-grid">
         <div class="section-head" data-reveal>
           <h2 id="faq-title">Questions</h2>
-          <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-          <p><a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/faq.md">More in the FAQ</a></p>
+          <p><a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/faq.md">More in the FAQ</a></p>
         </div>
         <div class="faq" data-reveal="2">
           <details>
@@ -485,18 +485,18 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
     </section>
   </main>
 
-  <footer class="site-foot">
+  <footer class="site-foot sec on-dark">
     <div class="wrap foot-grid">
       <div class="foot-brand">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 32 15" class="m-mark" aria-hidden="true"><defs><linearGradient id="mflare-foot" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#07B6D5"/><stop offset="1" stop-color="#3C83F6"/></linearGradient></defs><path class="m-fold" d="M12.292 9 C13.331 9 14.221 9.801 14.28 10.788 L14.554 15.346 L12.18 22.327 C11.916 23.105 11.452 23.858 11.15 24 L11.115 24 C9.996 24 9.36 23.019 9.246 21.115 L9.029 17.495 L10.838 12.173 C11.395 10.538 11.996 9.141 12.206 9 L12.292 9Z"/><path class="m-stroke" d="M0.5 24 L6.904 24 L10.925 12.173 C11.481 10.538 12.083 9.141 12.292 9 L7.042 9 C6.18 9 5.413 9.549 5.136 10.366Z"/><path class="m-fold" d="M23.369 9 C24.408 9 25.298 9.801 25.357 10.788 L25.745 17.258 C25.133 17.737 24.444 18.836 24.013 20.106 L23.257 22.327 C22.993 23.105 22.529 23.858 22.227 24 L22.192 24 C21.073 24 20.437 23.019 20.323 21.115 L20.106 17.495 L21.915 12.173 C22.471 10.538 23.073 9.141 23.283 9 L23.369 9Z"/><path class="m-stroke" d="M11.115 24 L16.538 24 C17.401 24 18.167 23.451 18.445 22.634 L22.002 12.173 C22.558 10.538 23.16 9.141 23.369 9 L18.119 9 C17.257 9 16.49 9.549 16.213 10.366 L12.146 22.327 C11.881 23.105 11.418 23.858 11.115 24Z"/><path d="M22.192 24 L27.615 24 C28.478 24 29.244 23.451 29.522 22.634 L31.438 17 L26.303 17 C25.605 17 24.559 18.398 23.978 20.106 L23.223 22.327 C22.958 23.105 22.494 23.858 22.192 24Z" fill="url(#mflare-foot)"/></svg>
         <p><b>Myrlin Apaki</b>, a Myrlin Labs project.</p>
       </div>
       <nav class="foot-links" aria-label="More">
-        <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-        <a href="https://github.com/therealarthur/claude-latch">Source on GitHub</a>
-        <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/README.md">Docs</a>
-        <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/self-hosting.md">Self-hosting</a>
-        <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/SECURITY.md">Security review</a>
+        <a href="https://github.com/therealarthur/apaki">Source on GitHub</a>
+        <a href="https://github.com/therealarthur/apaki#readme">Docs</a>
+        <a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/self-hosting.md">Self-hosting</a>
+        <a href="https://github.com/therealarthur/apaki/blob/master/apaki/SECURITY.md">Security review</a>
+        <a href="privacy/">Privacy</a>
         <a href=".well-known/security.txt">Report a security problem</a>
         <a href="app/">Open the web app</a>
       </nav>
