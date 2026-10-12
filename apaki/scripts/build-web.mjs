@@ -265,6 +265,7 @@ export function writeLanding(site = DEFAULT_SITE) {
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="light dark">
   <title>Open the Apaki web app</title>
+  <!-- impeccable-disable marquee: the one infinite horizontal animation here is the pearl background's slow drift (the desktop app's own background); it scrolls no content and stops under prefers-reduced-motion (2026-10-12) -->
   <link rel="icon" href="../assets/apaki-icon.svg" type="image/svg+xml">
   <script src="../assets/theme.js"></script>
   <link rel="stylesheet" href="../site.css">

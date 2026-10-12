@@ -225,7 +225,16 @@ See ../_WHY_THIS_IS_HERE.md. Safe to delete; regenerate with that command.
 /* running a scene */
 
 async function openScene(browser, { scene, theme, baseUrl, recordDir }) {
-  const dev = deviceOf(scene);
+  return openPage(browser, { dev: deviceOf(scene), ws: SCENES[scene].ws, theme, baseUrl, recordDir });
+}
+
+/** A paired scene's phone page (2026-10-12): the device and workspace its pair names. */
+function openPair(browser, { scene, theme, baseUrl, recordDir }) {
+  const pair = SCENES[scene].pair;
+  return openPage(browser, { dev: DEVICES[pair.device] || DEVICES.phone, ws: pair.ws, theme, baseUrl, recordDir });
+}
+
+async function openPage(browser, { dev, ws, theme, baseUrl, recordDir }) {
   const ctx = await browser.newContext({
     viewport: dev.viewport, deviceScaleFactor: dev.scale, locale: 'en-US', timezoneId: 'America/New_York', colorScheme: theme,
     ...(dev.touch ? { hasTouch: true, isMobile: true } : {}),
@@ -238,7 +247,7 @@ async function openScene(browser, { scene, theme, baseUrl, recordDir }) {
   page.on('pageerror', (e) => problems.push(`page error: ${e.message}`));
   page.on('requestfailed', (r) => problems.push(`request failed: ${r.url()}`));
   page.on('response', (r) => { if (r.status() >= 400 && !r.url().endsWith('favicon.ico')) problems.push(`HTTP ${r.status()}: ${r.url()}`); });
-  await page.goto(`${baseUrl}/${dev.page}?ws=${encodeURIComponent(SCENES[scene].ws)}&theme=${theme}`);
+  await page.goto(`${baseUrl}/${dev.page}?ws=${encodeURIComponent(ws)}&theme=${theme}`);
   await page.waitForFunction(() => window.__demo?.ready?.(), null, { timeout: 20000 });
   // Context meters, history and the Glass card settle in over the first second or two.
   await page.waitForTimeout(2200);
@@ -271,45 +280,62 @@ async function main() {
   try {
     for (const theme of THEMES) {
       for (const name of WANT_SCENES) {
+        // A paired scene (2026-10-12) runs the phone page beside the desktop one; its files are "<name>-phone-...".
+        const pair = SCENES[name].pair || null;
+        const maxSeconds = SCENES[name].maxSeconds || MAX_SECONDS;
         if (DO_STILLS) {
           const t0 = Date.now();
           const { ctx, page, problems: probs } = await openScene(browser, { scene: name, theme, baseUrl: server.url });
+          const side = pair ? await openPair(browser, { scene: name, theme, baseUrl: server.url }) : null;
           const saved = [];
+          const keep = (prefix, hero, dv) => async (label, png) => {
+            const file = path.join(OUT, 'stills', `${prefix}-${label}-${theme}.png`);
+            fs.writeFileSync(file, png);
+            saved.push({ label, file, bytes: png.length, hero: label === hero, dv });
+            if (label === hero) fs.writeFileSync(path.join(OUT, 'stills', `${prefix}-${theme}.png`), png);
+          };
           const result = await runScene(page, name, {
             stills: true,
-            onStill: async (label, png) => {
-              const file = path.join(OUT, 'stills', `${name}-${label}-${theme}.png`);
-              fs.writeFileSync(file, png);
-              saved.push({ label, file, bytes: png.length });
-              if (label === SCENES[name].hero) fs.writeFileSync(path.join(OUT, 'stills', `${name}-${theme}.png`), png);
-            },
+            onStill: keep(name, SCENES[name].hero, deviceOf(name)),
+            ...(side ? { pairPage: side.page, onPairStill: keep(`${name}-phone`, pair.hero, DEVICES[pair.device] || DEVICES.phone) } : {}),
           });
           await ctx.close();
-          const dv = deviceOf(name);
-          for (const s of saved) manifest.push({ scene: name, theme, kind: 'still', hero: s.label === SCENES[name].hero, label: s.label, file: path.relative(OUT, s.file).replace(/\\/g, '/'), bytes: s.bytes, width: dv.viewport.width * dv.scale, height: dv.viewport.height * dv.scale });
+          if (side) await side.ctx.close();
+          for (const s of saved) manifest.push({ scene: name, theme, kind: 'still', hero: s.hero, label: s.label, file: path.relative(OUT, s.file).replace(/\\/g, '/'), bytes: s.bytes, width: s.dv.viewport.width * s.dv.scale, height: s.dv.viewport.height * s.dv.scale });
           console.log(`  ${name} / ${theme}: ${saved.length} stills (${((Date.now() - t0) / 1000).toFixed(1)} s, scene ${result.seconds.toFixed(1)} s)`);
-          for (const p of probs) problems.push(`${name}/${theme} stills: ${p}`);
+          for (const p of [...probs, ...(side?.problems || [])]) problems.push(`${name}/${theme} stills: ${p}`);
         }
         if (DO_VIDEO && ffmpeg) {
           const t0 = Date.now();
           const dir = fs.mkdtempSync(path.join(rawDir, `${name}-${theme}-`));
           const { ctx, page, problems: probs, startedAt } = await openScene(browser, { scene: name, theme, baseUrl: server.url, recordDir: dir });
-          const result = await runScene(page, name, { stills: false });
+          const side = pair ? await openPair(browser, { scene: name, theme, baseUrl: server.url, recordDir: fs.mkdtempSync(path.join(rawDir, `${name}-phone-${theme}-`)) }) : null;
+          const result = await runScene(page, name, { stills: false, ...(side ? { pairPage: side.page } : {}) });
           const video = page.video();
+          const sideVideo = side?.page.video();
           await ctx.close();
-          const raw = await video.path();
-          const start = Math.max(0, (result.beganAt - startedAt) / 1000 - CUT_LEAD_SECONDS);
-          const len = Math.min(MAX_SECONDS, result.seconds + CUT_LEAD_SECONDS + 0.3);
-          if (result.seconds < MIN_SECONDS || result.seconds > MAX_SECONDS + 1) console.warn(`    note: ${name} runs ${result.seconds.toFixed(1)} s; the target is ${MIN_SECONDS} to ${MAX_SECONDS}`);
-          const base = path.join(OUT, 'video', `${name}-${theme}`);
-          const outs = await encode(ffmpeg, raw, base, start, len, deviceOf(name).record);
-          for (const o of outs) {
-            const info = probe(ffmpeg, o.file);
-            manifest.push({ scene: name, theme, kind: 'video', file: path.relative(OUT, o.file).replace(/\\/g, '/'), bytes: o.bytes, seconds: info.seconds, width: info.width, height: info.height, codec: info.codec, crf: o.crf });
+          if (side) await side.ctx.close();
+          const len = Math.min(maxSeconds, result.seconds + CUT_LEAD_SECONDS + 0.3);
+          if (result.seconds < MIN_SECONDS || result.seconds > maxSeconds + 1) console.warn(`    note: ${name} runs ${result.seconds.toFixed(1)} s; the target is ${MIN_SECONDS} to ${maxSeconds}`);
+          // Both recordings are cut at the same instant (begin), each from its own start, and to the same length.
+          const cuts = [{ raw: await video.path(), startedAt, base: `${name}-${theme}`, size: deviceOf(name).record }];
+          if (side) cuts.push({ raw: await sideVideo.path(), startedAt: side.startedAt, base: `${name}-phone-${theme}`, size: (DEVICES[pair.device] || DEVICES.phone).record });
+          const sizes = [];
+          for (const c of cuts) {
+            const start = Math.max(0, (result.beganAt - c.startedAt) / 1000 - CUT_LEAD_SECONDS);
+            const outs = await encode(ffmpeg, c.raw, path.join(OUT, 'video', c.base), start, len, c.size);
+            for (const o of outs) {
+              const info = probe(ffmpeg, o.file);
+              manifest.push({ scene: c.base.endsWith(`-${theme}`) && c.base.includes('-phone-') ? `${name}-phone` : name, theme, kind: 'video', file: path.relative(OUT, o.file).replace(/\\/g, '/'), bytes: o.bytes, seconds: info.seconds, width: info.width, height: info.height, codec: info.codec, crf: o.crf });
+              sizes.push(`${path.basename(o.file)} ${(o.bytes / 1e6).toFixed(2)} MB`);
+            }
+            if (KEEP_RAW) { fs.mkdirSync(path.join(OUT, 'video', 'raw'), { recursive: true }); fs.copyFileSync(c.raw, path.join(OUT, 'video', 'raw', `${c.base}.webm`)); }
           }
-          if (KEEP_RAW) { fs.mkdirSync(path.join(OUT, 'video', 'raw'), { recursive: true }); fs.copyFileSync(raw, path.join(OUT, 'video', 'raw', `${name}-${theme}.webm`)); }
-          console.log(`  ${name} / ${theme}: video ${outs.map((o) => `${path.extname(o.file)} ${(o.bytes / 1e6).toFixed(2)} MB`).join(', ')} (${((Date.now() - t0) / 1000).toFixed(1)} s, scene ${result.seconds.toFixed(1)} s)`);
-          for (const p of probs) problems.push(`${name}/${theme} video: ${p}`);
+          console.log(`  ${name} / ${theme}: video ${sizes.join(', ')} (${((Date.now() - t0) / 1000).toFixed(1)} s, scene ${result.seconds.toFixed(1)} s)`);
+          // The moments a scene noted (seconds into the clip), for a page that times something to them.
+          const moments = result.log.filter((l) => !l.what.startsWith('still '));
+          if (moments.length) console.log(`    moments: ${moments.map((l) => `${l.what} at ${l.at} s`).join(', ')}`);
+          for (const p of [...probs, ...(side?.problems || [])]) problems.push(`${name}/${theme} video: ${p}`);
         }
       }
     }

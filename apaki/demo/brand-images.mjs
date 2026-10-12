@@ -7,9 +7,9 @@
  *       the Myrlin M and "Apaki" in wide italic Archivo on a transparent ground, for the README
  *       (GitHub shows images without their web fonts, so the type is drawn here once)
  *   relay/site/assets/og.jpg
- *       the 1200x630 link preview: the wordmark, one line, and the split-pane window on the pearl
+ *       the 1200x630 link preview: the wordmark, one line, and the handoff window (the PC with the phone's session) on the pearl
  *
- * Run after site-media.mjs (the preview uses relay/site/assets/media/split-light-2000.webp):
+ * Run after site-media.mjs (the preview uses relay/site/assets/media/handoff-light-2000.webp):
  *   node apaki/demo/brand-images.mjs [playwright=<dir>] [chromium=<exe>] [ffmpeg=<exe>]
  */
 
@@ -88,7 +88,7 @@ body { width: 1200px; height: 630px; position: relative; overflow: hidden; backg
 <div class="copy"><div class="wm">${MARK}<span>Apaki</span></div>
 <div class="line">Every Claude Code session on your PC, in one window.</div>
 <div class="fine">Free and open source · apaki.myrlin.io</div></div>
-<div class="win"><img src="data:image/webp;base64,${b64(path.join(REPO, 'relay', 'site', 'assets', 'media', 'split-light-2000.webp'))}"></div>
+<div class="win"><img src="data:image/webp;base64,${b64(path.join(REPO, 'relay', 'site', 'assets', 'media', 'handoff-light-2000.webp'))}"></div>
 </body></html>`;
 
 const pw = await loadPlaywright();

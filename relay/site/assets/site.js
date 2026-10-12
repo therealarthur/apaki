@@ -12,6 +12,10 @@
  *   Players   .player wraps one clip (it loops) or a reel of several (one after another, with a
  *             labelled tab per clip and a thin bar that fills as it plays). A round button in the
  *             corner pauses and plays; a pause by hand sticks until the visitor plays it again.
+ *   Together  (2026-10-12) a .player with data-together plays recordings made at the same moment, the
+ *             PC and the phone, as one: the first keeps the clock, the others follow within a quarter
+ *             second, one button pauses all. data-link-at marks, from that second on, that both show the
+ *             same session (.is-linked: the rings in site.css); the stills show that moment too.
  *   Quiet     with prefers-reduced-motion, or Save-Data on, nothing loads or plays by itself: the
  *             stills stay, and the button offers Play.
  *   Theme     clips follow the page's theme (theme.js): light clips on light, dark on dark, and a
@@ -58,7 +62,12 @@
     this.el = el;
     this.clips = Array.prototype.slice.call(el.querySelectorAll('.clip'));
     this.tabs = Array.prototype.slice.call(el.querySelectorAll('[role="tab"]'));
-    this.reel = this.clips.length > 1;
+    // Together (2026-10-12): recordings made in step (the PC and the phone at the same moment) play as one: the
+    // first is the clock, the others follow it, and one button pauses them all. Otherwise several clips are a reel.
+    this.together = el.hasAttribute('data-together');
+    this.reel = !this.together && this.clips.length > 1;
+    // The moment, in seconds, from which the PC and the phone show the same session (data-link-at): .is-linked.
+    this.linkAt = parseFloat(el.getAttribute('data-link-at'));
     this.i = 0;
     this.near = false;
     this.visible = false;
@@ -79,7 +88,7 @@
       v.addEventListener('playing', function () { clip.classList.add('is-playing'); self.sync(); });
       v.addEventListener('pause', function () { self.sync(); });
       v.addEventListener('ended', function () { if (self.reel) self.go(n + 1); });
-      v.addEventListener('timeupdate', function () { self.progress(n); });
+      v.addEventListener('timeupdate', function () { self.progress(n); if (self.together && n === 0) self.follow(); });
       v.addEventListener('error', function () { clip.classList.remove('is-playing'); self.sync(); });
     });
 
@@ -114,7 +123,8 @@
 
   Player.prototype.update = function () {
     if (this.near && (!quiet() || this.userPlayed)) {
-      attach(this.current().video);
+      if (this.together) this.clips.forEach(function (c) { attach(c.video); });
+      else attach(this.current().video);
       // The next clip of a reel loads too, so the change to it does not wait on the network.
       if (this.reel) attach(this.clips[(this.i + 1) % this.clips.length].video);
     }
@@ -122,10 +132,25 @@
   };
 
   Player.prototype.play = function () {
-    var v = this.current().video;
-    attach(v);
-    var p = v.play();
-    if (p && p.catch) p.catch(function () { /* blocked (low power mode, say): the still stays */ });
+    var vids = this.together ? this.clips.map(function (c) { return c.video; }) : [this.current().video];
+    vids.forEach(function (v) {
+      attach(v);
+      var p = v.play();
+      if (p && p.catch) p.catch(function () { /* blocked (low power mode, say): the still stays */ });
+    });
+  };
+
+  /** Together: the other clips keep to the first one's clock (within a quarter second), and the link follows it. */
+  Player.prototype.follow = function () {
+    var clock = this.clips[0].video;
+    var t = clock.currentTime;
+    for (var k = 1; k < this.clips.length; k++) {
+      var v = this.clips[k].video;
+      if (!v.getAttribute('data-attached') || v.seeking || v.readyState < 1) continue;
+      if (Math.abs(v.currentTime - t) > 0.25) { try { v.currentTime = t; } catch (e) { /* not seekable yet */ } }
+      if (v.paused && !clock.paused) { var p = v.play(); if (p && p.catch) p.catch(function () {}); }
+    }
+    if (!isNaN(this.linkAt)) this.el.classList.toggle('is-linked', t >= this.linkAt);
   };
 
   Player.prototype.pause = function () {
@@ -182,8 +207,10 @@
     var v = this.current().video;
     var playing = Boolean(v.getAttribute('data-attached')) && !v.paused;
     this.toggle.innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
-    this.toggle.setAttribute('aria-label', playing ? 'Pause the recording' : 'Play the recording');
+    this.toggle.setAttribute('aria-label', playing ? (this.together ? 'Pause the recordings' : 'Pause the recording') : (this.together ? 'Play the recordings' : 'Play the recording'));
     this.el.classList.toggle('is-paused', !playing);
+    // The stills show the moment after the handoff, so a still pair is linked too.
+    if (!isNaN(this.linkAt) && !playing) this.el.classList.add('is-linked');
   };
 
   Player.prototype.progress = function (n) {

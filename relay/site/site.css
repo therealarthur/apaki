@@ -40,7 +40,7 @@
   --peach: 246, 200, 174; --peach-glow: #F2A57E;
   --fill: #5361C9; --fill-hover: #2C3578; --on-fill: #FFFFFF;
   --code-bg: #1E1B33; --code-ink: #E4E6F8; --code-faint: #9C9FC4;
-  --w: 0, 0%, 100%; --shadow-rgb: 44, 53, 120;
+  --w: 0, 0%, 100%; --shadow-rgb: 20, 18, 40;
   --font: 'Archivo', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --mono: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
   --ease-out: cubic-bezier(.22, 1, .36, 1); --ease-hover: cubic-bezier(.4, 0, .2, 1);
@@ -123,7 +123,7 @@ h3 { font-weight: 820; font-stretch: 112%; font-size: 20px; line-height: 1.25; l
   transition: background var(--dur-fast) var(--ease-hover), border-color var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-hover);
 }
 .btn:active { transform: scale(.985); }
-.btn-primary { background: var(--fill); color: var(--on-fill); box-shadow: 0 12px 26px -16px rgba(83, 97, 201, .9); }
+.btn-primary { background: var(--fill); color: var(--on-fill); box-shadow: 0 12px 24px -16px rgba(20, 18, 40, .55); }
 .btn-primary:hover { background: var(--fill-hover); color: var(--on-fill); }
 /* On the dark ground a coloured shadow reads as a glow; the button stands on its fill alone. */
 :root[data-theme="dark"] .btn-primary { box-shadow: none; }
@@ -172,11 +172,10 @@ h3 { font-weight: 820; font-stretch: 112%; font-size: 20px; line-height: 1.25; l
 
 .hero-kicker { margin: 0 0 14px; font-weight: 760; font-stretch: 112%; font-size: 16px; letter-spacing: .005em; color: var(--action-strong); }
 .hero-stage { position: relative; margin-top: clamp(40px, 5vw, 64px); padding-bottom: clamp(40px, 6vw, 72px); }
-/* A warm glow under the window, the app's peach in the pearl. */
+/* A warm glow under the window, the app's peach in the pearl (soft by its gradients alone; no blur filter to repaint). */
 .hero-stage::before {
-  content: ""; position: absolute; inset: 8% 6% 0; z-index: -1; pointer-events: none; border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(var(--peach), .5), transparent 70%), radial-gradient(closest-side at 70% 60%, hsla(var(--pearl-stop-blue), .22), transparent 70%);
-  filter: blur(30px);
+  content: ""; position: absolute; inset: 2% -2% -6%; z-index: -1; pointer-events: none;
+  background: radial-gradient(48% 46% at 42% 52%, rgba(var(--peach), .5), rgba(var(--peach), 0) 100%), radial-gradient(40% 44% at 72% 62%, hsla(var(--pearl-stop-blue), .22), hsla(var(--pearl-stop-blue), 0) 100%);
 }
 .window-hero { width: min(100%, 1160px); }
 .stage-note { margin-top: 14px; font-size: 13px; color: var(--faint); }
@@ -352,6 +351,199 @@ html:not(.js) .reel-tabs { display: none; }
 .reveal-on [data-reveal="2"] { transition-delay: 90ms; }
 .reveal-on [data-reveal="3"] { transition-delay: 180ms; }
 
+/* ==========================================================================
+   The PC and the phone in step (2026-10-12, Arthur: the recordings should
+   read as the same thing). The hero and the pairing section play a desktop
+   recording and a phone recording made at the same moment (site.js
+   data-together). From the moment the phone takes the session over
+   (data-link-at), a peach ring marks that pane on the PC and the phone's
+   frame: the same colour, the same session.
+   ========================================================================== */
+.link-ring {
+  position: absolute; z-index: 2; pointer-events: none; border-radius: 9px; opacity: 0;
+  box-shadow: 0 0 0 2px rgba(var(--peach-ring), .95), 0 0 0 7px rgba(var(--peach-ring), .22);
+  transition: opacity .6s var(--ease-out);
+}
+/* The left pane of the handoff recording: under the tab strip, left of the split. */
+.link-ring-left { left: .6%; top: 5.1%; width: 49.4%; bottom: 1.1%; }
+.is-linked .link-ring { opacity: 1; }
+.float-phone .phone { transition: box-shadow .6s var(--ease-out); }
+.is-linked .float-phone .phone { box-shadow: var(--float-shadow), 0 0 0 2px rgba(var(--peach-ring), .95), 0 0 0 8px rgba(var(--peach-ring), .2); }
+/* The phone sits over the hero window's bottom right, so its button moves to the bottom left. */
+.window-hero .clip-toggle { right: auto; left: 12px; }
+:root { --peach-ring: 236, 146, 102; }
+:root[data-theme="dark"] { --peach-ring: 246, 184, 149; }
+
+/* ==========================================================================
+   Section grounds (2026-10-12, Arthur: "different sections with different
+   backgrounds that are not straight lines ... angular or circular ... it
+   should feel artistic"). Each band paints its own ground and is cut by a
+   shape: a slant, a dome, a bowl, a notch. Where a band is cut away, the
+   pearl shows through. No two grounds share a texture: a peach dot lattice
+   fading from a corner, the app's white halftone, rings, a warm colour
+   field, two orbs, a sky with a low sun, the app's effort-grid dots lit
+   violet, two blobs, a glow. All static (no filters; nothing fixed but the
+   pearl), so scrolling stays cheap. The ground is painted on the section
+   itself, so a contrast check sees the colour the text sits on.
+   ========================================================================== */
+.sec > .wrap { padding-left: 0; padding-right: 0; max-width: 1160px; }
+/* Insets and cuts step with the width, in plain pixels: the band's own inset, plus the depth of its cut where it has one. */
+.sec { position: relative; --cut: 80px; padding: 104px 40px; }
+.sec-cut-y { padding-top: 184px; padding-bottom: 184px; }
+.sec-cut-top { padding-top: 184px; }
+@media (max-width: 1200px) {
+  .sec { --cut: 64px; padding-top: 88px; padding-bottom: 88px; }
+  .sec-cut-y { padding-top: 152px; padding-bottom: 152px; }
+  .sec-cut-top { padding-top: 152px; }
+}
+@media (max-width: 960px) {
+  .sec { --cut: 48px; padding-top: 72px; padding-bottom: 72px; }
+  .sec-cut-y { padding-top: 120px; padding-bottom: 120px; }
+  .sec-cut-top { padding-top: 120px; }
+}
+@media (max-width: 720px) {
+  .sec { --cut: 28px; padding: 56px 20px; }
+  .sec-cut-y { padding-top: 84px; padding-bottom: 84px; }
+  .sec-cut-top { padding-top: 84px; }
+}
+
+/* Sections on a dark ground: the light-on-dark tokens, in both themes. */
+.on-dark {
+  --ink: #F2F3FB; --soft: #C9CBE2; --faint: #AEB0CC; --ink-deep: #F2F3FB;
+  --hairline: hsla(240, 40%, 90%, .11); --hairline-strong: hsla(240, 40%, 90%, .2);
+  --brand: #A3ABF2; --brand-strong: #BCC2F8; --brand-deep: #DCDFFA; --action-strong: #F6B895;
+  --frost: #24213F; --frost-strong: #2B2848;
+  --code-faint: #B0B3D6;
+  color: var(--ink);
+}
+.on-dark .code-card { background: #0B0A16; box-shadow: 0 0 0 1px hsla(240, 40%, 90%, .12), 0 24px 48px -28px rgba(0, 0, 0, .7); }
+.on-dark .btn-secondary { background: #2B2848; color: var(--ink); border-color: var(--hairline-strong); }
+.on-dark .flow-node { -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* Open source: ink, a peach-tinted dot lattice (offset rows), a warm glow in the top right. */
+.g-ink-lattice {
+  background-color: #1B1834;
+  background-image:
+    radial-gradient(38% 60% at 88% 18%, rgba(var(--peach), .24), rgba(var(--peach), 0) 100%),
+    radial-gradient(circle, rgba(var(--peach), .2) 1.3px, transparent 1.5px),
+    radial-gradient(circle, rgba(var(--peach), .2) 1.3px, transparent 1.5px),
+    linear-gradient(160deg, #231F42, #15132A 72%);
+  background-size: auto, 18px 18px, 18px 18px, auto;
+  background-position: 0 0, 0 0, 9px 9px, 0 0;
+  clip-path: polygon(0 var(--cut), 100% 0, 100% calc(100% - var(--cut)), 0 100%);
+}
+:root[data-theme="dark"] .g-ink-lattice {
+  background-color: #0B0A16;
+  background-image:
+    radial-gradient(38% 60% at 88% 18%, rgba(var(--peach), .13), rgba(var(--peach), 0) 100%),
+    radial-gradient(circle, rgba(var(--peach), .12) 1.3px, transparent 1.5px),
+    radial-gradient(circle, rgba(var(--peach), .12) 1.3px, transparent 1.5px),
+    linear-gradient(160deg, #0F0D1F, #08070F 72%);
+}
+
+/* Glass: lilac with the app's white halftone, under a wide dome. */
+.g-lilac-dome {
+  background-color: #EAE8FB;
+  background-image: radial-gradient(circle, hsla(0, 0%, 100%, .9) 1.2px, transparent 1.4px), linear-gradient(180deg, #EEEFFC, #E5E2FA);
+  background-size: 10px 10px, auto;
+  clip-path: ellipse(150% 100% at 50% 100%);
+}
+:root[data-theme="dark"] .g-lilac-dome {
+  background-color: #19182F;
+  background-image: radial-gradient(circle, hsla(240, 60%, 90%, .06) 1.2px, transparent 1.4px), linear-gradient(180deg, #1C1B35, #16152B);
+}
+
+/* Sessions: the pearl, with concentric rings spreading from its top right and fading out. */
+.g-rings { isolation: isolate; }
+.g-rings::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  --ring: 232, 55%, 62%;
+  background:
+    radial-gradient(circle at 90% 16%, transparent 119px, hsla(var(--ring), .2) 120px 121.5px, transparent 122.5px),
+    radial-gradient(circle at 90% 16%, transparent 199px, hsla(var(--ring), .17) 200px 201.5px, transparent 202.5px),
+    radial-gradient(circle at 90% 16%, transparent 289px, hsla(var(--ring), .14) 290px 291.5px, transparent 292.5px),
+    radial-gradient(circle at 90% 16%, transparent 389px, hsla(var(--ring), .1) 390px 391.5px, transparent 392.5px),
+    radial-gradient(circle at 90% 16%, transparent 499px, hsla(var(--ring), .07) 500px 501.5px, transparent 502.5px);
+}
+:root[data-theme="dark"] .g-rings::before { --ring: 232, 70%, 78%; }
+
+/* Tabs and panes: a warm colour field, peach into lilac, slanted the other way. */
+.g-warm-field {
+  background-color: #F8EAEE;
+  background-image: radial-gradient(60% 80% at 12% 30%, rgba(var(--peach), .45), rgba(var(--peach), 0) 100%), linear-gradient(115deg, #FCEEE5, #F8E7F0 55%, #ECEAFB);
+  clip-path: polygon(0 0, 100% var(--cut), 100% 100%, 0 calc(100% - var(--cut)));
+}
+:root[data-theme="dark"] .g-warm-field {
+  background-color: #221A27;
+  background-image: radial-gradient(60% 80% at 12% 30%, rgba(var(--peach), .1), rgba(var(--peach), 0) 100%), linear-gradient(115deg, #2A1D22, #241B2A 55%, #191830);
+}
+
+/* Browser: the pearl, with a large cool orb low on the left and a small warm one high on the right. */
+.g-orbs {
+  background-image:
+    radial-gradient(30% 42% at 6% 82%, hsla(189, 94%, 43%, .16), hsla(189, 94%, 43%, 0) 100%),
+    radial-gradient(16% 22% at 94% 12%, rgba(var(--peach), .32), rgba(var(--peach), 0) 100%);
+}
+
+/* Phone: a pale sky with a low sun, its top scooped out in a bowl. */
+.g-sky-bowl {
+  background-color: #E8EEFB;
+  background-image: radial-gradient(24% 34% at 78% 74%, hsla(0, 0%, 100%, .85), hsla(0, 0%, 100%, 0) 100%), linear-gradient(200deg, #E2F1FB, #E9E6FC 70%);
+  -webkit-mask-image: radial-gradient(64% var(--cut) at 50% 0, transparent 98%, #000 100%); mask-image: radial-gradient(64% var(--cut) at 50% 0, transparent 98%, #000 100%);
+}
+:root[data-theme="dark"] .g-sky-bowl {
+  background-color: #131B2A;
+  background-image: radial-gradient(24% 34% at 78% 74%, hsla(232, 60%, 70%, .12), hsla(232, 60%, 70%, 0) 100%), linear-gradient(200deg, #10202B, #16152C 70%);
+}
+
+/* Security: the app's effort-grid dots, fine with a brighter one every fifth, lit violet from the top left; slanted top. */
+.g-violet-dots {
+  background-color: #12102A;
+  background-image:
+    radial-gradient(50% 55% at 12% 4%, hsla(277, 80%, 62%, .26), hsla(277, 80%, 62%, 0) 100%),
+    radial-gradient(circle, hsla(217, 90%, 78%, .34) 1.6px, transparent 1.9px),
+    radial-gradient(circle, hsla(217, 90%, 78%, .12) 1px, transparent 1.2px);
+  background-size: auto, 100px 100px, 20px 20px;
+  background-position: 0 0, -40px -40px, 0 0;
+  clip-path: polygon(0 0, 100% var(--cut), 100% 100%, 0 100%);
+}
+:root[data-theme="dark"] .g-violet-dots {
+  background-color: #0A0918;
+  background-image:
+    radial-gradient(50% 55% at 12% 4%, hsla(277, 80%, 62%, .15), hsla(277, 80%, 62%, 0) 100%),
+    radial-gradient(circle, hsla(217, 90%, 78%, .24) 1.6px, transparent 1.9px),
+    radial-gradient(circle, hsla(217, 90%, 78%, .08) 1px, transparent 1.2px);
+}
+
+/* Coming next: the pearl, with a warm blob top right and a periwinkle one bottom left (not the browser's orbs). */
+.g-blobs {
+  background-image:
+    radial-gradient(34% 48% at 96% 6%, rgba(var(--peach), .38), rgba(var(--peach), 0) 100%),
+    radial-gradient(40% 50% at 2% 96%, hsla(232, 60%, 64%, .2), hsla(232, 60%, 64%, 0) 100%);
+}
+
+/* Get Apaki: a glow rising from below, under a top with a notch in it. */
+.g-glow-notch {
+  background-color: #F4F1FC;
+  background-image:
+    radial-gradient(60% 70% at 50% 108%, rgba(var(--peach), .5), rgba(var(--peach), 0) 100%),
+    radial-gradient(80% 90% at 50% 120%, hsla(277, 87%, 63%, .2), hsla(277, 87%, 63%, 0) 100%),
+    linear-gradient(180deg, #F5F3FD, #F1EEFC);
+  clip-path: polygon(0 0, 36% var(--cut), 100% 0, 100% 100%, 0 100%);
+}
+:root[data-theme="dark"] .g-glow-notch {
+  background-color: #17152C;
+  background-image:
+    radial-gradient(60% 70% at 50% 108%, rgba(var(--peach), .16), rgba(var(--peach), 0) 100%),
+    radial-gradient(80% 90% at 50% 120%, hsla(277, 87%, 63%, .14), hsla(277, 87%, 63%, 0) 100%),
+    linear-gradient(180deg, #1A1830, #15142A);
+}
+
+/* The footer: plain ink under a slanted top. */
+.site-foot.sec { border-top: 0; background: #171530; clip-path: polygon(0 var(--cut), 100% 0, 100% 100%, 0 100%); padding-top: 120px; padding-bottom: 56px; }
+@media (max-width: 720px) { .site-foot.sec { padding-top: 68px; } }
+:root[data-theme="dark"] .site-foot.sec { background: #07060E; }
+
 /* ---------- smaller screens: the display type steps down ---------- */
 @media (max-width: 1200px) {
   .wordmark { font-size: 140px; }
@@ -437,7 +629,7 @@ html:not(.js) .reel-tabs { display: none; }
 /* "Open Apaki" (2026-10-10): the way in, to sign in or pair; the app's brand gradient. */
 .app-page .cta { margin: 28px 0 10px; }
 .app-page .btn { display: inline-block; min-height: 0; padding: 14px 26px; border-radius: 14px; color: #FFFFFF; text-decoration: none; font-weight: 800; font-size: 17px; letter-spacing: .01em;
-  background: linear-gradient(135deg, #2C3578, #5A3FB0); box-shadow: 0 10px 24px -14px rgba(70, 52, 160, .7); }
+  background: linear-gradient(135deg, #2C3578, #5A3FB0); box-shadow: 0 10px 24px -14px rgba(20, 18, 40, .5); }
 .app-page .btn:hover { filter: brightness(1.08); }
 :root[data-theme="dark"] .app-page .btn { background: linear-gradient(135deg, #3E48A0, #5B40AA); box-shadow: none; }
 .app-page .cta-note { margin: 0; font-size: 14px; color: var(--faint); }
