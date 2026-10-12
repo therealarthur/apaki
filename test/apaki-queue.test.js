@@ -258,17 +258,19 @@ test('auto-compact: kept in one small file under ~/.claude/latch, never in Claud
     const env = { CLAUDE_CONFIG_DIR: path.join(dir, 'claude') };
     const file = prefsFile(env);
     assert.equal(file, path.join(dir, 'claude', 'latch', 'apaki-settings.json'));
-    assert.deepEqual(loadPrefs(file), { autoCompact: 'off' }, 'no file yet: the default');
+    assert.deepEqual(loadPrefs(file), { autoCompact: 'off', releaseHiddenMin: 15 }, 'no file yet: the defaults');
     savePrefs(file, { autoCompact: 200000 });
-    assert.deepEqual(loadPrefs(file), { autoCompact: 200000 });
+    assert.deepEqual(loadPrefs(file), { autoCompact: 200000, releaseHiddenMin: 15 });
     savePrefs(file, { autoCompact: 'default' });
-    assert.deepEqual(loadPrefs(file), { autoCompact: 'default' });
-    savePrefs(file, { autoCompact: 'off' });
-    assert.deepEqual(loadPrefs(file), { autoCompact: 'off' });
+    assert.deepEqual(loadPrefs(file), { autoCompact: 'default', releaseHiddenMin: 15 });
+    savePrefs(file, { autoCompact: 'off', releaseHiddenMin: 0 });
+    assert.deepEqual(loadPrefs(file), { autoCompact: 'off', releaseHiddenMin: 0 }, 'the hidden-conversation setting is kept beside it, and 0 (off) is a choice');
+    savePrefs(file, { autoCompact: 'off', releaseHiddenMin: 7 });
+    assert.equal(loadPrefs(file).releaseHiddenMin, 15, 'a value that is not a choice is the default');
     fs.writeFileSync(file, '{ not json');
-    assert.deepEqual(loadPrefs(file), { autoCompact: 'off' }, 'a damaged file reads as the default');
+    assert.deepEqual(loadPrefs(file), { autoCompact: 'off', releaseHiddenMin: 15 }, 'a damaged file reads as the defaults');
     fs.writeFileSync(file, JSON.stringify({ autoCompact: 42 }));
-    assert.deepEqual(loadPrefs(file), { autoCompact: 'off' });
+    assert.deepEqual(loadPrefs(file), { autoCompact: 'off', releaseHiddenMin: 15 });
     assert.deepEqual(fs.readdirSync(path.join(dir, 'claude')), ['latch'], 'nothing written beside the latch folder');
     assert.deepEqual(fs.readdirSync(path.join(dir, 'claude', 'latch')), ['apaki-settings.json'], 'no temp file left behind');
   } finally { rm(dir); }
@@ -276,7 +278,7 @@ test('auto-compact: kept in one small file under ~/.claude/latch, never in Claud
 
 test('phones: queueSet and autoCompact are not available; a phone send never carries queued ids', () => {
   const ctx = { deviceId: 'dev1', paneExists: () => true };
-  for (const op of ['queueSet', 'autoCompact']) {
+  for (const op of ['queueSet', 'autoCompact', 'releaseHidden']) {
     const r = checkPhoneCommand({ op, paneId: 'p1', items: [], value: 200000 }, ctx);
     assert.equal(r.ok, false, op);
   }
@@ -357,7 +359,7 @@ register('./hooks.mjs', import.meta.url);
 const APP = 'apaki-dev-queue-test';
 
 /** Starts engine.js --host in a temp world (isolated, no Glass, no index, no keeper); resolves once its host file names it. */
-async function startHost(t) {
+async function startHost(t, extraEnv = {}) {
   const dir = tmp();
   const claude = path.join(dir, 'claude');
   const fake = path.join(dir, 'fake');
@@ -373,6 +375,7 @@ async function startHost(t) {
     APAKI_REMOTE_DIR: path.join(dir, 'remote'), LATCH_GLASS_CLI: path.join(dir, 'no-glass.exe'), LATCH_LIVE_LOGIN_FILE: path.join(dir, 'no-login.json'),
     CLAUDE_CREDENTIALS_FILE: path.join(dir, 'no-credentials.md'), APAKI_VOICE_DIR: path.join(dir, 'voice'), LATCH_NO_INDEX: '1', LATCH_WARM_NO_KEEPER: '1',
     APAKI_SHELL_FEATURES: 'browser', APAKI_HOST_TICK_MS: '100', APAKI_HOST_IDLE_MS: '60000', APAKI_HOST_EXIT_MS: '60000',
+    ...extraEnv,
   };
   const child = spawn(process.execPath, ['--import', pathToFileURL(path.join(fake, 'loader.mjs')).href, ENGINE, '--host'], { cwd: ROOT, env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
   let log = '';
@@ -489,6 +492,47 @@ test('end to end: the window owns the queue while connected; with no window the 
   w.close();
 });
 
+test('end to end: a conversation in a hidden tab lets go of its Claude Code process when idle, and the next message starts it again', { timeout: 60000 }, async (t) => {
+  // The hidden time is shortened for the test (APAKI_HOST_HIDE_MS; the setting itself is in minutes, 15 by default).
+  const h = await startHost(t, { APAKI_HOST_HIDE_MS: '600' });
+  const w = await windowOf(h);
+  const ctl = await connectHost({ file: h.file, role: 'control' });
+  const running = async () => {
+    ctl.send({ op: 'hostStatus', reqId: 'st' });
+    const st = await ctl.next((m) => m.ev === 'host' && m.reqId === 'st', 10000, ctl.events.length);
+    return Object.fromEntries(st.panes.map((p) => [p.id, p.running]));
+  };
+  const sids = {};
+  for (const id of ['pA', 'pB']) {
+    w.send({ op: 'open', reqId: `o${id}`, paneId: id, sessionId: null, cwd: h.dir, warm: true });
+    await w.next((m) => m.ev === 'opened' && m.reqId === `o${id}`);
+    w.send({ op: 'send', reqId: `s${id}`, paneId: id, text: 'hello' });
+    sids[id] = (await w.next((m) => m.ev === 'session_id' && m.paneId === id)).sessionId;
+    await w.next((m) => m.ev === 'result' && m.reqId === `s${id}`);
+  }
+  assert.deepEqual(await running(), { pA: true, pB: true });
+  // The window shows tab 0 (pA); pB's tab is hidden. After its hidden time the host frees pB's process, never pA's.
+  w.send({ op: 'saveState', state: ws([{ pane: 'pA', s: sids.pA, busy: false }, { pane: 'pB', s: sids.pB, busy: false }], 1000) });
+  await until(() => /freed the Claude Code process of hidden pane pB/.test(h.log()), 20000);
+  assert.deepEqual(await running(), { pA: true, pB: false });
+  assert.ok(!/hidden pane pA/.test(h.log()), 'the showing tab is never released');
+  // The next message in pB starts its process again, resuming the same conversation from disk.
+  w.send({ op: 'send', reqId: 'sB2', paneId: 'pB', text: 'again' });
+  const r = await w.next((m) => m.ev === 'result' && m.reqId === 'sB2', 20000);
+  assert.equal(r.result, 'echo: again');
+  assert.equal((await running()).pB, true);
+  assert.equal(r.sessionId, sids.pB, 'the same conversation');
+  // Showing pB's tab clears its hidden time: it is not released again while it shows.
+  w.send({ op: 'saveState', state: { ...ws([{ pane: 'pA', s: sids.pA, busy: false }, { pane: 'pB', s: sids.pB, busy: false }], 2000), active: 1 } });
+  // pA is hidden now and is freed in turn (polled: a loaded machine can be slow); pB, showing, is not.
+  let now = await running();
+  for (let i = 0; i < 60 && now.pA; i++) { await sleep(250); now = await running(); }
+  assert.equal(now.pA, false, 'pA is hidden now and freed in turn');
+  assert.equal(now.pB, true, 'showing');
+  ctl.close();
+  w.close();
+});
+
 test('end to end: Auto-compact is kept by the engine, defaults to off, and reaches each new Claude Code process as its own setting', { timeout: 90000 }, async (t) => {
   const h = await startHost(t);
   const w = await windowOf(h);
@@ -498,7 +542,7 @@ test('end to end: Auto-compact is kept by the engine, defaults to off, and reach
   assert.deepEqual(first.choices, ['off', 200000, 300000, 500000, 'default']);
   const file = path.join(h.claude, 'latch', 'apaki-settings.json');
   assert.equal((await ask('c2', { value: 500000 })).value, 500000);
-  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { autoCompact: 500000 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { autoCompact: 500000, releaseHiddenMin: 15 });
 
   /** Opens a pane, sends one message and returns the settings its Claude Code process was started with. */
   const startedWith = async (paneId) => {
@@ -520,7 +564,7 @@ test('end to end: Auto-compact is kept by the engine, defaults to off, and reach
   assert.deepEqual(await startedWith('p4'), { autoCompactEnabled: false, idleCompaction: false });
   // Off by choice: the same settings.
   assert.equal((await ask('c6', { value: 'off' })).value, 'off');
-  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { autoCompact: 'off' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { autoCompact: 'off', releaseHiddenMin: 15 });
   assert.deepEqual(await startedWith('p5'), { autoCompactEnabled: false, idleCompaction: false });
   // Claude Code's own settings file is never written (the temp CLAUDE_CONFIG_DIR holds only the latch folder).
   assert.equal(fs.existsSync(path.join(h.claude, 'settings.json')), false);

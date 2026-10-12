@@ -166,13 +166,13 @@ import { createBrowserTools } from './browser-tools.js';
 import { createShell } from './shell-channel.js';
 import {
   DEFAULT_APP_ID, HostServer, codeStamp, connectHost, createLifecycle, engineStamp, hostFile, latchDir, noteSdkMessage, paneTurnBusy, paneWorking,
-  patchWorkspaceLeaves, restoreAsAttach, taskReplay,
+  patchWorkspaceLeaves, restoreAsAttach, taskReplay, trackHiddenPanes,
 } from './host.js';
 import { startOpenServer } from './open-server.js';
 // A pane's queued messages, held here so they go out with no window connected (queue-hold.js has the ownership rule).
 import { dropHeld, heldView, resetHeld, setHeld, takeForAutoSend } from './queue-hold.js';
 // "Auto-compact at" (Settings) and the other few settings the engine keeps (prefs.js).
-import { COMPACT_CHOICES, COMPACT_DEFAULT, compactSettings, loadPrefs, normalizeCompact, prefsFile, savePrefs } from './prefs.js';
+import { COMPACT_CHOICES, COMPACT_DEFAULT, RELEASE_CHOICES, RELEASE_DEFAULT, compactSettings, loadPrefs, normalizeCompact, normalizeRelease, prefsFile, savePrefs } from './prefs.js';
 // The context meter before a conversation runs: its last call's usage, from the transcript (2026-10-10 night).
 import { estimateEvent, lastUsage } from './context-estimate.js';
 // The session list's times: the last message, not the file's modified time (2026-10-11).
@@ -1614,6 +1614,15 @@ const handlers = {
     emit({ ev: 'warmState', reqId: c.reqId, ...warmSummary() });
     refreshWarm();
   },
+  // The Settings sheet's "Free hidden conversations": minutes a tab can be hidden and idle before its conversation lets go of its
+  // Claude Code process (0 is off); read, or set with value. Kept with the other settings. Not a phone op (remote-policy.js).
+  releaseHidden: (c) => {
+    if (c.value !== undefined) {
+      prefs = { ...prefs, releaseHiddenMin: normalizeRelease(c.value) };
+      savePrefs(PREFS_FILE, prefs);
+    }
+    emit({ ev: 'releaseHidden', reqId: c.reqId, value: prefs.releaseHiddenMin, choices: RELEASE_CHOICES, standard: RELEASE_DEFAULT });
+  },
   // The Settings sheet's "Auto-compact at": the choice (read, or set with value), kept in ~/.claude/latch/apaki-settings.json.
   // It reaches Claude Code processes as they next start; a conversation already running keeps what it began with.
   autoCompact: (c) => {
@@ -2211,6 +2220,13 @@ function saveWorkspace(st) {
 // The desktop's tabs as phones see them (desktop-tabs.js, 2026-10-11): sent when they change, and once at start
 // from the saved workspace, so a phone sees them even while the window is closed (remote.js caches the last one).
 let lastDesktopTabs = '';
+// When each pane of a tab that is not showing was last shown (the window's workspace says which tab is active), by the window's
+// pane id: what "Free hidden conversations" waits on (host.js planIdle hiddenSince). A pane in the active tab has no entry.
+const hiddenSince = new Map();
+/** Updates hiddenSince from the window's tabs (host.js trackHiddenPanes). */
+function noteHiddenPanes(tabs, now = Date.now()) {
+  trackHiddenPanes(hiddenSince, tabs, now);
+}
 // What each pane of the window is (desktop-tabs.js kind: session, browser, task, viewer), by the window's pane id, so a phone is
 // told "not a conversation" for a viewer instead of "not open" (the shared view, 2026-10-11; engine.desktopPane).
 let desktopKinds = new Map();
@@ -2218,6 +2234,7 @@ function sendDesktopTabs(st) {
   if (!st || typeof st !== 'object') return;
   const tabs = desktopTabs(st);
   desktopKinds = new Map(tabs.flatMap((t) => t.panes).filter((p) => p.paneId).map((p) => [p.paneId, p.kind]));
+  noteHiddenPanes(tabs);
   const key = JSON.stringify(tabs);
   if (key === lastDesktopTabs) return;
   lastDesktopTabs = key;
@@ -2621,6 +2638,8 @@ function hostView() {
     panes: [...panes.values()].map((p) => ({
       id: p.id, sessionId: p.sessionId || null, phone: Boolean(parsePhoneId(p.id)), open: Boolean(p.runner) || isCodexPane(p), running: Boolean(p.runner?.running) || (isCodexPane(p) && Boolean(p.busy)),
       busy: paneTurnBusy(p), working: paneWorking(p), tasks: p.bgTasks?.size || 0, asks: asksOf(p.id), lastActiveAt: p.lastActiveAt || 0,
+      // The window's tab that holds this pane is not showing, since when (hiddenDesktopPanes); a Codex pane is never released for it.
+      hiddenSince: hiddenSince.get(p.id) || 0, codex: isCodexPane(p),
     })),
   };
 }
@@ -2631,13 +2650,18 @@ function hostView() {
  * comes back reopens it from disk. Runs in the pane's queue so it never
  * interleaves with an open or attach from a window that is just coming back.
  */
-function closeIdlePane(id) {
+function closeIdlePane(id, why = 'idle') {
   const p = panes.get(id);
   if (!p) return;
   p.queue = (p.queue || Promise.resolve()).then(async () => {
-    if ((host?.window && !lifecycle?.status().quit) || paneWorking(p) || asksOf(p.id)) return;
+    // With a window connected only a pane whose tab is hidden closes ("Free hidden conversations"), and it is checked again here:
+    // the window may have shown the tab, or the pane started a turn, since the host decided.
+    const stillHidden = why === 'hidden' && hiddenSince.has(p.id) && prefs.releaseHiddenMin > 0 && !isCodexPane(p) && Boolean(p.runner?.running);
+    if ((host?.window && !lifecycle?.status().quit && !stillHidden) || paneWorking(p) || asksOf(p.id)) return;
     await closeRunner(p);
     p.inTurn = false;
+    if (stillHidden) process.stderr.write(`apaki host: freed the Claude Code process of hidden pane ${id}
+`);
   }).catch((e) => process.stderr.write(`apaki host: closing pane ${id}: ${e.message}\n`));
 }
 
@@ -2685,6 +2709,9 @@ async function startHostMode() {
   lifecycle = createLifecycle({
     view: hostView,
     closeIdle: closeIdlePane,
+    // Minutes hidden and idle before a tab's conversation lets go of its Claude Code process (Settings, prefs.js releaseHiddenMin).
+    // (APAKI_HOST_HIDE_MS shortens it for tests, only while the setting is on, like APAKI_HOST_IDLE_MS.)
+    hideCloseMs: () => ((prefs.releaseHiddenMin || 0) > 0 && Number(process.env.APAKI_HOST_HIDE_MS) > 0 ? Number(process.env.APAKI_HOST_HIDE_MS) : (prefs.releaseHiddenMin || 0) * 60 * 1000),
     codeChanged: () => codeStamp(codePaths) !== startedCode,
     exit: (reason) => {
       // The window hears why first, so it says "updating" rather than "lost the engine" while it reconnects.

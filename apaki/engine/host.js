@@ -613,11 +613,31 @@ export function codeStamp(paths = []) {
 /* ---------- when idle processes close and when the host exits ---------- */
 
 /**
- * One look at the host's state. panes: [{ id, phone, open, working, asks, lastActiveAt }].
- * Returns the desktop panes to close now and whether the host may exit.
+ * Keeps `since` (window pane id to the time its tab stopped showing) in step with the window's tabs
+ * ([{ active, panes: [{ paneId }] }], desktop-tabs.js): a pane of the active tab is showing and has no entry; any other
+ * pane starts its hidden time when first seen hidden and keeps it until the tab shows again; a pane the window no longer
+ * lists loses its entry. A workspace with no active tab changes nothing about who is hidden (nothing is released on it).
  */
-export function planIdle({ window = false, remoteOn = false, quit = false, panes = [], windowGoneAt = 0, now = Date.now(), idleCloseMs = IDLE_CLOSE_MS, swap = false, swapQuietMs = SWAP_QUIET_MS } = {}) {
+export function trackHiddenPanes(since, tabs, now = Date.now()) {
+  const known = new Set();
+  const showing = new Set();
+  for (const t of Array.isArray(tabs) ? tabs : []) for (const p of t?.panes || []) { if (!p?.paneId) continue; known.add(p.paneId); if (t.active) showing.add(p.paneId); }
+  for (const id of [...since.keys()]) if (!known.has(id) || showing.has(id)) since.delete(id);
+  if (!(Array.isArray(tabs) && tabs.some((t) => t?.active))) { since.clear(); return since; }
+  for (const id of known) if (!showing.has(id) && !since.has(id)) since.set(id, now);
+  return since;
+}
+
+/**
+ * One look at the host's state. panes: [{ id, phone, open, running, working, asks, tasks, codex, lastActiveAt, hiddenSince }].
+ * hiddenSince: when the window last showed this pane's tab (0 when it is showing, or was never reported); hideCloseMs: how
+ * long a pane stays hidden and idle before its process closes under a connected window (0: never).
+ * Returns the desktop panes to close now (hidden: those of them closed for a hidden tab) and whether the host may exit.
+ */
+export function planIdle({ window = false, remoteOn = false, quit = false, panes = [], windowGoneAt = 0, now = Date.now(), idleCloseMs = IDLE_CLOSE_MS, swap = false, swapQuietMs = SWAP_QUIET_MS, hideCloseMs = 0 } = {}) {
   const close = [];
+  // Of `close`, the panes closed because their tab is hidden under a window that is still connected (closeIdle gets 'hidden').
+  const hidden = [];
   const waiting = [];
   let working = 0;
   let asks = 0;
@@ -629,6 +649,11 @@ export function planIdle({ window = false, remoteOn = false, quit = false, panes
     if (p.asks) { asks += p.asks; waiting.push({ id: p.id, why: 'question' }); }
     if (!p.open) continue;
     open += 1;
+    // A window is connected: only a pane in a tab that has been hidden for hideCloseMs closes (2026-10-12, "Free hidden
+    // conversations"), and only one with no turn, no background task, no question, a running process and nothing
+    // in it that is not a plain Claude Code conversation. hiddenSince is when the window last showed it (0: never reported hidden).
+    if (window && !quit && hideCloseMs > 0 && p.running && p.hiddenSince && !p.phone && !p.codex && !p.working && !p.asks && !(p.tasks > 0)
+      && now - Math.max(p.hiddenSince, p.lastActiveAt || 0) >= hideCloseMs) { close.push(p.id); hidden.push(p.id); continue; }
     if (window || p.working || p.asks) continue;
     // Phone panes follow remote.js (closed once their phone has been gone a while); a quit closes them too.
     if (p.phone && !quit) continue;
@@ -642,7 +667,7 @@ export function planIdle({ window = false, remoteOn = false, quit = false, panes
   const exitReady = swapReady || (!window && working === 0 && asks === 0 && (quit || (!remoteOn && openAfter === 0)));
   if (!exitReady && !window && remoteOn && !quit) waiting.push({ id: null, why: 'phone access is on' });
   if (window && !swapReady) waiting.push({ id: null, why: swap ? 'a pane was active in the last minute' : 'a window is connected' });
-  return { close, exitReady, swapReady, waiting, working, asks, open };
+  return { close, hidden, exitReady, swapReady, waiting, working, asks, open };
 }
 
 /**
@@ -691,10 +716,13 @@ export function createLifecycle(o) {
     const t = now();
     lookForNewBuild(t);
     const v = o.view();
-    const plan = planIdle({ window, remoteOn: Boolean(v.remoteOn), quit: Boolean(quit), panes: v.panes || [], windowGoneAt, now: t, idleCloseMs, swap, swapQuietMs });
+    // "Free hidden conversations" (prefs.js releaseHiddenMin), read live so a changed setting applies at the next tick.
+    const hideCloseMs = Math.max(0, Number(typeof o.hideCloseMs === 'function' ? o.hideCloseMs() : o.hideCloseMs) || 0);
+    const plan = planIdle({ window, remoteOn: Boolean(v.remoteOn), quit: Boolean(quit), panes: v.panes || [], windowGoneAt, now: t, idleCloseMs, swap, swapQuietMs, hideCloseMs });
     for (const id of plan.close) {
-      log(`closing the idle Claude Code process of pane ${id}`);
-      try { o.closeIdle(id); } catch (e) { log(`closeIdle ${id}: ${e.message}`); }
+      const why = plan.hidden.includes(id) ? 'hidden' : 'idle';
+      log(why === 'hidden' ? `closing the Claude Code process of pane ${id}: its tab has been hidden and idle (it starts again with the next message)` : `closing the idle Claude Code process of pane ${id}`);
+      try { o.closeIdle(id, why); } catch (e) { log(`closeIdle ${id}: ${e.message}`); }
     }
     if (plan.exitReady) {
       if (readySince === null) readySince = t;
