@@ -1,7 +1,12 @@
 # Headers for the static files the relay Worker serves (Workers static assets).
 # A published phone page (/v/<version>/) never changes: cache it for good.
+# no-transform (2026-10-12): Cloudflare must serve every HTML file byte for byte. With Web Analytics on for the zone it
+# injected its beacon script into HTML fetched by a browser (seen on /v/<version>/ with a phone's headers), so the PC's
+# check of the phone page (remote-page.js, which asks the way a phone does) saw index.html differ: new versions never
+# verified, and the hourly re-check of a verified version turned phone access off. It also put a third-party script
+# into pages that promise none (the CSP blocked it). The same header is on the other HTML pages below.
 /v/*
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=31536000, immutable, no-transform
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Cross-Origin-Opener-Policy: same-origin
@@ -39,3 +44,11 @@
 /.well-known/assetlinks.json
   Content-Type: application/json
   Cache-Control: public, max-age=3600
+
+# The other HTML pages: revalidated on every visit, and never rewritten by the CDN (no-transform, see /v/* above).
+/
+  Cache-Control: public, max-age=0, must-revalidate, no-transform
+/app/*
+  Cache-Control: public, max-age=0, must-revalidate, no-transform
+/privacy/*
+  Cache-Control: public, max-age=0, must-revalidate, no-transform

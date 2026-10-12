@@ -2048,7 +2048,8 @@ async function capChanged(deviceId) {
 remote = createRemote({
   emit,
   dispatch: (c) => dispatch(c),
-  readyEvent: () => ({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: false, codex: CODEX_FOUND }),
+  // voice: whether this PC has Whisper, so a phone shows its mic (op transcribe, 2026-10-12); it was always false here.
+  readyEvent: () => ({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), codex: CODEX_FOUND }),
   engine: {
     hasOp: (op) => typeof handlers[op] === 'function',
     paneExists: (id) => panes.has(id),
