@@ -83,7 +83,7 @@ const CORPUS = [
   '| Run | Before | After |\n| - | -: | -: |\n| Local | 1 in 40 | 0 in 200 |\n| CI | 1 in 12 | 0 in 200 |\n| Slow CI | 1 in 5 | 0 in 200 |\n\n',
   '> A flaky test is a bug report from the future. Read it that way and the fix is rarely a retry.\n\n',
   '### Why not a retry\n\nA retry hides the race and keeps the slow path. The test now waits for the store with `await waitFor(() => expect(total).toBe(42))`, so it fails loudly when the hook is wrong and passes when it is right. Ten runs in a row, all green; I will leave the loop running on CI overnight and check the timing in the morning.\n\n',
-  '1. Run `npm test -- checkout` ten times\n2. Compare the timings with `main`\n3. Open the pull request with the numbers in the description\n4. Ask for a review from the payments owners\n\nThat is the whole change. The diff is 14 lines in two files, and nothing else moves.\n\n',
+  '1. Run `npm test checkout` ten times\n2. Compare the timings with `main`\n3. Open the pull request with the numbers in the description\n4. Ask for a review from the payments owners\n\nThat is the whole change. The diff is 14 lines in two files, and nothing else moves.\n\n',
 ].join('');
 
 /**
@@ -140,7 +140,7 @@ function pageHistory({ paneId, turns, corpus }) {
     const at = new Date(now - (turns - i) * 60000).toISOString();
     const tid = `toolu_${paneId}_${i}`;
     const name = tools[i % tools.length];
-    const input = name === 'Bash' ? { command: `npm test -- --grep case${i}` } : name === 'Edit' ? { file_path: `src/mod${i % 40}.ts`, old_string: `const a${i} = 1;`, new_string: `const a${i} = 2;` } : name === 'Grep' ? { pattern: `thing${i}`, path: 'src' } : { file_path: `src/mod${i % 40}.ts` };
+    const input = name === 'Bash' ? { command: `npm test -t case${i}` } : name === 'Edit' ? { file_path: `src/mod${i % 40}.ts`, old_string: `const a${i} = 1;`, new_string: `const a${i} = 2;` } : name === 'Grep' ? { pattern: `thing${i}`, path: 'src' } : { file_path: `src/mod${i % 40}.ts` };
     messages.push({ type: 'user', uuid: `u-${paneId}-${i}`, at, prompt: { text: `Round ${i}: please look at module ${i % 40} and tell me what you find about case ${i}.` }, message: { content: [{ type: 'text', text: `Round ${i}` }] } });
     messages.push({ type: 'assistant', at, message: { content: [{ type: 'text', text: corpus.slice((i * 137) % 600, ((i * 137) % 600) + 900 + (i % 5) * 300) }, { type: 'tool_use', id: tid, name, input }] } });
     messages.push({ type: 'user', at, message: { content: [{ type: 'tool_result', tool_use_id: tid, content: `line one of ${name} output ${i}\nline two\nline three\nline four\nline five` }] } });
