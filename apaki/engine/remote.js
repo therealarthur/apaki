@@ -1770,6 +1770,8 @@ export class RemoteBridge {
       askPane: e.askPane,
       knownCwd: e.knownCwd,
       phoneSessions: e.phoneSessions,
+      // Whether a pane runs a Codex thread (2026-10-12): its model, effort, mode and files are checked as Codex's.
+      paneKind: e.paneKind,
       // What this phone may make Claude do (2026-10-10), read now so a change on the PC applies to the next command.
       cap: this.capFor(deviceId),
     });

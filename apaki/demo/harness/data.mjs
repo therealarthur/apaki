@@ -458,6 +458,21 @@ PRESETS['phone-browser'] = () => {
   return p;
 };
 
+// Codex installed (2026-10-12): a Codex thread open next to a Claude conversation, the rail on its Codex view.
+PRESETS.codex = () => {
+  const p = PRESETS.base();
+  p.codex = true;
+  p.tabs = [
+    { focused: 'pc1', root: { type: 'split', dir: 'row', sizes: [0.5, 0.5], children: [
+      leaf('pc1', ID.codexPricing, { title: 'Refactor the pricing table component', cwd: CWD.web, kind: 'codex', model: 'gpt-6.1-sol', effort: 'low', mode: 'auto' }),
+      leaf('pa1', ID.flaky, { title: 'Fix flaky checkout test', cwd: CWD.web }),
+    ] } },
+    p.tabs[1],
+  ];
+  p.rail = { ...p.rail, view: 'codex' };
+  return p;
+};
+
 // Git worktrees (2026-10-12): conversations in the worktrees of two invented repositories, the sidebar on its Worktrees view.
 PRESETS.worktrees = () => {
   const p = PRESETS.base();

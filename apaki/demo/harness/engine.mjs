@@ -19,6 +19,8 @@ import {
   CONTEXT, CONTEXT_USED, COMMANDS, PRESETS, ID, DAY, HOUR, MIN,
 } from './data.mjs';
 import { Turn, TurnAborted, SCRIPTS } from './turns.mjs';
+// Codex panes (2026-10-12): the ops a Codex pane sends, answered from invented data.
+import { createCodexDemo } from './codex.mjs';
 // Git worktrees (2026-10-12): the pretend of the engine's worktree ops, on invented repositories.
 import { createWorktrees } from './worktrees.mjs';
 
@@ -67,6 +69,7 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
   // What Claude last did in the pretend browser (a browserActivity line): the phone's Browser view draws the page to match.
   let browserDid = '';
   const emit = (ev) => { if (ev?.ev === 'browserActivity') browserDid += ` ${ev.text || ev.action || ''}`; send(ev); };
+  const codexDemo = createCodexDemo({ emit, later, nextId, sessions, panes, now });
 
   /* billing, Glass */
 
@@ -404,6 +407,8 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     if (!c || typeof c.op !== 'string') return;
     if (c.op.startsWith('remote')) { remoteOp(c); return; }
     const pane = panes.get(c.paneId);
+    // A Codex pane's ops (and the two only Codex has) are answered there; the workspace starts with Codex only in the codex preset.
+    if (codexDemo.handle(c, pane)) return;
     if (worktrees.handle(c)) return;
     switch (c.op) {
       case 'sessions': sendSessions(c.reqId); break;
@@ -506,7 +511,7 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
   function boot() {
     if (listening) return;
     listening = true;
-    later(30, { ev: 'ready', billing: billing(), voice: false, model: MODEL });
+    later(30, { ev: 'ready', billing: billing(), voice: false, model: MODEL, ...(start.codex ? { codex: true } : {}) });
     later(90, { ev: 'index', ok: true, stats: { blocks_added: 3 }, ms: 410 });
     later(120, { ev: 'meaning', stage: 'ready', result: { ok: true, passages: 31_408 } });
     later(160, glassEvent(false));

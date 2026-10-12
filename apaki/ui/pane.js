@@ -22,12 +22,16 @@ import { noticeFor } from './notices.js';
 import { SHOW_TOOL, artifactCard, kindGlyph, kindLabel, linkCard, parseOpened, parseRef, updateCard } from './artifacts.js';
 // TodoWrite as a live checklist (todos.js, 2026-10-12).
 import { continuesList, hasTodos, normalizeTodos, paintTodos, sameTodos } from './todos.js';
+// A Codex pane is this same pane with the Codex app's pickers, patches and footer (codex.js, 2026-10-12).
+import { CODEX_LOCAL, CODEX_MODES, codexFooter, codexMode, earlierText, effortNames, findModel, isCodexId, modelLabel, patchArgs, patchHtml, pickMode, pickModel, usageText, usageWorst } from './codex.js';
 // The branch label in the header when the conversation's folder is in a git repository (worktree.js, 2026-10-12).
 import { GLYPH_WORKTREE, branchLabel, branchName, changeText, relPath, tooltip, trouble } from './worktree.js';
 
 // Images go in at most this many pixels on the long edge (the API's sweet
 // spot, and under the 2000 px limit that breaks a session).
 const IMAGE_MAX_EDGE = 1568;
+// A file attached to a Codex message (not a picture): the most one carries; the phone policy allows the same.
+const DOC_MAX_BYTES = 6 * 1024 * 1024;
 // History pages (engine history.js): how many messages each earlier page asks for, and how close to the
 // top of the loaded part the reader gets before the next page loads on its own.
 const HISTORY_PAGE = 300;
@@ -102,6 +106,7 @@ export function toolArgs(name, input = {}) {
   if (name.startsWith(BROWSER_TOOL)) return browserArgs(name, input).slice(0, 160);
   const pick = input.command ?? input.file_path ?? input.notebook_path ?? input.pattern ?? input.url ?? input.query ?? input.description ?? input.prompt ?? input.skill ?? '';
   if (name === 'TodoWrite' && Array.isArray(input.todos)) return `${input.todos.length} todos`;
+  if (name === 'ApplyPatch') return patchArgs(input.changes).slice(0, 160);
   return String(pick).replace(/\s+/g, ' ').slice(0, 160);
 }
 
@@ -115,6 +120,12 @@ export class Pane {
     this.model = settings.model || host.defaults.model;
     this.effort = settings.effort || host.defaults.effort;
     this.mode = settings.mode || host.defaults.mode;
+    // 'claude' or 'codex' (2026-10-12): a Codex session id, or the engine's opened event, makes the pane a Codex one. Its model,
+    // effort and mode are Codex's, left empty until the engine says what the thread has (or a new conversation is picked).
+    this.kind = settings.kind === 'codex' || isCodexId(settings.sessionId) ? 'codex' : 'claude';
+    if (this.kind === 'codex') { this.model = settings.model || ''; this.effort = settings.effort || ''; this.mode = settings.mode || ''; }
+    // What the person chose in this Codex pane (the rest is the thread's own or the user's Codex config): only picks travel with open.
+    this.picked = { model: false, effort: false, mode: false };
     this.billing = host.defaults.billing;
     this.busy = false;
     this.unread = false;
@@ -150,7 +161,7 @@ export class Pane {
       file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
       folder: q('.folder-chip'), wt: q('.wt-btn'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'), ctx: q('.chip-btn.ctx'),
       statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
-      pin: q('.prompt-pin'), artReopen: q('.art-reopen'), tasksBtn: q('.tasks-btn'),
+      pin: q('.prompt-pin'), artReopen: q('.art-reopen'), tasksBtn: q('.tasks-btn'), kindMark: q('.kind-mark'),
     };
     // Scrolled near the top of a long conversation: its earlier messages load (see loadEarlier).
     this.$.ground.addEventListener('scroll', () => { this.noteScroll(); this.schedulePin(); this.host.dirty?.(); this.maybeLoadEarlier(); }, { passive: true });
@@ -174,6 +185,7 @@ export class Pane {
     this.wire();
     this.renderBilling();
     this.showEmpty();
+    this.applyKind();
   }
 
   send(op, args = {}) { return this.host.send(op, { paneId: this.id, ...args }); }
@@ -191,13 +203,14 @@ export class Pane {
     this.$.send.onclick = () => { if (this.busy && !this.hasDraft()) this.stop(); else this.submit(); };
     this.$.file.addEventListener('change', async (e) => { for (const f of e.target.files) await this.addImageFile(f); e.target.value = ''; });
     this.$.mic.onclick = () => this.host.voice(this);
-    this.$.model.onclick = () => menu(this.$.model, Object.entries(MODEL_NAMES).map(([value, label]) => ({ value, label, checked: value === this.model })), { onPick: (v) => this.setModel(v) });
-    this.$.effort.onclick = () => menu(this.$.effort, EFFORTS.map((value) => ({ value, html: `${effortGrid(value)}<span class="ml">${value}</span>`, hint: EFFORT_HINTS[value], checked: value === this.effort })), { onPick: (v) => this.setEffort(v), width: 250 });
-    this.$.mode.onclick = () => menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 });
+    // A Codex pane's pickers list Codex's models, their efforts and the Codex app's permission presets (codexMenu below).
+    this.$.model.onclick = () => (this.kind === 'codex' ? this.codexMenu('model') : menu(this.$.model, Object.entries(MODEL_NAMES).map(([value, label]) => ({ value, label, checked: value === this.model })), { onPick: (v) => this.setModel(v) }));
+    this.$.effort.onclick = () => (this.kind === 'codex' ? this.codexMenu('effort') : menu(this.$.effort, EFFORTS.map((value) => ({ value, html: `${effortGrid(value)}<span class="ml">${value}</span>`, hint: EFFORT_HINTS[value], checked: value === this.effort })), { onPick: (v) => this.setEffort(v), width: 250 }));
+    this.$.mode.onclick = () => (this.kind === 'codex' ? this.codexMenu('mode') : menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 }));
     this.$.folder.onclick = () => this.host.folderMenu(this, this.$.folder);
     // The branch label: changes, commit, push, pull request, merge, remove (worktree.js paneMenu).
     this.$.wt.onclick = () => this.host.worktreeMenu?.(this, this.$.wt);
-    this.$.billing.onclick = () => this.send('billingOptions');
+    this.$.billing.onclick = () => (this.kind === 'codex' ? this.note('Codex bills the ChatGPT account (or API key) it is signed in with. Myrlin Glass switches that account.') : this.send('billingOptions'));
     if (this.$.ctx) this.$.ctx.onclick = () => this.contextMenu();
     this.$.close.onclick = () => this.host.close(this);
     if (this.$.artReopen) this.$.artReopen.onclick = () => this.artifactsMenu();
@@ -231,12 +244,90 @@ export class Pane {
   }
 
   cycleMode() {
-    const i = MODES.findIndex((m) => m.value === this.mode);
-    this.setMode(MODES[(i + 1) % MODES.length].value);
+    const list = this.kind === 'codex' ? CODEX_MODES : MODES;
+    const i = list.findIndex((m) => m.value === this.mode);
+    this.setMode(list[(i + 1) % list.length].value);
+  }
+
+  /* ---------- Codex (2026-10-12): the Codex app's pickers in this pane ---------- */
+
+  /** The model list the app read from Codex ({ models, defaults, presets, account }), or null until it did. */
+  codexInfo() { return this.host.codexModels?.() || null; }
+
+  /** Switches the pane between Claude Code and Codex (before its first message), or follows what the engine opened. */
+  setKind(kind, { fromEngine = false } = {}) {
+    if (kind !== 'codex' && kind !== 'claude') return;
+    if (kind === this.kind && !fromEngine) return;
+    const was = this.kind;
+    this.kind = kind;
+    if (was !== kind) {
+      // The picks of one are not the other's: a Claude model means nothing to Codex.
+      if (kind === 'codex') {
+        this.model = ''; this.effort = ''; this.mode = ''; this.picked = { model: false, effort: false, mode: false };
+        // Codex bills the ChatGPT account it is signed in with, not Claude's: blank until the engine says which.
+        this.billing = this.codexInfo()?.account || null;
+        if (this.billing) this.renderBilling(); else this.$.billing.textContent = '';
+      } else { this.model = this.host.defaults.model; this.effort = this.host.defaults.effort; this.mode = this.host.defaults.mode; this.billing = this.host.defaults.billing; this.renderBilling(); }
+    }
+    this.applyKind();
+    if (kind === 'codex' && !this.codexInfo()) this.host.askCodexModels?.();
+  }
+
+  /** Everything on the page that depends on the kind: the word mark, the box's hint, what can be attached, the chips. */
+  applyKind() {
+    const codex = this.kind === 'codex';
+    this.el.classList.toggle('codex', codex);
+    if (this.$.kindMark) this.$.kindMark.hidden = !codex;
+    this.$.input.placeholder = codex ? 'Message Codex, / for commands, paste or drop files' : 'Message Claude, / for commands, paste or drop images';
+    this.$.file.accept = codex ? '' : 'image/*';
+    this.$.file.closest('label')?.setAttribute('title', codex ? 'Attach images or files' : 'Attach images');
+    this.renderChips();
+    if (!this.sessionId && !this.$.T.querySelector('.turn-user')) this.showEmpty();
+  }
+
+  /** The models arrived (or changed): the chips and an open menu use them. */
+  codexModelsChanged() {
+    if (this.kind !== 'codex') return;
+    const info = this.codexInfo();
+    // A new conversation shows what Codex would start with until the engine's opened event says so (none of it is a pick).
+    if (info?.defaults && !this.sessionId && !this.model) { this.model = info.defaults.model; this.effort = info.defaults.effort; this.mode = info.defaults.mode; }
+    if (info?.account && this.billing?.source !== 'codex') { this.billing = info.account; this.renderBilling(); }
+    this.renderChips();
+  }
+
+  /** The Codex pickers: model (each with its description), effort (that model's own), permissions (the three presets). */
+  codexMenu(which) {
+    const info = this.codexInfo();
+    if (!info) { this.host.askCodexModels?.(); this.note('Reading the model list from Codex… try again in a moment.'); return; }
+    if (which === 'model') {
+      menu(this.$.model, info.models.map((m) => ({ value: m.id, label: m.name, hint: m.description, checked: m.id === this.model })), { onPick: (v) => this.setModel(v), width: 340 });
+    } else if (which === 'effort') {
+      const levels = effortNames(info.models, this.model);
+      menu(this.$.effort, (findModel(info.models, this.model)?.efforts || []).map((e) => ({ value: e.value, html: `${effortGrid(e.value, { levels })}<span class="ml">${esc(e.value)}</span>`, hint: e.description, checked: e.value === this.effort })), { onPick: (v) => this.setEffort(v), width: 270 });
+    } else {
+      menu(this.$.mode, CODEX_MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 360 });
+    }
+  }
+
+  /** The settings line of a Codex pane. */
+  renderCodexChips() {
+    const { model, effort, mode } = this.$;
+    const info = this.codexInfo();
+    model.textContent = this.model ? modelLabel(info?.models, this.model) : 'Model';
+    const levels = effortNames(info?.models, this.model);
+    effort.innerHTML = `${effortGrid(this.effort, { levels })}<span>${esc(this.effort || 'effort')}</span>`;
+    const m = codexMode(this.mode);
+    mode.innerHTML = `<span class="mm">${m.mark}</span><span class="ml-full">${esc(m.label)}</span><span class="ml-short">${esc(m.short || m.label)}</span>`;
+    mode.setAttribute('aria-label', `Permissions: ${m.label}`);
+    mode.dataset.mode = m.value;
+    mode.title = `${m.hint} · Shift+Tab to cycle`;
+    model.title = 'Model';
+    effort.title = 'Reasoning effort';
   }
 
   /** The settings line under the message box: model, effort grid, mode, billing. */
   renderChips() {
+    if (this.kind === 'codex') { this.renderCodexChips(); return; }
     const { model, effort, mode } = this.$;
     model.textContent = MODEL_NAMES[this.model] || this.model;
     effort.innerHTML = `${effortGrid(this.effort)}<span>${esc(this.effort)}</span>`;
@@ -328,8 +419,12 @@ Click for changes, commit, push, pull request, merge`;
     if (!b) return;
     // A key says so beside its name (Arthur, 2026-10-09): it bills per token, a subscription does not.
     const key = b.isKey ? '<span class="key-tag" aria-label="(API key)">API key</span>' : '';
-    this.$.billing.innerHTML = `<span class="bn">${esc(b.name)}</span>${key}${b.follow && !/glass/i.test(b.name) ? '<span class="src">Glass</span>' : ''}`;
-    this.$.billing.title = `Billing: ${b.name}${b.isKey ? ' (API key, billed per token)' : ''}${b.follow ? ' (follows Myrlin Glass)' : ''} · click to change`;
+    // A Codex account says how much of its plan's windows is used (the server's numbers, kept current by the engine).
+    const used = this.kind === 'codex' ? usageWorst(b.limits) : '';
+    this.$.billing.innerHTML = `<span class="bn">${esc(b.name)}</span>${key}${b.follow && !/glass/i.test(b.name) ? '<span class="src">Glass</span>' : used ? `<span class="src">${esc(used)}</span>` : ''}`;
+    this.$.billing.title = this.kind === 'codex'
+      ? `Codex bills ${b.name}${b.isKey ? ' (API key, billed per token)' : ''}.${usageText(b.limits) ? ` Plan usage: ${usageText(b.limits)}.` : ''} Myrlin Glass switches the signed-in account.`
+      : `Billing: ${b.name}${b.isKey ? ' (API key, billed per token)' : ''}${b.follow ? ' (follows Myrlin Glass)' : ''} · click to change`;
   }
 
   /** The folder chip under the title: the folder's name, or a quiet "Add to folder". */
@@ -343,7 +438,7 @@ Click for changes, commit, push, pull request, merge`;
     this.folderId = f?.id || null;
   }
 
-  setModel(m) { this.model = m; this.renderChips(); this.send('model', { model: m }); this.host.changed(this); this.askContext(1500); }
+  setModel(m) { this.model = m; this.picked.model = true; this.renderChips(); this.send('model', { model: m }); this.host.changed(this); this.askContext(1500); }
 
   /* ---------- the context meter (2026-10-10) ---------- */
 
@@ -354,6 +449,9 @@ Click for changes, commit, push, pull request, merge`;
   }
 
   /** The meter in the settings line: a thin bar and the percentage, warmer as the window fills. */
+  /** The name of what runs this conversation, for the lines that say who is working. */
+  agentName() { return this.kind === 'codex' ? 'Codex' : 'Claude'; }
+
   renderContext() {
     const b = this.$.ctx;
     const c = this.ctx;
@@ -366,9 +464,9 @@ Click for changes, commit, push, pull request, merge`;
     b.classList.toggle('warm', pct >= 70 && pct < 88);
     b.classList.toggle('full', pct >= 88);
     const k = (n) => (n == null ? '?' : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-    const auto = typeof c.autoCompact === 'number' ? ` Claude Code compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off: Compact now (click) summarizes it when you choose.' : '';
+    const auto = typeof c.autoCompact === 'number' ? ` ${this.kind === 'codex' ? 'Codex' : 'Claude Code'} compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off: Compact now (click) summarizes it when you choose.' : '';
     b.title = c.estimate
-      ? `Context: about ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens (${pct}%) at the last reply, from the transcript; exact once Claude runs here.`
+      ? `Context: about ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens (${pct}%) at the last reply, from the transcript; exact once ${this.agentName()} runs here.`
       : `Context: ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens used (${pct}%).${auto} Click for the breakdown.`;
     b.classList.toggle('estimate', Boolean(c.estimate));
     b.setAttribute('aria-label', `Context ${pct}% used`);
@@ -382,7 +480,7 @@ Click for changes, commit, push, pull request, merge`;
     const items = [{ heading: `Context ${Math.round(c.percentage)}% · ${k(c.totalTokens || 0)} of ${k(c.maxTokens || 0)}` }];
     for (const u of c.used || []) items.push({ label: u.name, hint: `${k(u.tokens)} tokens`, value: null, disabled: true });
     items.push({ divider: true });
-    items.push({ label: 'Compact now', hint: 'summarize the conversation to free the window', value: 'compact', disabled: this.busy ? 'Wait until Claude finishes' : false });
+    items.push({ label: 'Compact now', hint: 'summarize the conversation to free the window', value: 'compact', disabled: this.busy ? `Wait until ${this.agentName()} finishes` : false });
     items.push({ label: 'Measure again', value: 'refresh' });
     menu(this.$.ctx, items, {
       width: 300,
@@ -392,8 +490,8 @@ Click for changes, commit, push, pull request, merge`;
       },
     });
   }
-  setEffort(x) { this.effort = x; this.renderChips(); this.send('effort', { effort: x }); this.host.changed(this); }
-  setMode(x) { this.mode = x; this.renderChips(); this.send('mode', { mode: x }); this.host.changed(this); }
+  setEffort(x) { this.effort = x; this.picked.effort = true; this.renderChips(); this.send('effort', { effort: x }); this.host.changed(this); }
+  setMode(x) { this.mode = x; this.picked.mode = true; this.renderChips(); this.send('mode', { mode: x }); this.host.changed(this); }
 
   /* ---------- open ---------- */
 
@@ -406,7 +504,14 @@ Click for changes, commit, push, pull request, merge`;
     this.lockLost = false;
     this.stopDriftWatch();
     this.lastOpen = s ? { id: s.id, cwd: s.cwd, title: s.title } : null;
-    this.send('open', { sessionId, cwd: s?.cwd || this.cwd || null, warm, force, model: this.model, effort: this.effort, mode: this.mode });
+    // A Codex thread (a list row marked codex, or its id) makes this a Codex pane before anything is sent.
+    if (s?.codex || isCodexId(s?.id)) this.setKind('codex');
+    else if (s && this.kind === 'codex' && s.id !== this.sessionId) this.setKind('claude');
+    // A Codex pane sends only what the person picked here; the thread's own model, effort and permissions are the engine's to read.
+    const picks = this.kind === 'codex'
+      ? { kind: 'codex', ...(this.picked.model ? { model: this.model } : {}), ...(this.picked.effort ? { effort: this.effort } : {}), ...(this.picked.mode ? { mode: this.mode } : {}) }
+      : { model: this.model, effort: this.effort, mode: this.mode };
+    this.send('open', { sessionId, cwd: s?.cwd || this.cwd || null, warm, force, ...picks });
   }
 
   /**
@@ -461,12 +566,19 @@ Click for changes, commit, push, pull request, merge`;
 
   showEmpty() {
     this.$.T.innerHTML = '';
-    queueMicrotask(() => { const b = this.$.T.querySelector('.start-in'); if (b) b.onclick = () => this.host.chooseFolder(this); });
+    queueMicrotask(() => {
+      const b = this.$.T.querySelector('.start-in');
+      if (b) b.onclick = () => this.host.chooseFolder(this);
+      // Claude Code or Codex for this new conversation (2026-10-12); the choice ends with the first message.
+      for (const k of this.$.T.querySelectorAll('.kind-pick button')) {
+        k.onclick = () => { if (this.sessionId || this.busy || k.dataset.kind === this.kind) return; this.setKind(k.dataset.kind); this.open(null, { warm: true }); this.host.changed(this); };
+      }
+    });
     // 40 cells, slow and out of step; about 5% (two, placed at random) in peach, the rest periwinkle.
     const peach = new Set();
     while (peach.size < 2) peach.add(Math.floor(Math.random() * 40));
     const cells = Array.from({ length: 40 }, (_, i) => `<i${peach.has(i) ? ' class="pk"' : ''} style="--d:${(-Math.random() * 9).toFixed(2)}s"></i>`).join('');
-    this.$.T.append(el('div', 'empty', `<div class="empty-grid rand" aria-hidden="true">${cells}</div><h3>New conversation</h3><p>It becomes a Claude Code session with your first message.</p><button class="start-in" title="Choose the folder this conversation starts in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.6 0-1.2-.5-1.2-1.2z"/></svg><span class="start-label">Starts in</span><span class="start-path">${esc(this.startPathText())}</span><span class="start-change">Change</span></button><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
+    this.$.T.append(el('div', 'empty', `<div class="empty-grid rand" aria-hidden="true">${cells}</div><h3>New conversation</h3><p>${this.kind === 'codex' ? 'It becomes a Codex thread with your first message.' : 'It becomes a Claude Code session with your first message.'}</p>${this.host.codexAvailable?.() ? `<div class="kind-pick" role="group" aria-label="Start with"><button data-kind="claude" aria-pressed="${this.kind !== 'codex'}">Claude Code</button><button data-kind="codex" aria-pressed="${this.kind === 'codex'}">Codex</button></div>` : ''}<button class="start-in" title="Choose the folder this conversation starts in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.6 0-1.2-.5-1.2-1.2z"/></svg><span class="start-label">Starts in</span><span class="start-path">${esc(this.startPathText())}</span><span class="start-change">Change</span></button><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
   }
 
   /* ---------- transcript ---------- */
@@ -630,7 +742,7 @@ Click for changes, commit, push, pull request, merge`;
     if (images.length) {
       const box = el('div', 'imgs');
       // From history, an image is a placeholder that loads it on demand (ref); never all of them up front.
-      for (const im of images) { if (im.url) { const i = el('img'); i.src = im.url; box.append(i); } else if (im.ref) box.append(this.imagePlaceholder(im)); else box.append(el('span', 'img-marker', '[image]')); }
+      for (const im of images) { if (im.url) { const i = el('img'); i.src = im.url; box.append(i); } else if (im.ref) box.append(this.imagePlaceholder(im)); else box.append(el('span', 'img-marker', im.name ? esc(im.name) : '[image]')); }
       u.append(box);
     }
     u.append(document.createTextNode(text));
@@ -668,7 +780,7 @@ Click for changes, commit, push, pull request, merge`;
     // A TodoWrite call is a checklist, not a tool line (an input without a list, or an empty one with nothing to clear, stays a line).
     if (block.name === 'TodoWrite' && hasTodos(block.input) && (normalizeTodos(block.input).length || this.liveTodoCard())) { this.addTodos(block); return; }
     const d = el('details', 'tool');
-    const label = block.name === 'Task' ? 'Agent' : block.name.startsWith(BROWSER_TOOL) ? 'Browser' : block.name;
+    const label = block.name === 'Task' ? 'Agent' : block.name.startsWith(BROWSER_TOOL) ? 'Browser' : block.name === 'ApplyPatch' ? 'Patch' : block.name;
     d.innerHTML = `<summary><span class="dot">⏺</span><span class="name">${esc(label)}</span><span class="args">(${esc(toolArgs(block.name, block.input))})</span></summary><div class="sum">running…</div>`;
     if ((block.name === 'Edit' || block.name === 'MultiEdit') && block.input) {
       const edits = block.input.edits || [{ old_string: block.input.old_string, new_string: block.input.new_string }];
@@ -676,6 +788,17 @@ Click for changes, commit, push, pull request, merge`;
       d.append(el('pre', 'diff', diff));
     } else if (block.input && (block.name === 'Write' || block.name === 'Bash' || block.name === 'PowerShell')) {
       d.append(el('pre', '', esc(block.input.content || block.input.command || '')));
+    } else if (block.name === 'ApplyPatch' && Array.isArray(block.input?.changes)) {
+      // Codex's file changes (2026-10-12): the diffs it applied, a header per file.
+      const pre = el('pre', 'diff', patchHtml(block.input.changes, { open: true }));
+      // The file name in a patch header opens the file in the viewer, as the Codex app's side panel does.
+      pre.addEventListener('click', (ev) => {
+        const b = ev.target.closest?.('.file-open');
+        if (!b) return;
+        ev.preventDefault();
+        this.send('codexOpenFile', { path: b.dataset.path });
+      });
+      d.append(pre);
     }
     this.$.T.append(d);
     this.tools.set(block.id, d);
@@ -917,7 +1040,7 @@ Click for changes, commit, push, pull request, merge`;
       this.renderArtifactsButton();
       return;
     }
-    const via = e.via && e.via !== 'show' ? `Opened by ${e.via}` : '';
+    const via = e.sub || (e.via && e.via !== 'show' && !/^codex-/.test(e.via) ? `Opened by ${e.via}` : e.via === 'codex-diff' ? 'Changed in this turn' : '');
     this.placeArtifact({ id: e.id, rev: e.rev, title: e.title, kind: e.kind, sub: via }, e.toolUseId ? this.tools.get(e.toolUseId) : null);
   }
 
@@ -937,10 +1060,24 @@ Click for changes, commit, push, pull request, merge`;
     this.placeLink({ url: e.url, title: e.title, reason: e.reason, toolUseId: e.toolUseId }, null, tool);
   }
 
+  /** A running command's output so far (Codex streams it): the newest part in a block the final result replaces, its last line in the summary. */
+  toolLive(id, text) {
+    const d = this.tools.get(id);
+    if (!d || d.classList.contains('ok') || d.classList.contains('err')) return;
+    let pre = d.querySelector('pre.live');
+    if (!pre) { pre = el('pre', 'live'); d.append(pre); }
+    pre.textContent = String(text || '').slice(-20000);
+    const last = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).pop();
+    const sum = d.querySelector('.sum');
+    if (sum && last) sum.textContent = last.slice(0, 200);
+    if (pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40) pre.scrollTop = pre.scrollHeight;
+  }
+
   /** A tool's result into its tool line. `block` (from history) says when the output was cut and which images it had. */
   toolResult(id, content, isError, block = null) {
     const d = this.tools.get(id);
     if (!d) return;
+    d.querySelector('pre.live')?.remove();
     const text = Array.isArray(content) ? content.filter((c) => c.type === 'text').map((c) => c.text).join('\n') : String(content ?? '');
     // A TodoWrite result is only "Todos have been modified successfully": the checklist is the result. An error says why it failed.
     if (d.classList.contains('todos')) {
@@ -1033,7 +1170,7 @@ Click for changes, commit, push, pull request, merge`;
 
   renderHistory(messages, total, e = {}) {
     // From the transcript (engine history.js): the newest page of the whole conversation, the rest on request.
-    const paged = e.source === 'transcript' && e.first !== undefined;
+    const paged = (e.source === 'transcript' || e.source === 'codex') && e.first !== undefined;
     // The same conversation at the same revision is already on screen (a reconnect): keep it, no redraw.
     if (!e.refresh && e.rev && e.rev === this.historyRev && e.sessionId === this.historyShownFor && this.$.T.childElementCount > 0) return;
     // The transcript's revision as drawn here, for checkDrift (2026-10-11).
@@ -1048,7 +1185,7 @@ Click for changes, commit, push, pull request, merge`;
     const keepTop = g.scrollTop;
     for (const r of this.history?.waits || []) r(false);
     clearTimeout(this.history?.timer);
-    this.history = paged ? { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total, loaded: messages.length, loading: false, waits: [] } : null;
+    this.history = paged ? { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total, loaded: messages.length, loading: false, waits: [], countless: Boolean(e.countless) } : null;
     // Ctrl+F says when it can only search the messages loaded here.
     this.historyCut = paged ? (e.hasMore ? { shown: messages.length, total, paged: true } : null) : total > messages.length ? { shown: messages.length, total } : null;
     this.$.T.innerHTML = '';
@@ -1169,7 +1306,7 @@ Click for changes, commit, push, pull request, merge`;
     }
     box.classList.toggle('loading', Boolean(h.loading));
     box.innerHTML = `<button class="hm-load"${h.loading ? ' disabled' : ''}>${h.loading ? 'Loading earlier messages…' : 'Load earlier messages'}</button>`
-      + `<span class="hm-n">${h.earlier.toLocaleString()} earlier · ${h.total.toLocaleString()} in all</span>`
+      + `<span class="hm-n">${earlierText(h)}</span>`
       + `<button class="hm-all link-btn"${h.loading ? ' disabled' : ''} title="Load the whole conversation (Ctrl+F can then search all of it)">Load all</button>`;
   }
 
@@ -1241,7 +1378,7 @@ Click for changes, commit, push, pull request, merge`;
     if (anchor) real.insertBefore(frag, anchor); else real.append(frag);
     // Whatever the browser's own scroll anchoring did, the message you were reading stays put.
     if (anchor) g.scrollTop += anchor.getBoundingClientRect().top - y0;
-    Object.assign(h, { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total: e.total ?? h.total, loaded: h.loaded + (e.messages || []).length });
+    Object.assign(h, { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total: e.total ?? h.total, loaded: h.loaded + (e.messages || []).length, countless: Boolean(e.countless) });
     // Earlier prompts are on screen now: fewer come before the first one drawn (the pin's "N of M", 2026-10-11).
     if (e.prompts && Number.isFinite(e.prompts.before)) { this.promptsBefore = e.prompts.before; this._pinKey = ''; this.updatePin?.(); }
     this.historyCut = h.hasMore ? { shown: h.loaded, total: h.total, paged: true } : null;
@@ -1415,6 +1552,9 @@ Click for changes, commit, push, pull request, merge`;
           if (live) { cancelAnimationFrame(live._raf); live.classList.remove('streaming'); live.innerHTML = md(b.text); this.host.linkSessions?.(live); this.streams.delete(key); } else this.addAssistant(b.text);
         } else if (b.type === 'tool_use') {
           this.addTool(b);
+        } else if (b.type === 'thinking' && b.thinking && msg.codex) {
+          // Codex's reasoning summary (2026-10-12), collapsed under "Thinking" like the ones history draws.
+          this.addThinking(b);
         }
       });
       if (msg.error) this.note(String(msg.error), 'error');
@@ -1430,6 +1570,8 @@ Click for changes, commit, push, pull request, merge`;
     // Everything else Claude Code shows its users (notices.js): drawn apart from Claude's reply.
     const notice = noticeFor(msg, this.noticeSeen);
     if (notice) this.sysline(notice);
+    // A running command's output so far (Codex streams it, 2026-10-12).
+    if (msg.type === 'system' && msg.subtype === 'tool_output') this.toolLive(msg.tool_use_id, msg.text);
     if (msg.type === 'system' && msg.subtype === 'status' && msg.status === 'compacting' && this.busy) this.setStatus('Compacting the conversation…');
     if (msg.type === 'system' && msg.subtype === 'compact_boundary') this.note('Conversation compacted.');
     if (msg.type === 'system' && /^(task_|background_tasks_changed)/.test(msg.subtype || '')) this.onTaskMessage(msg);
@@ -1490,9 +1632,41 @@ Click for changes, commit, push, pull request, merge`;
 
   /* ---------- send ---------- */
 
+  /** The slash commands the window answers itself in a Codex pane (the engine answers compact, status, review, diff, mcp). */
+  codexLocalCommand(cmd, arg) {
+    const info = this.codexInfo();
+    switch (cmd) {
+      case 'new': case 'clear': this.host.newConversation(this); return true;
+      case 'resume': case 'continue': this.host.findSession?.(arg); return true;
+      case 'model': {
+        if (!arg) { this.note(`Model: ${modelLabel(info?.models, this.model)}`); return true; }
+        const m = pickModel(info?.models, arg);
+        if (m) this.setModel(m.id); else this.note(`Codex has no model called "${arg}". ${info?.models?.length ? `Try: ${info.models.map((x) => x.id).join(', ')}.` : ''}`, 'warn');
+        return true;
+      }
+      case 'effort': {
+        const list = effortNames(info?.models, this.model);
+        if (!arg) { this.note(`Effort: ${this.effort || 'the thread\'s own'}`); return true; }
+        if (list.includes(arg)) this.setEffort(arg); else this.note(`This model offers: ${list.join(', ') || 'no efforts'}.`, 'warn');
+        return true;
+      }
+      case 'approvals': case 'mode': case 'permissions': {
+        if (!arg) { this.note(`Permissions: ${codexMode(this.mode).label}`); return true; }
+        const v = pickMode(arg);
+        if (v) this.setMode(v); else this.note('Permissions: full-access, auto or read-only.', 'warn');
+        return true;
+      }
+      case 'folder': if (arg && this.sessionId) this.send('folder', { action: 'create', name: arg, sessionId: this.sessionId }); return true;
+      // A copy of the thread to take elsewhere (the engine answers 'forked' and the window opens it).
+      case 'fork': if (this.sessionId) this.send('forkSession', { sessionId: this.sessionId }); else this.note('Send a message first; there is nothing to fork yet.'); return true;
+      default: return false;
+    }
+  }
+
   localCommand(text) {
     const [cmd, ...rest] = text.slice(1).split(/\s+/);
     const arg = rest.join(' ').trim();
+    if (this.kind === 'codex') return this.codexLocalCommand(cmd, arg);
     switch (cmd) {
       case 'new': case 'clear': this.host.newConversation(this); return true;
       // Claude Code's /resume picker is terminal-only (the SDK answers "isn't available in this environment"): Apaki's search instead.
@@ -1519,7 +1693,8 @@ Click for changes, commit, push, pull request, merge`;
     b.textContent = { send: 'Send', queue: 'Queue', stop: 'Stop' }[mode];
     b.classList.toggle('stop', mode === 'stop');
     b.classList.toggle('queue', mode === 'queue');
-    b.title = { send: 'Send (Enter)', queue: 'Queue this for when Claude finishes (Enter). Ctrl+Enter steers it in now', stop: 'Stop Claude (Esc)' }[mode];
+    const who = this.agentName();
+    b.title = { send: 'Send (Enter)', queue: `Queue this for when ${who} finishes (Enter). Ctrl+Enter steers it in now`, stop: `Stop ${who} (Esc)` }[mode];
   }
 
   /** Stops the running turn. Queued messages stay; they do not go out on their own after a stop. */
@@ -1550,7 +1725,7 @@ Click for changes, commit, push, pull request, merge`;
   syncQueue() {
     if (!this.host.engineQueue) return;
     this.send('queueSet', {
-      items: this.queue.map(({ id, text, attachments }) => ({ id, text, images: attachments.map(({ media_type, data, w, h }) => ({ media_type, data, w, h })) })),
+      items: this.queue.map(({ id, text, attachments }) => ({ id, text, images: attachments.map(({ media_type, data, w, h, name }) => ({ media_type, data, w, h, ...(name ? { name } : {}) })) })),
     });
   }
 
@@ -1569,7 +1744,7 @@ Click for changes, commit, push, pull request, merge`;
     const next = held.map((it) => mine.get(it.id) || {
       id: it.id,
       text: it.text,
-      attachments: (it.images || []).map((im) => ({ media_type: im.media_type, data: im.data, url: `data:${im.media_type};base64,${im.data}`, w: im.w || 0, h: im.h || 0 })),
+      attachments: (it.images || []).map((im) => ({ media_type: im.media_type, data: im.data, ...(im.name ? { name: im.name, size: Math.round(String(im.data).length * 0.75) } : {}), url: im.name ? '' : `data:${im.media_type};base64,${im.data}`, w: im.w || 0, h: im.h || 0 })),
     });
     const extra = this.queue.filter((it) => !heldIds.has(it.id) && !gone.has(it.id));
     this.queue = [...next, ...extra];
@@ -1586,14 +1761,14 @@ Click for changes, commit, push, pull request, merge`;
     // While Claude works: Steer adds the message to the current work now.
     // After a stop (nothing to steer): Send starts a new turn with it.
     const act = this.busy ? 'Steer' : 'Send';
-    const actTip = this.busy ? 'Add this to what Claude is doing now, without stopping it (Ctrl+Enter in the box does the same)' : 'Send this now';
+    const actTip = this.busy ? `Add this to what ${this.agentName()} is doing now, without stopping it (Ctrl+Enter in the box does the same)` : 'Send this now';
     // Rebuilt only when something changed: a row replaced between press and release swallows the click
     // (2026-10-10, "the steer button doesnt work").
     const sig = `${this.busy}|${this.queue.map((it) => `${it.id}:${it.text.length}:${it.attachments.length}`).join(',')}`;
     if (sig === this.queueSig && box.childElementCount) return;
     this.queueSig = sig;
-    box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? 'Sends when Claude finishes · Steer or Ctrl+Enter adds it now' : 'Not sent: Claude was stopped'}</span></div>`
-      + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} image${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" data-q="act" title="${actTip}">${act}</button><button class="q-edit" data-q="edit" title="Put it back in the message box to change it (Up arrow in an empty box does the same)">Edit</button><button class="q-x" data-q="x" title="Remove" aria-label="Remove">×</button></div>`).join('');
+    box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? `Sends when ${this.agentName()} finishes · Steer or Ctrl+Enter adds it now` : `Not sent: ${this.agentName()} was stopped`}</span></div>`
+      + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} ${it.attachments.every((a) => a.url) ? 'image' : 'file'}${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" data-q="act" title="${actTip}">${act}</button><button class="q-edit" data-q="edit" title="Put it back in the message box to change it (Up arrow in an empty box does the same)">Edit</button><button class="q-x" data-q="x" title="Remove" aria-label="Remove">×</button></div>`).join('');
     // One listener for the whole list (set once), reading the row and the button at click time.
     if (!box.dataset.wired) {
       box.dataset.wired = '1';
@@ -1643,7 +1818,7 @@ Click for changes, commit, push, pull request, merge`;
     this.steering.set(id, it);
     // Seen while it goes (2026-10-11): "Steering..." until Claude Code took it or it comes back.
     if (this.$?.status) this.setStatus('Steering your message in…');
-    this.send('steer', { qid: id, text: it.text, images: it.attachments.map(({ media_type, data }) => ({ media_type, data })) });
+    this.send('steer', { qid: id, text: it.text, images: it.attachments.map(({ media_type, data, name }) => ({ media_type, data, ...(name ? { name } : {}) })) });
   }
 
   sendItem(id) {
@@ -1658,7 +1833,7 @@ Click for changes, commit, push, pull request, merge`;
    * engine to send again).
    */
   sendNow(text, attachments = [], queued = []) {
-    const images = attachments.map(({ media_type, data }) => ({ media_type, data }));
+    const images = attachments.map(({ media_type, data, name }) => ({ media_type, data, ...(name ? { name } : {}) }));
     this.stoppedByUser = false;
     this.addUser(text, attachments);
     this.setBusy(true);
@@ -1725,7 +1900,8 @@ Click for changes, commit, push, pull request, merge`;
     const m = v.match(/^\/(\S*)$/);
     if (!m) { this.hideSlash(); return; }
     const q = m[1].toLowerCase();
-    const all = [...LOCAL, ...this.commands.filter((c) => !LOCAL.some((l) => l.name === c.name))];
+    const base = this.kind === 'codex' ? CODEX_LOCAL : LOCAL;
+    const all = [...base, ...this.commands.filter((c) => !base.some((l) => l.name === c.name))];
     const hits = all.filter((c) => c.name.toLowerCase().includes(q)).sort((a, b) => (a.name.toLowerCase().startsWith(q) ? 0 : 1) - (b.name.toLowerCase().startsWith(q) ? 0 : 1)).slice(0, 40);
     const ul = this.$.slash;
     ul.innerHTML = '';
@@ -1747,7 +1923,9 @@ Click for changes, commit, push, pull request, merge`;
   /* ---------- images ---------- */
 
   async addImageFile(file) {
-    if (!file || !file.type.startsWith('image/')) return;
+    if (!file) return;
+    // Codex reads other files by path (the engine saves them where it can): attached whole (addDocFile).
+    if (!file.type.startsWith('image/')) { if (this.kind === 'codex') await this.addDocFile(file); return; }
     const bmp = await createImageBitmap(file);
     const scale = Math.min(1, IMAGE_MAX_EDGE / Math.max(bmp.width, bmp.height));
     const w = Math.round(bmp.width * scale);
@@ -1761,12 +1939,27 @@ Click for changes, commit, push, pull request, merge`;
     this.renderAttachments();
   }
 
+  /** A file that is not a picture, kept whole up to DOC_MAX_BYTES (what a message can carry through the relay to a phone's PC too). */
+  async addDocFile(file) {
+    if (file.size > DOC_MAX_BYTES) { this.note(`${file.name} is over ${DOC_MAX_BYTES / 1048576} MB, which is more than a message carries.`, 'warn'); return; }
+    const data = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1] || '');
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    }).catch(() => '');
+    if (!data) return;
+    this.attachments.push({ media_type: file.type || 'application/octet-stream', data, name: file.name || 'file', size: file.size, url: '', w: 0, h: 0 });
+    this.renderAttachments();
+  }
+
   renderAttachments() {
     this.renderSendButton();
     const box = this.$.attachments;
     box.innerHTML = '';
     this.attachments.forEach((a, i) => {
-      const c = el('div', 'chip', `<img src="${a.url}" alt=""><span class="dim">${a.w}×${a.h}</span>`);
+      const kb = a.size >= 1048576 ? `${(a.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round((a.size || 0) / 1024))} KB`;
+      const c = a.url ? el('div', 'chip', `<img src="${a.url}" alt=""><span class="dim">${a.w}×${a.h}</span>`) : el('div', 'chip doc', `<span class="doc-name">${esc(a.name || 'file')}</span><span class="dim">${kb}</span>`);
       const x = el('button', 'chip-x', '×');
       x.title = 'Remove';
       x.onclick = () => { this.attachments.splice(i, 1); this.renderAttachments(); };
@@ -1794,6 +1987,12 @@ Click for changes, commit, push, pull request, merge`;
         // (The engine clears its copy of the queue itself when a pane opens another conversation: queue-hold.js resetHeld.)
         if (e.sessionId !== this.sessionId) { this.queue = []; this.steering.clear(); this.stoppedByUser = false; this.renderQueue(); this.closedArts.clear(); }
         this.sessionId = e.sessionId; this.cwd = e.cwd; this.billing = e.billing;
+        // A Codex thread (2026-10-12): the engine says what model, effort and permissions it really has.
+        if (e.kind === 'codex') {
+          this.setKind('codex', { fromEngine: true });
+          this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode;
+          this.renderChips();
+        }
         this.streams.clear(); this.tools.clear(); this.cardKeys.clear();
         this.setTitle(e.title || 'New conversation');
         this.setCwdLine();
@@ -1823,8 +2022,8 @@ Click for changes, commit, push, pull request, merge`;
         if (e.terminal?.length) this.openNotes.push([`This session is also open in a Claude Code terminal window (${e.terminal.map((t) => t.name).join(', ')}). Stop typing there while you work here; that window must /resume to see these turns.`, 'warn']);
         // Re-attached (the background host kept this Claude Code process running): nothing was cut off.
         if (this.crashNote && e.attached) this.crashNote = false;
-        if (this.crashNote) { this.openNotes.push(['Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
-        if (this.turnStoppedNote) { this.openNotes.push(['The engine restarted while Claude was working here, and that turn stopped. Everything until then is above; send a message to carry on.', 'warn']); this.turnStoppedNote = false; }
+        if (this.crashNote) { this.openNotes.push([this.kind === 'codex' ? 'Apaki closed while Codex was working here, and its Codex process stopped with it. Everything it did until then is above; send a message to carry on.' : 'Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
+        if (this.turnStoppedNote) { this.openNotes.push([`The engine restarted while ${this.agentName()} was working here, and that turn stopped. Everything until then is above; send a message to carry on.`, 'warn']); this.turnStoppedNote = false; }
         if (e.sessionId !== this.sessionId || e.reset) this.liveTasks.clear();
         this.renderTasksButton();
         if (!e.sessionId) this.flushOpenNotes();
@@ -1846,8 +2045,8 @@ Click for changes, commit, push, pull request, merge`;
         queueMicrotask(() => this.flushQueue());
         const u = e.usage || {};
         const k = (n) => `${((n || 0) / 1000).toFixed(1)}k`;
-        const foot = [`${((e.durationMs || 0) / 1000).toFixed(1)}s`, `${k(u.cache_read_input_tokens)} cached`, `${k(u.cache_creation_input_tokens)} new`, e.cost != null ? `$${e.cost.toFixed(3)}` : null, this.billing?.name ? `${this.billing.name}${this.billing.isKey ? ' (API key)' : ''}` : null].filter(Boolean).join(' · ');
-        this.$.T.append(el('div', 'foot', esc(foot)));
+        const foot = e.codex ? codexFooter(e, this.billing) : [`${((e.durationMs || 0) / 1000).toFixed(1)}s`, `${k(u.cache_read_input_tokens)} cached`, `${k(u.cache_creation_input_tokens)} new`, e.cost != null ? `$${e.cost.toFixed(3)}` : null, this.billing?.name ? `${this.billing.name}${this.billing.isKey ? ' (API key)' : ''}` : null].filter(Boolean).join(' · ');
+        if (!e.quiet) this.$.T.append(el('div', 'foot', esc(foot)));
         if (e.isError) this.note(e.result || (e.errors || []).join('; ') || e.subtype, 'error');
         this.setStatus('');
         this.scrollDown();
@@ -1871,7 +2070,7 @@ Click for changes, commit, push, pull request, merge`;
         if (this.busy && !it.steerRetried) { it.steerRetried = true; setTimeout(() => (this.busy ? this.steerItem(e.qid, it) : this.sendNow(it.text, it.attachments)), 1000); break; }
         if (this.busy) {
           this.queue.unshift(it); this.renderQueue(); this.syncQueue();
-          this.note('Could not add that to the running turn; it goes out as soon as Claude finishes.', 'warn');
+          this.note(`Could not add that to the running turn; it goes out as soon as ${this.agentName()} finishes.`, 'warn');
           break;
         }
         this.sendNow(it.text, it.attachments);

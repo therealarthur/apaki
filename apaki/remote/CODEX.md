@@ -23,34 +23,58 @@ params).
 ## Checklist (each item: built, tested, and recorded in apaki/parity)
 
 Discovery and lists
-- [ ] Every Codex thread on the PC: thread/list (includes the Codex app's
+- [x] Every Codex thread on the PC: thread/list (includes the Codex app's
       threads), plus the rollout files in ~/.codex/sessions and
       ~/.codex/archived_sessions for anything the server does not list.
+      (2026-10-12: thread/list is read, quick state-database read first and a
+      rollout scan on refresh; apaki/engine/codex-rollouts.js then lists the
+      rollout files the server did not, read only, archived ones under
+      Archived. The search index reads archived_sessions too: a Rust change in
+      index/src/main.rs that was not built here.)
 - [ ] A Codex tab in the sidebar next to Claude's, with the same search
       (keyword and meaning index cover Codex threads), times from the last
       message, archive, rename (thread/name/set), folders mapped to Codex's
       own thread sections (threadSection/*, thread/section/move) both ways.
-- [ ] Codex threads open as panes in any tab, next to Claude panes; drag and
+      Partly: the Codex view, search (archived threads included), archive,
+      rename and fork are done; times use the server's recency time (a rollout
+      row the file's last write), and the Codex app's thread sections are not
+      mapped (they live in the Codex app's own state).
+- [x] Codex threads open as panes in any tab, next to Claude panes; drag and
       drop, tabs, split, the badge and unread all work the same.
+      (2026-10-12: also a new conversation, from the empty pane.)
 
 The pane (prompt box parity)
-- [ ] Model picker from model/list (per model reasoning efforts), effort
+- [x] Model picker from model/list (per model reasoning efforts), effort
       picker, the Codex app's approval and sandbox presets: read-only, auto
       (workspace write, ask on request), full access (danger-full-access,
       approvals never), shown like Claude's permission modes.
-- [ ] Send (turn/start), Stop (turn/interrupt), steer (turn/steer, Ctrl+Enter),
+- [x] Send (turn/start), Stop (turn/interrupt), steer (turn/steer, Ctrl+Enter),
       queue (thread/queue/changed), Edit queued, the same keyboard rules.
-- [ ] Attach images and files (input items; thread/attachment/*), paste,
+      (Same code as Claude's pane, worded for Codex. The queue is Apaki's own,
+      the same for both agents, not the server's experimental thread/queue/*,
+      which only matters for a thread another client also drives.)
+- [x] Attach images and files (input items; thread/attachment/*), paste,
       drag in; voice through Apaki's local Whisper into the box.
-- [ ] Slash commands Codex offers (from its own list where the server gives
+      (Pictures go inline, other files are saved where Codex can read them
+      and mentioned by path; thread/attachment/* is not used. No voice on the
+      phone, as for Claude.)
+- [x] Slash commands Codex offers (from its own list where the server gives
       one; otherwise the documented set: new, model, approvals, review,
       compact, diff, mention, status, init, mcp), with Apaki's own (resume)
       handled like Claude's.
+      (2026-10-12: new, resume, model, effort, approvals, folder, fork,
+      compact, status, review [branch, commit or instructions], diff, mcp,
+      init, mention, goal, revert. The server has no command list; its skills
+      (skills/list) follow the commands in the slash menu and /name words
+      sends one as the Codex app does.)
 - [ ] Context meter from thread/tokenUsage/updated; compaction
       (thread/compact/start, thread/compacted) and auto-compact settings.
+      Partly: the meter, Compact now and the percent where the user's own
+      auto-compact limit fires are done; changing that setting (a Codex config
+      key, which Apaki never writes) is not.
 
 What the conversation shows
-- [ ] Streaming agent messages (item/agentMessage/delta), reasoning summaries
+- [x] Streaming agent messages (item/agentMessage/delta), reasoning summaries
       (item/reasoning/*) like Claude's thinking, plans (turn/plan/updated,
       item/plan/delta) as a checklist, command runs with live output
       (item/commandExecution/*), file changes with diffs
@@ -58,44 +82,66 @@ What the conversation shows
       calls, web searches, images, errors and retries, model reroutes
       (model/rerouted), hooks (hook/started, hook/completed) as system lines
       like Claude's (apaki/ui/notices.js).
-- [ ] Full history from the rollout file (thread/read, thread/turns/list,
+      (Not drawn live: item/plan/delta streaming, item/fileChange/patchUpdated
+      and hook/started; a plan item shows when it completes. Sub-agent items
+      are tool lines.)
+- [x] Full history from the rollout file (thread/read, thread/turns/list,
       thread/items/list), paged like Claude's history.
+      (By thread/turns/list only: a rollout can be 1.3 GB, so thread/read with
+      turns is never used.)
 
 Questions and approvals (Codex's AskUserQuestion and friends)
-- [ ] item/tool/requestUserInput: shown with the same sheet as Claude's
+- [x] item/tool/requestUserInput: shown with the same sheet as Claude's
       AskUserQuestion (options, multi-select, free text), answered once
       (serverRequest/resolved drops a stale sheet, as ask_gone does).
-- [ ] item/commandExecution/requestApproval, item/fileChange/requestApproval,
+- [x] item/commandExecution/requestApproval, item/fileChange/requestApproval,
       item/permissions/requestApproval, and the older execCommandApproval and
       applyPatchApproval: Approve once, Approve for the session, Deny, with
       the command or the diff shown; the same sheet style as Claude's plan
       approval.
-- [ ] mcpServer/elicitation/request: a form from the tool server's schema.
-- [ ] From a phone: the same sheets, through the phone policy (caps).
+- [x] mcpServer/elicitation/request: a form from the tool server's schema.
+      (Tool-call approvals, forms and links are built from the schema and
+      tested against the fake server; none was seen live, no turn was started
+      on a real account. The openai/form variants are declined.)
+- [x] From a phone: the same sheets, through the phone policy (caps).
 
 Browser and viewer knowledge (as Claude has in apaki-tools.js)
-- [ ] Apaki's show and browser tools offered to Codex as dynamic tools (the
+- [x] Apaki's show and browser tools offered to Codex as dynamic tools (the
       app-server's item/tool/call: the client runs the tool and answers), or
       as an MCP server passed per process if dynamic tools cannot carry them.
-- [ ] Developer instructions per thread: one paragraph, like Claude's
+      (Done as the per process MCP server: dynamic tools exist only on
+      thread/start, so a resumed thread would have had none. Seen working in
+      the fake-server tests only; see the ledger note.)
+- [x] Developer instructions per thread: one paragraph, like Claude's
       appended prompt, saying the tools exist and to use them instead of
       opening Chrome or Explorer.
-- [ ] BROWSER pointed at Apaki's shim in the app-server's environment, so a
+- [x] BROWSER pointed at Apaki's shim in the app-server's environment, so a
       link Codex opens lands in Apaki's browser pane.
 - [ ] Where the Codex app has its own browser, file preview or diff view,
       Apaki shows the same thing in its browser and viewer panes, with the
       versatility of the Codex app's side panel (diffs, files, images,
       terminal output, web pages).
+      Partly: diffs, images, command output and web pages, and a changed
+      file's name in a patch header opens that file in the viewer (op
+      codexOpenFile, only files this conversation changed); not a preview of
+      a file Codex only read, nor a terminal view.
 
 Accounts and the rest
 - [ ] Myrlin Glass for Codex: the signed-in account (account/updated), rate
       limits (account/rateLimits/updated) shown like Claude's usage, swaps
       and API keys reflected live.
-- [ ] Review mode (review/start), revert (thread/revert), fork
+      Partly: the account shows in the billing chip and follows
+      account/updated; the chip's tooltip lists the plan windows (the worst
+      one shows beside the name) and usage at 80 percent and above is the same
+      warning Claude shows. Swaps stay Glass's; not verified live.
+- [x] Review mode (review/start), revert (thread/revert), fork
       (thread/fork), goals (thread/goal/*) where the Codex app shows them.
-- [ ] Phone access: Codex panes on the phone with the same caps; remote
+      (/review with its four targets, fork and /fork, /revert [history only,
+      files stay; read from the schema, not tried on a real thread], /goal.
+      No standing goal indicator in the pane header.)
+- [x] Phone access: Codex panes on the phone with the same caps; remote
       policy covers the new ops.
-- [ ] Do not touch the ChatGPT or Codex desktop apps' running processes or
+- [x] Do not touch the ChatGPT or Codex desktop apps' running processes or
       files beyond reading; never close them.
 
 ## How it runs
@@ -107,3 +153,28 @@ threads, turns and items to the window's existing pane events where they
 match, and adds Codex-only events where they do not. Tests drive a fake
 app-server that replays recorded JSON-RPC traffic, plus one live smoke test
 on this PC that sends nothing billable.
+
+## As built (2026-10-12)
+
+- `apaki/engine/codex-client.js`: the JSON-RPC connection and the lookup of
+  the codex build. `codex-map.js`: pure translation to the messages a pane
+  already draws (SDK-shaped, so the same renderer serves both agents and the
+  phone page). `codex-history.js`: history by thread/turns/list.
+  `codex-panes.js`: the pane glue; engine.js sends the ops of a Codex pane
+  there (same op names as a Claude pane). `codex-rollouts.js`: the rollout
+  files the server does not list, read only.
+- The window side is `apaki/ui/codex.js` (presets, model and effort choices,
+  patch lines) with small branches in pane.js, app.js, permission.js and
+  menu.js; the phone page shares all of it. `remote-policy.js` knows the
+  Codex values.
+- Tools: a per process MCP server (`apaki-mcp-stdio.mjs`, proxy mode) rather
+  than dynamic tools, because dynamic tools are set on thread/start only and
+  most Codex panes are resumed threads. One process serves every thread, so
+  the engine attributes a call to the pane whose turn is running.
+- Tests: `apaki-codex-e2e` (the real engine and a fake app-server),
+  `apaki-codex-panes` (a scripted client: phones, crashes, withdrawn
+  requests, attachments, idle stop), `-map`, `-client`, `-ui`, `-policy`,
+  `-tools`, and the opt-in `apaki-codex-live` (APAKI_LIVE_CODEX=1).
+- Not seen live: a real turn (none was started on a real account), so how the
+  model uses the tools, the exact elicitation payloads and a Glass swap while
+  the server runs are known from the schema and the fake server only.

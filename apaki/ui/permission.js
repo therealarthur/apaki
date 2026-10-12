@@ -18,6 +18,8 @@
  */
 
 import { esc } from './markdown.js';
+// Codex's file changes are drawn with the same lines as the conversation's patch block (codex.js, 2026-10-12).
+import { patchHtml } from './codex.js';
 
 /** A moment after the sheet opens during which Enter does not approve (a keystroke meant for the message box). */
 export const ARM_MS = 600;
@@ -63,6 +65,8 @@ function questionFor(name) {
     case 'WebSearch': return 'Search the web?';
     case 'Task': case 'Agent': return 'Start this agent?';
     case 'Skill': return 'Use this skill?';
+    case 'ApplyPatch': return 'Apply these changes?';
+    case 'Permissions': return 'Grant more access?';
     default: return null;
   }
 }
@@ -101,6 +105,11 @@ function blocksFor(name, input) {
       return [rows([['Agent', i.subagent_type], ['Job', i.description]]), i.prompt ? code(i.prompt) : null];
     case 'Skill':
       return [rows([['Skill', i.skill || i.name], ['Arguments', i.args]])];
+    // Codex (apaki/engine/codex-map.js approvalAsk): the changes it wants to make, as diffs; the access it asks for, as rows.
+    case 'ApplyPatch':
+      return [{ kind: 'patch', changes: Array.isArray(i.changes) ? i.changes.slice(0, EDITS_MAX) : [], more: Math.max(0, (Array.isArray(i.changes) ? i.changes.length : 0) - EDITS_MAX) }];
+    case 'Permissions':
+      return [rows(Array.isArray(i.rows) ? i.rows : []), i.cwd ? rows([['Folder', short(i.cwd)]]) : null];
     default: {
       // Any other tool (an MCP server's, a new one): its simple fields as rows, or the input as text.
       const entries = Object.entries(i);
@@ -133,6 +142,9 @@ export function permissionView(ask) {
     question, tool, server, sub: clip(perm.description, 300),
     blocks: blocksFor(name, ask?.input).filter(Boolean).filter((b) => b.kind !== 'rows' || b.rows.length),
     notes, always, defaultToNo: Boolean(perm.defaultToNo),
+    // Codex words its own buttons ("Approve once", "Approve for this session"); Claude's keep theirs.
+    labels: { once: clip(perm.labels?.once, 40) || 'Allow once', always: clip(perm.labels?.always, 40) || 'Always allow', deny: clip(perm.labels?.deny, 40) || 'Deny' },
+    codex: Boolean(perm.codex),
   };
 }
 
@@ -144,6 +156,8 @@ function blockHtml(b) {
       return `<pre class="perm-code">${esc(b.text)}</pre>${b.cut ? '<div class="perm-fine">Shortened here.</div>' : ''}`;
     case 'diff':
       return `${b.file ? `<div class="perm-file">${esc(short(b.file))}</div>` : ''}<pre class="diff perm-diff">${b.edits.map((e) => `${diffSide(e.del, '-', 'del')}${diffSide(e.add, '+', 'add')}`).join('')}${b.more ? `<span class="more">... ${b.more} more edit${b.more === 1 ? '' : 's'}</span>` : ''}</pre>`;
+    case 'patch':
+      return `<pre class="diff perm-diff">${patchHtml(b.changes)}${b.more ? `<span class="more">... ${b.more} more file${b.more === 1 ? '' : 's'}</span>` : ''}</pre>`;
     case 'file':
       return `<div class="perm-file">${esc(short(b.file))}<span class="perm-meta">${b.lines} line${b.lines === 1 ? '' : 's'}</span></div><pre class="perm-code">${esc(b.text)}</pre>${b.more ? `<div class="perm-fine">... ${b.more} more line${b.more === 1 ? '' : 's'}</div>` : ''}`;
     case 'rows':
@@ -156,13 +170,14 @@ function blockHtml(b) {
 }
 
 /** The label on the Deny button: it says when a note goes with it. */
-export const denyLabel = (note) => (String(note || '').trim() ? 'Deny with note' : 'Deny');
+export const denyLabel = (note, base = 'Deny') => (String(note || '').trim() ? `${base} with note` : base);
 
 /** The sheet's HTML. `from` is the pane's title (escaped here). */
 export function permissionHtml(view, { from = '' } = {}) {
+  const L = view.labels || { once: 'Allow once', always: 'Always allow', deny: 'Deny' };
   const keys = view.defaultToNo
-    ? 'Esc denies. Enter does not approve this one.'
-    : 'Enter allows once. Esc denies.';
+    ? `${view.codex ? `Esc: ${L.deny.toLowerCase()}.` : 'Esc denies.'} Enter does not approve this one.`
+    : view.codex ? `Enter: ${L.once.toLowerCase()}. Esc: ${L.deny.toLowerCase()}.` : 'Enter allows once. Esc denies.';
   return `${from ? `<div class="from">${esc(from)}</div>` : ''}<h2 id="permQ">${esc(view.question)}</h2>`
     + `${view.sub ? `<div class="perm-sub">${esc(view.sub)}</div>` : ''}`
     + `<div class="perm-tool"><span class="perm-name">${esc(view.tool)}</span>${view.server ? `<span class="perm-srv">${esc(view.server)}</span>` : ''}</div>`
@@ -170,9 +185,9 @@ export function permissionHtml(view, { from = '' } = {}) {
     + view.notes.map((n) => `<div class="perm-note ${n.tone === 'warn' ? 'warn' : ''}">${esc(n.text)}</div>`).join('')
     // The placeholder fits a 390 px phone whole (2026-10-12; "(sent with Deny)" was cut there): the Deny button
     // turns into "Deny with note" as soon as there is one, and the field's label still says it goes with Deny.
-    + '<input type="text" class="perm-say" data-note maxlength="2000" autocomplete="off" aria-label="A note for Claude, sent with Deny" placeholder="Or tell Claude what to do instead">'
-    + `${view.always ? `<div class="perm-always"><span class="perm-always-h">Always allow saves</span>${view.always.map((l) => `<span class="perm-always-l">${esc(l)}</span>`).join('')}</div>` : ''}`
-    + `<div class="row perm-row"><button data-k="deny">Deny</button>${view.always ? '<button data-k="always" title="Allow it now and save the rule above, the way Claude Code does">Always allow</button>' : ''}<button class="primary" data-k="once"${view.defaultToNo ? '' : ' title="Enter"'}>Allow once</button></div>`
+    + `<input type="text" class="perm-say" data-note maxlength="2000" autocomplete="off" aria-label="A note for ${view.codex ? 'Codex' : 'Claude'}, sent with Deny" placeholder="Or tell ${view.codex ? 'Codex' : 'Claude'} what to do instead">`
+    + `${view.always ? `<div class="perm-always"><span class="perm-always-h">${esc(view.codex ? `${L.always} means` : 'Always allow saves')}</span>${view.always.map((l) => `<span class="perm-always-l">${esc(l)}</span>`).join('')}</div>` : ''}`
+    + `<div class="row perm-row"><button data-k="deny">${esc(L.deny)}</button>${view.always ? `<button data-k="always" title="${view.codex ? 'Approve it now and for the rest of this session' : 'Allow it now and save the rule above, the way Claude Code does'}">${esc(L.always)}</button>` : ''}<button class="primary" data-k="once"${view.defaultToNo ? '' : ' title="Enter"'}>${esc(L.once)}</button></div>`
     + `<div class="perm-keys">${keys}</div>`;
 }
 

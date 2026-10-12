@@ -55,7 +55,7 @@ Billing is per conversation, so one pane can run on your subscription while anot
 
 Apaki reads Claude Code's transcripts, so the list has everything: sessions you started in a terminal, headless runs (`claude -p`), workers. A session open in a terminal window shows up within about two seconds, marked working or waiting. Search finds sessions by words and by meaning, with a local index and a local embedding model; nothing is uploaded. When you cannot remember which session it was, Ask Claude reads the best matches and says why each one fits.
 
-Codex sessions are listed and searchable today, read-only. Opening them in panes is coming ([CODEX.md](apaki/remote/CODEX.md)).
+Codex threads are listed (a Codex view in the sidebar), searchable, and open as panes next to Claude's, with Codex's own model and effort pickers, permission presets, questions and approvals ([CODEX.md](apaki/remote/CODEX.md) says what is done and what is not).
 
 ## Tabs, panes, and a Claude that listens while it works
 
@@ -127,7 +127,6 @@ The web version of the phone client is code served by apaki.myrlin.io, so your P
 
 | | |
 |-|-|
-| Codex in panes | Codex threads next to Claude's, with Codex's own pickers, questions and approvals. [CODEX.md](apaki/remote/CODEX.md) |
 | Apaki Cloud | Any-browser sign-in that saves nothing, a Cloud button on the desktop listing your machines, and phone push when Claude asks or finishes. A paid option on our hosted relay; a relay you run gets every feature. [CLOUD.md](apaki/remote/CLOUD.md) |
 
 ## Install

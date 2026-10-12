@@ -61,7 +61,7 @@ Yes, on your own Cloudflare account; the free plan is enough for a few people. S
 ## Coming
 
 **Codex?**
-Codex sessions are listed and searchable now, read-only. Opening them as panes next to Claude's, with Codex's own pickers, questions and approvals, is coming ([remote/CODEX.md](../remote/CODEX.md)).
+Codex threads open as panes next to Claude's, with Codex's own model and effort pickers, its three permission presets (full access included), questions, approvals, plans, diffs and the same viewer and browser tools. A new conversation can start as either from the empty pane, and the sidebar has a Codex view. Apaki runs its own `codex app-server`, the protocol the Codex app uses, so threads are the same ones the Codex app shows. What is still open is listed in [remote/CODEX.md](../remote/CODEX.md).
 
 **Worktrees?**
 Yes, since 2026-10-12. Pick New worktree when you start a conversation; the pane header then shows the branch and its changes, with View changes, Commit, Push, Open PR, Merge and Remove in its menu. Remove refuses a worktree with uncommitted or unpushed work. The phone shows the same; its actions need Full access ([remote/WORKTREES.md](../remote/WORKTREES.md)).

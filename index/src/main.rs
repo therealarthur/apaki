@@ -459,6 +459,8 @@ fn update() -> Result<Value> {
 
     let mut files = transcripts(&claude_dir().join("projects"));
     files.extend(codex_transcripts(&codex_dir().join("sessions")));
+    // Threads archived in the Codex app stay searchable (2026-10-12; read only, like the rest of ~/.codex).
+    files.extend(codex_transcripts(&codex_dir().join("archived_sessions")));
     let on_disk: std::collections::HashSet<String> = files.iter().map(|(p, _, _)| p.to_string_lossy().to_string()).collect();
 
     // Removed transcripts lose their entries.
@@ -920,6 +922,7 @@ fn hybrid(s: &mut Searchers, query: &str, limit: usize) -> Result<Value> {
 fn all_transcripts() -> Vec<(PathBuf, String, u64)> {
     let mut files = transcripts(&claude_dir().join("projects"));
     files.extend(codex_transcripts(&codex_dir().join("sessions")));
+    files.extend(codex_transcripts(&codex_dir().join("archived_sessions")));
     files
 }
 

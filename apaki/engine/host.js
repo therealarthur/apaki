@@ -541,7 +541,8 @@ export function taskReplay(p) {
  * Returns the attach command, or null to run the open as sent.
  */
 export function restoreAsAttach(c, p) {
-  if (!c || c.op !== 'open' || c.warm !== false || c.force || !p || !p.runner) return null;
+  // A Codex pane (2026-10-12) holds its thread without a Claude Code process: it is taken over the same way.
+  if (!c || c.op !== 'open' || c.warm !== false || c.force || !p || !(p.runner || p.kind === 'codex')) return null;
   const want = c.sessionId || null;
   const have = p.sessionId || null;
   if (want !== have && !(want === null && have && p.createdHere)) return null;

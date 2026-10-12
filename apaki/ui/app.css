@@ -2637,6 +2637,46 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
   .composer-row > .send { margin-left: auto; }
 }
 
+/* ---------- Codex panes (2026-10-12) ----------
+   A Codex pane is the same pane with the Codex app's pickers, so it differs by one small word: CODEX in the action ink
+   in the header's meta line, set like the rail's "codex" word. No capsule, no dot, no stripe. */
+.kind-mark { flex: none; font: 700 var(--fs-micro)/1.4 var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--action-strong); }
+.kind-mark[hidden] { display: none; }
+/* Claude Code or Codex for a new conversation: two words under the empty pane's line, the chosen one underlined like the rail's views. */
+.kind-pick { display: flex; justify-content: center; gap: 18px; margin: 14px 0 0; font-size: var(--fs-small); }
+.kind-pick button { border: 0; background: none; padding: 2px 0; cursor: pointer; color: var(--faint); border-bottom: 1.5px solid transparent; transition: color var(--dur-fast) var(--ease-hover), border-color var(--dur-fast) var(--ease-hover); }
+.kind-pick button:hover { color: var(--ink); }
+.kind-pick button[aria-pressed=true] { color: var(--ink); font-weight: 600; border-bottom-color: var(--brand); }
+.pane.codex .kind-pick button[aria-pressed=true] { border-bottom-color: var(--action); }
+/* The Codex app's three presets in the mode chip and its menu, coloured like Claude's modes of the same power. */
+.chip-btn.mode[data-mode=full-access] { color: var(--action-strong); }
+.chip-btn.mode[data-mode=auto] { color: var(--brand-strong); }
+.chip-btn.mode[data-mode=read-only] { color: var(--good); }
+.menu-item .mm.full-access { color: var(--action-strong); }
+.menu-item .mm.auto { color: var(--brand-strong); }
+.menu-item .mm.read-only { color: var(--good); }
+/* A patch (Codex's file changes): a header per file, hunk lines quiet, context dimmer than the changes. */
+.diff .hunk { display: block; color: var(--faint); background: var(--tint); }
+.diff .hunk.file { color: var(--ink); font-weight: 600; background: var(--tint-deep); }
+.diff .hunk.file i { font-style: normal; font-weight: 500; color: var(--faint); }
+.diff .ctx { display: block; color: var(--soft); }
+/* A changed file's name in a patch header opens it in the viewer: still the name, underlined softly, the action ink on hover. */
+.diff .hunk.file .file-open { border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: var(--hairline-strong); text-underline-offset: 3px; text-align: left; }
+.diff .hunk.file .file-open:hover { color: var(--action-strong); text-decoration-color: currentColor; }
+.diff .hunk.file .file-open:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 3px; }
+.diff .more { display: block; color: var(--faint); }
+.tool pre.diff .hunk, .tool pre.diff .ctx, .tool pre.diff .more { padding: 0 11px; }
+:root[data-theme="dark"] .diff .hunk { background: var(--tint); }
+:root[data-theme="dark"] .diff .hunk.file { background: var(--tint-deep); }
+/* A command's output while it runs: the newest part, in the block the final result takes over. */
+.tool pre.live { max-height: 220px; }
+/* A file attached to a Codex message: its name and size in a quiet chip (a picture shows itself). */
+.chip.doc { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 14px 0 10px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); background: var(--tint); max-width: 240px; }
+.chip.doc .doc-name { font-size: var(--fs-small); font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.doc .dim { position: static; color: var(--faint); text-shadow: none; flex: none; }
+/* Text fields of a sheet that hold a secret (a Codex question marked secret) look like the others. */
+.sheet input[type=password] { width: 100%; padding: 8px 10px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); margin-top: 6px; background: var(--ground); }
+.sheet input[type=password]:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px hsla(var(--pearl-stop-blue), .14); }
 /* ---------- git worktrees (2026-10-12; worktree.js, diff.js, apaki/remote/WORKTREES.md) ----------
    Arthur: "The best approach to AI development is using git worktrees to tackle multiple features simultaneously."
    A worktree row shows the branch name and the change count and nothing else. Colour is only for trouble
