@@ -441,3 +441,13 @@ html:not(.js) .reel-tabs { display: none; }
 .app-page .btn:hover { filter: brightness(1.08); }
 :root[data-theme="dark"] .app-page .btn { background: linear-gradient(135deg, #3E48A0, #5B40AA); box-shadow: none; }
 .app-page .cta-note { margin: 0; font-size: 14px; color: var(--faint); }
+
+/* The privacy page (privacy/index.html, 2026-10-12): one readable column of prose. */
+.legal { max-width: 760px; padding-top: clamp(40px, 7vw, 88px); padding-bottom: clamp(56px, 8vw, 112px); }
+.legal h1 { font-weight: 860; font-stretch: 118%; font-size: 52px; line-height: 1.04; letter-spacing: -.022em; }
+.legal h2 { font-size: 24px; line-height: 1.2; letter-spacing: -.01em; margin-top: 40px; margin-bottom: 10px; }
+.legal p + p { margin-top: 12px; }
+.legal ul { margin: 10px 0 12px; padding-left: 1.2em; }
+.legal li + li { margin-top: 6px; }
+.legal .legal-date { margin: 10px 0 28px; font-size: 14px; color: var(--faint); }
+@media (max-width: 640px) { .legal h1 { font-size: 38px; } }

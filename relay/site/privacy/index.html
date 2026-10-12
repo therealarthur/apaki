@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!--
+    Myrlin Apaki's privacy policy at apaki.myrlin.io/privacy/ (relay/site, served as static files by the relay
+    Worker). Written 2026-10-12 by Claude Code (Opus 5.5) for Arthur, when the iPhone app opened a public TestFlight
+    link (App Store Connect asks for a privacy policy address). Facts from apaki/docs/security.md, apaki/SECURITY.md,
+    apaki/remote/ACCOUNTS.md and the relay's configuration; keep it in step with them.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light dark">
+  <title>Privacy: Myrlin Apaki</title>
+  <meta name="description" content="What Myrlin Apaki, its phone apps and its relay collect, keep and share.">
+  <link rel="icon" href="../assets/apaki-icon.svg" type="image/svg+xml">
+  <script src="../assets/theme.js"></script>
+  <link rel="stylesheet" href="../site.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to the content</a>
+  <header class="site-head">
+    <div class="wrap head-row">
+      <a class="head-brand" href="../" aria-label="Myrlin Apaki, home">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 32 15" class="m-mark" aria-hidden="true"><defs><linearGradient id="mflare-head" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#07B6D5"/><stop offset="1" stop-color="#3C83F6"/></linearGradient></defs><path class="m-fold" d="M12.292 9 C13.331 9 14.221 9.801 14.28 10.788 L14.554 15.346 L12.18 22.327 C11.916 23.105 11.452 23.858 11.15 24 L11.115 24 C9.996 24 9.36 23.019 9.246 21.115 L9.029 17.495 L10.838 12.173 C11.395 10.538 11.996 9.141 12.206 9 L12.292 9Z"/><path class="m-stroke" d="M0.5 24 L6.904 24 L10.925 12.173 C11.481 10.538 12.083 9.141 12.292 9 L7.042 9 C6.18 9 5.413 9.549 5.136 10.366Z"/><path class="m-fold" d="M23.369 9 C24.408 9 25.298 9.801 25.357 10.788 L25.745 17.258 C25.133 17.737 24.444 18.836 24.013 20.106 L23.257 22.327 C22.993 23.105 22.529 23.858 22.227 24 L22.192 24 C21.073 24 20.437 23.019 20.323 21.115 L20.106 17.495 L21.915 12.173 C22.471 10.538 23.073 9.141 23.283 9 L23.369 9Z"/><path class="m-stroke" d="M11.115 24 L16.538 24 C17.401 24 18.167 23.451 18.445 22.634 L22.002 12.173 C22.558 10.538 23.16 9.141 23.369 9 L18.119 9 C17.257 9 16.49 9.549 16.213 10.366 L12.146 22.327 C11.881 23.105 11.418 23.858 11.115 24Z"/><path d="M22.192 24 L27.615 24 C28.478 24 29.244 23.451 29.522 22.634 L31.438 17 L26.303 17 C25.605 17 24.559 18.398 23.978 20.106 L23.223 22.327 C22.958 23.105 22.494 23.858 22.192 24Z" fill="url(#mflare-head)"/></svg>
+        <span class="head-word">Apaki</span>
+      </a>
+    </div>
+  </header>
+
+  <main id="main" class="wrap legal">
+    <h1>Privacy</h1>
+    <p class="legal-date">Last changed 12 October 2026</p>
+
+    <p>Myrlin Apaki is a desktop app for Claude Code, with phone apps and a web page that reach your PC through a relay at apaki.myrlin.io. Myrlin Labs (Arthur Mouradian) makes it. This page says what each part collects, what it keeps, and who else is involved. The source code is public, so you can check every statement here against it.</p>
+
+    <h2>The desktop app</h2>
+    <p>Everything Apaki works with stays on your PC: your Claude Code and Codex sessions, your logins, the search index and the local model behind search by meaning, your settings and your workspace. Apaki sends none of it to us. Claude Code talks to Anthropic, and Codex to OpenAI, exactly as they do without Apaki; their own privacy policies cover that. Apaki has no analytics and no crash reporting.</p>
+    <p>Until you turn on phone access, Apaki makes no connection to our relay or our site.</p>
+
+    <h2>Phone access and the relay</h2>
+    <p>With phone access on, your PC and your paired phones connect to the relay, and everything between them is encrypted end to end (a P-256 key exchange, AES-256-GCM, fresh keys for every connection). The relay cannot read your prompts, replies, files or session list, and it cannot pair a phone or connect to your PC.</p>
+    <p>What the relay does handle:</p>
+    <ul>
+      <li>IP addresses, when your PC and phones connect and leave, and how much data moves.</li>
+      <li>To keep the relay's cost capped and shared fairly, a count of each day's use per address (an IP address, or the /64 network of an IPv6 address). The count holds no content and is deleted when the day ends (UTC).</li>
+    </ul>
+    <p>The relay's code writes no logs, and the hosting platform's request logging is turned off in its configuration. The relay runs on Cloudflare, which sees every request as the network and TLS provider; Cloudflare's privacy policy covers what it does. If you would rather not use our relay at all, you can run your own.</p>
+
+    <h2>Apaki accounts (optional)</h2>
+    <p>An Apaki account is a passkey, with no email address and no password. For an account, the relay keeps the name you give it, your passkeys' public keys, the devices you link, and one vault listing your PCs, encrypted with a key only your passkey can produce, so we cannot open it. Deleting the account from any of your phones deletes everything the server holds for it.</p>
+
+    <h2>The iPhone app</h2>
+    <p>The app uses the camera only to scan the pairing code on your PC's screen; no picture is kept or sent. It keeps its device key in the Secure Enclave and its pairings on the phone. It has no analytics, no advertising and no tracking. If you join the TestFlight beta, Apple shares with us what you choose to send through TestFlight (feedback, screenshots, crash reports), under Apple's own terms.</p>
+
+    <h2>This website</h2>
+    <p>apaki.myrlin.io sets no cookies, stores nothing in your browser, and loads nothing from other sites. The web version of the phone app stores its pairings and device key in your browser so it can reconnect.</p>
+
+    <h2>Sharing, selling, children</h2>
+    <p>We do not sell or rent data, and we share none beyond the providers named above. Apaki is not directed at children under 13.</p>
+
+    <h2>Questions and changes</h2>
+    <p>Write to <a href="mailto:support@myrlin.io">support@myrlin.io</a>, or to <a href="mailto:security@myrlin.io">security@myrlin.io</a> about a security problem. When this page changes, the date at the top changes, and the history is in the public repository.</p>
+  </main>
+
+  <footer class="site-foot">
+    <div class="wrap foot-grid">
+      <p class="foot-fine">Myrlin Apaki is independent and not affiliated with or endorsed by Anthropic or OpenAI. Claude and Claude Code are trademarks of Anthropic.</p>
+    </div>
+  </footer>
+</body>
+</html>
