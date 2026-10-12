@@ -132,6 +132,9 @@ export class SessionRunner {
    *                                   refused (Apaki's restricted phone panes, remote-policy.js)
    * @param {string[]} [o.allowedTools]     SDK allowedTools: tools allowed without asking (and, in
    *                                   a native build, Grep and Glob are only there when named)
+   * @param {Function} [o.onProcessEnd] called when the running Claude Code process ends (a stop, a restart, a crash),
+   *                                   so a host can drop what only that process was waiting for (Apaki's permission
+   *                                   prompts and questions, 2026-10-12)
    * @param {object|Function} [o.flagSettings] Claude Code settings for the processes this runner
    *                                   starts and nothing else: the SDK's `settings` option, the
    *                                   same layer as `claude --settings`, so no settings file is
@@ -255,7 +258,10 @@ export class SessionRunner {
     } catch (error) {
       this.onMessage({ type: 'latch_error', error });
     } finally {
-      if (this.q === q) this.q = null;
+      if (this.q === q) {
+        this.q = null;
+        try { this.onProcessEnd?.(); } catch { /* a host's cleanup must not break the runner */ }
+      }
       this.turnActive = false;
       for (const turn of this.pending.splice(0)) turn.reject(new Error('Claude Code process ended'));
     }

@@ -98,6 +98,21 @@ Written 2026-10-10 from what is built and tested.
   of interrupting; Steer folds it into the running turn at Claude's next step.
 - Model, effort and permission mode per conversation (Opus 5.5 at xhigh
   effort by default), with questions and plan approvals as real dialogs.
+- Permission prompts, as in Claude Code. In Ask permissions and Auto-accept
+  edits, a tool Claude Code would ask about waits for you: a sheet shows the
+  tool and what it will do (the command, the file and the change, the page),
+  with Allow once, Always allow and Deny, plus a box for a note that goes to
+  Claude with the denial. Always allow saves the rule Claude Code itself
+  suggested, the same way Claude Code saves it. Enter allows once and Esc
+  denies. A prompt is answered once, goes away if the turn ends or Claude Code
+  cancels the call, and comes back if the window reconnects. On a phone it is
+  the same sheet; a phone can answer only for its own conversations, and only
+  a phone with Full access can save a rule. Bypass permissions still skips
+  prompts.
+- Claude's todo list is a checklist in the conversation, as in Claude Code:
+  done items struck through, the item being worked on in bold. Later todo
+  updates in the same turn change that checklist in place instead of adding a
+  new one, and old conversations show it the same way, on the phone too.
 - Rename a session by double-clicking its tab. The name is saved in the
   session the way `/rename` saves it, so Claude Code, latch and Apaki all show
   the same one.

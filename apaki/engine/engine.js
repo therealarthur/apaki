@@ -87,6 +87,13 @@
  *   op historyBefore { paneId, sessionId?, before, limit?, all? } -> ev historyPage (same fields, to prepend)
  *   op historyBlock  { paneId, sessionId?, ref } -> ev historyBlock { ref, kind, text | media_type + data }
  *
+ * Permission prompts (2026-10-12, permissions.js): in Ask permissions and Auto-accept edits Claude Code asks
+ * before a tool it does not already allow, and the pane's window (or phone) is asked the same way a question is:
+ *   ev ask         gains `permission` (title, displayName, description, decisionReason, blockedPath, mcpServer,
+ *                  agentId, toolUseId, defaultToNo, cut, always: { lines } | null) when the ask is a tool call
+ *   op answer      result { behavior: 'allow', always? } or { behavior: 'deny', message? } settles it once
+ *   ev ask_gone    the call is over (the turn ended, Claude Code cancelled it): drop its sheet
+ *
  *   op hostStatus -> ev host { pid, window, remoteOn, panes, lifecycle }
  *   op hostQuit { whenIdle: true } | { now: true } -> ev hostQuit { ok, pending, waiting }
  *   ev opened from attach also carries running (its Claude Code process is up)
@@ -139,6 +146,8 @@ import { makeLoader } from '../../src/ui/picker.js';
 import { noteRunnerUse, setOn as setWarm, statusText as warmStatus, summary as warmSummary, warmSessions } from '../../src/warm.js';
 import { folderStats, listDir, makeDir } from '../../src/places.js';
 import { createRemote } from './remote.js';
+// Real permission prompts: the canUseTool every pane gets (2026-10-12).
+import { createPermissionGate } from './permissions.js';
 import { parsePhoneId, windowOf } from './remote-policy.js';
 // What a paired phone may make Claude do (2026-10-10, apaki/SECURITY.md 4.4 item 4): enforced on every phone pane below.
 import { CAP_PLAN_TEXT, capCanUseTool, capDefaultMode, capModeText, capModes, capPreToolUse, capRunnerOptions, clampMode } from './remote-policy.js';
@@ -196,7 +205,8 @@ if (HOST_MODE) shell.expect(String(process.env.APAKI_SHELL_FEATURES || '').split
 
 // Session list shared by every pane.
 const state = {
-  asks: new Map(), // askId -> { resolve, paneId }
+  // askId -> { resolve, paneId, toolName, input, at }; a permission prompt (permissions.js) also has kind 'permission', permission and answer
+  asks: new Map(),
   items: null,
   byId: new Map(),
   commandsByCwd: new Map(),
@@ -584,7 +594,13 @@ function holderOf(p) {
  * conversation continues only in the pane that took it.
  */
 async function takeFrom(other, taker) {
-  for (const [id, a] of state.asks) if (a.paneId === other.id) { state.asks.delete(id); a.resolve({ behavior: 'deny', message: 'The session was taken over in another window.' }); }
+  for (const [id, a] of state.asks) {
+    if (a.paneId !== other.id) continue;
+    state.asks.delete(id);
+    a.resolve({ behavior: 'deny', message: 'The session was taken over in another window.' });
+    // Its sheet goes with it (a permission prompt must not stay up for a call that no longer waits).
+    emit({ ev: 'ask_gone', askId: id, paneId: other.id });
+  }
   const r = other.runner;
   other.runner = null;
   other.busy = false;
@@ -652,10 +668,14 @@ async function sendContext(p, reqId = null) {
  * settled with no answer and the window drops its sheet (ask_gone), so a
  * person never answers the same question twice (Arthur, 2026-10-10).
  */
-function dropStaleAsks(paneId, { olderThanMs = 0 } = {}) {
+function dropStaleAsks(paneId, { olderThanMs = 0, questionsOnly = false, keepSubagents = false } = {}) {
   const now = Date.now();
   for (const [id, a] of state.asks) {
     if (a.paneId !== paneId || now - (a.at || 0) < olderThanMs) continue;
+    // A permission prompt has no retry that replaces it (the SDK parks it with no deadline): only the end of the turn or a cancel settles it.
+    if (questionsOnly && a.kind === 'permission') continue;
+    // A background subagent can ask after, or across, the main turn's end: its prompt waits for its own answer or cancel.
+    if (keepSubagents && a.kind === 'permission' && a.permission?.agentId) continue;
     state.asks.delete(id);
     a.resolve(null);
     emit({ ev: 'ask_gone', askId: id, paneId });
@@ -708,6 +728,7 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   p.openedAt = new Date().toISOString();
   p.credential = p.credential.follow ? glassCredential() : p.credential;
   const tools = toolsFor(p);
+  const permissionGate = createPermissionGate({ paneId: p.id, asks: state.asks, emit, alwaysOk: () => !parsePhoneId(p.id) || phoneCap(p.id) === 'full' });
   const runner = new SessionRunner({
     sessionId: sessionId || null,
     cwd: cwd || info?.cwd || os.homedir(),
@@ -726,10 +747,12 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     model: p.model,
     effort: p.effort,
     permissionMode: p.mode,
-    canUseTool: capOpts ? capCanUseTool(() => phoneCap(p.id), async (_name, input) => ({ behavior: 'allow', updatedInput: input })) : async (_name, input) => ({ behavior: 'allow', updatedInput: input }),
+    // Tools Claude Code would ask about are asked here (permissions.js): the pane's window or phone answers. A phone's
+    // blocked tools are refused first (capCanUseTool), and only a 'full' phone may save an "always allow" rule.
+    canUseTool: capOpts ? capCanUseTool(() => phoneCap(p.id), permissionGate) : permissionGate,
     onMessage: (msg) => {
       // A turn cannot end while a question really waits (its tool call is held), so any still open now went stale.
-      if (msg?.type === 'result' || msg?.type === 'latch_error') dropStaleAsks(p.id);
+      if (msg?.type === 'result' || msg?.type === 'latch_error') dropStaleAsks(p.id, { keepSubagents: true });
       emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
       // What the pane is doing (a turn, background tasks), for attach and the host's idle rules (host.js).
       paneActivity(p, runner, msg);
@@ -741,11 +764,13 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     },
     onStderr: (d) => process.stderr.write(String(d).replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***')),
   });
+  // The Claude Code process ended (a stop, a restart for another effort or account, a crash): nothing it asked still waits.
+  runner.onProcessEnd = () => dropStaleAsks(p.id);
   // Questions and plan approval go to the window and wait for its answer.
   runner.onInteractiveTool = (toolName, input) => new Promise((resolve) => {
     // Asked again while an earlier one has been open a while: Claude Code gave up on the earlier one (a
     // retry comes a minute or more later; questions asked together arrive within a second), so the window drops it.
-    dropStaleAsks(p.id, { olderThanMs: 5000 });
+    dropStaleAsks(p.id, { olderThanMs: 5000, questionsOnly: true });
     const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     // toolName and input are kept so attach can ask a reconnected window again.
     state.asks.set(id, { resolve, paneId: p.id, toolName, input, at: Date.now() });
@@ -837,7 +862,7 @@ async function attach(reqId, paneId, sessionId, cwd) {
     // The queue as this engine holds it (queue-hold.js): what is still queued, and the ids it sent while no window was here.
     ...heldView(p) });
   if (p.sessionId) await sendHistory(p, p.sessionId);
-  for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: p.id, toolName: a.toolName, input: a.input });
+  for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: p.id, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}) });
   // Subagents and background tasks still running in this process, so the window's Tasks button and panel show them again.
   for (const msg of taskReplay(p)) emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
 }
@@ -846,7 +871,12 @@ async function attach(reqId, paneId, sessionId, cwd) {
 async function closePane(reqId, paneId) {
   const p = panes.get(String(paneId));
   if (!p) return;
-  for (const [id, a] of state.asks) if (a.paneId === p.id) { state.asks.delete(id); a.resolve({ behavior: 'deny', message: 'The pane was closed.' }); }
+  for (const [id, a] of state.asks) {
+    if (a.paneId !== p.id) continue;
+    state.asks.delete(id);
+    a.resolve({ behavior: 'deny', message: 'The pane was closed.' });
+    emit({ ev: 'ask_gone', askId: id, paneId: p.id });
+  }
   await closeRunner(p);
   openServer?.forget(p.id);
   panes.delete(p.id);
@@ -937,7 +967,9 @@ const handlers = {
     process.stderr.write(`apaki: steer missed in pane ${p.id}: runner ${r ? 'yes' : 'none'}, process ${r?.running ? 'up' : 'down'}, pending ${r?.pending?.length ?? 0}, turn ${r?.turnActive ? 'active' : 'idle'}, pane busy ${Boolean(p.busy)}\n`);
     emit({ ev: 'steer_missed', reqId: c.reqId, paneId: p.id, qid: c.qid });
   },
-  answer: (c) => { const a = state.asks.get(c.askId); state.asks.delete(c.askId); a?.resolve(c.result || null); },
+  // A question, plan approval or permission prompt is settled once: the entry leaves the map first, so a second answer finds nothing.
+  // A permission prompt turns the reply into the SDK's result itself (permissions.js answer), never trusting rules or input from it.
+  answer: (c) => { const a = state.asks.get(c.askId); state.asks.delete(c.askId); if (a?.answer) a.answer(c.result || null); else a?.resolve(c.result || null); },
   model: async (c) => {
     const p = getPane(c.paneId);
     p.model = c.model; if (!parsePhoneId(p.id)) defaults.model = c.model;

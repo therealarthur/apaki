@@ -114,13 +114,13 @@
         "claude-sdk:message:system/permission_denied",
         "claude-sdk:permission-mode:default"
       ],
-      "status": "partial",
-      "surfaces": { "desktop": "partial", "phone": "partial" },
-      "where": ["apaki/engine/engine.js", "apaki/engine/remote-policy.js"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/permissions.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/ui/permission.js", "apaki/ui/app.js", "src/runner.js", "test/apaki-permissions.test.js"],
       "commits": ["655bd06", "1734636"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "Observed 2026-10-11 (engine.js canUseTool): in Ask permissions mode Claude Code's own allow and deny rules decide and anything that would prompt is auto-allowed; there is no Allow once, Always allow or Deny sheet (the can_use_tool request carries permission_suggestions). Denials show as Permission lines. Questions and plan approval are separate features and do have sheets."
+      "notes": "2026-10-12: built. engine.js passes every pane the callback from permissions.js, which holds the call, sends an ask event with a permission block (the SDK's title, displayName, description, decisionReason, blockedPath, defaultToNo and the suggestions as words) and settles it from the window's or phone's answer op: Allow once, Always allow (the SDK's suggestions returned as updatedPermissions, never rules from the client; suppressAlwaysAllowRule is respected) or Deny with a note (the note is Claude's message). Enter allows once (not in the first 600 ms, not when defaultToNo) and Esc denies. Answered once; the sheet drops (ask_gone) when the signal aborts, the main turn ends or the process ends; a subagent's prompt survives a main result. A phone's blocked tools are refused first (capCanUseTool); only a Full phone may save a rule. Apaki's own show tool (mcp__apaki__show, from the in-process server) is allowed without a prompt; its browser tools are asked about like any MCP tool. Before this, anything that would prompt was auto-allowed (observed 2026-10-11). Not covered: the permission_denied message still shows as a Permission line, not a sheet; AskUserQuestion and ExitPlanMode keep their own sheets."
     },
     {
       "id": "ask-user-question",
@@ -963,11 +963,11 @@
       ],
       "status": "partial",
       "surfaces": { "desktop": "partial", "phone": "partial" },
-      "where": ["apaki/ui/pane.js"],
+      "where": ["apaki/ui/todos.js", "apaki/ui/pane.js", "apaki/ui/tasks.js", "test/apaki-todos.test.js"],
       "commits": ["655bd06"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "Observed 2026-10-11 (pane.js): a TodoWrite call prints as a tool line \"N todos\" and nothing keeps the checklist on screen; the newer TaskCreate, TaskUpdate and TaskList tools are not rendered specially. Codex plans are planned as a checklist (codex-plans-checklist), so the Claude side should match."
+      "notes": "2026-10-12: TodoWrite is a checklist (todos.js): pending, in progress (bold, tinted row, the present-tense form under it) and completed (struck through), one card per turn that later TodoWrite calls update in place (a new turn, or a new plan once the old one is all done, starts a new card), drawn the same live, from history (tool_use blocks) and in a subagent's viewer, on the desktop and the phone page. Still partial: the newer TaskCreate, TaskUpdate, TaskList and TaskGet tools are not rendered specially. Codex plans are planned as a checklist (codex-plans-checklist), so the Claude side should match."
     },
     {
       "id": "start-folder-sheet",

@@ -42,6 +42,15 @@
  * change the capability does not allow. engine.js applies capRunnerOptions,
  * capCanUseTool and capPreToolUse to every phone pane, so the tools are
  * also refused inside Claude Code, in every permission mode.
+ *
+ * Permission prompts (2026-10-12, permissions.js): in Ask permissions and
+ * Auto-accept edits a tool Claude Code would ask about is asked on the
+ * phone, through the same answer op as a question. capCanUseTool refuses
+ * what the capability blocks first and hands everything else to that
+ * prompt, so a phone answers only for its own panes and only within its
+ * access. The answer carries the yes or no (and `always: true`), never
+ * rules: the engine applies the SDK's own suggestions, and only for a
+ * 'full' phone; a restricted phone's "always" is an allow once.
  */
 
 export const PHONE_PREFIX = 'phone:';
@@ -362,6 +371,9 @@ export function checkPhoneCommand(cmd, ctx) {
         if (!isObj(r) || (r.behavior !== 'allow' && r.behavior !== 'deny')) return fail('Bad answer.', cmd);
         out.result = { behavior: r.behavior };
         if (r.behavior === 'allow' && isObj(r.updatedInput)) out.result.updatedInput = r.updatedInput;
+        // "Always allow" on a permission prompt (2026-10-12, permissions.js): only the yes, never rules. The engine applies the
+        // SDK's own suggestions for that call, and only when this phone's access may save a rule (full).
+        if (r.behavior === 'allow' && r.always === true) out.result.always = true;
         if (typeof r.message === 'string') out.result.message = r.message.slice(0, 2000);
       } else {
         out.result = null;

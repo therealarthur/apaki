@@ -40,6 +40,8 @@ import { folderSheet } from './startfolder.js';
 import { initGlassCard } from './glasscard.js';
 import { initSettings } from './settings.js';
 import { findStep, openFind } from './find.js';
+// The permission sheet (Allow once, Always allow, Deny) for a tool Claude Code asks about (permission.js, 2026-10-12).
+import { ARM_MS, denyLabel, permissionHtml, permissionKey, permissionReply, permissionView } from './permission.js';
 import { DRAG_TASK, KIND_LABEL, TaskPane, closeTasksPanel, newTaskViewerId, specKey, taskGlyph, tasksPanel, tasksPanelPane } from './tasks.js';
 import { ArtifactPane, newViewerId } from './artifacts.js';
 import { BrowserPane } from './browser.js';
@@ -1971,8 +1973,9 @@ let sheetOpen = false;
 let sheetKey = null;
 let sheetClose = null;
 
-function sheet(html, wire, key = null) {
-  if (sheetOpen) { sheetQueue.push([html, wire, key]); return; }
+// onClose (optional): called once when this sheet goes, however it closes (a button, or dropSheet taking it away).
+function sheet(html, wire, key = null, onClose = null) {
+  if (sheetOpen) { sheetQueue.push([html, wire, key, onClose]); return; }
   sheetOpen = true;
   sheetKey = key;
   $('sheet').innerHTML = html;
@@ -1985,6 +1988,7 @@ function sheet(html, wire, key = null) {
     sheetOpen = false;
     sheetKey = null;
     sheetClose = null;
+    try { onClose?.(); } catch { /* a cleanup must not keep the next sheet from showing */ }
     const next = sheetQueue.shift();
     if (next) sheet(...next);
   };
@@ -1999,7 +2003,66 @@ function dropSheet(key) {
   if (sheetOpen && sheetKey === key) sheetClose?.();
 }
 
+/**
+ * A tool Claude Code asks about (Ask permissions, Auto-accept edits): what it wants to do, and Allow once, Always
+ * allow (the engine saves the rule the SDK suggested, as Claude Code does) or Deny with an optional note for Claude.
+ * Enter allows once and Esc denies; the engine settles it once, and drops this sheet if the turn ends first (ask_gone).
+ * The same sheet runs on the phone page (apaki/ui is shared).
+ */
+function permissionSheet(e) {
+  const view = permissionView(e);
+  const pane = S.panes.get(e.paneId);
+  const html = permissionHtml(view, { from: pane?.title || '' });
+  const reply = (result) => send('answer', { askId: e.askId, result });
+  let onKey = null;
+  let before = null;
+  sheet(html, (root, close) => {
+    before = document.activeElement;
+    const noteBox = root.querySelector('[data-note]');
+    const denyBtn = root.querySelector('[data-k=deny]');
+    const armedAt = Date.now() + ARM_MS;
+    const choose = (kind) => {
+      const note = noteBox?.value || '';
+      close();
+      reply(permissionReply(kind, note));
+    };
+    denyBtn.onclick = () => choose('deny');
+    root.querySelector('[data-k=once]').onclick = () => choose('once');
+    const always = root.querySelector('[data-k=always]');
+    if (always) always.onclick = () => choose('always');
+    // The button says when the note goes with it.
+    noteBox?.addEventListener('input', () => { denyBtn.textContent = denyLabel(noteBox.value); });
+    onKey = (ev) => {
+      if (!root.isConnected || sheetKey !== e.askId) return;
+      const t = ev.target;
+      const target = t === noteBox ? 'field' : t?.closest?.('button') ? 'button' : 'other';
+      const act = permissionKey({ key: ev.key, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, altKey: ev.altKey, shiftKey: ev.shiftKey, repeat: ev.repeat, target, noteText: noteBox?.value || '', armed: Date.now() >= armedAt, defaultToNo: view.defaultToNo });
+      if (!act) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      choose(act);
+    };
+    document.addEventListener('keydown', onKey, true);
+    // Keys must land in the sheet, not in the message box behind it. When the SDK asked for a default of no, the
+    // prompt opens on Deny; otherwise on the sheet itself, so a stray Enter in the first moments approves nothing.
+    root.tabIndex = -1;
+    root.setAttribute('role', 'alertdialog');
+    root.setAttribute('aria-labelledby', 'permQ');
+    (view.defaultToNo ? denyBtn : root).focus({ preventScroll: true });
+  }, e.askId, () => {
+    if (onKey) document.removeEventListener('keydown', onKey, true);
+    $('sheet').removeAttribute('role');
+    $('sheet').removeAttribute('aria-labelledby');
+    $('sheet').removeAttribute('tabindex');
+    if (before?.isConnected && before !== document.body) before.focus?.({ preventScroll: true });
+  });
+}
+
 function askSheet(e) {
+  // The engine asks again when a window reconnects (attach); a sheet already showing or waiting for this question is the same one.
+  if (e.askId && (sheetKey === e.askId || sheetQueue.some((q) => q[2] === e.askId))) return;
+  // A tool call waiting for permission (engine permissions.js) has its own sheet; questions and plan approval follow.
+  if (e.permission) { permissionSheet(e); return; }
   const input = e.input || {};
   const pane = S.panes.get(e.paneId);
   const from = pane ? `<div class="from">${esc(pane.title)}</div>` : '';

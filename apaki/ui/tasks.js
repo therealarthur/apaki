@@ -26,6 +26,8 @@
 
 import { esc, md } from './markdown.js';
 import { toolArgs } from './pane.js';
+// A subagent's TodoWrite calls as one live checklist, like the conversation's (todos.js, 2026-10-12).
+import { continuesList, hasTodos, normalizeTodos, paintTodos, sameTodos } from './todos.js';
 
 export const DRAG_TASK = 'application/x-apaki-task';
 
@@ -104,6 +106,7 @@ export class TaskPane {
     this.sourcePane = spec.ownerPane || null;
     this.title = spec.title || KIND_LABEL[spec.kind] || 'Task';
     this.tools = new Map();
+    this.todoCard = null;
     this.running = false;
     this.el = el('section', 'pane viewer task-viewer');
     this.el.dataset.pane = id;
@@ -170,7 +173,7 @@ export class TaskPane {
     const body = this.$.body;
     const g = this.$.ground;
     const atEnd = g.scrollHeight - g.scrollTop - g.clientHeight < 40;
-    if (e.reset) { body.innerHTML = ''; this.tools.clear(); }
+    if (e.reset) { body.innerHTML = ''; this.tools.clear(); this.todoCard = null; }
     if (e.missing) { body.innerHTML = '<p class="tk-empty">No transcript for this subagent yet. It appears here as soon as Claude Code writes one.</p>'; return; }
     if (e.agent) {
       this.spec = { ...this.spec, agentId: e.agent.id, title: this.spec.title || e.agent.description, type: this.spec.type || e.agent.type, model: this.spec.model || e.agent.model };
@@ -202,6 +205,7 @@ export class TaskPane {
   }
 
   addPrompt(text, label) {
+    this.todoCard = null;
     const card = el('div', 'tk-prompt');
     card.innerHTML = `<div class="tk-prompt-h">${esc(label)}</div><div class="tk-prompt-t"></div>`;
     card.querySelector('.tk-prompt-t').textContent = text;
@@ -215,6 +219,7 @@ export class TaskPane {
   }
 
   addTool(b) {
+    if (b.name === 'TodoWrite' && hasTodos(b.input) && (normalizeTodos(b.input).length || this.todoCard?.card.parentNode)) { this.addTodos(b); return; }
     const d = el('details', 'tool');
     const label = b.name === 'Task' ? 'Agent' : String(b.name || '').replace(/^mcp__\w+__/, '');
     d.innerHTML = `<summary><span class="dot">⏺</span><span class="name">${esc(label)}</span><span class="args">(${esc(toolArgs(b.name, b.input))})</span></summary><div class="sum">running…</div>`;
@@ -222,9 +227,26 @@ export class TaskPane {
     this.tools.set(b.id, d);
   }
 
+  /** A TodoWrite call: one checklist card per run of calls, updated in place (pane.js addTodos has the rules). */
+  addTodos(b) {
+    const list = normalizeTodos(b.input);
+    const cur = this.todoCard?.card.parentNode ? this.todoCard : null;
+    if (cur && (!list.length || continuesList(cur.list, list))) {
+      this.tools.set(b.id, cur.card);
+      if (!sameTodos(cur.list, list)) { paintTodos(cur.card, list); cur.list = list; }
+      return;
+    }
+    const card = el('div', 'todos');
+    card.setAttribute('role', 'group');
+    paintTodos(card, list);
+    this.$.body.append(card);
+    this.tools.set(b.id, card);
+    this.todoCard = { card, list };
+  }
+
   toolResult(b) {
     const d = this.tools.get(b.tool_use_id);
-    if (!d) return;
+    if (!d || d.classList.contains('todos')) return;
     const text = String(b.content || '');
     const lines = text.split('\n').filter((l) => l.trim());
     d.querySelector('.sum').textContent = `⎿ ${lines[0]?.slice(0, 160) || '(no output)'}${lines.length > 1 ? ` … ${lines.length} lines` : ''}`;

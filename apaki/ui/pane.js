@@ -20,6 +20,8 @@ import { pickVerb } from './verbs.js';
 // What Claude Code shows that is not Claude's reply: blocked prompts, hook errors, retries, limits (2026-10-11).
 import { noticeFor } from './notices.js';
 import { SHOW_TOOL, artifactCard, kindGlyph, kindLabel, linkCard, parseOpened, parseRef, updateCard } from './artifacts.js';
+// TodoWrite as a live checklist (todos.js, 2026-10-12).
+import { continuesList, hasTodos, normalizeTodos, paintTodos, sameTodos } from './todos.js';
 
 // Images go in at most this many pixels on the long edge (the API's sweet
 // spot, and under the 2000 px limit that breaks a session).
@@ -123,6 +125,8 @@ export class Pane {
     this.streams = new Map();
     this.tools = new Map();
     this.cardKeys = new Set(); // artifact and link cards already in the transcript
+    // The checklist card of the turn being drawn { card, list } (addTodos): later TodoWrite calls of the turn update it in place.
+    this.todoCard = null;
     this.closedArts = new Map(); // viewers of this conversation's artifacts that were closed (by id)
     // Subagents, shells, monitors and workflows this conversation's Claude Code
     // started (task_* messages): taskId -> task. See tasks.js and the Tasks button.
@@ -497,6 +501,8 @@ export class Pane {
 
   addUser(text, images = [], { steered = false } = {}) {
     this.clearEmpty();
+    // You wrote something: the next TodoWrite starts a new checklist (a steered message is part of the turn that runs, so it keeps its card).
+    if (!steered) this.todoCard = null;
     const u = el('div', steered ? 'turn-user steered' : 'turn-user');
     if (steered) u.append(el('span', 'steer-tag', 'Steered in'));
     if (images.length) {
@@ -534,6 +540,8 @@ export class Pane {
   addTool(block) {
     // Apaki's show tool is drawn as a card the user can open again later.
     if (block.name === SHOW_TOOL) { this.addShowCard(block); return; }
+    // A TodoWrite call is a checklist, not a tool line (an input without a list, or an empty one with nothing to clear, stays a line).
+    if (block.name === 'TodoWrite' && hasTodos(block.input) && (normalizeTodos(block.input).length || this.liveTodoCard())) { this.addTodos(block); return; }
     const d = el('details', 'tool');
     const label = block.name === 'Task' ? 'Agent' : block.name.startsWith(BROWSER_TOOL) ? 'Browser' : block.name;
     d.innerHTML = `<summary><span class="dot">⏺</span><span class="name">${esc(label)}</span><span class="args">(${esc(toolArgs(block.name, block.input))})</span></summary><div class="sum">running…</div>`;
@@ -549,6 +557,50 @@ export class Pane {
     // A subagent: openable at once (the engine finds its transcript by this tool call).
     if (block.name === 'Task' || block.name === 'Agent') this.linkTool(block.id, { id: null, type: 'local_agent', description: block.input?.description || '', subagentType: block.input?.subagent_type || 'agent', status: this.liveTasks.size ? 'running' : 'completed' });
     this.scrollDown();
+  }
+
+  /* ---------- the todo checklist (todos.js) ---------- */
+
+  /** The checklist card of the current turn, while it is still in the transcript. */
+  liveTodoCard() {
+    return this.todoCard?.card?.parentNode ? this.todoCard : null;
+  }
+
+  /**
+   * A TodoWrite call as a checklist. Every call carries the whole list, so a call in the same turn updates the card
+   * the first one drew (in place, where it started) instead of adding another; a new turn, or a new plan once the
+   * old one is finished, starts a new card (continuesList). The result of the call has nothing to show, so each
+   * call's id points at its card and toolResult leaves it alone.
+   */
+  addTodos(block) {
+    const list = normalizeTodos(block.input);
+    const cur = this.liveTodoCard();
+    if (cur && (!list.length || continuesList(cur.list, list))) {
+      this.tools.set(block.id, cur.card);
+      if (!sameTodos(cur.list, list)) {
+        paintTodos(cur.card, list);
+        cur.list = list;
+        // A live update glows for a moment; replaying history does not.
+        if (!this._replaying) this.flashTodos(cur.card);
+      }
+      return;
+    }
+    this.clearEmpty();
+    const card = el('div', 'todos');
+    card.setAttribute('role', 'group');
+    paintTodos(card, list);
+    this.$.T.append(card);
+    this.tools.set(block.id, card);
+    this.todoCard = { card, list };
+    this.scrollDown();
+  }
+
+  flashTodos(card) {
+    card.classList.remove('fresh');
+    void card.offsetWidth;
+    card.classList.add('fresh');
+    clearTimeout(card._fresh);
+    card._fresh = setTimeout(() => card.classList.remove('fresh'), 900);
   }
 
   /* ---------- artifact and link cards (artifacts.js) ---------- */
@@ -756,6 +808,11 @@ export class Pane {
     const d = this.tools.get(id);
     if (!d) return;
     const text = Array.isArray(content) ? content.filter((c) => c.type === 'text').map((c) => c.text).join('\n') : String(content ?? '');
+    // A TodoWrite result is only "Todos have been modified successfully": the checklist is the result. An error says why it failed.
+    if (d.classList.contains('todos')) {
+      if (isError && !d.querySelector('.todos-err')) d.append(el('div', 'todos-err', esc(text.split('\n')[0].slice(0, 200) || 'The todo list could not be updated.')));
+      return;
+    }
     if (d.classList.contains('art-card')) {
       if (d.classList.contains('link')) return;
       const urlInput = d.dataset.input ? JSON.parse(d.dataset.input) : null;
@@ -817,6 +874,12 @@ export class Pane {
 
   /** Messages from the engine's history, drawn in order (the first page, or an earlier page off-screen). */
   renderMessages(messages) {
+    // Replaying history: a checklist updated by a later call is drawn as it ended, without the live glow (addTodos).
+    this._replaying = true;
+    try { this.renderMessagesIn(messages); } finally { this._replaying = false; }
+  }
+
+  renderMessagesIn(messages) {
     for (const m of messages) {
       if (m.type === 'compact') { this.addCompactMarker(m); continue; }
       // What Claude Code said itself, from the transcript (engine history.js systemNote, hookNote): a system line.
@@ -857,6 +920,7 @@ export class Pane {
     this.$.T.innerHTML = '';
     this.tools.clear();
     this.cardKeys.clear();
+    this.todoCard = null;
     if (paged) this.renderLoader();
     else if (total > messages.length) this.note(`Showing the latest ${messages.length} of ${total} messages. The whole conversation is in the session.`);
     this.renderMessages(messages);
@@ -1008,7 +1072,10 @@ export class Pane {
     const box = document.createElement('div');
     this.$.T = box;
     this._prepending = true;
-    try { this.renderMessages(e.messages || []); } finally { this.$.T = real; this._prepending = false; }
+    // An earlier page is drawn apart from the checklist of the turn at the end of the conversation (todos.js).
+    const keepTodos = this.todoCard;
+    this.todoCard = null;
+    try { this.renderMessages(e.messages || []); } finally { this.$.T = real; this._prepending = false; this.todoCard = keepTodos; }
     const frag = document.createDocumentFragment();
     while (box.firstChild) frag.append(box.firstChild);
     if (anchor) real.insertBefore(frag, anchor); else real.append(frag);

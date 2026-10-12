@@ -2439,3 +2439,71 @@ body.rail-collapsed .signin-card { left: 22px; }
 .engine-banner[hidden] { display: none; }
 @keyframes banner-in { from { opacity: 0; transform: translate(-50%, -4px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @media (prefers-reduced-motion: reduce) { .engine-banner { animation: none; } }
+
+/* The permission sheet (permission.js, 2026-10-12): a tool Claude Code asks about. The tool and a readable summary of
+   its input, a note for Claude, then Deny, Always allow and Allow once. Same sheet on the phone page (apaki/ui is shared).
+   No dot, no stripe: notes are tinted fields. */
+.sheet:focus { outline: none; }
+.sheet .perm-sub { margin-top: 2px; font-size: 13.5px; color: var(--soft); }
+.sheet .perm-tool { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 6px; font-family: var(--font-mono); font-size: 12px; }
+.sheet .perm-name { font-weight: 700; color: var(--ink); }
+.sheet .perm-srv { color: var(--faint); overflow-wrap: anywhere; }
+.sheet .perm-body { display: grid; gap: 8px; }
+.sheet .perm-code, .sheet .perm-diff {
+  margin: 0; max-height: 36vh; overflow: auto; padding: 9px 11px; background: var(--ground); border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.sheet .perm-diff .more { display: block; color: var(--faint); }
+.sheet .perm-file { display: flex; justify-content: space-between; gap: 12px; font-family: var(--font-mono); font-size: 12px; color: var(--soft); overflow-wrap: anywhere; }
+.sheet .perm-meta, .sheet .perm-fine { font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+.sheet .perm-fine { white-space: normal; }
+.sheet .perm-rows { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 14px; font-size: 13px; }
+.sheet .perm-rows dt { color: var(--faint); }
+.sheet .perm-rows dd { margin: 0; font-family: var(--font-mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.sheet .perm-text { font-size: 13px; color: var(--soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sheet .perm-note { margin-top: 10px; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--tint); color: var(--soft); font-size: 12.5px; }
+.sheet .perm-note.warn { background: var(--action-tint); color: var(--action-strong); }
+.sheet .perm-say { margin-top: 12px; }
+.sheet .perm-always { margin-top: 10px; display: grid; gap: 2px; font-size: 12.5px; color: var(--soft); }
+.sheet .perm-always-h { font-size: 12px; font-weight: 650; color: var(--ink); }
+.sheet .perm-always-l { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.sheet .perm-row { flex-wrap: wrap; }
+.sheet .perm-keys { margin-top: 8px; text-align: right; font-size: 11.5px; color: var(--faint); }
+@media (hover: none) { .sheet .perm-keys { display: none; } }
+@media (max-width: 560px) {
+  .sheet .perm-row { flex-direction: column-reverse; }
+  .sheet .perm-row button { width: 100%; }
+}
+
+/* The todo checklist (todos.js, 2026-10-12): TodoWrite as Claude Code draws it. Done items struck through, the item being
+   worked on in bold on a tinted row, a calm count in the header; a later call in the same turn redraws it in place
+   (a short glow when live). Marks are boxes, not dots; no stripe. */
+.todos {
+  margin: 8px 0 8px 18px; max-width: 640px; padding: 9px 10px 7px; border: 1px solid var(--hairline); border-radius: var(--radius);
+  background: var(--card); font-size: 13.5px; line-height: 1.45;
+}
+.todos.fresh { animation: todos-fresh 900ms var(--ease-out); }
+@keyframes todos-fresh { from { background: var(--brand-wash); border-color: var(--brand-soft); } to { background: var(--card); border-color: var(--hairline); } }
+.todos-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 4px 6px; }
+.todos-name { font: 750 11px/1 var(--font-display); font-stretch: 112%; letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
+.todos-count { font: 12px/1 var(--font-mono); color: var(--faint); }
+.todos.all-done .todos-count { color: var(--good); }
+.todos-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.td { display: flex; align-items: flex-start; gap: 9px; padding: 4px 6px; border-radius: 7px; }
+.td-mark { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--faint); }
+.td-mark svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.td-body { min-width: 0; display: flex; flex-direction: column; }
+.td-text { overflow-wrap: anywhere; }
+.td-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.td.todo .td-text { color: var(--ink); }
+.td.done .td-mark { color: var(--good); }
+.td.done .td-mark .tb { fill: currentColor; }
+.td.done .td-mark .tc { stroke: var(--card); stroke-width: 1.8; }
+.td.done .td-text { color: var(--faint); text-decoration: line-through; text-decoration-color: hsla(240, 10%, 50%, .45); }
+.td.doing { background: var(--brand-wash); }
+.td.doing .td-mark { color: var(--brand-strong); }
+.td.doing .td-mark .tn { fill: currentColor; stroke: none; }
+.td.doing .td-text { font-weight: 700; color: var(--brand-deep); }
+.td-now { font-size: 12px; color: var(--soft); }
+.todos-err { margin: 6px 4px 2px; font-size: 12.5px; color: var(--action-strong); }
+@media (max-width: 640px) { .todos { margin-left: 0; max-width: none; } }
