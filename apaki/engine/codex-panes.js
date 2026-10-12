@@ -413,14 +413,15 @@ export function createCodex(env) {
   }
 
   /** ev history: the newest page of the thread, in the shape a Claude transcript gives. */
-  async function sendHistory(p, { refresh = false, reqId = null } = {}) {
+  async function sendHistory(p, { refresh = false, reqId = null, paneId = null } = {}) {
     const threadId = p.codex?.threadId;
     if (!threadId) return;
     try {
       const rev = await revOf(threadId);
       const page = await history.firstPage(threadId, { limit: HISTORY_PAGE });
       trackFromMessages(p, page.messages);
-      emit({ ev: 'history', reqId, paneId: p.id, sessionId: p.sessionId, ...page, rev, ...(refresh ? { refresh: true } : {}) });
+      // paneId: a phone that follows this pane (the shared view) is sent it under its own pane id.
+      emit({ ev: 'history', reqId, paneId: paneId || p.id, sessionId: p.sessionId, ...page, rev, ...(refresh ? { refresh: true } : {}) });
     } catch (e) {
       note(p, `Codex could not read this conversation's history: ${e.message || e}`, 'warn');
     }
@@ -510,12 +511,16 @@ export function createCodex(env) {
   }
 
   /** A window reconnected to a running pane: its state again, the history, any question still waiting. */
-  async function attach(reqId, p) {
+  async function attach(reqId, p, as = null) {
     const cx = p.codex;
-    emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: Boolean(p.busy), running: Boolean(client?.ready), reqId, paneId: p.id, sessionId: p.sessionId, cwd: cx.cwd, title: p.codexTitle || 'Codex', model: p.model, effort: p.effort, mode: p.mode, billing: billingOf(), terminal: [], kind: 'codex' });
-    if (cx.threadId) await sendHistory(p);
-    for (const [askId, a] of asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: p.id, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}) });
-    if (cx.usage) sendContext(p);
+    // as: { paneId, readOnly } (the shared view, engine.js followState): a phone that follows this pane gets the same state under
+    // its own pane id, marked as a follower. Nothing about the pane changes.
+    const to = as?.paneId || p.id;
+    const follower = as ? { follower: true, readOnly: Boolean(as.readOnly) } : {};
+    emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: Boolean(p.busy), running: Boolean(client?.ready), reqId, paneId: to, sessionId: p.sessionId, cwd: cx.cwd, title: p.codexTitle || 'Codex', model: p.model, effort: p.effort, mode: p.mode, billing: billingOf(), terminal: [], kind: 'codex', ...follower });
+    if (cx.threadId) await sendHistory(p, as ? { paneId: to } : {});
+    for (const [askId, a] of asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: to, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}), ...(as ? { readOnly: follower.readOnly } : {}) });
+    if (cx.usage) sendContext(p, null, to);
   }
 
   /* ---------- sending ---------- */
@@ -818,10 +823,10 @@ export function createCodex(env) {
 
   /* ---------- the context meter ---------- */
 
-  function sendContext(p, reqId = null) {
+  function sendContext(p, reqId = null, to = null) {
     const cx = p.codex;
-    if (!cx?.usage) { if (reqId) emit({ ev: 'context', reqId, paneId: p.id, none: true }); return; }
-    emit({ ev: 'context', reqId, paneId: p.id, ...contextFromUsage(cx.usage, { model: p.model, threadId: cx.threadId, autoCompactLimit: shared.config?.model_auto_compact_token_limit }) });
+    if (!cx?.usage) { if (reqId) emit({ ev: 'context', reqId, paneId: to || p.id, none: true }); return; }
+    emit({ ev: 'context', reqId, paneId: to || p.id, ...contextFromUsage(cx.usage, { model: p.model, threadId: cx.threadId, autoCompactLimit: shared.config?.model_auto_compact_token_limit }) });
   }
 
   function contextSoon(p) {

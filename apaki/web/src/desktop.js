@@ -27,9 +27,10 @@
  * desktop window never runs this file (native.js calls it on the phone only).
  * Opening a conversation a desktop pane holds follows the engine's rules
  * (today the phone takes it over, the desktop pane says so); this list only
- * asks to open it. A PC that lists 'follow' in hello (planned, 2026-10-11)
- * gets op follow instead (app.js followDesktop): the phone shows that desktop
- * pane live without taking it over, "View only" with No shell or Chat only.
+ * asks to open it. A PC that lists 'follow' in hello gets op follow instead
+ * (app.js followDesktop): the phone shows that desktop pane live without
+ * taking it over ("Watching" on its row, a bar with Take over in the pane),
+ * "View only" with No shell or Chat only.
  */
 
 import { onDesktopTabs } from './shim.js';
@@ -57,7 +58,7 @@ const CHEV = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-
  * behind "Show more"; counts for the header. Pure (exported for tests).
  *   openHere(sessionId) -> true when this phone has that conversation open.
  */
-export function deskModel(tabs, { expanded = false, shown = DESK_TABS_SHOWN, openHere = () => false } = {}) {
+export function deskModel(tabs, { expanded = false, shown = DESK_TABS_SHOWN, openHere = () => false, watching = () => false } = {}) {
   const list = (Array.isArray(tabs) ? tabs : [])
     .filter((t) => Array.isArray(t?.panes) && t.panes.length)
     .map((t) => ({
@@ -68,8 +69,10 @@ export function deskModel(tabs, { expanded = false, shown = DESK_TABS_SHOWN, ope
         const go = kind === 'session' && typeof p.sessionId === 'string' && p.sessionId.length > 0;
         const busy = kind === 'session' && Boolean(p.busy);
         const here = go && openHere(p.sessionId);
-        const meta = busy ? 'Working' : here ? 'Open here' : p.focused && t.active ? 'On screen' : kind === 'session' ? (go ? '' : 'Not started') : KIND_WORD[kind];
-        // paneId (planned, 2026-10-11): the desktop pane's own id, which a phone can follow without taking it over.
+        // This phone follows this desktop pane (the shared view): "Watching", said beside "Working" when both are true.
+        const watched = go && typeof p.paneId === 'string' && p.paneId.length > 0 && Boolean(watching(p.paneId));
+        const meta = busy ? (watched ? 'Working · Watching' : 'Working') : watched ? 'Watching' : here ? 'Open here' : p.focused && t.active ? 'On screen' : kind === 'session' ? (go ? '' : 'Not started') : KIND_WORD[kind];
+        // paneId (2026-10-11): the desktop pane's own id, which a phone can follow without taking it over.
         return { kind, go, busy, sessionId: go ? p.sessionId : null, paneId: typeof p.paneId === 'string' && p.paneId ? p.paneId : null, title: String(p.title || (kind === 'session' ? 'New conversation' : KIND_WORD[kind])).trim(), meta, focused: Boolean(p.focused) };
       }),
     }));
@@ -98,7 +101,9 @@ export function initDesktop({ haptic = () => {}, showChat = () => {} } = {}) {
   const D = { ev: null, expanded: false, folded: false };
   try { D.folded = localStorage.getItem(FOLD_KEY) === 'folded'; } catch { /* no storage */ }
   const searching = () => Boolean($('q')?.value.trim());
-  const openHere = (id) => [...(A?.S?.panes?.values() || [])].some((p) => p.sessionId === id);
+  // A pane that follows a desktop pane has the conversation's session id too, but it is not "open here": it is "Watching".
+  const openHere = (id) => [...(A?.S?.panes?.values() || [])].some((p) => p.sessionId === id && !p.following);
+  const watching = (paneId) => [...(A?.S?.panes?.values() || [])].some((p) => p.following === paneId);
 
   function row(r) {
     const meta = r.meta && r.go ? `<span class="desk-m">${r.busy ? effortGrid('max', { live: true }) : ''}${esc(r.meta)}</span>` : '';
@@ -113,7 +118,7 @@ export function initDesktop({ haptic = () => {}, showChat = () => {} } = {}) {
 
   function render() {
     const tabs = D.ev?.tabs;
-    const m = deskModel(tabs, { expanded: D.expanded, openHere });
+    const m = deskModel(tabs, { expanded: D.expanded, openHere, watching });
     sec.hidden = !m.total || searching();
     if (sec.hidden) return;
     sec.classList.toggle('folded', D.folded);
@@ -141,10 +146,11 @@ export function initDesktop({ haptic = () => {}, showChat = () => {} } = {}) {
     if (!go || typeof A?.openFromRail !== 'function') return;
     haptic();
     const id = go.dataset.sid;
-    // A PC that offers 'follow' (planned, 2026-10-11) shows its pane here without taking it over; with No shell or
-    // Chat only access the phone may watch, not send ("View only"). Any other PC: the session list's own open path.
+    // A PC that offers 'follow' shows its pane here without taking it over; with No shell or Chat only access the phone
+    // may watch, not send ("View only"). A conversation this phone already holds as its own pane just shows that pane
+    // (the desktop's is stopped, so there is nothing to follow). Any other PC: the session list's own open path.
     const link = window.__apakiLink;
-    if (go.dataset.pane && link?.supports?.('follow') && typeof A.followDesktop === 'function') {
+    if (go.dataset.pane && !openHere(id) && link?.supports?.('follow') && typeof A.followDesktop === 'function') {
       A.followDesktop({ desktopPaneId: go.dataset.pane, title: go.dataset.title || '', viewOnly: (link.cap?.() || 'full') !== 'full' });
       showChat();
       return;

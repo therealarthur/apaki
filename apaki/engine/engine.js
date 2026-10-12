@@ -1073,6 +1073,8 @@ async function followState(c) {
   // remote.js checked that the pane is a conversation; it may have closed since. The phone pane then hears closed, which also
   // removes it from remote.js's list of followers.
   if (!p || parsePhoneId(p.id)) { emit({ ev: 'closed', reqId: c.reqId, paneId: to }); return; }
+  // A Codex pane (2026-10-12): the same state from Codex's side, under the phone's pane id.
+  if (isCodexPane(p)) { await codex.attach(c.reqId, p, { paneId: to, readOnly: Boolean(c.readOnly) }); return; }
   const info = p.sessionId ? await getSessionInfo(p.sessionId).catch(() => null) : null;
   emit({
     ev: 'opened', attached: true, follower: true, readOnly: Boolean(c.readOnly), reqId: c.reqId, paneId: to,
@@ -1082,7 +1084,7 @@ async function followState(c) {
   });
   // The history and the meter estimate for a conversation with no process: the same helper, named for the phone's pane.
   if (p.sessionId) await sendHistory({ id: to, runner: p.runner, sessionId: p.sessionId }, p.sessionId);
-  for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: to, toolName: a.toolName, input: a.input, readOnly: Boolean(c.readOnly) });
+  for (const [askId, a] of state.asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: to, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}), readOnly: Boolean(c.readOnly) });
   for (const msg of taskReplay(p)) emit({ ev: 'sdk', paneId: to, sessionId: p.sessionId, msg });
 }
 

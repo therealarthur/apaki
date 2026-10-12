@@ -202,6 +202,8 @@ const host = {
   renameSession: (p, anchor) => beginRename(p.sessionId, anchor, { pane: p }),
   focus: (p) => focusPane(p, { scroll: false }),
   close: (p) => closePane(p),
+  // A pane that follows a pane on the PC asks to take its conversation over (the phone's shared view; takeOver below).
+  takeOver: (p) => takeOver(p),
   voice: (p) => toggleVoice(p),
   folder: (p, value) => paneFolder(p, value),
   folderMenu: (p, anchor) => folderMenu(p.sessionId, anchor),
@@ -748,12 +750,12 @@ function closeTab(t, { confirmBusy = true } = {}) {
 }
 
 /**
- * The phone follows a desktop pane (2026-10-11, apaki/web/src/desktop.js; the engine op follow, planned on the PC side,
- * used only when the PC lists 'follow' in hello): a pane of the phone's own that shows that desktop pane's
- * conversation live, without taking it over. Followed already: shown. Otherwise a new page next to the focused one in
- * the tab in front (a new tab past six panes). viewOnly (the phone's access is No shell or Chat only): the composer
- * gives way to a quiet "View only" line. Closing it sends unfollow (closePane). It is not saved as a session of its own
- * (snapshot), so the phone never reopens, and so takes over, a followed conversation on its next start. Phone only.
+ * The phone follows a desktop pane (apaki/web/src/desktop.js; the engine op follow, used only when the PC lists 'follow' in
+ * hello): a pane of the phone's own that shows that desktop pane's conversation live, without taking it over. Followed
+ * already: shown. Otherwise a new page next to the focused one in the tab in front (a new tab past six panes). viewOnly (the
+ * phone's access is No shell or Chat only): the composer gives way to a quiet "View only" line. Closing it sends unfollow
+ * (closePane); Take over (takeOver below) ends it and opens the conversation here. It is saved as a follower (snapshot, restore),
+ * never as a session of its own, so a reload follows again instead of reopening, and so taking over, the conversation. Phone only.
  */
 function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
   if (!desktopPaneId) return null;
@@ -762,12 +764,8 @@ function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
   const t = activeTab();
   const base = focusedPane();
   const p = createPane({ cwd: '', ...inheritable(base) });
-  p.following = desktopPaneId;
-  p.el.classList.add('following');
-  if (viewOnly) {
-    p.el.classList.add('view-only');
-    p.$.wrap?.append(el('div', 'view-only-note', '<b>View only</b><span>This phone follows the pane on the PC. Its access there lets it read, not send.</span>'));
-  }
+  // The bar ("Watching live on <PC>", Take over), the read only chips and, for a restricted phone, the "View only" line (pane.js).
+  p.setFollowing(desktopPaneId, { readOnly: viewOnly });
   if (title) p.setTitle(title);
   if (!t || !t.root || L.count(t.root) >= L.MAX_PANES) {
     const nt = createTab(L.leaf(p.id));
@@ -784,6 +782,30 @@ function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
   renderTabs();
   save();
   return p;
+}
+
+/**
+ * Take over (the phone's shared view, 2026-10-12): the pane that follows a conversation on the PC moves that conversation here. It asks
+ * first, because it stops the PC's pane (the same hand-over as opening a conversation the PC holds and choosing Take over here).
+ * Phone only: a window never has a pane that follows.
+ */
+function takeOver(p) {
+  if (!p?.following || !S.panes.has(p.id)) return;
+  const pc = String(window.__apakiLink?.pcName?.() || '').trim() || 'the PC';
+  sheet(`<div class="from">${esc(p.title)}</div><h2>Take over from ${esc(pc)}?</h2>
+    <p>${p.busy ? 'It is working on the PC right now, and taking over stops that. ' : ''}The pane there stops before its next message and says the conversation moved to this phone, so nothing forks. Everything it already did is saved and loads here.</p>
+    <div class="row"><button data-k="x">Keep watching</button><button class="primary" data-k="go">Take over</button></div>`, (root, close) => {
+    root.querySelector('[data-k=x]').onclick = close;
+    root.querySelector('[data-k=go]').onclick = () => { close(); if (S.panes.has(p.id)) p.takeOver(); };
+  });
+}
+
+// The PC changed what this phone may do (boot.js cap): the panes that follow a PC pane become view only, or send again.
+if (WEB) {
+  window.addEventListener('apaki:cap', (e) => {
+    const readOnly = (e.detail?.cap || 'full') !== 'full';
+    for (const p of S.panes.values()) if (p.following) p.setFollowing(p.following, { readOnly });
+  });
 }
 
 function newConversation(p, o = {}) {
@@ -2489,7 +2511,9 @@ function snapshot() {
         draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ id: q.id, text: q.text })),
         // A pane in a background tab has no box to measure: its remembered place is saved, not "at the end, 0" (pane.js scrollState, 2026-10-12).
         scroll: p?.scrollState ? p.scrollState() : null,
-        busy: Boolean(p?.busy), pendingName: p?.pendingName || null,
+        busy: Boolean(p?.busy && !p?.following), pendingName: p?.pendingName || null,
+        // The shared view: what the pane follows, and the conversation it showed (for its Open here if the PC's pane is gone by then).
+        ...(p?.following ? { follow: p.following, fs: p.sessionId || null, ft: p.title || '' } : {}),
       };
     }),
   }));
@@ -2543,6 +2567,13 @@ function restore(saved = readLocal()) {
       if (lf.view?.diff) return L.leaf(createDiffViewer(lf.view.diff, lf.pane).id);
       // A viewer comes back showing its artifact's latest revision.
       if (lf.view?.id) return L.leaf(createViewer(lf.view, lf.pane).id);
+      // A pane that followed a pane on the PC follows it again (the shared view); opening its conversation here would take it over.
+      if (typeof lf.follow === 'string' && lf.follow) {
+        const fp = createPane({ id: lf.pane, sessionId: lf.fs || null, cwd: lf.cwd, title: lf.ft, model: lf.model, effort: lf.effort, mode: lf.mode, kind: lf.kind });
+        fp.setFollowing(lf.follow, { readOnly: phoneCap() !== 'full' });
+        send('follow', { paneId: fp.id, desktopPaneId: lf.follow });
+        return L.leaf(fp.id);
+      }
       // One session per pane, ever: a duplicate in old saved state opens as a new conversation.
       const sid = lf.s && !seen.has(lf.s) ? lf.s : null;
       if (sid) seen.add(sid);
@@ -2625,6 +2656,8 @@ await listen('engine', ({ payload: e }) => {
         for (const p of S.panes.values()) {
           // Viewers load again from the new engine's server address.
           if (p.isViewer) { p.engineBack(); continue; }
+          // A pane that follows a PC pane follows it again (opening its conversation would take it over).
+          if (p.following) { send('follow', { paneId: p.id, desktopPaneId: p.following }); continue; }
           p.open(p.sessionId ? { id: p.sessionId, cwd: p.cwd, title: p.title } : null, { warm: false });
         }
       }
@@ -2771,6 +2804,8 @@ await listen('engine', ({ payload: e }) => {
     case 'ask': {
       const p = S.panes.get(e.paneId);
       if (p) cameBack(p, 'ask');
+      // A phone that may only watch (follows a PC pane at No shell or Chat only) cannot answer it: the PC refuses. One line says where.
+      if (e.readOnly) { p?.note('Claude is asking a question on the PC. This phone can watch, not answer: answer it there, or take the conversation over here.'); break; }
       askSheet(e);
       break;
     }
@@ -2787,7 +2822,9 @@ await listen('engine', ({ payload: e }) => {
       break;
     case 'warmState': settings.handle(e); break;
     case 'autoCompact': settings.handle(e); break;
-    case 'closed': break;
+    // The PC closed the pane this phone's pane follows (or no longer has it): the pane says so (pane.js followEnded). The answer to this
+    // phone's own unfollow or close finds nothing (the pane left already, or follows no more).
+    case 'closed': { const p = S.panes.get(e.paneId); if (p?.following) p.followEnded(); break; }
     case 'remote': phone?.handle(e); break;
     case 'note': focusedPane()?.note(e.text, e.tone || ''); break;
     // Fresh installs (2026-10-10): Claude Code has no login yet, so the first message would fail.

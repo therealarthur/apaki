@@ -721,6 +721,23 @@ body.web .pane.view-only .view-only-note {
 }
 .view-only-note b { font: 900 10px/1.2 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--brand-strong); }
 
+/* The follow bar (2026-10-12, the shared view; pane.js renderFollowBar): a pane that shows a conversation open in a pane on the PC
+   says so at the top of the conversation and offers Take over. One quiet row with a hairline under it: no dot, no stripe, no pill.
+   The model, effort and mode chips of such a pane are the PC pane's, so they stay on screen but cannot be changed here. */
+.follow-bar { display: none; }
+body.web .pane.following .follow-bar {
+  position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 44px; margin: 0 0 6px; padding: 0 4px 0 16px;
+  background: hsla(var(--w), .74); -webkit-backdrop-filter: blur(14px) saturate(1.6); backdrop-filter: blur(14px) saturate(1.6);
+  border-bottom: 1px solid var(--hairline);
+}
+.follow-bar .fb-t { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--fs-small); color: var(--soft); }
+.follow-bar .fb-t svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.follow-bar .fb-w { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.follow-bar .fb-w b { font-weight: 680; color: var(--ink); }
+.follow-bar .fb-go { flex: none; min-width: 44px; min-height: 44px; padding: 0 14px; border: 0; background: none; font: inherit; font-size: var(--fs-small); font-weight: 760; color: var(--brand-strong); cursor: pointer; }
+.follow-bar .fb-go:active { opacity: .6; }
+body.web .pane.following .chip-btn.model, body.web .pane.following .chip-btn.effort, body.web .pane.following .chip-btn.mode { opacity: .6; pointer-events: none; }
 /* ---------- git worktrees on the phone (2026-10-12; apaki/ui/worktree.js, diff.js) ----------
    Arthur: "make sure we're updating the app alongside the desktop app so all functionality is equal across the board".
    The window's own code draws the Worktrees view, the branch label, the sheets and the diff viewer; this file gives
