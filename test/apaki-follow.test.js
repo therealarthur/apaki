@@ -1174,3 +1174,49 @@ test('end to end: a phone follows a pane of the real engine; the window keeps it
   assert.equal(w.events.some((m) => ['taken_over', 'locked', 'open_elsewhere'].includes(m.ev)), false);
   w.close();
 });
+
+test('end to end: Take over from a followed pane (unfollow, then a forced open) stops the desktop pane, starts the phone\'s own Claude Code for the session, and a second watcher hears it moved', { timeout: 240000 }, async (t) => {
+  const h = await startWorld(t);
+  const w = await windowOf(h);
+  w.send({ op: 'open', reqId: 'oA', paneId: 'pA', sessionId: null, cwd: h.dir, warm: true });
+  await w.next((m) => m.ev === 'opened' && m.reqId === 'oA');
+  w.send({ op: 'send', reqId: 'sA1', paneId: 'pA', text: 'hello desk' });
+  const sidA = (await w.next((m) => m.ev === 'session_id' && m.paneId === 'pA')).sessionId;
+  await w.next((m) => m.ev === 'result' && m.reqId === 'sA1');
+  w.send({ op: 'saveState', state: layout([{ pane: 'pA', s: sidA, title: 'Desk', busy: false }]) });
+  assert.equal(h.queries().length, 1);
+
+  // Two phones watch the pane.
+  const a = await pairWithEngine(h, w, { name: 'Taking iPhone' });
+  const b = await pairWithEngine(h, w, { name: 'Watching iPad' });
+  for (const p of [a, b]) {
+    await p.phone.pump(() => p.phone.got('desktopTabs').some((e) => e.tabs[0]?.panes.some((x) => x.paneId === 'pA')), 10000);
+    await p.phone.cmd({ op: 'follow', reqId: 'f1r', paneId: 'f1', desktopPaneId: 'pA' });
+    await p.phone.pump(() => p.phone.got('history', 'f1').length === 1, 10000);
+  }
+  assert.equal(h.queries().length, 1, 'watching started nothing');
+
+  // Take over, as the page does it: unfollow first (the PC refuses an open on a follower), then open with force.
+  let wFrom = w.events.length;
+  const bFrom = b.phone.events.length;
+  await a.phone.cmd({ op: 'unfollow', reqId: 'u1', paneId: 'f1' });
+  await a.phone.cmd({ op: 'open', reqId: 'o1', paneId: 'f1', sessionId: sidA, cwd: h.dir, warm: true, force: true, mode: 'default' });
+  const opened = await (async () => { await a.phone.pump(() => a.phone.events.some((e) => e.ev === 'opened' && e.reqId === 'o1'), 15000); return a.phone.events.find((e) => e.ev === 'opened' && e.reqId === 'o1'); })();
+  assert.equal(opened.tookOver, true);
+  assert.equal(opened.follower, undefined, 'its own pane now, not a follower');
+  assert.ok(a.phone.events.some((e) => e.ev === 'closed' && e.reqId === 'u1' && e.paneId === 'f1'), 'the unfollow was answered');
+  const taken = await w.next((m) => m.ev === 'taken_over' && m.paneId === 'pA', 10000, wFrom);
+  assert.equal(taken.sessionId, sidA, 'the desktop pane says the conversation moved');
+  // The other watcher hears it too, under its own pane id, and the window's line for the pane keeps only that watcher.
+  await b.phone.pump(() => b.phone.events.slice(bFrom).some((e) => e.ev === 'taken_over' && e.paneId === 'f1'), 10000);
+  assert.deepEqual((await w.next((m) => m.ev === 'followers' && m.paneId === 'pA' && m.phones.length === 1, 10000, wFrom)).phones, ['Watching iPad']);
+
+  // The phone's own Claude Code took the session (one resume), and what it does now is its own pane's: the window hears nothing of it.
+  wFrom = w.events.length;
+  await a.phone.cmd({ op: 'send', reqId: 'm1', paneId: 'f1', text: 'from the phone' });
+  await a.phone.pump(() => a.phone.events.some((e) => e.ev === 'result' && e.reqId === 'm1'), 15000);
+  assert.deepEqual(h.queries(), ['query new', `query ${sidA}`], 'one Claude Code for the window\'s pane, one resumed for the phone');
+  await sleep(200);
+  assert.equal(w.events.slice(wFrom).filter((m) => m.paneId === 'f1' || (m.ev === 'peerMessage')).length, 0);
+  w.close();
+});
