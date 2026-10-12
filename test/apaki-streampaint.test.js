@@ -100,7 +100,7 @@ test('a frame that has spent its budget carries the rest over, but always draws 
 });
 
 test('while someone types nothing is drawn, and the reply is drawn as soon as they pause', () => {
-  const r = rig({ gap: 50, hold: 220 });
+  const r = rig({ gap: 50, hold: 220, maxWait: 5000 });
   let draws = 0;
   const draw = () => { draws++; };
   r.painter.queue(key('a'), draw);
