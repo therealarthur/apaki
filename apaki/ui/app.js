@@ -50,6 +50,7 @@ import { BrowserPane } from './browser.js';
 // Git worktrees (2026-10-12): the branch label, the Worktrees view, the actions, and the diff viewer.
 import { GLYPH_WORKTREE, branchName, hasLinked, initWorktrees } from './worktree.js';
 import { DiffPane, newDiffViewerId } from './diff.js';
+import { initTooltips } from './tooltip.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -263,6 +264,9 @@ const host = {
 // Arthur: "The best approach to AI development is using git worktrees to tackle multiple features simultaneously ...
 // make sure we're updating the app alongside the desktop app so all functionality is equal across the board." This
 // file runs on the phone page too, so everything below is on both; a phone's access level decides what the engine runs.
+// Apaki's own hover tooltips in place of the browser's title boxes (tooltip.js, Arthur 2026-10-12).
+initTooltips();
+
 const wtc = initWorktrees({
   send, sheet, menu, web: WEB, shortPath: short,
   cap: () => (WEB ? (window.__apakiLink?.cap?.() || 'full') : 'full'),

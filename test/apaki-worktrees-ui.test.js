@@ -364,7 +364,10 @@ test('the window: Worktrees view, branch label, New worktree, + menu, tab toolti
 
 test('the design rules hold in the CSS: no px font sizes in the window\'s block, no stripe down a row, no status dot', () => {
   const css = read('../apaki/ui/app.css');
-  const block = css.slice(css.indexOf('(2026-10-12; worktree.js, diff.js'));
+  // The worktrees block only: it ends where the next section (the tooltips, tooltip.js) begins.
+  const start = css.indexOf('(2026-10-12; worktree.js, diff.js');
+  const end = css.indexOf('/* ---------- tooltips (tooltip.js', start);
+  const block = css.slice(start, end === -1 ? undefined : end);
   assert.ok(block.length > 2000);
   assert.deepEqual([...block.matchAll(/font(-size)?:[^;]*?\d+(\.\d+)?px/g)].map((m) => m[0]), [], 'the type tokens only (fs-micro, fs-small, fs-body)');
   assert.doesNotMatch(block, /border-left|box-shadow: inset [1-9]/, 'a nested conversation is indented, never striped');

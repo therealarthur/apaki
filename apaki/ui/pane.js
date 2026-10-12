@@ -26,6 +26,7 @@ import { continuesList, hasTodos, normalizeTodos, paintTodos, sameTodos } from '
 import { CODEX_LOCAL, CODEX_MODES, codexFooter, codexMode, earlierText, effortNames, findModel, isCodexId, modelLabel, patchArgs, patchHtml, pickMode, pickModel, usageText, usageWorst } from './codex.js';
 // The branch label in the header when the conversation's folder is in a git repository (worktree.js, 2026-10-12).
 import { GLYPH_WORKTREE, branchLabel, branchName, changeText, relPath, tooltip, trouble } from './worktree.js';
+import { setTip } from './tooltip.js';
 
 // Images go in at most this many pixels on the long edge (the API's sweet
 // spot, and under the 2000 px limit that breaks a session).
@@ -422,9 +423,10 @@ Click for changes, commit, push, pull request, merge`;
     // A Codex account says how much of its plan's windows is used (the server's numbers, kept current by the engine).
     const used = this.kind === 'codex' ? usageWorst(b.limits) : '';
     this.$.billing.innerHTML = `<span class="bn">${esc(b.name)}</span>${key}${b.follow && !/glass/i.test(b.name) ? '<span class="src">Glass</span>' : used ? `<span class="src">${esc(used)}</span>` : ''}`;
-    this.$.billing.title = this.kind === 'codex'
-      ? `Codex bills ${b.name}${b.isKey ? ' (API key, billed per token)' : ''}.${usageText(b.limits) ? ` Plan usage: ${usageText(b.limits)}.` : ''} Myrlin Glass switches the signed-in account.`
-      : `Billing: ${b.name}${b.isKey ? ' (API key, billed per token)' : ''}${b.follow ? ' (follows Myrlin Glass)' : ''} · click to change`;
+    // A card, not a sentence (tooltip.js, 2026-10-12): who pays, how, and what a click does.
+    setTip(this.$.billing, this.kind === 'codex'
+      ? { head: `Codex bills ${b.name}`, rows: [['Billing', b.isKey ? 'API key, per token' : 'Subscription'], ...(usageText(b.limits) ? [['Plan usage', usageText(b.limits)]] : [])], hint: 'Myrlin Glass switches the signed-in account' }
+      : { head: `Billing: ${b.name}`, rows: [['Billed', b.isKey ? 'API key, per token' : 'Subscription'], ...(b.follow ? [['Account', 'Follows Myrlin Glass']] : [])], hint: 'Click to change' });
   }
 
   /** The folder chip under the title: the folder's name, or a quiet "Add to folder". */
@@ -465,9 +467,11 @@ Click for changes, commit, push, pull request, merge`;
     b.classList.toggle('full', pct >= 88);
     const k = (n) => (n == null ? '?' : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
     const auto = typeof c.autoCompact === 'number' ? ` ${this.kind === 'codex' ? 'Codex' : 'Claude Code'} compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off: Compact now (click) summarizes it when you choose.' : '';
-    b.title = c.estimate
-      ? `Context: about ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens (${pct}%) at the last reply, from the transcript; exact once ${this.agentName()} runs here.`
-      : `Context: ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens used (${pct}%).${auto} Click for the breakdown.`;
+    // A card with the same bar as the meter (tooltip.js, 2026-10-12; it was one long sentence in a Windows tooltip).
+    const tone = pct >= 88 ? 'full' : pct >= 70 ? 'warm' : '';
+    setTip(b, c.estimate
+      ? { head: `Context about ${pct}%`, meter: pct / 100, tone: `${tone} estimate`.trim(), rows: [['Used', `about ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens`]], lines: [`Estimated from the transcript at the last reply; exact once ${this.agentName()} runs here.`] }
+      : { head: `Context ${pct}%`, meter: pct / 100, tone, rows: [['Used', `${k(c.totalTokens)} of ${k(c.maxTokens)} tokens`], ...(c.maxTokens && c.totalTokens != null ? [['Left', `${k(Math.max(0, c.maxTokens - c.totalTokens))} tokens`]] : [])], lines: [auto.trim()], hint: 'Click for the breakdown and Compact now' });
     b.classList.toggle('estimate', Boolean(c.estimate));
     b.setAttribute('aria-label', `Context ${pct}% used`);
   }
