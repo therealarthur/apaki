@@ -789,9 +789,12 @@ test('ip limit: new connections from one address are limited per minute', async 
   const limited = await startRelay({ IP_LIMIT: 'on' });
   try {
     const { roomId } = await createRoom();
+    // The limiter counts in fixed one-minute windows, so attempts that straddle a window boundary split between two
+    // windows (seen 2026-10-12: 24 attempts, no 429). Keep going until refused: 41 attempts put 21 in one window even
+    // across one boundary, and the attempts take seconds, so they never span two.
     const codes = [];
-    for (let i = 0; i < 24; i++) codes.push(await upgradeStatus(limited, `/v1/rooms/${roomId}/phone`, ['apaki.v1']));
-    assert.ok(codes.slice(0, 20).every((c) => c === 101 || c === 429), String(codes));
+    for (let i = 0; i < 41 && !codes.includes(429); i++) codes.push(await upgradeStatus(limited, `/v1/rooms/${roomId}/phone`, ['apaki.v1']));
+    assert.ok(codes.every((c) => c === 101 || c === 429), String(codes));
     assert.ok(codes.includes(429), `no 429 in ${codes}`);
   } finally { await limited.worker.stop(); }
 });
