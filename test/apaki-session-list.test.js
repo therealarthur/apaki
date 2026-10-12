@@ -263,7 +263,9 @@ test('Details: every fact in sections, the list\'s at once and the engine\'s whe
   assert.equal(find(f, 'Model').v, 'Opus 5.5');
   assert.equal(find(f, 'Models used').v, 'Sonnet 4.5, Opus 5.5');
   assert.equal(find(f, 'Effort').v, 'high');
-  assert.equal(find(f, 'Permissions').v, 'plan');
+  assert.equal(find(f, 'Permissions').v, 'Plan mode', 'in the words of the mode picker');
+  assert.equal(find(f, 'Listed as').v, 'Fix the flaky checkout test', 'the list\'s name, when Claude Code saved another');
+  assert.equal(find(pending, 'Listed as'), undefined);
   assert.equal(find(f, 'Billed to').v, 'Team plan');
   assert.equal(find(f, 'In Apaki').v, 'on a phone, working');
   assert.equal(find(f, 'Subagents').v, '3');

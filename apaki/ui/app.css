@@ -2911,7 +2911,8 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
 .sessions li.sr-group:hover { background: none; }
 
 /* Folders: a tree. The chevron turns, the sessions ease open under the row, several can be open. */
-.rail-folders .folder-list { max-height: 46vh; }
+/* Open folders scroll inside their section past this, so the session list below keeps its room. */
+.rail-folders .folder-list { max-height: 38vh; }
 .folder-list > li.folder { margin: 0; padding: 0; }
 .folder-row .chev { width: 10px; height: 10px; margin-right: -2px; flex: none; fill: none; stroke: var(--faint); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--dur-fast) var(--ease-out); }
 .folder.open > .folder-row .chev { transform: rotate(90deg); stroke: var(--soft); }
@@ -2924,8 +2925,9 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
 .folder-note { list-style: none; padding: 3px 10px 6px; font-size: var(--fs-small); color: var(--faint); }
 .folder-note .link-btn { padding: 2px 4px; font-size: var(--fs-small); }
 
-/* The menu stays inside the window (the session menu is long), scrolling when it must. */
-.menu { max-height: calc(100vh - 16px); overflow-y: auto; }
+/* A menu opened from a row reaches across the sidebar's edge: the resize handle (z-index 30, over the menu's 20) does
+   not take the clicks meant for its items while a menu is open. */
+body:has(> .menu:not(.out)) .rail-resize { pointer-events: none; }
 
 /* Details: a sheet of label and value rows in sections, copy buttons beside ids and paths. */
 .sheet .sd-title { margin: 0 0 2px; overflow-wrap: anywhere; }

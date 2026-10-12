@@ -204,7 +204,8 @@ export function rowTip(s, c = {}) {
   if (model) rows.push(['Model', modelName(model)]);
   if (s.size) rows.push(['Size', bytesText(s.size)]);
   if (c.folderName) rows.push(['In folder', c.folderName]);
-  const states = rowStates(s, c.live || {}, { showPinned: true }).map((x) => x.label);
+  // Codex is already the Agent row.
+  const states = rowStates(s, c.live || {}, { showPinned: true }).filter((x) => x.k !== 'codex').map((x) => x.label);
   if (s.subagents > 0) states.push(plural(s.subagents, 'subagent'));
   if (s.headless) states.push('Started headless (claude -p, a worker, or relay on from its first message)');
   if (s.bare) states.push('No messages yet');
@@ -213,7 +214,7 @@ export function rowTip(s, c = {}) {
   return {
     head: s.title || '(untitled)',
     rows,
-    hint: c.web ? '' : 'Click to open · Shift+click: beside · Ctrl+click: new tab · Right-click: more',
+    hint: c.web ? '' : 'Shift+click: beside · Ctrl+click: new tab · Right-click: more',
   };
 }
 
@@ -306,6 +307,12 @@ export function folderMenuItems(f, { open = false, shownAlone = false, web = fal
 
 const n = (v) => (Number.isFinite(v) ? Number(v).toLocaleString() : '');
 
+/** A pane's permission mode in the words its picker uses (Claude Code's modes, the Codex app's presets). */
+export const MODE_WORDS = Object.freeze({
+  bypassPermissions: 'Bypass permissions', acceptEdits: 'Auto-accept edits', plan: 'Plan mode', default: 'Ask permissions',
+  'full-access': 'Full access', auto: 'Auto', 'read-only': 'Read only',
+});
+
 /**
  * Everything the Details sheet shows about a session, in sections, from its list record (s), what the engine read
  * (info: null while it reads, { error } when it could not) and what this window knows (c: { pane, worktree, folderName,
@@ -323,8 +330,9 @@ export function sessionFacts(s, info, c = {}) {
   const row = (k, v, o = {}) => ({ k, v: v === undefined || v === null ? '' : String(v), ...o });
   const sections = [];
 
+  // The full name is the sheet's heading; the list's name shows here only when Claude Code saved another one.
   const conv = [
-    row('Name', title),
+    ...(s.title && s.title !== title ? [row('Listed as', s.title)] : []),
     row('Session id', s.id, { mono: true, copy: 'id' }),
     row('Agent', `${codex ? 'Codex' : 'Claude Code'}${i.version ? ` ${i.version}` : ''}${i.originator ? ` (${i.originator})` : ''}`),
   ];
@@ -369,7 +377,7 @@ export function sessionFacts(s, info, c = {}) {
   if ((i.models || []).length > 1) run.push(row('Models used', i.models.map(modelName).join(', ')));
   const effort = (pane && pane.effort) || i.effort || '';
   if (effort) run.push(row('Effort', effort));
-  if (pane?.mode) run.push(row('Permissions', pane.mode));
+  if (pane?.mode) run.push(row('Permissions', MODE_WORDS[pane.mode] || pane.mode));
   if (i.approval || i.sandbox) run.push(row('Codex approvals', [i.approval, i.sandbox].filter(Boolean).join(' · ')));
   const billing = (pane && pane.billing) || '';
   if (billing) run.push(row('Billed to', billing));
