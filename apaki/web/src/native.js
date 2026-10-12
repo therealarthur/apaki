@@ -32,10 +32,15 @@
  * desktop (desktop.js). The left edge of the conversation stays the swipe
  * back; with the pager on, only a swipe that starts on that edge (outside the
  * pages) goes back, so a sideways swipe on a page turns the page.
+ *
+ * 2026-10-12 (phone parity): a long press on a row of the list opens its session menu (app.js
+ * phoneSessionMenu); the window's short lines (apaki:toast) and its "show the conversation" (apaki:chat)
+ * after a menu opened or forked one are drawn here; the PC browser view (browserview.js) starts with the rest.
  */
 
 import { initPager } from './pager.js';
 import { initDesktop } from './desktop.js';
+import { initBrowserView } from './browserview.js';
 
 const $ = (id) => document.getElementById(id);
 const body = document.body;
@@ -257,7 +262,7 @@ function pullToRefresh(scroller, ptr) {
 
 /* ---------- sheets: swipe down to close ---------- */
 
-const SHEETS = '.menu, .sheet, .glass-panel, .task-panel, .pair-screen.sheet-mode .pair-card';
+const SHEETS = '.menu, .sheet, .glass-panel, .task-panel, .bv, .pair-screen.sheet-mode .pair-card';
 
 /** Closes a sheet the way its own code does: Escape for menus and panels, its close button for a sheet that has one. */
 function dismiss(el) {
@@ -283,7 +288,7 @@ function sheetSwipe() {
     const el = e.target.closest?.(SHEETS);
     if (!el || e.touches.length !== 1) return;
     // Only from the top of a sheet that is scrolled to its top (or its grabber), so lists inside still scroll.
-    const scroller = e.target.closest('.gp-body, .menu, .sheet, .tp-body') || el;
+    const scroller = e.target.closest('.gp-body, .menu, .sheet, .tp-body, .bv-body') || el;
     const r = el.getBoundingClientRect();
     if (scroller.scrollTop > 0 && e.touches[0].clientY - r.top > 36) return;
     s = { el, y0: e.touches[0].clientY, t0: performance.now(), dy: 0 };
@@ -302,6 +307,64 @@ function sheetSwipe() {
     if ((dy > 110 || (v > 0.5 && dy > 40)) && dismiss(el)) { haptic(); el.style.transform = 'translate3d(0, 100%, 0)'; return; }
     el.style.transform = '';
   }, { passive: true });
+}
+
+/* A long press on a session opens its menu (2026-10-12) */
+
+/** How long a finger must stay on a row, and how far it may drift before it is a scroll instead. */
+const LONG_PRESS_MS = 460;
+const LONG_PRESS_SLOP_PX = 9;
+
+/**
+ * A long press on a row of the sessions list opens the session menu: app.js sessionMenu listens for contextmenu on
+ * every row. Android's browser sends that event by itself after about half a second; iOS Safari never does, so this
+ * press makes it there (and first on Android: the browser's own one, which follows, is ignored). A finger that moves
+ * more than a few pixels is scrolling the list. The tap a lifted finger would make after a press is swallowed.
+ */
+function longPress() {
+  const list = $('sessions');
+  if (!list) return;
+  let p = null;
+  let swallowUntil = 0;
+  const cancel = () => { if (p) { clearTimeout(p.timer); p = null; } };
+  const fire = () => {
+    if (!p) return;
+    const { li, x, y } = p;
+    p = null;
+    swallowUntil = Date.now() + 700;
+    haptic('medium');
+    li.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+  };
+  list.addEventListener('touchstart', (e) => {
+    const li = e.target.closest?.('li[data-id]');
+    cancel();
+    if (!li || e.touches.length !== 1 || e.target.closest('.subs-n')) return;
+    const t = e.touches[0];
+    p = { li, x: t.clientX, y: t.clientY, timer: setTimeout(fire, LONG_PRESS_MS) };
+  }, { passive: true });
+  list.addEventListener('touchmove', (e) => {
+    if (!p) return;
+    const t = e.touches[0];
+    if (Math.hypot(t.clientX - p.x, t.clientY - p.y) > LONG_PRESS_SLOP_PX) cancel();
+  }, { passive: true });
+  list.addEventListener('touchend', cancel, { passive: true });
+  list.addEventListener('touchcancel', cancel, { passive: true });
+  list.addEventListener('click', (e) => { if (Date.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); } }, true);
+  list.addEventListener('contextmenu', (e) => { if (e.isTrusted && Date.now() < swallowUntil) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+}
+
+/* A short line that leaves by itself */
+
+/** The window's own short lines (copied, refused, forked): the same toast the pairing screens use (boot.js), at the top. */
+function toast(text, ok = true) {
+  let t = document.querySelector('.toast');
+  if (!t) { t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); body.append(t); }
+  t.textContent = text;
+  t.classList.toggle('bad', !ok);
+  t.classList.remove('out');
+  t.hidden = false;
+  clearTimeout(N.toastTimer);
+  N.toastTimer = setTimeout(() => { t.classList.add('out'); setTimeout(() => { t.hidden = true; }, 200); }, 3200);
 }
 
 /* ---------- install ---------- */
@@ -367,6 +430,15 @@ export function initNative({ onPcTap, startInChat = false } = {}) {
   // 2026-10-11: tabs and pages on the conversation screen, the desktop's tabs on the list.
   try { initPager({ haptic }); } catch (e) { console.warn('apaki pager:', e); }
   try { initDesktop({ haptic, showChat }); } catch (e) { console.warn('apaki desktop tabs:', e); }
+  // 2026-10-12: the PC browser view, the session menu's long press, Ask Claude's button, and what app.js asks of this screen.
+  try { initBrowserView({ haptic }); } catch (e) { console.warn('apaki browser view:', e); }
+  longPress();
+  window.addEventListener('apaki:toast', (e) => toast(String(e.detail?.text || ''), e.detail?.ok !== false));
+  window.addEventListener('apaki:chat', () => showChat());
+  // Ask Claude's button shows only when the PC takes the command from a phone (an older Apaki does not).
+  const syncAsk = () => body.classList.toggle('can-ask', Boolean(window.__apakiLink?.supports?.('op:askSearch')));
+  $('q')?.addEventListener('input', syncAsk);
+  syncAsk();
   edgeSwipe();
   sheetSwipe();
   installHint();

@@ -45,7 +45,7 @@ To look at the harness by hand instead:
 node apaki/demo/server.mjs port=8765
 ```
 
-then open `http://127.0.0.1:8765/desktop.html?ws=steer&theme=dark`. Query string: `ws=<workspace>` (a name from `PRESETS` in `harness/data.mjs`), `theme=light|dark|auto`, `cursor=0` hides the pointer overlay, `seed=` and `now=` override the dice and the clock. It is a working window: type, send, steer, open the Glass panel.
+then open `http://127.0.0.1:8765/desktop.html?ws=steer&theme=dark`. For the phone client at 390x844: `http://127.0.0.1:8765/phone.html?ws=phone&theme=light`; `ws=phone-browser` makes the first conversation play a visit to the demo shop as the real engine reports it (Browser tool lines and activity), so the phone's Browser button and view can be tried (the engine answers `browserView` with a drawn picture, and `forkSession` with a copy). Query string: `ws=<workspace>` (a name from `PRESETS` in `harness/data.mjs`), `theme=light|dark|auto`, `cursor=0` hides the pointer overlay, `seed=` and `now=` override the dice and the clock. It is a working window: type, send, steer, open the Glass panel.
 
 ## The scenes
 

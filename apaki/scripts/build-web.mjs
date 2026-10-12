@@ -55,7 +55,8 @@ const REMOTE = path.join(APAKI, 'remote');
 const UI_SKIP = new Set(['phone.js']);
 const uiFiles = () => fs.readdirSync(UI).filter((f) => /\.(js|css)$/.test(f) && !UI_SKIP.has(f) && fs.statSync(path.join(UI, f)).isFile());
 // pager.js and desktop.js (2026-10-11): the conversation screen's tabs and pages, and "On your desktop" on the list.
-const WEB_FILES = ['boot.js', 'link.js', 'shim.js', 'store.js', 'scan.js', 'account.js', 'native.js', 'phonekey.js', 'pager.js', 'desktop.js', 'web.css'];
+// browserview.js (2026-10-12): the page Claude opened in the PC's browser, as a picture.
+const WEB_FILES = ['boot.js', 'link.js', 'shim.js', 'store.js', 'scan.js', 'account.js', 'native.js', 'phonekey.js', 'pager.js', 'desktop.js', 'browserview.js', 'web.css'];
 const REMOTE_FILES = ['protocol.js', 'wire.js'];
 const RELAY_PLACEHOLDER = 'wss://relay.apaki.invalid';
 

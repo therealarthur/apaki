@@ -48,8 +48,10 @@ body.drawer-open .drawer-scrim { opacity: 1; pointer-events: auto; }
 :root[data-theme="dark"] .drawer-scrim { background: rgba(0, 0, 0, .55); }
 body.web .brand { height: 52px; }
 
-body.web .winctl, body.web .tabs-tools, body.web .grip, body.web .gutter, body.web .mic, body.web .ask,
+body.web .winctl, body.web .tabs-tools, body.web .grip, body.web .gutter, body.web .mic,
 body.web .dig-row, body.web .folder-add, body.web .folder-x, body.web .folder-chip, body.web #phone { display: none !important; }
+/* Ask Claude is a phone button since 2026-10-12, for a PC that takes the command (native.js sets body.can-ask); Dig deeper still runs from the PC. */
+body.web:not(.can-ask) .ask { display: none !important; }
 
 /* One pane: with a split, only the focused pane shows. */
 body.web .stage { inset: 0; border-radius: 0; border-width: 1px 0 0; box-shadow: none; }
@@ -529,7 +531,7 @@ body.web.native.paged .chat-chrome.bar-on:not(.strip-on) { padding-bottom: 8px; 
 .cn-pos { flex: none; font-weight: 750; font-variant-numeric: tabular-nums; color: var(--brand-strong); }
 .cn-cwd { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cn-acts { flex: none; display: flex; align-items: center; }
-.cn-btn { position: relative; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 12px; background: none; color: var(--soft); cursor: pointer; transition: background-color 150ms var(--ease-hover); }
+.cn-btn { position: relative; display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 12px; background: none; color: var(--soft); cursor: pointer; transition: background-color 150ms var(--ease-hover); }
 .cn-btn[hidden] { display: none; }
 .cn-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .cn-btn:active { background: hsla(232, 60%, 62%, .12); }
@@ -761,3 +763,82 @@ body.web .df-btn { min-height: 36px; font-size: 14px; }
 body.web .df-file > summary { min-height: 48px; padding: 10px 12px; }
 body.web .df-pre { font-size: 12px; }
 @media (prefers-reduced-motion: reduce) { .cn-wtb { transition: none; } }
+/* =====================================================================
+   2026-10-12, phone parity (Arthur: every desktop feature also works on
+   the phone). Ask Claude, find in a conversation, the session menu and
+   the PC browser's page. Sizes come from app.css's type tokens; the only
+   px sizes are the 16 px fields iOS needs so it does not zoom on focus.
+   Every touch target is at least 44 px.
+   ===================================================================== */
+
+/* Ask Claude: the button under the search box (shown when the PC takes it, body.can-ask). */
+body.web.native .lens { margin: 10px 16px 0; min-height: 44px; gap: 10px; }
+body.web.native .lens-info { font-size: var(--fs-small); -webkit-line-clamp: 3; }
+body.web.native .ask { height: 44px; padding: 0 16px 0 13px; border-radius: 12px; gap: 8px; font-size: var(--fs-body); }
+body.web.native .ask svg { width: 17px; height: 17px; }
+body.web.native .ask:active { background-color: hsla(232, 60%, 62%, .12); }
+
+/* Find in a conversation (find.js): a bar the width of the screen under the conversation bar, big targets, no case toggle. */
+body.web.native .pane > .find-bar {
+  justify-self: stretch; margin: 8px 10px 0; min-height: 52px; padding: 4px 4px 4px 14px; gap: 2px; border-radius: 16px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+}
+body.web.native .find-bar input { height: 44px; font-size: 16px; padding: 0 6px; }
+body.web.native .find-bar .fb-n { min-width: 0; padding: 0 6px 0 2px; font-size: var(--fs-small); }
+body.web.native .find-bar button { height: 44px; min-width: 44px; border-radius: 12px; }
+body.web.native .find-bar button svg, body.web.native .find-bar .fb-i svg { width: 18px; height: 18px; }
+body.web.native .find-bar button:active { background: hsla(232, 60%, 62%, .14); }
+body.web.native .find-bar .fb-case { display: none; }
+body.web.native .find-bar .fb-note { padding: 0 8px 6px; font-size: var(--fs-small); }
+body.web.native .find-bar .fb-note .fb-all { min-height: 36px; padding: 0 12px; font-size: var(--fs-small); border-radius: 10px; }
+body.web.native .pane.finding > .prompt-pin { padding-top: 70px; }
+body.web.native .pane.finding.find-cut > .prompt-pin { padding-top: 120px; }
+
+/* The page Claude opened in the PC's browser (browserview.js): a sheet from the bottom, a picture in it. */
+.bv-scrim { position: fixed; inset: 0; z-index: 70; display: flex; align-items: flex-end; background: rgba(16, 14, 38, .26); animation: bv-fade 200ms var(--ease-out); }
+.bv-scrim[hidden] { display: none; }
+@keyframes bv-fade { from { opacity: 0; } }
+.bv {
+  position: relative; width: 100%; max-height: calc(var(--vvh, 100dvh) - env(safe-area-inset-top) - 18px); display: flex; flex-direction: column; gap: 10px; outline: none;
+  padding: 26px 16px calc(14px + env(safe-area-inset-bottom)); border: 1px solid var(--hairline-strong); border-width: 1px 0 0; border-radius: 22px 22px 0 0;
+  background: var(--card); box-shadow: 0 -8px 40px -16px rgba(var(--shadow-rgb), .45); animation: sheet-up 320ms var(--ios-ease);
+}
+.bv::before { content: ''; position: absolute; top: 7px; left: 50%; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: hsla(238, 14%, 50%, .32); }
+.bv-head { display: grid; gap: 3px; min-width: 0; }
+.bv-k { font: 900 var(--fs-micro)/1 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--brand-strong); }
+.bv-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 var(--fs-title)/1.25 var(--font-display); font-stretch: 112%; letter-spacing: -.012em; color: var(--ink-deep); }
+.bv-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
+.bv-body { position: relative; min-height: 0; flex: 0 1 auto; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; border: 1px solid var(--hairline-strong); border-radius: 14px; background: var(--tint); }
+.bv-shot { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; touch-action: manipulation; }
+.bv-shot[hidden] { display: none; }
+.bv-shot img { display: block; width: 100%; height: auto; }
+.bv.zoom .bv-shot { width: 240%; cursor: zoom-out; }
+.bv-state { padding: 14px; font-size: var(--fs-small); line-height: 1.45; color: var(--soft); }
+.bv-state[hidden] { display: none; }
+.bv-state.bad { color: var(--action-strong); }
+.bv-state.skeleton {
+  min-height: 52vw; padding: 0;
+  background: linear-gradient(100deg, transparent 30%, hsla(var(--pearl-stop-blue), .13) 50%, transparent 70%) 0 0 / 200% 100% no-repeat, var(--tint);
+  animation: sweep 1.7s linear infinite;
+}
+.bv-body:has(.bv-shot:not([hidden])) .bv-state:not([hidden]) { border-top: 1px solid var(--hairline); background: hsla(var(--w), .7); }
+.bv-act { min-height: 0; font: 600 var(--fs-small)/1.35 var(--font-body); color: var(--soft); }
+.bv-act:empty { display: none; }
+.bv-foot { display: flex; justify-content: space-between; gap: 10px; font: 500 var(--fs-micro)/1.35 var(--font-mono); color: var(--faint); }
+.bv-row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.bv-row button {
+  min-height: 44px; padding: 0 16px; border: 1px solid var(--btn2-line); border-radius: 12px; cursor: pointer; font: 720 var(--fs-body)/1 var(--font-body); color: var(--ink-deep);
+  background: linear-gradient(180deg, var(--btn2-a), var(--btn2-b)); box-shadow: 0 1px 2px rgba(var(--shadow-rgb), .06);
+  transition: transform var(--dur-fast) var(--ease-hover), opacity var(--dur-fast) var(--ease-hover);
+}
+.bv-row button[hidden] { display: none; }
+.bv-row button.primary { border-color: transparent; color: #fff; background: linear-gradient(135deg, var(--btn-a), var(--btn-b)); }
+.bv-row button:active { transform: scale(.97); }
+.bv-row button:disabled { opacity: .6; }
+.bv-row [data-k=x] { margin-right: auto; border-color: transparent; background: none; box-shadow: none; color: var(--soft); }
+body.bv-open .toast { z-index: 90; }
+@media (prefers-reduced-motion: reduce) {
+  .bv-scrim, .bv { animation: none; }
+  .bv-state.skeleton { animation: none; }
+  .bv-row button, .bv-row button:active { transition: none; transform: none; }
+}

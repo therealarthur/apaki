@@ -57,6 +57,18 @@ const SETTLE_MS = 120;
 const ICON_ART = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="4.2" width="9" height="9.6" rx="1.6"/><path d="M5 4.2v-.6c0-.8.6-1.4 1.4-1.4h6.4c.8 0 1.4.6 1.4 1.4v6.8c0 .8-.6 1.4-1.4 1.4h-2"/></svg>';
 const ICON_TASKS = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="5.2" cy="5.2" r="2"/><path d="M1.8 12.8c.4-2 1.7-3.1 3.4-3.1s3 1.1 3.4 3.1"/><rect x="9.4" y="3" width="5" height="4" rx="1"/><path d="M10.4 9.6h3M10.4 12h3"/></svg>';
 const ICON_CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+// 2026-10-12: the PC browser's page (a globe), and the conversation menu (three dots).
+const ICON_BROWSER = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6"/><path d="M2.6 8h10.8M8 2.4c1.6 1.6 2.3 3.5 2.3 5.6S9.6 12 8 13.6M8 2.4C6.4 4 5.7 5.9 5.7 8s.7 4 2.3 5.6"/></svg>';
+const ICON_MORE = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.6" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.4" cy="8" r="1.1"/></svg>';
+
+/**
+ * Whether the conversation bar offers the Browser button: Claude used Apaki's browser in this conversation (the pane
+ * marks it, pane.js markBrowser), this phone has Full access (only a Full pane's Claude has the browser) and the PC
+ * takes browserView. Pure (exported for tests).
+ */
+export function browserOffer({ marked, cap, canView }) {
+  return Boolean(marked) && cap === 'full' && Boolean(canView);
+}
 
 /** The tabs as app.js's hidden tab bar shows them. Pure over a list of { title, n, on, busy, unread } (exported for tests). */
 export function stripModel(tabs) {
@@ -92,6 +104,8 @@ export function initPager({ haptic = () => {} } = {}) {
       <div class="cn-acts">
         <button class="cn-btn cn-art" hidden aria-label="Artifacts from this conversation">${ICON_ART}<span class="cn-n"></span></button>
         <button class="cn-btn cn-tasks" hidden aria-label="Subagents and background tasks">${ICON_TASKS}<span class="cn-n"></span></button>
+        <button class="cn-btn cn-browser" hidden aria-label="The page Claude opened in the PC's browser">${ICON_BROWSER}</button>
+        <button class="cn-btn cn-more" hidden aria-label="Conversation menu: find, rename, fork, archive">${ICON_MORE}</button>
         <button class="cn-btn cn-close" aria-label="Close this conversation">${ICON_CLOSE}</button>
       </div>
     </div>
@@ -207,6 +221,10 @@ export function initPager({ haptic = () => {} } = {}) {
     };
     mirror('.cn-art', '.art-reopen');
     mirror('.cn-tasks', '.tasks-btn');
+    // 2026-10-12: the page Claude opened in the PC's browser (Full access, a PC that has the view), and the menu.
+    const link = window.__apakiLink;
+    chrome.querySelector('.cn-browser').hidden = !browserOffer({ marked: el?.dataset.browser === '1', cap: link?.cap?.() || 'full', canView: link?.supports?.('op:browserView') });
+    chrome.querySelector('.cn-more').hidden = !el;
     chrome.querySelector('.cn-close').hidden = !el;
     P.shown = i;
     // The visible pane's own bar changes (title, tasks, artifacts): follow it.
@@ -227,6 +245,10 @@ export function initPager({ haptic = () => {} } = {}) {
   chrome.querySelector('.cn-art').onclick = press('.art-reopen');
   chrome.querySelector('.cn-tasks').onclick = press('.tasks-btn');
   chrome.querySelector('.cn-close').onclick = () => { haptic(); press('.pane-bar .close')(); };
+  // 2026-10-12: both ask for a screen of their own, which app.js (the menu) and browserview.js (the page) draw.
+  const visibleId = () => panesOf(stage())[current(stage())]?.dataset.pane || null;
+  chrome.querySelector('.cn-more').onclick = () => { haptic(); window.dispatchEvent(new CustomEvent('apaki:pane-menu', { detail: { pane: visibleId() } })); };
+  chrome.querySelector('.cn-browser').onclick = () => { haptic(); window.dispatchEvent(new CustomEvent('apaki:browser-view', { detail: { pane: visibleId() } })); };
   wtSlot.addEventListener('click', (e) => { if (e.target.closest('.cn-wtb')) { haptic(); press('.pane-bar .wt-btn')(); } });
 
   /* ---------- paging ---------- */
@@ -278,6 +300,8 @@ export function initPager({ haptic = () => {} } = {}) {
     clearTimeout(P.settleTimer);
     P.settleTimer = setTimeout(() => { if (!P.touching) settle(); }, SETTLE_MS);
   }, { capture: true, passive: true });
+  // A conversation used the PC's browser (pane.js markBrowser): its Browser button may show now.
+  stages.addEventListener('apaki:browser-used', schedule);
   stages.addEventListener('touchstart', () => { P.touching = true; }, { capture: true, passive: true });
   const lift = () => {
     P.touching = false;

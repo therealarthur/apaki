@@ -30,9 +30,11 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-remote-test-'));
 
 /* ---------------------------------------------------------------- policy */
 
-test('policy: only allowlisted ops pass; billing, remote*, voice, folders and shell-ish ops are refused', () => {
+test('policy: only allowlisted ops pass; billing, remote*, voice, Dig deeper and shell-ish ops are refused', () => {
   const ctx = { deviceId: DEV, paneExists: () => true, paneCount: () => 0 };
-  for (const op of ['billing', 'billingOptions', 'remoteEnable', 'remotePairStart', 'remoteRevoke', 'remoteStatus', 'transcribe', 'folder', 'askSearch', 'digPrompt', 'warm', 'exec', 'readFile', '__proto__', 'constructor']) {
+  // folder and askSearch left this list on 2026-10-12: a phone may move a session to a folder and ask Claude
+  // (test/apaki-phone-parity.test.js holds those, with their access levels).
+  for (const op of ['billing', 'billingOptions', 'remoteEnable', 'remotePairStart', 'remoteRevoke', 'remoteStatus', 'transcribe', 'digPrompt', 'warm', 'exec', 'readFile', 'stopSession', 'revealFolder', 'openExternal', '__proto__', 'constructor']) {
     const r = checkPhoneCommand({ op, reqId: 'r1', paneId: 'p1' }, ctx);
     assert.equal(r.ok, false, op);
     assert.equal(r.reqId, 'r1');

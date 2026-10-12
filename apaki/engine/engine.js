@@ -70,6 +70,8 @@
  *   ev browserActivity { paneId, browserId, action, text }   what Claude just did there
  *   op browserTool { paneId, tool, input } -> ev browserToolResult { ok, text, image? }
  *                  (runs one of Claude's browser tools for a pane: checks, later the phone)
+ *   op browserView { paneId } -> ev browserView { ok, text, state, image, mime, width, height, at }
+ *                  (2026-10-12: one quiet JPEG of the page in the pane's browser, for a phone's Browser view)
  *
  * The background host (2026-10-10, Arthur: closing Apaki must not close the
  * Claude sessions that are open; see host.js for the whole design): the
@@ -1194,6 +1196,15 @@ const handlers = {
     const b = toolsFor(p).browser;
     const r = b ? await b.call(String(c.tool || ''), c.input || {}) : { ok: false, text: 'This window has no built-in browser.' };
     emit({ ev: 'browserToolResult', reqId: c.reqId, paneId: p.id, tool: c.tool, ok: r.ok, text: r.text, image: r.image || null, width: r.width || null, height: r.height || null });
+  },
+  // What a phone sees of the page this pane's Claude opened in the built-in browser (2026-10-12, remote-policy.js
+  // browserView): one quiet JPEG of the part in view and the page's address, title and loading state. Read only; the
+  // phone refreshes it when a browserActivity line arrives. Only the pane's own browser (the shell finds it by owner).
+  browserView: async (c) => {
+    const p = getPane(c.paneId);
+    const b = toolsFor(p).browser;
+    const r = b ? await b.view() : { ok: false, text: 'This PC has no built-in browser right now.' };
+    emit({ ev: 'browserView', reqId: c.reqId, paneId: p.id, ok: Boolean(r.ok), text: r.ok ? '' : String(r.text || ''), state: r.state || null, image: r.image || null, mime: r.mimeType || null, width: r.width || null, height: r.height || null, at: Date.now() });
   },
   transcribe: (c) => transcribe(c.reqId, c.wav, c.paneId || null),
   sessions: (c) => sessions(c.reqId),

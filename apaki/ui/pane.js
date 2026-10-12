@@ -164,7 +164,7 @@ export class Pane {
       pin: q('.prompt-pin'), artReopen: q('.art-reopen'), tasksBtn: q('.tasks-btn'), kindMark: q('.kind-mark'),
     };
     // Scrolled near the top of a long conversation: its earlier messages load (see loadEarlier).
-    this.$.ground.addEventListener('scroll', () => { this.schedulePin(); this.host.dirty?.(); this.maybeLoadEarlier(); }, { passive: true });
+    this.$.ground.addEventListener('scroll', () => { this.noteScroll(); this.schedulePin(); this.host.dirty?.(); this.maybeLoadEarlier(); }, { passive: true });
     // The composer floats over the conversation (frosted); keep the last
     // message clear of it as it grows and shrinks.
     new ResizeObserver(() => {
@@ -178,7 +178,8 @@ export class Pane {
     if (this.$.pin) new ResizeObserver(() => this.el.style.setProperty('--pin-h', `${this.$.pin.offsetHeight}px`)).observe(this.$.pin);
     // A pane drawn while hidden (a background tab, the phone's list screen) measured nothing, so its pin was stale
     // when it came into view and covered your message (2026-10-12): look again whenever the conversation's box changes size.
-    new ResizeObserver(() => this.schedulePin()).observe(this.$.ground);
+    // And a pane that was hidden (a background tab) is put back where the reader was, or at the end (settleScroll, 2026-10-12).
+    new ResizeObserver(() => { this.settleScroll(); this.schedulePin(); }).observe(this.$.ground);
     this.renderChips();
     this.setTitle(this.title);
     this.wire();
@@ -581,7 +582,54 @@ Click for changes, commit, push, pull request, merge`;
     // Earlier messages drawn off-screen to go on top (prependHistory) keep the reader where they are.
     if (this._prepending) return;
     const g = this.$.ground;
+    // No box (a background tab): there is nothing to scroll yet; the reader is put at the end when it shows (settleScroll).
+    if (!this.hasBox()) { if (force) this.scrollMemo = { atEnd: true, top: 0 }; return; }
     if (force || g.scrollHeight - g.scrollTop - g.clientHeight < 160) g.scrollTop = g.scrollHeight;
+    this.schedulePin();
+  }
+
+  /* Where the reader is, in a pane with no box (2026-10-12) */
+
+  // A background tab is display: none, so its conversation has no box: scrollHeight and clientHeight read 0 and a
+  // scrollTop written to it is lost. A tab opened in the background, or restored with the window, therefore opened
+  // scrolled to the top instead of the end of its conversation (found in the last desktop UI pass); the workspace
+  // also saved "at the end, 0" for such a pane, which lost where you were reading. The pane now keeps where the
+  // reader is (scrollMemo: { atEnd, top }, updated as they scroll and when something asks for the end) and puts
+  // them there the moment it has a box (settleScroll, from the ground's ResizeObserver). The phone's tabs are the
+  // same stages, so the phone has the same fix.
+
+  /** True while the conversation has a box on screen (a hidden tab does not). */
+  hasBox() {
+    return (this.$.ground?.clientHeight || 0) > 0;
+  }
+
+  /** Where the reader is: { atEnd, top } as drawn; with no box, what it was when last seen or last asked for. */
+  scrollState() {
+    const g = this.$.ground;
+    if (this.hasBox()) return { atEnd: g.scrollHeight - g.scrollTop - g.clientHeight < 40, top: Math.round(g.scrollTop) };
+    return this.scrollMemo || { atEnd: true, top: 0 };
+  }
+
+  /** The ground scrolled: remember it (only while it has a box; a hidden one reports 0). */
+  noteScroll() {
+    if (this.hasBox()) this.scrollMemo = this.scrollState();
+  }
+
+  /**
+   * The ground's size changed. When it has just got a box after having none, the reader goes where the memo says:
+   * the end (a new tab, a conversation that grew while hidden) or the offset they had.
+   */
+  settleScroll() {
+    const had = this._hadBox;
+    this._hadBox = this.hasBox();
+    if (!this._hadBox || had !== false) return;
+    const want = this.scrollMemo || { atEnd: true, top: 0 };
+    const g = this.$.ground;
+    const go = () => { g.scrollTop = want.atEnd ? g.scrollHeight : want.top; };
+    // The composer's height is read from its box a moment later (the wrap's ResizeObserver): measure it now, so the end is the real end.
+    this.el.style.setProperty('--composer-h', `${this.$.wrap.offsetHeight}px`);
+    go();
+    requestAnimationFrame(go);
     this.schedulePin();
   }
 
@@ -721,6 +769,9 @@ Click for changes, commit, push, pull request, merge`;
   addTool(block) {
     // Apaki's show tool is drawn as a card the user can open again later.
     if (block.name === SHOW_TOOL) { this.addShowCard(block); return; }
+    // Claude used Apaki's browser here (2026-10-12): the phone page lights its Browser button for this conversation
+    // (pager.js, browserview.js). Marked once, also when the conversation is drawn from history.
+    if (block.name.startsWith(BROWSER_TOOL)) this.markBrowser();
     // A TodoWrite call is a checklist, not a tool line (an input without a list, or an empty one with nothing to clear, stays a line).
     if (block.name === 'TodoWrite' && hasTodos(block.input) && (normalizeTodos(block.input).length || this.liveTodoCard())) { this.addTodos(block); return; }
     const d = el('details', 'tool');
@@ -980,7 +1031,16 @@ Click for changes, commit, push, pull request, merge`;
     this.placeArtifact({ id: e.id, rev: e.rev, title: e.title, kind: e.kind, sub: via }, e.toolUseId ? this.tools.get(e.toolUseId) : null);
   }
 
+  /** Marks that this conversation has a page in the PC's built-in browser (the phone's Browser button, 2026-10-12). Once. */
+  markBrowser() {
+    if (!this.el?.dataset || this.el.dataset.browser === '1') return;
+    this.el.dataset.browser = '1';
+    this.el.dispatchEvent?.(new CustomEvent('apaki:browser-used', { bubbles: true }));
+  }
+
   onOpenUrl(e) {
+    // The page went to the PC's built-in browser (browserId): this conversation has one a phone can look at.
+    if (e.browserId) this.markBrowser();
     const tool = e.toolUseId ? this.tools.get(e.toolUseId) : null;
     if (tool?.classList.contains('art-card')) { this.placeLink({ url: e.url, title: e.title, reason: e.reason, toolUseId: e.toolUseId }, tool); return; }
     this.clearEmpty();
@@ -1128,7 +1188,11 @@ Click for changes, commit, push, pull request, merge`;
     this.flushOpenNotes();
     this.scrollDown(true);
     // Back where you were reading when the workspace was saved (crash recovery).
-    if (this.restoreScroll && !this.restoreScroll.atEnd) this.$.ground.scrollTop = this.restoreScroll.top;
+    // (A pane in a background tab has no box to scroll: the place waits in the memo for settleScroll.)
+    if (this.restoreScroll && !this.restoreScroll.atEnd) {
+      if (this.hasBox()) this.$.ground.scrollTop = this.restoreScroll.top;
+      else this.scrollMemo = { atEnd: false, top: this.restoreScroll.top };
+    }
     this.restoreScroll = null;
     this.renderArtifactsButton();
     this.renderTasksButton();
