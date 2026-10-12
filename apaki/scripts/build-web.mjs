@@ -343,6 +343,9 @@ export function serve(dir, port, { log = (line) => process.stdout.write(`${line}
     log(`${req.method} ${url.pathname}${url.search}`);
     let rel = decodeURIComponent(url.pathname);
     if (rel.endsWith('/')) rel += 'index.html';
+    // Like the site (Workers assets, html_handling auto-trailing-slash): a page is also served at its name without .html
+    // (sandbox.html at sandbox, 2026-10-12), which is the address the PC's page check asks for.
+    if (!path.extname(rel) && fs.existsSync(path.resolve(root, `.${rel}.html`))) rel += '.html';
     const file = path.resolve(root, `.${rel}`);
     if (!file.startsWith(root) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found'); return; }
     res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' });
