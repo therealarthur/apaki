@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { CODEX_SHARED, createCodex, isCodexPane, reviewTarget } from '../apaki/engine/codex-panes.js';
+import { CODEX_SHARED, createCodex, isCodexPane, reviewTarget, skillCall } from '../apaki/engine/codex-panes.js';
 
 const THREAD = '01a00000-0000-7000-8000-000000000001';
 const THREAD2 = '01a00000-0000-7000-8000-000000000002';
@@ -570,4 +570,31 @@ test('a Chat only phone may read the goal but cannot set it or take a turn out o
   await open.codex.open('r', q, `codex:${THREAD}`, null, {});
   await open.codex.send('d', q, '/revert', []);
   assert.equal(open.client.of('thread/revert').length, 1);
+});
+
+test('a skill is called as /name words; command words are never skills, and the slash menu lists enabled skills after the commands', async () => {
+  assert.deepEqual(skillCall('/deploy staging now'), { name: 'deploy', rest: 'staging now' });
+  assert.deepEqual(skillCall('/pdf-tools'), { name: 'pdf-tools', rest: '' });
+  assert.equal(skillCall('/review main'), null);
+  assert.equal(skillCall('/Model x'), null);
+  assert.equal(skillCall('deploy'), null);
+  assert.equal(skillCall('/'), null);
+  const skills = { data: [{ cwd: 'C:\proj', errors: [], skills: [
+    { name: 'deploy', description: 'long text', path: 'C:\s\deploy\SKILL.md', enabled: true, interface: { shortDescription: 'Ship it' } },
+    { name: 'status', description: 'shadows a command', path: 'C:\s\status\SKILL.md', enabled: true },
+    { name: 'old', description: 'off', path: 'C:\s\old\SKILL.md', enabled: false },
+  ] }] };
+  const s = setup({ table: { 'skills/list': skills } });
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  const list = await s.codex.commandsFor(p);
+  assert.deepEqual(list.slice(-1), [{ name: 'deploy', description: 'Ship it', argumentHint: '', skill: true }]);
+  assert.equal(list.filter((c) => c.name === 'status').length, 1);
+  assert.equal(list.some((c) => c.name === 'old'), false);
+  // a skill that is not there is an ordinary message
+  const sent = s.codex.send('k1', p, '/nothing here', []);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(s.client.of('turn/start')[0].input, [{ type: 'text', text: '/nothing here', text_elements: [] }]);
+  s.client.emit('notification', 'turn/completed', { threadId: THREAD, turn: { id: 'T1', status: 'completed' } });
+  await sent;
 });

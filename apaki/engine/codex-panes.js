@@ -90,6 +90,15 @@ export const INIT_PROMPT = [
 /** True for a pane that runs a Codex thread. */
 export const isCodexPane = (p) => p?.kind === 'codex';
 
+/** Slash words that are commands (Codex's, Apaki's own, the window's): a skill with such a name is never offered or called. */
+const RESERVED = new Set([...COMMANDS.map((c) => c.name), 'new', 'clear', 'resume', 'continue', 'model', 'effort', 'approvals', 'mode', 'permissions', 'folder', 'fork', 'key', 'warm']);
+
+/** `/name rest` from a message, or null: the shape of a skill call. */
+export function skillCall(body) {
+  const m = /^\/([A-Za-z0-9][\w:.-]*)(?:\s+([\s\S]*))?$/.exec(String(body || '').trim());
+  return m && !RESERVED.has(m[1].toLowerCase()) ? { name: m[1], rest: (m[2] || '').trim() } : null;
+}
+
 /**
  * What /review is asked to look at: nothing after the word means the uncommitted changes; "branch main" the changes
  * against that base branch; "commit abc123" one commit; anything else is read as the review instructions.
@@ -160,7 +169,7 @@ export function createCodex(env) {
   const turnEnded = env.turnEnded || (() => {});
   const rollouts = createRolloutScanner({ home: env.home || undefined, roots: env.rolloutRoots || null });
   const byThread = new Map();
-  const shared = { models: null, config: null, account: null, rows: null, rowsAt: 0, idle: null };
+  const shared = { models: null, config: null, account: null, rows: null, rowsAt: 0, idle: null, skills: new Map() };
   let client = null;
   let history = null;
 
@@ -543,11 +552,17 @@ export function createCodex(env) {
     if (/^\/init\s*$/i.test(body) && !attachments.length) text = INIT_PROMPT;
     try {
       await ensureLoaded(p);
+      // /<skill> [words]: one of Codex's skills (skills/list), sent the way the Codex app sends a picked skill: its $name in
+      // the text and the skill itself as an input item.
+      const call = attachments.length ? null : skillCall(body);
+      const skill = call ? (await skillsOf(p)).find((s) => s.name === call.name) : null;
+      if (skill) text = `$${skill.name} ${call.rest}`.trim();
       const { images, files } = split(attachments);
       const saved = saveFiles(p, files);
       // Files /mention attached ride with this message, once.
       const input = turnInput(text, images, [...saved, ...(cx.mentions || [])]);
       cx.mentions = [];
+      if (skill) input.push({ type: 'skill', name: skill.name, path: skill.path });
       if (!input.length) { emit({ ev: 'result', reqId, paneId: p.id, sessionId: p.sessionId, subtype: 'success', isError: false, durationMs: 0, usage: {}, cost: null, errors: null, result: null, codex: true }); return; }
       const clientId = `apaki-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       cx.sentIds.add(clientId);
@@ -619,6 +634,32 @@ export function createCodex(env) {
   }
 
   /* ---------- slash commands ---------- */
+
+  /** The skills Codex has for this thread's folder (skills/list), kept a minute: [{ name, description, path }]. */
+  async function skillsOf(p) {
+    const cx = p.codex;
+    const cwd = cx.cwd || os.homedir();
+    const hit = shared.skills.get(cwd);
+    if (hit && Date.now() - hit.at < 60000) return hit.list;
+    let list = [];
+    try {
+      const r = await rpc('skills/list', { cwds: [cwd] });
+      const data = Array.isArray(r?.data) ? r.data : [];
+      const entry = data.find((e) => e?.cwd === cwd) || data[0] || null;
+      list = (Array.isArray(entry?.skills) ? entry.skills : []).filter((s) => s && s.enabled !== false && typeof s.name === 'string' && typeof s.path === 'string')
+        .map((s) => ({ name: s.name, description: String(s.interface?.shortDescription || s.shortDescription || s.description || '').replace(/\s+/g, ' ').slice(0, 140), path: s.path }));
+    } catch (e) { log(`codex skills/list failed: ${e.message}`); }
+    shared.skills.set(cwd, { at: Date.now(), list });
+    return list;
+  }
+
+  /** The slash menu of a Codex pane: its own commands, then the skills Codex has here (a skill never hides a command). */
+  async function commandsFor(p) {
+    const own = COMMANDS.map((c) => ({ ...c }));
+    if (!p?.codex?.threadId && !p?.codex?.cwd) return own;
+    const skills = (await skillsOf(p)).filter((s) => !RESERVED.has(s.name)).map((s) => ({ name: s.name, description: s.description || 'A Codex skill', argumentHint: '', skill: true }));
+    return [...own, ...skills];
+  }
 
   async function slashCommand(reqId, p, name, arg = '') {
     const cx = p.codex;
@@ -1108,7 +1149,7 @@ export function createCodex(env) {
 
   return {
     isCodexPane, open, attach, send, steer, interrupt, setModel, setEffort, setMode, models, list, sendContext, historyBefore, historyCheck, sendHistory,
-    runTool, openedLink, pickPane, release, close, rename, fork, recap, shutdown, touchIdle, rpc, commands: () => COMMANDS.map((c) => ({ ...c })),
+    runTool, openedLink, pickPane, release, close, rename, fork, recap, shutdown, touchIdle, rpc, commands: () => COMMANDS.map((c) => ({ ...c })), commandsFor,
     /** The thread rows read by the last list() (empty until the Codex view asks). */
     cachedRows: () => shared.rows || [],
     /** Tests: the client and the panes by thread. */

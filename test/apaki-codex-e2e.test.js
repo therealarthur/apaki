@@ -515,7 +515,7 @@ ${JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'use
   const p = await codexPane(w, h, 'c11', { sessionId: SMALL });
   w.send({ op: 'commands', reqId: 'cm', paneId: 'c11' });
   const cmds = await waitFor(w, 'commands', (m) => m.ev === 'commands' && m.paneId === 'c11');
-  assert.deepEqual(cmds.commands.map((c) => c.name), ['compact', 'status', 'review', 'diff', 'mcp', 'goal', 'revert', 'init', 'mention']);
+  assert.deepEqual(cmds.commands.map((c) => c.name), ['compact', 'status', 'review', 'diff', 'mcp', 'goal', 'revert', 'init', 'mention', 'deploy']);
 
   let mark = p.mark();
   await p.result(p.send('/status'));
@@ -527,6 +527,15 @@ ${JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'use
   await p.result(p.send('/compact'));
   assert.equal(h.requests('thread/compact/start').length, 1);
   assert.ok(p.sdk(mark).some((m) => m.subtype === 'compact_boundary'));
+
+  // /deploy is a skill the fake server lists: sent as its $name in the text and the skill as an input item.
+  assert.equal(cmds.commands.find((c) => c.name === 'deploy').description, 'Ship the current branch');
+  mark = p.mark();
+  await p.result(p.send('/deploy now'));
+  const turn = h.requests('turn/start').at(-1);
+  assert.deepEqual(turn.input.map((i) => i.type), ['text', 'skill']);
+  assert.equal(turn.input[0].text, '$deploy now');
+  assert.deepEqual([turn.input[1].name, turn.input[1].path], ['deploy', 'C:\skills\deploy\SKILL.md']);
 
   // /revert: the newest turn leaves the thread (the fake drops it from its history) and the pane is drawn again.
   mark = p.mark();

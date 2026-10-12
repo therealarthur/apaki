@@ -215,6 +215,11 @@ const handlers = {
     return {};
   },
   'mcpServerStatus/list': () => ({ data: [{ name: 'apaki', authStatus: 'unsupported', tools: { show: {} } }], nextCursor: null }),
+  'skills/list': (p) => ({ data: (p.cwds || [process.cwd()]).map((cwd) => ({ cwd, errors: [], skills: [
+    { name: 'deploy', description: 'Deploy the app to staging, then check it', path: 'C:\skills\deploy\SKILL.md', enabled: true, scope: 'user', interface: { shortDescription: 'Ship the current branch' } },
+    { name: 'review', description: 'Shadows a command', path: 'C:\skills\review\SKILL.md', enabled: true, scope: 'user' },
+    { name: 'off', description: 'Switched off', path: 'C:\skills\off\SKILL.md', enabled: false, scope: 'user' },
+  ] })) }),
   'thread/revert': (p) => {
     const turns = hist.get(p.threadId) || [];
     const at = turns.findIndex((t) => t.id === p.beforeTurnId);

@@ -1447,7 +1447,7 @@ const handlers = {
   commands: async (c) => {
     const p = getPane(c.paneId);
     const shape = (list) => list.map((x) => ({ name: x.name, description: x.description || '', argumentHint: x.argumentHint || '' }));
-    if (isCodexPane(p)) { emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: codex.commands() }); return; }
+    if (isCodexPane(p)) { emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: await codex.commandsFor(p).catch(() => codex.commands()) }); return; }
     if (!p.runner) { emit({ ev: 'commands', reqId: c.reqId, paneId: p.id, commands: [] }); return; }
     if (!p.runner.running) {
       const cached = state.commandsByCwd.get(p.runner.cwd) || [...state.commandsByCwd.values()][0] || [];
