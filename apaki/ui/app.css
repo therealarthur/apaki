@@ -2848,4 +2848,4 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
 .tt-keys { white-space: nowrap; }
 =======
 /* The shared view (2026-10-11): a phone is watching this conversation. Plain text in the meta line, no dot, no badge, no motion. */
-.meta-line .also-on { flex: none; font: 600 11px/1.4 var(--font-mono); color: var(--faint); white-space: nowrap; }
+.meta-line .also-on { flex: none; font-family: var(--font-mono); font-size: var(--fs-micro); font-weight: 600; line-height: 1.4; color: var(--faint); white-space: nowrap; }

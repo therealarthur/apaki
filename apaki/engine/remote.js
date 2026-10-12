@@ -1885,7 +1885,7 @@ export class RemoteBridge {
     }
     // The shared view (2026-10-11): an event of a desktop pane some phone follows also goes to that phone. The desktop still
     // gets it (false), so nothing about the desktop changes.
-    if (false) this.mirror(ev);
+    if (this.following.size && ev && typeof ev.paneId === 'string') this.mirror(ev);
     return false;
   }
 
