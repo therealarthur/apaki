@@ -2019,11 +2019,11 @@
       "upstream": ["chatgpt-desktop:feature:side-panel", "chatgpt-desktop:feature:browser"],
       "status": "partial",
       "surfaces": { "desktop": "partial", "phone": "partial" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/artifacts.js", "apaki/ui/browser.js", "apaki/engine/codex-panes.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/artifacts.js", "apaki/ui/browser.js", "apaki/engine/codex-panes.js", "apaki/ui/codex.js", "apaki/engine/remote-policy.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "99f942c"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Diffs (turn card, viewer), images (card), command output (tool lines), web pages (the browser pane) and what Codex shows through apaki show. Not done: a file preview of any file Codex touched, and a terminal view."
+      "notes": "Diffs (the turn's changes as a card that opens in the viewer), images (shown as the Codex app shows them), command output (live in the tool line, then the final result) and web pages (the browser pane) are shown. A changed file's name in a patch header now opens that file in the viewer (op codexOpenFile; only files this conversation changed, also those read from its history; a phone may ask the same through the policy). Not done: a preview of a file Codex only read, and a terminal view of a running command in its own pane."
     },
     {
       "id": "codex-glass-accounts-and-limits",

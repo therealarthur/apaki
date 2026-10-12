@@ -121,8 +121,10 @@ Browser and viewer knowledge (as Claude has in apaki-tools.js)
       Apaki shows the same thing in its browser and viewer panes, with the
       versatility of the Codex app's side panel (diffs, files, images,
       terminal output, web pages).
-      Partly: diffs, images, command output and web pages; not a preview of
-      any file Codex touched, nor a terminal view.
+      Partly: diffs, images, command output and web pages, and a changed
+      file's name in a patch header opens that file in the viewer (op
+      codexOpenFile, only files this conversation changed); not a preview of
+      a file Codex only read, nor a terminal view.
 
 Accounts and the rest
 - [ ] Myrlin Glass for Codex: the signed-in account (account/updated), rate
