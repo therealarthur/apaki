@@ -11,9 +11,14 @@
  *   model, effort, mode, commands, close
  *   artifactGet                              when the engine has it (artifacts track)
  *   historyBefore, historyBlock              read only: more of a conversation it has open
+ *   rename, forkSession, archive, folder     the session list's own actions (2026-10-12, below)
+ *   askSearch                                Ask Claude over past conversations (2026-10-12, below)
+ *   browserView                              one picture of the PC browser page its own conversation opened
  * Never billing, never the remote* ops (pairing, devices), never voice,
- * folders, Ask Claude or Dig deeper (they write files or spend outside a
- * conversation), and nothing that reaches the shell or the filesystem.
+ * Dig deeper (it starts an Opus session outside a conversation), folders
+ * beyond move and create, stopSession, revealFolder or openExternal (they act
+ * on the PC's screen or on another window's panes), and nothing that reaches
+ * the shell or the filesystem.
  *
  * Panes: a phone names its panes like the desktop does (p1, pab3...). The
  * engine sees them as phone:<deviceId>:<name>, so a phone can never touch a
@@ -43,6 +48,20 @@
  * capCanUseTool and capPreToolUse to every phone pane, so the tools are
  * also refused inside Claude Code, in every permission mode.
  *
+ * Phone parity (2026-10-12; Arthur: every desktop feature also works on the
+ * phone). The session list's actions are the person's own, not Claude's, but
+ * they change what the PC keeps (a name in the transcript, a copy of it, the
+ * archive flag, a folder), and Chat only is the read-only level, so:
+ *   rename, forkSession, archive, folder   Full and No shell; Chat only is refused
+ *                                          (capAllowsOp). folder takes only the
+ *                                          actions move and create; renaming and
+ *                                          deleting folders stay on the PC.
+ *   askSearch   any access: Haiku with no tools reads the PC's search indexes
+ *               and changes nothing; it costs about a cent, so one question at
+ *               a time per phone (AskGate), billed to the phone's focused pane.
+ *   browserView Full only, like the browser tools: only a Full pane's Claude
+ *               can open a page there, and a phone sees only its own pane's.
+ *
  * Permission prompts (2026-10-12, permissions.js): in Ask permissions and
  * Auto-accept edits a tool Claude Code would ask about is asked on the
  * phone, through the same answer op as a question. capCanUseTool refuses
@@ -70,10 +89,15 @@ export const PHONE_OPS = Object.freeze([
   'historyBefore', 'historyBlock',
   // Whether its conversation moved on elsewhere, so the phone shows no stale transcript (2026-10-11).
   'historyCheck',
+  // 2026-10-12 (phone parity): the session menu, Ask Claude and the PC browser view; who may use which is capAllowsOp.
+  'rename', 'forkSession', 'archive', 'folder', 'askSearch', 'browserView',
 ]);
 
 /** Ops that act on one pane (paneId required). */
-const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck']);
+const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView']);
+
+/** Session-list actions that change what the PC keeps (2026-10-12): not for a Chat only phone. */
+export const SESSION_WRITE_OPS = Object.freeze(['rename', 'forkSession', 'archive', 'folder']);
 
 /** Most panes one phone may have open at once (the desktop's limit per tab). */
 export const MAX_PHONE_PANES = 6;
@@ -165,6 +189,49 @@ export function capDeniedText(cap, name) {
   return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, so Claude may not use ${String(name || 'that tool').slice(0, 80)} from it. Answer in text instead; the person can change the phone's access in Apaki's Phone sheet on the PC.`;
 }
 
+/**
+ * Whether a phone with this capability may send this op at all (2026-10-12). Everything that is not named here is
+ * open to every access level the way it always was (the cases in checkPhoneCommand still check the fields).
+ *   rename, forkSession, archive, folder   Full and No shell
+ *   browserView                            Full
+ */
+export function capAllowsOp(cap, op) {
+  if (SESSION_WRITE_OPS.includes(op)) return cap === 'full' || cap === 'noshell';
+  if (op === 'browserView') return cap === 'full';
+  return true;
+}
+
+/** Why an op was refused for this capability, for the person on the phone. */
+export function capOpText(cap, op) {
+  if (op === 'browserView') return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC: Claude cannot use the browser from it, so there is no page to show.`;
+  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, which only reads: it cannot ${{ rename: 'rename', forkSession: 'fork', archive: 'archive', folder: 'move' }[op] || 'change'} sessions. Change the phone's access in Apaki's Phone sheet on the PC.`;
+}
+
+/**
+ * One Ask Claude at a time per phone (2026-10-12). Each question is a Haiku call that costs about a cent; a page
+ * that loops, or two taps, must not stack them. `begin` returns null when it may go, or the reason it may not; the
+ * answer (or a timeout) frees the phone again.
+ */
+export class AskGate {
+  constructor(maxMs = 90_000) {
+    this.maxMs = maxMs;
+    this.open = new Map();
+  }
+
+  begin(deviceId, now = Date.now(), reqId = null) {
+    const cur = this.open.get(deviceId);
+    if (cur && now - cur.at < this.maxMs) return 'Claude is still answering your last question. Wait for it, then ask again.';
+    this.open.set(deviceId, { at: now, reqId });
+    return null;
+  }
+
+  /** Frees the phone: for the question `reqId` (any, when none is named). Another request's answer leaves it waiting. */
+  end(deviceId, reqId = null) {
+    const cur = this.open.get(deviceId);
+    if (cur && (reqId === null || cur.reqId === null || cur.reqId === reqId)) this.open.delete(deviceId);
+  }
+}
+
 /** What a chat-only phone pane says when Claude asks to carry out a plan. */
 export const CAP_PLAN_TEXT = 'This phone is set to Chat only on the PC, so plans cannot be carried out from it. Keep planning, or present the plan as text; the person can carry it out on the PC.';
 
@@ -238,6 +305,19 @@ const MAX_IMAGE_B64 = 8 * 1024 * 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HISTORY_REF_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:(\d{1,5}|s)(?::\d{1,5})?$/i;
 const MAX_HISTORY_PAGE = 5000;
+// rename (engine.js rename keeps 200) and folder create (src/folders.js keeps 60).
+const MAX_TITLE = 200;
+const MAX_FOLDER_NAME = 60;
+
+/**
+ * A pane an op may name without needing one (rename's note, Ask Claude's billing): this phone's own open pane in
+ * the engine's namespace, else null. Never an error: the op does not depend on it.
+ */
+function optionalPane(cmd, ctx, deviceId) {
+  if (typeof cmd.paneId !== 'string' || !LOCAL_ID_RE.test(cmd.paneId)) return null;
+  const id = phonePaneId(deviceId, cmd.paneId);
+  return (ctx.paneExists ? ctx.paneExists(id) : true) ? id : null;
+}
 
 /** The engine pane id of a phone's pane. */
 export function phonePaneId(deviceId, local) {
@@ -291,6 +371,8 @@ export function checkPhoneCommand(cmd, ctx) {
   const op = cmd.op;
   if (typeof op !== 'string' || !PHONE_OPS.includes(op)) return fail(`"${String(op).slice(0, 40)}" is not available from a phone.`, cmd);
   if (op === 'artifactGet' && !(ctx.hasOp?.(op))) return fail('Artifacts are not available on this PC.', cmd);
+  // 2026-10-12: the session list's actions need Full or No shell; the browser view needs Full.
+  if (!capAllowsOp(cap, op)) return fail(capOpText(cap, op), cmd);
   if (cmd.reqId !== undefined && cmd.reqId !== null && (typeof cmd.reqId !== 'string' || !REQ_ID_RE.test(cmd.reqId))) return fail('Bad request id.', null);
   const out = { op };
   if (cmd.reqId) out.reqId = phonePaneId(deviceId, cmd.reqId);
@@ -432,6 +514,57 @@ export function checkPhoneCommand(cmd, ctx) {
       if (cmd.rev != null) { if (typeof cmd.rev !== 'string' || !/^\d{1,15}:\d{1,16}$/.test(cmd.rev)) return fail('Bad revision.', cmd); out.rev = cmd.rev; }
       break;
     }
+    // 2026-10-12, phone parity: the session menu, Ask Claude, the PC browser view
+    case 'rename': {
+      // A name for any session in the list (the engine writes it the way /rename does and waits out a running turn).
+      // paneId is optional: it only routes the "renamed" answer's note to that pane.
+      if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
+      const title = typeof cmd.title === 'string' ? cmd.title.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim() : '';
+      if (!title) return fail('A name needs some text.', cmd);
+      out.sessionId = cmd.sessionId;
+      out.title = title.slice(0, MAX_TITLE);
+      const pane = optionalPane(cmd, ctx, deviceId);
+      if (pane) out.paneId = pane;
+      break;
+    }
+    case 'forkSession':
+      if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
+      out.sessionId = cmd.sessionId;
+      break;
+    case 'archive':
+      if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
+      out.sessionId = cmd.sessionId;
+      out.archived = cmd.archived !== false;
+      break;
+    case 'folder': {
+      // Only the two actions a session menu needs. Renaming and deleting folders (which the sidebar offers) stay on the PC.
+      if (cmd.action === 'move') {
+        if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
+        if (cmd.folderId != null && (typeof cmd.folderId !== 'string' || !LOCAL_ID_RE.test(cmd.folderId))) return fail('Bad folder.', cmd);
+        out.action = 'move';
+        out.sessionId = cmd.sessionId;
+        out.folderId = cmd.folderId ?? null;
+      } else if (cmd.action === 'create') {
+        const name = typeof cmd.name === 'string' ? cmd.name.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim() : '';
+        if (!name) return fail('A folder needs a name.', cmd);
+        if (cmd.sessionId != null && (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId))) return fail('Bad session id.', cmd);
+        out.action = 'create';
+        out.name = name.slice(0, MAX_FOLDER_NAME);
+        if (cmd.sessionId) out.sessionId = cmd.sessionId;
+      } else return fail('Folders are renamed and deleted on the PC.', cmd);
+      break;
+    }
+    case 'askSearch': {
+      // The question only; the pane (optional) says whose billing it uses, as for the desktop's focused pane.
+      if (typeof cmd.query !== 'string' || !cmd.query.trim()) return fail('Ask Claude needs a question.', cmd);
+      out.query = cmd.query.slice(0, MAX_QUERY);
+      const pane = optionalPane(cmd, ctx, deviceId);
+      out.paneId = pane;
+      break;
+    }
+    case 'browserView':
+      // Nothing but the pane: the engine shows the page that pane's own Claude opened (paneId checked above).
+      break;
     default:
       return fail('Not available from a phone.', cmd);
   }

@@ -144,7 +144,7 @@ import {
 } from '../remote/protocol.js';
 import { Inbox, Outbox, WIRE_VERSION } from '../remote/wire.js';
 import { BROADCAST_EVENTS, PHONE_OPS, checkPhoneCommand, hashText, parsePhoneId, phoneView, routeEvent } from './remote-policy.js';
-import { CAPS, CAP_LABEL, capDefaultMode, capNote, capOf, phonePaneId } from './remote-policy.js';
+import { CAPS, CAP_LABEL, AskGate, capDefaultMode, capNote, capOf, phonePaneId } from './remote-policy.js';
 import * as store from './remote-store.js';
 import { checkPage, pageText } from './remote-page.js';
 import { PHONE_AGENTS, browserHeaders } from './remote-page.js';
@@ -353,10 +353,12 @@ const MAX_PHONE_MESSAGE = 16 * 1024 * 1024;
 const REFUSED = {
   billing: 'Billing is chosen on the PC.',
   billingOptions: 'Billing is chosen on the PC.',
-  folder: 'Folders are arranged on the PC.',
+  // folder: a phone may move a session into a folder and make one (2026-10-12); renaming and deleting stay on the PC.
+  // askSearch is a phone op since 2026-10-12 (a refusal now says why itself: access, a question that is not text).
   transcribe: 'Dictation here uses your phone keyboard\'s microphone.',
-  askSearch: 'Ask Claude runs from the PC.',
   digPrompt: 'Dig deeper runs from the PC.',
+  stopSession: 'Stop a conversation from its own pane on this phone.',
+  revealFolder: 'Showing a folder happens on the PC.',
 };
 
 const hostOf = (url) => { try { return new URL(url).host; } catch { return String(url || ''); } };
@@ -433,6 +435,8 @@ export class RemoteBridge {
     this.recheckRetryMs = o.recheckRetryMs ?? 60000;
     // Capability notes for phone panes that opened a session: sent after its history, which redraws the pane (route).
     this.capNotes = new Map();
+    // One Ask Claude at a time per phone (remote-policy.js AskGate, 2026-10-12): a question costs about a cent.
+    this.askGate = new AskGate(o.askMaxMs);
     this.log = o.log || ((line) => process.stderr.write(`apaki remote: ${line}\n`));
     // Timings (tests shorten them).
     this.handshakeMs = o.handshakeMs ?? HANDSHAKE_MS;
@@ -1780,6 +1784,14 @@ export class RemoteBridge {
       return;
     }
     let out = r.cmd;
+    // Ask Claude costs about a cent a question (2026-10-12): one at a time per phone. The answer, or its error, frees it (route).
+    if (out.op === 'askSearch') {
+      const wait = this.askGate.begin(deviceId, this.now(), out.reqId || null);
+      if (wait) {
+        c.outbox.push({ ev: 'askSearch', reqId: typeof cmd.reqId === 'string' ? cmd.reqId.slice(0, 64) : null, query: out.query, error: wait });
+        return;
+      }
+    }
     // The phone's page restores its panes with open (warm: false) after a
     // reload; a pane still open in the engine re-attaches instead, so a turn
     // that is running keeps running.
@@ -1800,6 +1812,9 @@ export class RemoteBridge {
     const r = routeEvent(ev);
     if (r) {
       this.toDevice(r.deviceId, phoneView(r.ev));
+      // Its question has an answer (or failed): the phone may ask again.
+      if (ev.ev === 'askSearch') this.askGate.end(r.deviceId);
+      else if (ev.ev === 'error' && typeof ev.reqId === 'string') this.askGate.end(r.deviceId, ev.reqId);
       if (ev.ev === 'opened') this.afterOpened(r.deviceId, ev, r.ev);
       else if (ev.ev === 'history') this.flushCapNote(r.deviceId, ev.paneId);
       else if (ev.ev === 'closed') this.capNotes.delete(ev.paneId);

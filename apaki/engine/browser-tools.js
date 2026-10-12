@@ -43,6 +43,24 @@ export function pngSize(buf) {
   return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
 }
 
+/** Width and height of a JPEG from its first start-of-frame marker (a phone's browser view is sent as a JPEG, 2026-10-12). */
+export function jpegSize(buf) {
+  if (!buf || buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  let i = 2;
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xff) { i += 1; continue; }
+    const marker = buf[i + 1];
+    // Fill bytes and markers with no length (standalone): step over them.
+    if (marker === 0xff) { i += 1; continue; }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) { i += 2; continue; }
+    const len = buf.readUInt16BE(i + 2);
+    // SOF0 to SOF15 except DHT (c4), JPG (c8) and DAC (cc) carry the size.
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
+    i += 2 + len;
+  }
+  return null;
+}
+
 /** The clip and scale that keep a screenshot of the view at most `max` pixels wide. */
 export function screenshotClip(view, max = SCREENSHOT_MAX_WIDTH) {
   const w = Math.max(1, Math.round(view.w));
@@ -216,27 +234,38 @@ export function createBrowserTools({ shell, owner, onActivity = () => {} }) {
     } catch (e) { return fail(e); }
   }
 
-  async function screenshot() {
+  /**
+   * A picture of the part of the page in view. Claude's browser_screenshot is a PNG and shows in the browser's strip as
+   * "Took a screenshot". A phone's browser view (view below, 2026-10-12) is the same picture as a JPEG, much smaller to
+   * send, and quiet: a phone looking is not Claude acting, and the phone refreshes on those very activity lines.
+   * `state` (address, title, loading, error) rides along for the phone's header.
+   */
+  async function screenshot({ format = 'png', quality = 72, quiet = false } = {}) {
     try {
+      const jpeg = format === 'jpeg';
       const st = await req('state');
       const view = (await page('view')).value;
       let clip = screenshotClip(view);
       let data = null;
       let size = null;
       for (let attempt = 0; attempt < 2; attempt++) {
-        const params = { format: 'png', captureBeyondViewport: false, ...(clip.scale < 1 ? { clip } : {}) };
+        const params = { format: jpeg ? 'jpeg' : 'png', ...(jpeg ? { quality: Math.min(95, Math.max(30, Math.round(Number(quality) || 72))) } : {}), captureBeyondViewport: false, ...(clip.scale < 1 ? { clip } : {}) };
         const r = await cdp('Page.captureScreenshot', params, { render: true, timeout: 20000 });
         data = r.result?.data;
-        size = data ? pngSize(Buffer.from(data, 'base64')) : null;
+        size = data ? (jpeg ? jpegSize : pngSize)(Buffer.from(data, 'base64')) : null;
         if (!size || size.w <= SCREENSHOT_MAX_WIDTH) break;
         // Scaled differently than asked: scale down to fit and take it again.
         clip = { ...screenshotClip(view), scale: Math.floor((clip.scale || 1) * (SCREENSHOT_MAX_WIDTH / size.w) * 1000) / 1000 };
       }
       if (!data) return fail('The browser returned no picture.');
-      activity(st, 'screenshot', 'Took a screenshot');
-      return ok(`Screenshot of ${where(st)}: the part in view, ${size ? `${size.w}x${size.h}` : 'PNG'}.`, { image: data, mimeType: 'image/png', width: size?.w, height: size?.h });
+      if (!quiet) activity(st, 'screenshot', 'Took a screenshot');
+      const state = { url: st.url || '', title: st.title || '', loading: Boolean(st.loading), error: st.error || null, status: st.status ?? null, canGoBack: Boolean(st.canGoBack) };
+      return ok(`Screenshot of ${where(st)}: the part in view, ${size ? `${size.w}x${size.h}` : jpeg ? 'JPEG' : 'PNG'}.`, { image: data, mimeType: jpeg ? 'image/jpeg' : 'image/png', width: size?.w, height: size?.h, state });
     } catch (e) { return fail(e); }
   }
+
+  /** What a phone sees of this conversation's browser page (engine op browserView): one quiet JPEG and the page's state. */
+  const view = () => screenshot({ format: 'jpeg', quality: 72, quiet: true });
 
   const run = { open, read, click, type, back, screenshot };
 
@@ -281,5 +310,5 @@ export function createBrowserTools({ shell, owner, onActivity = () => {} }) {
     ];
   }
 
-  return { ...run, call, sdkTools, result, page, world };
+  return { ...run, view, call, sdkTools, result, page, world };
 }

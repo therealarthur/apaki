@@ -370,8 +370,13 @@ export class Link {
     }
   }
 
-  /** True when the PC said it understands `feature` (an older Apaki lists none). */
+  /**
+   * True when the PC said it understands `feature` (an older Apaki lists none). "op:<name>" asks about a command
+   * instead (2026-10-12): the ops the PC accepts from a phone are in its hello (remote-policy.js PHONE_OPS), so the
+   * page offers Rename, Ask Claude and the PC browser view only to a PC that has them.
+   */
   supports(feature) {
+    if (typeof feature === 'string' && feature.startsWith('op:')) return Array.isArray(this.hello?.ops) && this.hello.ops.includes(feature.slice(3));
     return Array.isArray(this.hello?.features) && this.hello.features.includes(feature);
   }
 

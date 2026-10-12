@@ -374,6 +374,19 @@ contextUsage. Everything else is refused, including billing, folders, Glass,
 voice, Ask Claude, Dig deeper, openExternal, browserTool and every remote* op
 (remote-policy.js:102-106, engine.js:948-957).
 
+Update 2026-10-12 (phone parity): the list above is the audit's snapshot. The
+allowlist since then also holds rename, forkSession, archive, folder (the
+actions move and create only), askSearch and browserView, and no longer
+refuses folders or Ask Claude outright. Access levels decide who may send
+them (remote-policy.js capAllowsOp): rename, forkSession, archive and folder
+need Full or No shell (Chat only is the read-only level and is refused with the
+reason); browserView needs Full (the browser tools are Full only, and it shows
+one JPEG of the page a phone's own conversation opened, never a page another
+window opened, and cannot click or type); askSearch is open to every level (a
+Haiku call with no tools over the PC's own search indexes, about a cent) but
+one question at a time per phone (AskGate). Dig deeper, stopSession,
+revealFolder, openExternal and browserTool stay out of reach of a phone.
+
 | Question | Answer | Where |
 |---|---|---|
 | Can a phone switch a conversation to bypassPermissions? | Yes, on open or with the mode op | remote-policy.js:45, 147, 201-204 |
