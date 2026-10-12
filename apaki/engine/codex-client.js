@@ -66,7 +66,13 @@ export function findCodex({ env = process.env, platform = process.platform, arch
   const triple = codexTriple(platform, arch);
   const exe = platform === 'win32' ? 'codex.exe' : 'codex';
   const pkgName = triple ? `@openai/codex-${platform === 'win32' ? 'win32' : platform === 'darwin' ? 'darwin' : 'linux'}-${/^aarch64/.test(triple) ? 'arm64' : 'x64'}` : null;
-  const dirs = String(env.PATH || env.Path || '').split(path.delimiter).filter(Boolean);
+  // PATH, then the places a global install lands when the app was started from a desktop shortcut with a short PATH
+  // (taken from the environment given, so a test with its own PATH sees only that).
+  const home = env.USERPROFILE || env.HOME || '';
+  const extra = platform === 'win32'
+    ? [env.APPDATA && path.join(env.APPDATA, 'npm')]
+    : home ? ['/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.local', 'bin'), path.join(home, '.npm-global', 'bin'), path.join(home, '.bun', 'bin')] : [];
+  const dirs = [...new Set([...String(env.PATH || env.Path || '').split(path.delimiter), ...extra].filter(Boolean))];
   for (const dir of dirs) {
     // A real binary on PATH (a standalone install, Homebrew, a cargo build).
     const direct = path.join(dir, exe);

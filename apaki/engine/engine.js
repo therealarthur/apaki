@@ -400,7 +400,7 @@ function compact(it, term, folderOf) {
     // Claude Code deleted its transcript; Apaki's transcript archive kept a copy (transcript-archive.js, 2026-10-12).
     ...(it.archivedCopy ? { archivedCopy: true, restorable: true } : {}),
     // A turn is running in this engine (a pane here, a phone's pane, or one kept running in the background).
-    running: [...panes.values()].some((p) => p.sessionId === it.id && (p.runner?.turnRunning || p.runner?.turnActive)),
+    running: [...panes.values()].some((p) => p.sessionId === it.id && (p.runner?.turnRunning || p.runner?.turnActive || (isCodexPane(p) && p.busy))),
   };
 }
 

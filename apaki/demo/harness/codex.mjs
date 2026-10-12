@@ -66,9 +66,9 @@ export function createCodexDemo({ emit, later, nextId, sessions, panes, now }) {
       res('c1', 'src/pricing/Table.tsx:41:      <td>{formatPrice(row.cents)}</td>\nsrc/pricing/format.ts:3:export function formatPrice(cents: number, locale = "en-US") {'),
       use('p1', 'ApplyPatch', { changes: PATCH }),
       res('p1', 'Changed 1 file.'),
-      use('c2', 'Bash', { command: 'npm test -- pricing' }),
+      use('c2', 'Bash', { command: 'npm test pricing' }),
       res('c2', 'PASS src/pricing/Table.test.tsx\n  Table\n    ok shows the per seat price (12 ms)\n\nTests: 4 passed, 4 total'),
-      { type: 'assistant', uuid: 'a1', at, message: { role: 'assistant', content: [{ type: 'text', text: 'The pricing table now shows the per seat price next to the plan price, both formatted with the locale. `npm test -- pricing` passes (4 tests).' }] } },
+      { type: 'assistant', uuid: 'a1', at, message: { role: 'assistant', content: [{ type: 'text', text: 'The pricing table now shows the per seat price next to the plan price, both formatted with the locale. `npm test pricing` passes (4 tests).' }] } },
     ];
   }
 

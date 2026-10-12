@@ -74,7 +74,9 @@ test('every preset names panes whose sessions exist', () => {
   for (const [name, make] of Object.entries(PRESETS)) {
     const p = make();
     assert.ok(p.tabs.length >= 1, name);
-    for (const t of p.tabs) assert.ok(ids.has(t.root.s), `${name}: ${t.root.s}`);
+    // A tab is a leaf or a split (the codex preset shows two panes side by side): every leaf names a session that exists.
+    const leaves = (n) => (n.type === 'leaf' ? [n] : n.children.flatMap(leaves));
+    for (const t of p.tabs) for (const lf of leaves(t.root)) assert.ok(ids.has(lf.s), `${name}: ${lf.s}`);
   }
 });
 

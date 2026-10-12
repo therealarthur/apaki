@@ -1636,7 +1636,7 @@ export class Pane {
     if (sig === this.queueSig && box.childElementCount) return;
     this.queueSig = sig;
     box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? 'Sends when Claude finishes · Steer or Ctrl+Enter adds it now' : 'Not sent: Claude was stopped'}</span></div>`
-      + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} image${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" data-q="act" title="${actTip}">${act}</button><button class="q-edit" data-q="edit" title="Put it back in the message box to change it (Up arrow in an empty box does the same)">Edit</button><button class="q-x" data-q="x" title="Remove" aria-label="Remove">×</button></div>`).join('');
+      + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} ${it.attachments.every((a) => a.url) ? 'image' : 'file'}${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" data-q="act" title="${actTip}">${act}</button><button class="q-edit" data-q="edit" title="Put it back in the message box to change it (Up arrow in an empty box does the same)">Edit</button><button class="q-x" data-q="x" title="Remove" aria-label="Remove">×</button></div>`).join('');
     // One listener for the whole list (set once), reading the row and the button at click time.
     if (!box.dataset.wired) {
       box.dataset.wired = '1';

@@ -1,7 +1,7 @@
 /**
  * Codex panes, end to end (apaki/engine/codex-panes.js), 2026-10-12.
  *
- * The real engine.js in host mode in a temp world, with a fake `codex app-server` (test/fixtures/fake-codex-app-server.mjs,
+ * The real engine.js in host mode in a temp world, with a fake `codex app-server` (test-fixtures/fake-codex-app-server.mjs,
  * APAKI_CODEX_BIN) that replays protocol traffic shaped like codex-cli 0.161.0's: models, threads, paged turns, streamed
  * items, approvals and questions. A window connects the way Apaki's does (connectHost) and drives a Codex pane with the
  * same ops it sends a Claude pane. Nothing is billed; no real Codex process or account is touched.
@@ -19,7 +19,7 @@ import { connectHost, readHostInfo } from '../apaki/engine/host.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = path.join(ROOT, 'apaki', 'engine', 'engine.js');
-const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-codex-app-server.mjs');
+const FAKE = path.join(ROOT, 'test-fixtures', 'fake-codex-app-server.mjs');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-codex-test-'));
 const rm = (dir) => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* still in use */ } };

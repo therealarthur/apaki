@@ -317,11 +317,15 @@ export function createCodex(env) {
     p.busy = false;
     p.openedAt = new Date().toISOString();
     clearTimeout(shared.idle);
+    // A failure to open keeps the thread the pane was asked for (the saved workspace still points at it, and the next message
+    // tries to resume it again); the pane shows the reason.
+    const keep = sessionId ? threadIdOf(sessionId) : null;
+    if (keep) { cx.threadId = keep; p.sessionId = codexId(keep); }
     try {
       await loadShared();
     } catch (e) {
       emit({ ev: 'error', reqId, paneId: p.id, message: e.message || String(e) });
-      emit({ ev: 'opened', reqId, paneId: p.id, sessionId: null, cwd: cwd || os.homedir(), title: 'Codex', model: '', effort: '', mode: DEFAULT_PRESET, billing: billingOf(), terminal: [], kind: 'codex' });
+      emit({ ev: 'opened', reqId, paneId: p.id, sessionId: p.sessionId || null, cwd: cwd || os.homedir(), title: 'Codex', model: '', effort: '', mode: DEFAULT_PRESET, billing: billingOf(), terminal: [], kind: 'codex' });
       return;
     }
     const d = defaultsOf();
@@ -350,9 +354,8 @@ export function createCodex(env) {
         p.codexTitle = title;
       } catch (e) {
         byThread.delete(threadId);
-        cx.threadId = null;
         emit({ ev: 'error', reqId, paneId: p.id, message: `Codex could not open that conversation: ${e.message || e}` });
-        emit({ ev: 'opened', reqId, paneId: p.id, sessionId: null, cwd: cwd || os.homedir(), title: 'Codex', model: p.model, effort: p.effort, mode: p.mode, billing: billingOf(), terminal: [], kind: 'codex' });
+        emit({ ev: 'opened', reqId, paneId: p.id, sessionId: p.sessionId, cwd: cwd || os.homedir(), title: 'Codex', model: p.model, effort: p.effort, mode: p.mode, billing: billingOf(), terminal: [], kind: 'codex' });
         return;
       }
     } else {
@@ -509,7 +512,8 @@ export function createCodex(env) {
       cx.startedAt = Date.now();
       const r = await rpc('turn/start', { threadId: cx.threadId, input, clientUserMessageId: clientId, summary: 'auto', ...turnOverrides(p) });
       const turnId = r?.turn?.id;
-      if (turnId) { cx.turnId = cx.turnId || turnId; cx.reqByTurn.set(turnId, reqId); }
+      // A turn that already ended (its events came before this answer) must not leave a turn id behind for a later steer to trust.
+      if (turnId && p.busy) { cx.turnId = cx.turnId || turnId; cx.reqByTurn.set(turnId, reqId); }
     } catch (e) {
       p.busy = false;
       p.inTurn = false;
@@ -802,6 +806,8 @@ export function createCodex(env) {
     for (const id of [...cx.out.keys()]) flushOutput(p, id);
     cx.out.clear();
     cx.blocks.clear();
+    // The turn's items (kept so an approval can show a patch's diffs) are not needed once it is over.
+    cx.items.clear();
     const reqId = cx.reqByTurn.get(turn.id) ?? null;
     cx.reqByTurn.delete(turn.id);
     const failed = turn.status === 'failed';

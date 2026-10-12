@@ -396,8 +396,14 @@ test('opening a thread the server cannot find says so and leaves an empty Codex 
   const p = s.pane('p1');
   await s.codex.open('r', p, `codex:${THREAD}`, null, {});
   assert.match(s.of('error')[0].message, /Codex could not open that conversation: no rollout found/);
-  assert.equal(s.of('opened')[0].sessionId, null);
+  assert.equal(s.of('opened')[0].sessionId, `codex:${THREAD}`, 'the pane keeps the thread it was asked for, so a saved workspace still points at it');
   assert.equal(s.of('opened')[0].kind, 'codex');
-  assert.equal(s.codex.byThread.size, 0, 'nothing is left registered for a thread that did not open');
+  assert.equal(s.codex.byThread.size, 0, 'nothing is registered for events of a thread that did not open');
+  // The next message tries to resume it again.
+  s.client.table['thread/resume'] = () => resumed();
+  await s.codex.send('r2', p, 'hello again', []);
+  assert.equal(s.client.of('thread/resume').length, 2);
+  assert.equal(s.client.of('turn/start')[0].threadId, THREAD);
+  assert.equal(s.codex.byThread.get(THREAD), p);
   assert.equal(CODEX_SHARED, 'codex-shared');
 });

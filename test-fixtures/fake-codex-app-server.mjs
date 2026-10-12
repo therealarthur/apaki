@@ -2,7 +2,8 @@
 /**
  * A stand-in for `codex app-server` (codex-cli 0.161.0 protocol) for Apaki's tests.
  *
- * It speaks the same JSON-RPC lines over stdio and replays traffic shaped like the real thing, recorded on 2026-10-12
+ * Kept outside test/ on purpose: node --test runs every .js and .mjs file under a folder named test as a test file, and
+ * this one would sit there waiting for input. It speaks the same JSON-RPC lines over stdio and replays traffic shaped like the real thing, recorded on 2026-10-12
  * (model/list, thread/list, thread/resume, thread/turns/list and the item and turn notifications of a streamed turn;
  * the names and texts here are made up). A turn does what its message says, like the fake Agent SDK in
  * test/apaki-permissions.test.js:

@@ -1,7 +1,7 @@
 /**
  * codex-client.js, codex-history.js and the process overrides of codex-panes.js (apaki/engine), 2026-10-12.
  *
- * The client against a stand-in `codex app-server` (test/fixtures/fake-codex-app-server.mjs, and a few tiny scripts
+ * The client against a stand-in `codex app-server` (test-fixtures/fake-codex-app-server.mjs, and a few tiny scripts
  * written here for the failures a fake that always answers cannot show): the handshake, requests, notifications, server
  * requests, a process that dies or hangs, a process that starts again on demand. Finding the codex build without a
  * shell. The paged history. No real Codex process, nothing billed.
@@ -19,7 +19,7 @@ import { CodexHistory } from '../apaki/engine/codex-history.js';
 import { DEV_INSTRUCTIONS, processEnv, processOverrides } from '../apaki/engine/codex-panes.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-codex-app-server.mjs');
+const FAKE = path.join(ROOT, 'test-fixtures', 'fake-codex-app-server.mjs');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-codex-client-test-'));
 const rm = (dir) => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* still in use */ } };
 const touch = (file, text = '') => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
@@ -57,6 +57,8 @@ test('findCodex: APAKI_CODEX_BIN first (a script runs under this Node), then the
   touch(native);
   const win = { platform: 'win32', arch: 'x64', env: { PATH: `${path.join(dir, 'nothing')}${path.delimiter}${npm}` }, execPath: exe };
   assert.deepEqual(findCodex(win), { command: native, args: [], label: native });
+  // An app started from a shortcut with a short PATH still finds the global npm install (APPDATA\npm).
+  assert.deepEqual(findCodex({ platform: 'win32', arch: 'x64', env: { PATH: '', APPDATA: dir }, execPath: exe }), { command: native, args: [], label: native });
 
   // Without the native build, the package's own launcher script runs under this Node (the shim is not spawned).
   fs.rmSync(native);
