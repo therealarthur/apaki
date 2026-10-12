@@ -23,7 +23,10 @@ test('the Codex ops a phone may send: its models and its thread list, read only'
   assert.deepEqual(ok({ op: 'codexThreads', reqId: 'r2', refresh: true, junk: 1 }), { op: 'codexThreads', reqId: `phone:${DEVICE}:r2`, refresh: true });
   assert.deepEqual(ok({ op: 'codexThreads', reqId: 'r3', refresh: 'yes' }), { op: 'codexThreads', reqId: `phone:${DEVICE}:r3`, refresh: false });
   assert.match(bad({ op: 'codexFork' }), /not available from a phone/);
-  assert.match(bad({ op: 'rename', sessionId: SID }), /not available from a phone/);
+  assert.match(bad({ op: 'worktreeTerminal', path: 'x' }), /not available from a phone/);
+  // The session menu's ops (phone parity, 2026-10-12) take a Codex thread's id like any other: the engine renames and forks it.
+  assert.equal(ok({ op: 'rename', sessionId: SID, title: 'A name' }).sessionId, SID);
+  assert.equal(ok({ op: 'forkSession', sessionId: SID }).sessionId, SID);
 });
 
 test('opening a Codex thread: the codex: session id passes, the Codex pick rules apply, a bare id is still a Claude pick', () => {
