@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "about": "Feature ledger of the upstream parity tracker (apaki/parity/PARITY.md). One entry per feature Apaki supports or plans. Edit by hand; npm test checks the shape.",
-  "updated": "2026-10-11",
+  "updated": "2026-10-12",
   "features": [
     {
       "id": "claude-code-runner",
@@ -1497,17 +1497,17 @@
         "codex:cli-flag:app-server/--listen",
         "codex:cli-flag:app-server/--config"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "n/a" },
-      "where": ["apaki/remote/CODEX.md", "src/codex.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "n/a" },
+      "where": ["apaki/remote/CODEX.md", "src/codex.js", "apaki/engine/codex-client.js", "test/apaki-codex-client.test.js", "test/apaki-codex-live.test.js"],
+      "commits": ["abdb517", "72f21e4"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "One app-server process per Apaki engine (or per account when Glass needs separate auths), started with codex app-server and per process -c overrides; Apaki is a client like the Codex app. Never write ~/.codex/config.toml: every setting goes per process or per thread (thread/start params). Tests drive a fake app-server that replays recorded JSON-RPC traffic plus one live smoke test that sends nothing billable. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "One codex app-server process per engine, started the first time a Codex pane, the model list or the Codex view needs it, stopped after three minutes with no Codex pane. Per process -c overrides only (the tool server and the shell variables); ~/.codex/config.toml is never written (test: no config/*Write request). The native build is found without a shell (npm layout, PATH, APAKI_CODEX_BIN). The phone has nothing to run: its engine is the PC. Live check: APAKI_LIVE_CODEX=1 npm test reads the real server (models, config, threads, a history page) and sees the -c override as config. Not done: a separate process per Glass account."
     },
     {
       "id": "codex-sessions-indexed-read-only",
-      "title": "Codex sessions indexed and searchable, shown read-only",
+      "title": "Codex sessions indexed and searchable; a hit opens as a Codex pane",
       "product": "apaki",
       "upstream": [],
       "status": "supported",
@@ -1516,7 +1516,7 @@
       "commits": ["a66fa63", "6beebdd", "655bd06"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": {  },
-      "notes": "latch-index reads ~/.codex/sessions rollout files as codex:<uuid> (1,761 files, 15.8 GB on the build PC): prompts, replies, function and custom tool calls. This is file based, not the app-server, so it follows the rollout format. The app-server route is the planned codex-thread-discovery."
+      "notes": "latch-index still indexes ~/.codex/sessions as codex:<uuid>. Since 2026-10-12 a hit opens as a working Codex pane (it was read-only before); the rail row says codex, and a Codex view lists the threads."
     },
     {
       "id": "codex-thread-discovery",
@@ -1526,15 +1526,16 @@
         "codex:client-request:thread/list",
         "codex:client-request:thread/loaded/list",
         "codex:client-request:thread/read",
-        "codex:client-request:thread/search"
+        "codex:client-request:thread/search",
+        "codex:enum:ThreadSourceKind"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "src/codex.js"],
-      "commits": ["abdb517"],
+      "status": "partial",
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "src/codex.js", "apaki/engine/codex-panes.js"],
+      "commits": ["abdb517", "72f21e4"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Includes the Codex app's own threads, plus ~/.codex/sessions and ~/.codex/archived_sessions for anything the server does not list. thread/search is experimental in 0.161.0. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "thread/list (cli, vscode, exec, appServer and unknown sources; recency order; the state database first, a rollout scan on refresh), shaped as session rows. Not done: the rollout files in ~/.codex/sessions and archived_sessions for threads the server does not list; the search index still finds those, and opening one by id works."
     },
     {
       "id": "codex-sidebar-tab-search-archive-sections",
@@ -1548,15 +1549,16 @@
         "codex:client-request:thread/section/move",
         "codex:notification:thread/name/updated",
         "codex:notification:thread/archived",
-        "codex:notification:thread/unarchived"
+        "codex:notification:thread/unarchived",
+        "codex:client-request:thread/fork"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js"],
-      "commits": ["abdb517"],
+      "status": "partial",
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-panes.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Same search (keyword and meaning index cover Codex threads), times from the last message, folders mapped to Codex's own thread sections (threadSection/*, thread/section/move) both ways. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "A Codex view next to All and In terminals (op codexThreads), threads out of All, search finds them (words and meaning), rename through thread/name/set (the Codex app shows the same name), archive in Apaki's own list, right-click: fork (thread/fork), copy the codex resume command, folders. Not done: times from the last message (the list uses the server's recency time), folders mapped to the Codex app's thread sections (threadSection/*, thread/section/move)."
     },
     {
       "id": "codex-panes-in-any-tab",
@@ -1567,15 +1569,17 @@
         "codex:client-request:thread/start",
         "codex:notification:thread/started",
         "codex:notification:thread/status/changed",
-        "codex:notification:thread/closed"
+        "codex:notification:thread/closed",
+        "codex:client-request:thread/unsubscribe",
+        "codex:client-request:thread/read"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/layout-tree.js", "apaki/ui/pane.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/layout-tree.js", "apaki/ui/pane.js", "apaki/engine/codex-panes.js", "apaki/ui/app.js", "test/apaki-codex-e2e.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Drag and drop, tabs, split, the badge and unread all work the same as for Claude panes. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "A Codex thread (codex:<id>) or a new conversation (Claude Code or Codex in the empty pane) opens in any tab, split or folder, next to Claude panes, with the same drag and drop, badge and unread; a small CODEX mark in the pane header (and the phone's nav line). The pane is the same Pane class with kind codex; a restored workspace keeps the kind; a window that comes back attaches to a running turn (open becomes attach, as for Claude). A new Claude pane never inherits a Codex pane's picks."
     },
     {
       "id": "codex-model-effort-approval-pickers",
@@ -1594,15 +1598,17 @@
         "codex:type:Model",
         "codex:type:ReasoningEffortOption",
         "codex:cli-flag:--sandbox",
-        "codex:cli-flag:--ask-for-approval"
+        "codex:cli-flag:--ask-for-approval",
+        "codex:client-request:thread/resume",
+        "codex:client-request:config/read"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js", "apaki/engine/codex-map.js", "apaki/engine/codex-panes.js", "apaki/ui/codex.js", "apaki/ui/permission.js", "test/apaki-codex-map.test.js", "test/apaki-codex-ui.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Presets shown like Claude's permission modes: read-only, auto (workspace write, ask on request), full access (danger-full-access, approvals never; the bypass session). Per model reasoning efforts come from model/list (Model.supportedReasoningEfforts; ReasoningEffort itself is a free string in 0.161.0). thread/settings/update and turn/settings/update are experimental in 0.161.0 (the plain generate-json-schema omits them), so changing the model or approval mid-thread may need the experimental opt-in; check before relying on them. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "Model picker from model/list with each model's own efforts (the effort grid spreads them over its five columns); the Codex app's three presets in the mode chip: read-only, auto and full access (danger-full-access with approvals never, the bypass session), Shift+Tab cycles. A new thread starts with the user's own Codex config (config/read); only what was picked in the pane travels (thread/start, thread/resume and every turn/start), so a thread the Codex app made keeps its own settings until a pick. A restricted phone is read-only and never asks. Not used: thread/settings/update and turn/settings/update (the per-turn overrides carry the same)."
     },
     {
       "id": "codex-send-stop-steer-queue",
@@ -1617,13 +1623,13 @@
         "codex:notification:turn/started",
         "codex:notification:turn/completed"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js", "apaki/engine/queue-hold.js"],
-      "commits": ["abdb517"],
+      "status": "partial",
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js", "apaki/engine/queue-hold.js", "apaki/engine/codex-panes.js", "test/apaki-codex-e2e.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Same keyboard rules as Claude panes. The whole thread/queue/* family is experimental in 0.161.0 (absent from the plain schema, marked experimental in the snapshot), and the Codex app-server has queue bugs open (#45019, #44781): test the queue against the real server and keep a client-side queue (queue-hold.js) as the fallback. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "Send (turn/start), Stop (turn/interrupt, the turn ends as stopped), steer (turn/steer, Ctrl+Enter or the Steer button; a steer with no turn running comes back as steer_missed and goes out as a message), the queue with Edit, Up arrow to edit, the engine sending the queue when no window is connected: all the same code as for Claude. Not done: the server side queue (thread/queue/*, experimental); Apaki's own queue does the same job."
     },
     {
       "id": "codex-attachments-and-voice",
@@ -1639,13 +1645,13 @@
         "chatgpt-desktop:feature:attach-files-and-images",
         "chatgpt-desktop:feature:voice-dictation"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js"],
-      "commits": ["abdb517"],
+      "status": "partial",
+      "surfaces": { "desktop": "supported", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js", "apaki/engine/codex-panes.js", "apaki/engine/remote-policy.js", "test/apaki-codex-panes.test.js", "test/apaki-codex-policy.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Voice goes through Apaki's local Whisper into the box (desktop only; the phone keyboard dictates). The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "Pictures go inline (image items as data URLs); other files (paste, drop, the attach button; up to 6 MB, four per message from a phone) are saved under the latch folder's codex-attachments/<thread> with a _WHY_THIS_IS_HERE.md and mentioned by path. Voice is the pane's own Whisper path (the mic button), unchanged. The phone has no voice (the phone keyboard dictates), as for Claude. Not used: thread/attachment/*."
     },
     {
       "id": "codex-slash-commands",
@@ -1655,15 +1661,18 @@
         "codex:client-request:skills/list",
         "codex:client-request:collaborationMode/list",
         "codex:notification:skills/changed",
-        "chatgpt-desktop:feature:slash-commands"
+        "chatgpt-desktop:feature:slash-commands",
+        "codex:client-request:thread/compact/start",
+        "codex:client-request:review/start",
+        "codex:client-request:mcpServerStatus/list"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/engine/engine.js"],
-      "commits": ["abdb517"],
+      "status": "partial",
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "apaki/engine/engine.js", "apaki/engine/codex-panes.js", "apaki/ui/codex.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "From Codex's own list where the server gives one (skills/list; collaborationMode/list is experimental in 0.161.0); otherwise the documented set: new, model, approvals, review, compact, diff, mention, status, init, mcp. /resume stays Apaki's. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "In the pane: /new, /resume, /model, /effort, /approvals, /folder; from the engine: /compact, /status, /review, /diff, /mcp. Not done: /init and /mention (and a list read from the server, which has none)."
     },
     {
       "id": "codex-context-meter-and-compaction",
@@ -1675,13 +1684,13 @@
         "codex:notification:thread/compacted",
         "codex:item-type:contextCompaction"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/engine/context-estimate.js"],
-      "commits": ["abdb517"],
+      "status": "partial",
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "apaki/engine/context-estimate.js", "apaki/engine/codex-map.js", "apaki/engine/codex-panes.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "The meter is the last call's tokens over the model's context window (thread/tokenUsage/updated), with the split (input, cached, output, reasoning); it shows once a turn has run (a resumed thread has no usage until then). Compact now (the meter's menu or /compact) runs thread/compact/start and the compaction shows as a divider. Not done: the auto-compact settings (a Codex config key, not a protocol call)."
     },
     {
       "id": "codex-agent-message-and-reasoning",
@@ -1692,28 +1701,36 @@
         "codex:notification:item/reasoning/*",
         "codex:item-type:agentMessage",
         "codex:item-type:reasoning",
-        "codex:item-type:userMessage"
+        "codex:item-type:userMessage",
+        "codex:notification:item/started",
+        "codex:notification:item/completed",
+        "codex:notification:turn/started",
+        "codex:notification:turn/completed"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js", "apaki/engine/codex-map.js", "apaki/engine/codex-panes.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "Agent messages stream as the SDK's text deltas, so the pane draws them as it draws Claude's; the reasoning summary is a collapsed Thinking line (the working line takes a thinking word while it runs); turn/start asks for summary auto."
     },
     {
       "id": "codex-plans-checklist",
       "title": "Codex plans shown as a checklist",
       "product": "codex",
-      "upstream": ["codex:notification:turn/plan/updated", "codex:notification:item/plan/delta", "codex:item-type:plan"],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js"],
-      "commits": ["abdb517"],
+      "upstream": [
+        "codex:notification:turn/plan/updated",
+        "codex:notification:item/plan/delta",
+        "codex:item-type:plan"
+      ],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js", "apaki/engine/codex-map.js", "apaki/ui/todos.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "turn/plan/updated is a TodoWrite call (inProgress is in_progress), so Codex's plan is the same checklist card, updated in place. A proposed plan item (Plan mode text) is shown as the assistant's text. Not done: the Plan collaboration mode toggle."
     },
     {
       "id": "codex-command-runs-live-output",
@@ -1722,15 +1739,16 @@
       "upstream": [
         "codex:notification:item/commandExecution/*",
         "codex:item-type:commandExecution",
-        "codex:client-request:thread/shellCommand"
+        "codex:client-request:thread/shellCommand",
+        "codex:notification:item/commandExecution/outputDelta"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js", "apaki/engine/codex-map.js", "apaki/engine/codex-panes.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "A command is a Bash (or PowerShell) line with the shell wrapper taken off; its output streams into the line while it runs (150 ms, the newest 40,000 characters), and the result replaces it with the exit code on failure."
     },
     {
       "id": "codex-file-changes-and-diffs",
@@ -1740,15 +1758,16 @@
         "codex:notification:item/fileChange/*",
         "codex:notification:turn/diff/updated",
         "codex:item-type:fileChange",
-        "chatgpt-desktop:feature:side-panel"
+        "chatgpt-desktop:feature:side-panel",
+        "codex:notification:item/fileChange/patchUpdated"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/artifacts.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/artifacts.js", "apaki/engine/codex-map.js", "apaki/engine/codex-panes.js", "apaki/ui/codex.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Shares the diff viewer with worktree-diff-viewer. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "A file change is a Patch line with a header per file and its hunks in red and green; the turn's whole diff becomes a card (via codex-diff, no viewer pops up by itself) that opens in the viewer; /diff shows the last turn's again. patchUpdated (streaming patches) is not drawn live."
     },
     {
       "id": "codex-mcp-web-image-items",
@@ -1767,13 +1786,13 @@
         "codex:item-type:sleep",
         "codex:item-type:functionCallOutput"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js"],
-      "commits": ["abdb517"],
+      "status": "partial",
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/pane.js", "apaki/engine/codex-map.js", "apaki/engine/codex-panes.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "All 19 item types are listed in the snapshot (codex:item-type:*); this entry names the ones beyond messages, plans, commands and file changes. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "MCP tool calls read like Claude's (mcp__server__tool, with image results), web searches list their results, pictures Codex looked at or made become a card, sub-agent items are tool lines. Not done: opening a sub-agent's own thread as a viewer."
     },
     {
       "id": "codex-errors-retries-reroutes",
@@ -1787,13 +1806,13 @@
         "codex:notification:deprecationNotice",
         "codex:notification:configWarning"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/notices.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/notices.js", "apaki/engine/codex-map.js", "apaki/engine/codex-panes.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Shown as system lines like Claude Code notices (notices.js). The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "A failed turn is a failed result with the server's reason in words (usage limit, context window, sign-in); a retry is a system line; a reroute says from which model to which and why; a server that dies ends the running turns with a message and the next message resumes the thread."
     },
     {
       "id": "codex-hooks-system-lines",
@@ -1805,13 +1824,13 @@
         "codex:client-request:hooks/list",
         "codex:item-type:hookPrompt"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/notices.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/notices.js", "apaki/engine/codex-map.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "A failed, blocked or stopped hook (or a quiet success with a warning) is a system line through notices.js, as Claude Code prints its own; a quiet success is not shown."
     },
     {
       "id": "codex-full-history",
@@ -1823,13 +1842,13 @@
         "codex:client-request:thread/items/list",
         "codex:client-request:thread/timeline/list"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/engine/history.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/engine/history.js", "apaki/engine/codex-history.js", "test/apaki-codex-client.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "thread/timeline/list is experimental in 0.161.0; thread/read, thread/turns/list and thread/items/list are in the plain schema. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "History pages by thread/turns/list (newest first, eight turns a request, itemsView full; rollouts reach 1.3 GB so thread/read with turns is never used). Load earlier, scroll near the top and Load all work as for Claude; the loader says how many messages are loaded (the server gives no total). The drift check compares the thread's updatedAt."
     },
     {
       "id": "codex-request-user-input",
@@ -1840,13 +1859,13 @@
         "codex:notification:serverRequest/resolved",
         "chatgpt-desktop:feature:request-user-input"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-e2e.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Options, multi-select and free text, answered once (serverRequest/resolved drops a stale sheet, as ask_gone does). The request has autoResolutionMs and isBlocking: the Codex app auto-resolves after a time (#28969 complains of 60 seconds), so decide whether Apaki honours the timer or waits. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "The same sheet as Claude's AskUserQuestion (options, a typed answer), headed by whose question it is; isSecret questions hide what is typed; answered once; a skip answers nothing; serverRequest/resolved drops a stale sheet. Multi-select does not exist in Codex's questions."
     },
     {
       "id": "codex-approval-requests",
@@ -1860,26 +1879,26 @@
         "codex:server-request:applyPatchApproval",
         "chatgpt-desktop:feature:approval-prompts"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "apaki/ui/permission.js", "test/apaki-codex-e2e.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Approve once, Approve for the session, Deny, with the command or the diff shown; same sheet style as Claude's plan approval. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "Command, file change, permissions and the older exec and patch approvals use the permission sheet with Codex's words (Approve once, Approve for this session, Deny) and the command or the diff shown; an unreadable answer declines; Deny with a note sends the note to the model as a steer. A request nobody can answer (a thread with no pane) is declined at once. Not done: acceptWithExecpolicyAmendment (offered as the session approval where the server lists no session decision)."
     },
     {
       "id": "codex-mcp-elicitation",
       "title": "Codex MCP elicitation: a form from the tool server's schema",
       "product": "codex",
       "upstream": ["codex:server-request:mcpServer/elicitation/request"],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js"],
-      "commits": ["abdb517"],
+      "status": "partial",
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-map.test.js", "test/apaki-codex-e2e.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Claude Code has the same idea (option onElicitation, hook events Elicitation and ElicitationResult) which Apaki does not handle yet. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "A tool-call approval (Codex marks it in _meta) is a permission sheet, a form is the question sheet (one question per field; enums, yes or no and text), a link asks first and then opens in Apaki's browser. The shapes were written from the schema; none was seen live (no turn was started on a real account). Not done: the openai/form variants and user verification (declined, never left waiting)."
     },
     {
       "id": "claude-mcp-elicitation",
@@ -1910,65 +1929,69 @@
         "codex:server-request:item/tool/requestUserInput",
         "codex:server-request:item/commandExecution/requestApproval"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "n/a", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/engine/remote-policy.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "n/a", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/engine/remote-policy.js", "test/apaki-codex-policy.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "The same sheets on the phone, with the caps (Full, No shell, Chat only) deciding what a phone may approve. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "The phone page shares apaki/ui, so the sheets are the same. The policy allows codex: session ids, Codex's model ids, efforts and presets on Codex panes (and Claude's on Claude panes), files, and the two read only ops codexModels and codexThreads; a restricted phone gets read-only and never prompts, and Apaki's tools are refused for it."
     },
     {
       "id": "codex-apaki-dynamic-tools",
-      "title": "Offer Apaki's show and browser tools to Codex as dynamic tools",
+      "title": "Apaki's show and browser tools offered to Codex (per process MCP server)",
       "product": "codex",
-      "upstream": ["codex:server-request:item/tool/call", "codex:item-type:dynamicToolCall", "codex:client-request:thread/start"],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/engine/apaki-tools.js", "apaki/engine/browser-tools.js"],
-      "commits": ["abdb517"],
+      "upstream": [
+        "codex:server-request:item/tool/call",
+        "codex:item-type:dynamicToolCall",
+        "codex:client-request:thread/start"
+      ],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/engine/apaki-tools.js", "apaki/engine/browser-tools.js", "apaki/engine/apaki-mcp-stdio.mjs", "apaki/engine/open-server.js", "test/apaki-codex-tools.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "The app-server's item/tool/call: the client runs the tool and answers; fall back to an MCP server passed per process if dynamic tools cannot carry them. Registering the tools is the dynamicTools param of thread/start, which is EXPERIMENTAL in 0.161.0 (listed under experimentalParams in the snapshot; the plain schema omits it), so the MCP fallback may be the stable route. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "Done as the per process MCP server the contract allows, not as dynamic tools: dynamic tools exist only on thread/start, so a resumed thread (the common case) would have none. The process gets -c mcp_servers.apaki.* (command, args, env; startup 30 s, tool 120 s); the stdio server lists show and the six browser tools and forwards each call to the engine (POST /tool, the process's token), which runs it for the pane whose turn is running (a thread id in the call's _meta wins, if the server ever sends one). item/tool/call is answered with a failure for any tool Apaki does not provide. Not verified live: no turn was started on a real account, so whether the model calls the tools was seen only in the fake-server tests."
     },
     {
       "id": "codex-developer-instructions",
       "title": "Per-thread developer instructions saying the Apaki tools exist",
       "product": "codex",
       "upstream": ["codex:client-request:thread/start"],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/engine/apaki-tools.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/engine/apaki-tools.js", "apaki/engine/codex-panes.js", "test/apaki-codex-e2e.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "One paragraph like Claude's appended prompt (APAKI_SYSTEM_PROMPT): use the tools instead of opening Chrome or Explorer. Goes in the developerInstructions param of thread/start. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "One paragraph (DEV_INSTRUCTIONS) sent as developerInstructions on thread/start and thread/resume, so a thread the Codex app made learns it when opened here: the tools exist, use show instead of start, explorer or xdg-open, inline what is shown, use the browser tools to check web work."
     },
     {
       "id": "codex-browser-env-shim",
       "title": "BROWSER pointed at Apaki's shim in the app-server environment",
       "product": "codex",
       "upstream": ["codex:cli:app-server"],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "n/a" },
-      "where": ["apaki/remote/CODEX.md", "apaki/engine/open-server.js"],
-      "commits": ["abdb517"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "n/a" },
+      "where": ["apaki/remote/CODEX.md", "apaki/engine/open-server.js", "apaki/engine/engine.js", "apaki/engine/codex-panes.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "So a link Codex opens lands in Apaki's browser pane. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "BROWSER, APAKI_OPEN_URL, the token and APAKI_NODE are set for the process and, through shell_environment_policy.set (the default policy drops names holding TOKEN), for the commands Codex runs; a link they open reaches the engine's /open and lands in the browser pane of the pane whose turn runs. Windows only, like Claude's (the shim is a .cmd)."
     },
     {
       "id": "codex-side-panel-parity",
       "title": "Match the Codex app's side panel: diffs, files, images, terminal output, web pages",
       "product": "codex",
       "upstream": ["chatgpt-desktop:feature:side-panel", "chatgpt-desktop:feature:browser"],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/artifacts.js", "apaki/ui/browser.js"],
-      "commits": ["abdb517"],
+      "status": "partial",
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/artifacts.js", "apaki/ui/browser.js", "apaki/engine/codex-panes.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Wherever the Codex app has its own browser, file preview or diff view, Apaki shows the same thing in its browser and viewer panes. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "Diffs (turn card, viewer), images (card), command output (tool lines), web pages (the browser pane) and what Codex shows through apaki show. Not done: a file preview of any file Codex touched, and a terminal view."
     },
     {
       "id": "codex-glass-accounts-and-limits",
@@ -1982,12 +2005,12 @@
         "codex:client-request:account/usage/read"
       ],
       "status": "partial",
-      "surfaces": { "desktop": "planned", "phone": "partial" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/glasscard.js"],
-      "commits": ["abdb517"],
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/glasscard.js", "apaki/engine/codex-panes.js", "apaki/engine/codex-map.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Shown like Claude's usage; swaps and API keys reflected live. Terms: OpenAI says app-server authentication has never been permitted for commercial or hosted services; local use is fine, hosted Cloud must not touch Codex credentials (market research section 5.2). The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "The pane's billing chip shows the signed-in account (account/read: ChatGPT and the plan, or API key) and follows account/updated; account/rateLimits/updated at 80 percent and above becomes the same usage warning Claude shows (five hour, weekly). Swaps stay Glass's: the corner card still switches the live login. Not verified: whether a Glass swap while the app-server runs sends account/updated."
     },
     {
       "id": "codex-review-revert-fork",
@@ -2002,13 +2025,13 @@
         "chatgpt-desktop:feature:review-mode",
         "chatgpt-desktop:feature:thread-fork-and-revert"
       ],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md"],
-      "commits": ["abdb517"],
+      "status": "partial",
+      "surfaces": { "desktop": "partial", "phone": "partial" },
+      "where": ["apaki/remote/CODEX.md", "apaki/engine/codex-panes.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Where the Codex app shows them. Claude side equivalents: fork exists (session-menu-stop-fork-archive), rewind is planned (rewind-and-file-checkpoints). The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "/review starts an inline review of the uncommitted changes (review/start); fork from the right-click menu (thread/fork). Not done: revert (thread/revert), other review targets."
     },
     {
       "id": "codex-goals",
@@ -2031,27 +2054,44 @@
       "id": "codex-phone-panes",
       "title": "Phone access: Codex panes on the phone with the same caps",
       "product": "codex",
-      "upstream": ["codex:client-request:thread/start", "codex:client-request:turn/start", "codex:client-request:thread/resume"],
-      "status": "planned",
-      "surfaces": { "desktop": "n/a", "phone": "planned" },
-      "where": ["apaki/remote/CODEX.md", "apaki/engine/remote-policy.js"],
-      "commits": ["abdb517"],
+      "upstream": [
+        "codex:client-request:thread/start",
+        "codex:client-request:turn/start",
+        "codex:client-request:thread/resume"
+      ],
+      "status": "supported",
+      "surfaces": { "desktop": "n/a", "phone": "supported" },
+      "where": ["apaki/remote/CODEX.md", "apaki/engine/remote-policy.js", "apaki/web/src/pager.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "Remote policy must cover every new op (PHONE_OPS and the capability checks) before a phone can drive a Codex pane. The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "Codex panes on the phone with the same caps (read-only for No shell and Chat only, enforced in the engine). The phone's nav line says Codex. Looked at in the demo harness (phone.html?ws=codex); not run against a real relay and phone."
     },
     {
       "id": "codex-leave-desktop-apps-alone",
       "title": "Never touch or close the ChatGPT or Codex desktop apps; read only",
       "product": "codex",
       "upstream": ["chatgpt-desktop:feature:projects-threads-sidebar"],
-      "status": "planned",
-      "surfaces": { "desktop": "planned", "phone": "n/a" },
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "n/a" },
       "where": ["apaki/remote/CODEX.md", "apaki/parity/lib/desktop.mjs"],
-      "commits": ["abdb517"],
+      "commits": ["abdb517", "72f21e4", "17282ea"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "A constraint more than a feature: no process kill, no app data writes, reading only. The parity extractor honours it (package names only). The Codex checklist item in apaki/remote/CODEX.md (2026-10-11, codex-cli 0.161.0). Built, tested and recorded here means: engine mapping, pane UI, phone policy, a test against a fake app-server, and verifiedAgainst updated."
+      "notes": "Apaki starts and stops only its own app-server process (by its own handle); the Codex and ChatGPT desktop apps are never touched. What it reads of ~/.codex is through that server's thread/list, thread/turns/list, model/list and config/read."
+    },
+    {
+      "id": "codex-new-conversation",
+      "title": "Start a new Codex conversation from the empty pane",
+      "product": "codex",
+      "upstream": ["codex:client-request:thread/start", "codex:client-request:initialize"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/pane.js", "apaki/engine/codex-panes.js", "test/apaki-codex-e2e.test.js"],
+      "commits": ["72f21e4", "17282ea"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": { "codex": "0.161.0" },
+      "notes": "The empty pane offers Claude Code or Codex; Codex starts a thread with the first message (thread/start with the folder, any picked model and preset, and the developer instructions), so no thread exists until something is sent. Phone and desktop alike."
     }
   ]
 }

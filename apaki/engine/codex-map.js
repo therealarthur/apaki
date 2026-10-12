@@ -483,7 +483,8 @@ export function turnInput(text, images = [], files = []) {
 
 const APPROVE_LABELS = Object.freeze({ once: 'Approve once', always: 'Approve for this session', deny: 'Deny' });
 
-const titleCase = (s) => String(s).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+/** "spaceName" or "space_name" as "Space name": a form field's label when its schema gives no title. */
+const titleCase = (s) => { const t = String(s).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().toLowerCase(); return t.charAt(0).toUpperCase() + t.slice(1); };
 
 /**
  * item/tool/requestUserInput as the `ask` Apaki already draws for Claude's AskUserQuestion: the same sheet (options,

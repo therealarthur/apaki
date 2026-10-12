@@ -2,7 +2,7 @@
   "schema": 1,
   "product": "codex",
   "version": "0.161.0",
-  "extractedAt": "2026-10-11",
+  "extractedAt": "2026-10-12",
   "meta": {"cli":"codex-cli 0.161.0","experimentalIncluded":true},
   "counts": {"cli":30,"cli-flag":40,"client-notification":1,"client-request":169,"enum":186,"input-item":7,"item-type":19,"notification":84,"server-request":11,"type":291},
   "items": [

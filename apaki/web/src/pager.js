@@ -188,7 +188,8 @@ export function initPager({ haptic = () => {} } = {}) {
     }
     title.title = t;
     pos.textContent = panes.length > 1 ? `${i + 1} of ${panes.length}` : '';
-    cwd.textContent = el?.querySelector('.pane-bar .cwd')?.textContent || '';
+    // A Codex pane says so in this line (the pane bar's own mark is hidden at this width, 2026-10-12).
+    cwd.textContent = `${el?.classList.contains('codex') ? 'Codex · ' : ''}${el?.querySelector('.pane-bar .cwd')?.textContent || ''}`;
     const mirror = (cls, src) => {
       const b = chrome.querySelector(cls);
       const from = el?.querySelector(src);
