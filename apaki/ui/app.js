@@ -2145,12 +2145,12 @@ function snapshot() {
       const p = S.panes.get(lf.pane);
       if (p?.isBrowser) return { type: 'leaf', pane: lf.pane, web: p.saved() };
       if (p?.isViewer) return { type: 'leaf', pane: lf.pane, view: p.saved() };
-      const g = p?.$?.ground;
       return {
         // A pane following a desktop pane (followDesktop) is kept as an empty one: reopening its session would take it over.
         type: 'leaf', pane: lf.pane, s: (!p?.following && p?.sessionId) || null, cwd: p?.cwd || '', title: p?.following ? '' : p?.title || '', model: p?.model, effort: p?.effort, mode: p?.mode,
         draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ id: q.id, text: q.text })),
-        scroll: g ? { atEnd: g.scrollHeight - g.scrollTop - g.clientHeight < 40, top: Math.round(g.scrollTop) } : null,
+        // A pane in a background tab has no box to measure: its remembered place is saved, not "at the end, 0" (pane.js scrollState, 2026-10-12).
+        scroll: p?.scrollState ? p.scrollState() : null,
         busy: Boolean(p?.busy), pendingName: p?.pendingName || null,
       };
     }),
