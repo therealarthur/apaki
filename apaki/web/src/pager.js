@@ -88,7 +88,7 @@ export function initPager({ haptic = () => {} } = {}) {
   const chrome = document.createElement('div');
   chrome.className = 'chat-chrome';
   chrome.innerHTML = `<div class="cn-row">
-      <div class="cn-t"><div class="cn-title"></div><div class="cn-sub"><span class="cn-pos"></span><span class="cn-cwd"></span></div></div>
+      <div class="cn-t"><div class="cn-title"></div><div class="cn-sub"><span class="cn-pos"></span><span class="cn-wt"></span><span class="cn-cwd"></span></div></div>
       <div class="cn-acts">
         <button class="cn-btn cn-art" hidden aria-label="Artifacts from this conversation">${ICON_ART}<span class="cn-n"></span></button>
         <button class="cn-btn cn-tasks" hidden aria-label="Subagents and background tasks">${ICON_TASKS}<span class="cn-n"></span></button>
@@ -107,11 +107,13 @@ export function initPager({ haptic = () => {} } = {}) {
   const title = chrome.querySelector('.cn-title');
   const pos = chrome.querySelector('.cn-pos');
   const cwd = chrome.querySelector('.cn-cwd');
+  // The branch label (git worktrees, 2026-10-12): the visible pane's .wt-btn, copied here, and a tap presses it.
+  const wtSlot = chrome.querySelector('.cn-wt');
 
   // The space the bars take: the stage starts below them (web.css --chat-top).
   new ResizeObserver(() => main.style.setProperty('--chat-top', `${chrome.offsetHeight}px`)).observe(chrome);
 
-  const P = { touching: false, scrolling: false, settleTimer: null, shown: -1, stripKey: '', barN: -1, raf: 0, stage: null, paneObs: null };
+  const P = { touching: false, scrolling: false, settleTimer: null, shown: -1, stripKey: '', barN: -1, raf: 0, stage: null, paneObs: null, wtHtml: '' };
 
   const stage = () => stages.querySelector('.stage.on');
   const panesOf = (s) => (s ? [...s.querySelectorAll('.pane')] : []);
@@ -189,6 +191,12 @@ export function initPager({ haptic = () => {} } = {}) {
     title.title = t;
     pos.textContent = panes.length > 1 ? `${i + 1} of ${panes.length}` : '';
     cwd.textContent = el?.querySelector('.pane-bar .cwd')?.textContent || '';
+    const wtSrc = el?.querySelector('.pane-bar .wt-btn');
+    const wtHtml = wtSrc && !wtSrc.hidden ? wtSrc.innerHTML : '';
+    if (wtHtml !== P.wtHtml) {
+      P.wtHtml = wtHtml;
+      wtSlot.innerHTML = wtHtml ? `<button type="button" class="cn-wtb" aria-label="${esc(wtSrc.getAttribute('aria-label') || 'Branch')}">${wtHtml}</button>` : '';
+    }
     const mirror = (cls, src) => {
       const b = chrome.querySelector(cls);
       const from = el?.querySelector(src);
@@ -218,6 +226,7 @@ export function initPager({ haptic = () => {} } = {}) {
   chrome.querySelector('.cn-art').onclick = press('.art-reopen');
   chrome.querySelector('.cn-tasks').onclick = press('.tasks-btn');
   chrome.querySelector('.cn-close').onclick = () => { haptic(); press('.pane-bar .close')(); };
+  wtSlot.addEventListener('click', (e) => { if (e.target.closest('.cn-wtb')) { haptic(); press('.pane-bar .wt-btn')(); } });
 
   /* ---------- paging ---------- */
 

@@ -19,6 +19,8 @@ import {
   CONTEXT, CONTEXT_USED, COMMANDS, PRESETS, ID, DAY, HOUR, MIN,
 } from './data.mjs';
 import { Turn, TurnAborted, SCRIPTS } from './turns.mjs';
+// Git worktrees (2026-10-12): the pretend of the engine's worktree ops, on invented repositories.
+import { createWorktrees } from './worktrees.mjs';
 
 const MODEL = 'claude-opus-5-5';
 const PAIR_URL = 'https://apaki.myrlin.io/pair#v1.q7T2mK9xRw4LbN8cHf3Yp6Ds5GjV1eAu';
@@ -51,6 +53,9 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
   let sessions = buildSessions(NOW);
   let folders = buildFolders(NOW);
   const start = (PRESETS[preset] || PRESETS.base)();
+  const worktrees = createWorktrees({ emit: (ev) => send(ev), later: (ms, ev) => setTimeout(() => send(ev), ms), now, enabled: Boolean(start.worktrees) });
+  // The worktrees preset moves a few conversations into worktrees of the invented repositories.
+  if (start.worktrees) sessions = worktrees.remap(sessions, ID);
   const scripts = new Map(Object.entries(start.scripts || {}).map(([k, v]) => [k, [...v]]));
   const sends = new Map(); // session id -> messages sent so far (picks the next script)
   const panes = new Map(); // pane id -> { id, sessionId, cwd, turn, ctxAdd }
@@ -275,6 +280,7 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     if (!c || typeof c.op !== 'string') return;
     if (c.op.startsWith('remote')) { remoteOp(c); return; }
     const pane = panes.get(c.paneId);
+    if (worktrees.handle(c)) return;
     switch (c.op) {
       case 'sessions': sendSessions(c.reqId); break;
       case 'loadState': later(10, { ev: 'state', state: { v: 1, savedAt: now() + 5000, active: start.active || 0, tabs: start.tabs, rail: start.rail, win: null } }); break;

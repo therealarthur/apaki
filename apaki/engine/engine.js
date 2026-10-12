@@ -94,6 +94,11 @@
  *   op answer      result { behavior: 'allow', always? } or { behavior: 'deny', message? } settles it once
  *   ev ask_gone    the call is over (the turn ended, Claude Code cancelled it): drop its sheet
  *
+ * Git worktrees (2026-10-12, worktrees.js and the section "git worktrees" below; design apaki/remote/WORKTREES.md):
+ *   op worktrees { cwd?, full?, refresh? } -> ev worktrees { repos: [{ name, base, worktrees: [{ path, branch, added, removed, ahead, behind, ... }] }] }
+ *   op worktreeDiff { path, scope? } -> ev worktreeDiff;  op worktreePlan / worktreeRun { kind, ... } -> ev worktreePlan / worktreeResult
+ *   op worktreeTerminal { path } (the window only)
+ *
  *   op hostStatus -> ev host { pid, window, remoteOn, panes, lifecycle }
  *   op hostQuit { whenIdle: true } | { now: true } -> ev hostQuit { ok, pending, waiting }
  *   ev opened from attach also carries running (its Claude Code process is up)
@@ -150,7 +155,9 @@ import { folderStats, listDir, makeDir } from '../../src/places.js';
 import { createRemote } from './remote.js';
 // Real permission prompts: the canUseTool every pane gets (2026-10-12).
 import { createPermissionGate } from './permissions.js';
-import { parsePhoneId, windowOf } from './remote-policy.js';
+import { hashText, parsePhoneId, windowOf } from './remote-policy.js';
+// Git worktrees: repositories, branches and change counts, the diff, and the guarded git and gh actions (2026-10-12, worktrees.js).
+import { WorktreeIndex, diffOf, execute as wtExecute, findRepo as wtFindRepo, plan as wtPlan, run as wtRun, samePath as wtSame, terminalCommand } from './worktrees.js';
 // What a paired phone may make Claude do (2026-10-10, apaki/SECURITY.md 4.4 item 4): enforced on every phone pane below.
 import { CAP_PLAN_TEXT, capCanUseTool, capDefaultMode, capModeText, capModes, capPreToolUse, capRunnerOptions, clampMode } from './remote-policy.js';
 
@@ -175,7 +182,7 @@ const HOST_APP_ID = String(process.env.APAKI_APP_ID || DEFAULT_APP_ID);
 let host = null;
 let lifecycle = null;
 // The last of these, for a window that connects later (they are only sent when they change).
-const HOST_CACHED = new Set(['index', 'meaning', 'warm']);
+const HOST_CACHED = new Set(['index', 'meaning', 'warm', 'worktrees']);
 const hostCache = new Map();
 
 if (HOST_MODE) {
@@ -856,6 +863,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   // Taken over by another window since: stop instead of forking the conversation.
   runner.lockGuard = () => (p.sessionId ? lockStolen(p.sessionId) : null);
   p.runner = runner;
+  // A pane in a folder the lists have no numbers for yet (a new worktree): the branch label follows within a second.
+  wtSoon(600);
   emit({ ev: 'opened', tookOver: Boolean(opts.force),  reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
   if (opts.warm !== false) runner.start();
   // The whole conversation, newest page first (history.js; the SDK's list when the file cannot be read).
@@ -972,6 +981,120 @@ function transcribe(reqId, wavBase64, paneId = null) {
       resolve();
     });
   });
+}
+
+/* ---------- git worktrees (worktrees.js; design apaki/remote/WORKTREES.md, 2026-10-12) ---------- */
+
+// Every repository a session or an open pane ran in, with its worktrees: branch, lines changed against the base,
+// ahead and behind. Re-read every 30 s while somebody is looking and shortly after a turn ends (files changed);
+// Apaki's note of what each worktree was made from lives in ~/.claude/latch/apaki-worktrees.json (WtMeta).
+//   op worktrees { cwd?, full?, refresh? } -> ev worktrees { repos } (also sent to every window and phone when it changes)
+//   op worktreeDiff { path, scope? } -> ev worktreeDiff { path, branch, base, files: [{ path, status, added, removed, patch }] }
+//   op worktreePlan { kind, ...args } -> ev worktreePlan { commands, blockers, warnings, data }: what an action will do, run by nobody
+//   op worktreeRun { kind, ...args } -> ev worktreeResult { ok, error, log }: plans again, refuses with a blocker, else runs it
+//   op worktreeTerminal { path }: a terminal in the folder (the window only; a phone cannot open windows on the PC)
+// kind: create, remove, commit, push, pr, merge. A phone may read (worktrees, worktreeDiff) at any access level and
+// plan or run only with Full access (remote-policy.js).
+const wtIndex = new WorktreeIndex();
+/** Folders asked about by name (the New worktree sheet's repository), so the next refresh still lists them. */
+const wtExtra = new Set();
+let wtSent = '';
+let wtTimer = null;
+let wtChain = Promise.resolve();
+
+/** The folders conversations are open in, desktop and phone. */
+const paneCwds = () => [...panes.values()].map((p) => p.runner?.cwd).filter(Boolean);
+
+/**
+ * `load`: read the session list first when it is not loaded yet (a window or phone asked; the timer and "a turn ended"
+ * never do: reading every session is the heavy part, and the list already comes with the window's own requests).
+ */
+let wtLoading = null;
+async function wtRepos({ force = false, ask = null, full = false, load = false } = {}) {
+  if (load && !state.items) await (wtLoading ||= loadSessions().catch(() => {}).finally(() => { wtLoading = null; }));
+  if (ask) { wtExtra.add(ask); if (wtExtra.size > 40) wtExtra.delete(wtExtra.values().next().value); }
+  const open = paneCwds();
+  const cwds = new Set([...(state.items || []).map((it) => it.cwd).filter(Boolean), ...open, ...wtExtra]);
+  return wtIndex.snapshot({ cwds: [...cwds], stats: [...open, ...(ask ? [ask] : [])], full: full && ask ? [ask] : [], force });
+}
+
+/** Sends the repositories: to whoever asked (reqId), otherwise to everyone, and only when something changed. */
+async function sendWorktrees(c = {}) {
+  const repos = await wtRepos({ force: c.refresh === true, ask: c.cwd || null, full: c.full === true, load: Boolean(c.reqId) });
+  const ev = { ev: 'worktrees', reqId: c.reqId ?? null, repos };
+  if (ev.reqId) { emit(ev); return; }
+  const h = hashText(JSON.stringify(repos));
+  if (h === wtSent) return;
+  wtSent = h;
+  emit(ev);
+}
+
+setInterval(() => { if (listening()) sendWorktrees().catch((e) => process.stderr.write(`apaki: worktrees: ${e.message}\n`)); }, 30 * 1000).unref();
+
+/** A turn ended, a pane opened or an action ran: files or folders probably changed, so look again shortly. */
+function wtSoon(ms = 2500) {
+  if (wtTimer) return;
+  wtTimer = setTimeout(() => { wtTimer = null; wtIndex.invalidate(); if (listening()) sendWorktrees().catch(() => {}); }, ms);
+  wtTimer.unref?.();
+}
+
+/** The arguments a plan is made from: only the fields an action uses, whatever else the client sent. */
+const wtArgs = (c) => ({
+  path: c.path ? String(c.path) : '', branch: c.branch, base: c.base, useExisting: c.useExisting === true, deleteBranch: c.deleteBranch === true,
+  message: c.message, paths: Array.isArray(c.paths) ? c.paths : undefined, title: c.title, body: c.body, draft: c.draft === true, into: c.into,
+});
+
+async function wtPlanFor(c, run) {
+  const kind = String(c.kind || '');
+  const where = String(kind === 'create' ? c.repo || c.path || '' : c.path || '');
+  const repo = where ? await wtIndex.fresh(where) : null;
+  return { repo, plan: await wtPlan(kind, wtArgs(c), repo, { run, openCwds: paneCwds() }) };
+}
+
+/** A plan as the window gets it: no steps (their folders are the engine's business), plus what the sheets need of the repository. */
+function planEvent(reqId, plan, repo) {
+  const { steps, ...rest } = plan;
+  return { ev: 'worktreePlan', reqId, ...rest, repo: repo ? { root: repo.root, name: repo.name, base: repo.base, branches: repo.branches, remote: repo.remote } : null };
+}
+
+/** What Apaki remembers after an action: the base a new worktree came from, and forgetting a removed one. */
+async function wtAfter(plan) {
+  if (plan.kind === 'create' && plan.data.path) {
+    const h = await wtRun('git', ['rev-parse', 'HEAD'], { cwd: plan.data.path });
+    wtIndex.meta.set(plan.data.path, { base: plan.data.base || '', startSha: h.code === 0 ? h.stdout.trim() : '', branch: plan.data.branch, createdAt: new Date().toISOString() });
+  }
+  if (plan.kind === 'remove' && plan.data.path) wtIndex.meta.forget(plan.data.path);
+}
+
+const wtDone = (plan, r) => ({
+  create: `Made ${plan.data.branch} in its own folder.`,
+  remove: 'Removed the worktree.',
+  commit: `Committed ${plan.data.files?.length === 1 ? '1 file' : `${plan.data.total || plan.data.files?.length || 0} files`} on ${plan.data.branch || 'HEAD'}.`,
+  push: `Pushed ${plan.data.branch}.`,
+  pr: r.url ? 'Opened the pull request.' : 'Pushed, and asked GitHub for the pull request.',
+  merge: `Merged ${plan.data.branch} into ${plan.data.into}.`,
+}[plan.kind] || 'Done.');
+
+/** Runs one action, one at a time: two commits or a commit and a remove in a repository must not interleave. */
+function wtRunOp(c) {
+  const job = wtChain.then(async () => {
+    try {
+      const { repo, plan } = await wtPlanFor(c, true);
+      if (!repo || plan.blockers.length) {
+        emit({ ev: 'worktreeResult', reqId: c.reqId, kind: plan.kind, ok: false, error: plan.blockers[0] || 'Nothing to do.', blockers: plan.blockers, commands: plan.commands });
+        return;
+      }
+      const r = await wtExecute(plan);
+      if (r.ok) await wtAfter(plan);
+      wtIndex.invalidate();
+      emit({ ev: 'worktreeResult', reqId: c.reqId, kind: plan.kind, ok: r.ok, error: r.error || null, log: r.log, url: r.url || null, path: plan.data.path || null, branch: plan.data.branch || null, message: r.ok ? wtDone(plan, r) : null, commands: plan.commands });
+      sendWorktrees({}).catch(() => {});
+    } catch (e) {
+      emit({ ev: 'worktreeResult', reqId: c.reqId, kind: String(c.kind || ''), ok: false, error: e.message || String(e), commands: [] });
+    }
+  });
+  wtChain = job.catch(() => {});
+  return job;
 }
 
 /* ---------- command loop ---------- */
@@ -1332,6 +1455,34 @@ const handlers = {
     if (c.action === 'delete') folders.deleteFolder(c.folderId);
     emit({ ev: 'folders', folders: folders.listFolders() });
   },
+  // Git worktrees (see the section above). A phone may send the first four, checked by remote-policy.js against its access.
+  worktrees: (c) => sendWorktrees(c),
+  worktreeDiff: async (c) => {
+    const found = c.path ? await wtIndex.recordFor(String(c.path)) : null;
+    if (!found || !found.wt) { emit({ ev: 'worktreeDiff', reqId: c.reqId, ok: false, path: String(c.path || ''), error: 'That folder is not a git worktree.' }); return; }
+    const d = await diffOf(found.top, { base: found.wt.base || found.rec.base || '', scope: c.scope === 'head' ? 'head' : 'base' });
+    emit({ ev: 'worktreeDiff', reqId: c.reqId, path: found.top, branch: found.wt.branch || '', repo: found.rec.name, ...d });
+  },
+  worktreePlan: async (c) => {
+    const { repo, plan } = await wtPlanFor(c, false);
+    emit(planEvent(c.reqId, plan, repo));
+  },
+  worktreeRun: (c) => wtRunOp(c),
+  // A terminal in the folder, on this PC: the window only (a phone has no business opening windows here).
+  worktreeTerminal: (c) => {
+    const dir = String(c.path || '');
+    const info = dir ? wtFindRepo(dir) : null;
+    if (!info || !wtSame(info.top, dir)) { emit({ ev: 'note', paneId: null, reqId: c.reqId, text: 'That folder is not a git worktree.' }); return; }
+    const start = (t, fallback) => {
+      try {
+        const child = spawn(t.cmd, t.args, { cwd: t.cwd || info.top, detached: true, stdio: 'ignore', windowsHide: false });
+        child.on('error', () => { if (fallback) start(fallback, null); });
+        child.unref();
+      } catch { if (fallback) start(fallback, null); }
+    };
+    const t = terminalCommand(process.platform, info.top);
+    start(t, t.fallback);
+  },
   // Phone access (remote.js): from the desktop window only. A phone's
   // commands never reach these: remote-policy.js does not allow them.
   remoteStatus: (c) => remote.op(c),
@@ -1438,7 +1589,8 @@ remote = createRemote({
     capChanged: (deviceId) => { capChanged(deviceId).catch((e) => process.stderr.write(`apaki: applying a phone's access: ${e.message}
 `)); },
     askPane: (askId) => state.asks.get(askId)?.paneId || null,
-    knownCwd: (cwd) => Boolean(state.items?.some((it) => it.cwd === cwd)),
+    // A folder some listed session ran in, or a worktree (or a folder in one) of a repository the engine lists (2026-10-12).
+    knownCwd: (cwd) => Boolean(state.items?.some((it) => it.cwd === cwd)) || wtIndex.knownPath(cwd),
     phoneSessions: (deviceId) => phonePanes(deviceId).map((id) => panes.get(id)?.sessionId).filter(Boolean),
   },
 });
@@ -1922,7 +2074,7 @@ function paneActivity(p, runner, msg) {
   if (p.runner && p.runner !== runner) return; // a runner this pane already replaced
   noteSdkMessage(p, msg, { q: runner.q || null });
   if (msg?.type === 'result') markAway(p, { busy: false, s: p.sessionId || null, away: { at: new Date().toISOString(), sessionId: p.sessionId || null } });
-  if (msg?.type === 'result' && !msg.parent_tool_use_id) turnEnded(p);
+  if (msg?.type === 'result' && !msg.parent_tool_use_id) { turnEnded(p); wtSoon(); }
 }
 
 /**

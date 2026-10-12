@@ -718,3 +718,46 @@ body.web .pane.view-only .view-only-note {
   font-size: 12.5px; line-height: 1.4; color: var(--soft);
 }
 .view-only-note b { font: 900 10px/1.2 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--brand-strong); }
+
+/* ---------- git worktrees on the phone (2026-10-12; apaki/ui/worktree.js, diff.js) ----------
+   Arthur: "make sure we're updating the app alongside the desktop app so all functionality is equal across the board".
+   The window's own code draws the Worktrees view, the branch label, the sheets and the diff viewer; this file gives
+   them touch sizes. There is no hover on a phone: a worktree row shows its two actions all the time, in place of
+   nothing (the count stays), and every target is 44 px. The branch label also sits in the nav row (pager.js). */
+body.web .wt-acts { position: static; padding-left: 0; transform: none; opacity: 1; pointer-events: auto; }
+body.web .wt-row:hover .wt-nn, body.web .wt-row:hover .wt-tr { opacity: 1; }
+body.web .wt-act { width: 36px; height: 36px; background: none; }
+body.web.native .sessions li.wt-repo { padding: 14px 18px 6px; margin: 6px 0 0; }
+body.web.native .sessions li.wt-row { padding: 6px 8px 6px 18px; min-height: 48px; gap: 10px; }
+body.web.native .sessions li.wt-row .wt-bn { font-size: 16px; font-weight: 680; }
+body.web.native .sessions li.wt-row .wt-nn, body.web.native .sessions li.wt-row .wt-tr, body.web.native .wt-repo .wt-rc { font-size: 12px; }
+body.web.native .wt-repo .wt-rn { font-size: 12px; }
+body.web.native .sessions li.wt-kid { margin-left: 0; padding-left: 36px; }
+body.web.native .sessions li.wt-showmore { margin: 0; padding: 4px 18px 8px 36px; }
+body.web.native .sessions li.wt-clean { margin: 6px 16px 10px; padding: 12px 14px; border-radius: 12px; font-size: 14px; }
+body.web.native .sessions li.wt-newrow { margin: 4px 0; padding: 6px 12px; }
+body.web.native .sessions li.wt-newrow .link-btn, body.web.native .sessions li.wt-showmore .link-btn, body.web.native .sessions li.wt-clean .link-btn { min-height: 44px; padding: 0 12px; font-size: 15px; }
+body.web.native .sessions li.wt-showmore, body.web.native .sessions li.wt-newrow, body.web.native .sessions li.wt-clean { -webkit-user-select: none; user-select: none; }
+body.web .sessions .wt-tag { font-size: inherit; }
+/* The label in the nav row, under the conversation's name: tappable, with a larger hit area than it looks. */
+.cn-wt { flex: 0 1 auto; min-width: 0; display: inline-flex; overflow: hidden; }
+.cn-wtb { max-width: 100%; margin: -8px 0; padding: 8px 6px; font-size: 11px; }
+/* The branch label says where the conversation is; the folder and session id beside it would only crowd it. */
+.cn-wt:not(:empty) ~ .cn-cwd { display: none; }
+.cn-wtb:active { background: hsla(232, 60%, 62%, .12); }
+/* Sheets and the diff viewer. */
+body.web .sheet .wt-f input[type=text], body.web .sheet .wt-f select, body.web .sheet .wt-f textarea { font-size: 16px; padding: 11px 12px; }
+body.web .sheet .wt-file { min-height: 44px; }
+body.web .sheet .wt-c { min-height: 44px; align-items: center; }
+body.web .sheet .wt-c input, body.web .sheet .wt-file input { width: 20px; height: 20px; }
+body.web .sheet .wt-cmds { font-size: 12.5px; }
+body.web .sheet .wt-link { min-height: 44px; font-size: 15px; }
+body.web .sheet .wt-mode { display: flex; width: 100%; }
+body.web .sheet .wt-mode button { flex: 1; justify-content: center; min-height: 40px; font-size: 15px; }
+body.web .sheet select { font-size: 16px; }
+body.web .df-bar { padding: 8px 12px; }
+body.web .df-bar .seg button { min-height: 36px; font-size: 14px; }
+body.web .df-btn { min-height: 36px; font-size: 14px; }
+body.web .df-file > summary { min-height: 48px; padding: 10px 12px; }
+body.web .df-pre { font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .cn-wtb { transition: none; } }

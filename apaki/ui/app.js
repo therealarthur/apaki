@@ -45,6 +45,9 @@ import { ARM_MS, denyLabel, permissionHtml, permissionKey, permissionReply, perm
 import { DRAG_TASK, KIND_LABEL, TaskPane, closeTasksPanel, newTaskViewerId, specKey, taskGlyph, tasksPanel, tasksPanelPane } from './tasks.js';
 import { ArtifactPane, newViewerId } from './artifacts.js';
 import { BrowserPane } from './browser.js';
+// Git worktrees (2026-10-12): the branch label, the Worktrees view, the actions, and the diff viewer.
+import { GLYPH_WORKTREE, branchName, hasLinked, initWorktrees } from './worktree.js';
+import { DiffPane, newDiffViewerId } from './diff.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -192,7 +195,13 @@ const host = {
   // /resume and /continue (pane.js): Claude Code's own /resume is a terminal picker the SDK turns off ("isn't
   // available in this environment"), so Apaki opens its session search instead, with what followed the command.
   findSession: (query = '') => findSession(query),
-  chooseFolder: (p) => { if (p && !p.sessionId && !p.busy) startUI = folderSheet(p, { sheet, send, esc, ago }); },
+  // opts.mode 'worktree' opens it on New worktree. The phone cannot browse the PC's disks: it picks among folders the PC knows.
+  chooseFolder: (p, opts = {}) => { if (p && !p.sessionId && !p.busy) startUI = folderSheet(p, { sheet, send, esc, ago, web: WEB, wt: wtc, mode: opts.mode, known: knownFolders }); },
+  // Git worktrees (worktree.js): the worktree a pane's folder is in, its menu, and making one from a first message.
+  worktreeFor: (p) => wtc.forCwd(p.cwd),
+  worktreeMenu: (p, anchor) => wtc.paneMenu(p, anchor),
+  makeWorktree: (p, text) => wtc.makeFor(p, text),
+  wt: null, // set below, once the controller exists (the diff viewer reads it)
   changed: () => { renderTabs(); renderRailMarks(); save(); },
   // Something worth saving changed (a draft, the queue, where you scrolled); no redraw.
   dirty: () => save(),
@@ -229,6 +238,105 @@ const host = {
   shortcut: (key, shift) => shortcut(key, shift),
   paneTitle: (id) => S.panes.get(id)?.title || null,
 };
+
+/* ---------- git worktrees (worktree.js, diff.js; 2026-10-12) ---------- */
+
+// Arthur: "The best approach to AI development is using git worktrees to tackle multiple features simultaneously ...
+// make sure we're updating the app alongside the desktop app so all functionality is equal across the board." This
+// file runs on the phone page too, so everything below is on both; a phone's access level decides what the engine runs.
+const wtc = initWorktrees({
+  send, sheet, menu, web: WEB, shortPath: short,
+  cap: () => (WEB ? (window.__apakiLink?.cap?.() || 'full') : 'full'),
+  sessions: () => S.sessions,
+  openCwds: () => [...S.panes.values()].filter((p) => !p.isViewer && p.cwd).map((p) => p.cwd),
+  openDiff: (spec) => openDiff(spec),
+  startIn: (path) => newConversation(focusedPane(), { cwd: path }),
+  // A pull request opens in the built-in browser on the desktop, and in the phone's own browser on the phone.
+  openUrl: (url) => { if (!/^https:\/\//i.test(String(url || ''))) return; if (WEB) window.open(url, '_blank', 'noopener,noreferrer'); else openUrlHere(url); },
+  focusedCwd: () => focusedPane()?.cwd || '',
+  note: (text, tone) => focusedPane()?.note(text, tone),
+  changed: (o) => wtChanged(o),
+});
+host.wt = wtc;
+
+/** The engine sent repositories: every branch label, diff viewer, tab tooltip and the sidebar follow. */
+function wtChanged({ save: keep = false } = {}) {
+  for (const p of S.panes.values()) {
+    if (p.isDiff) p.repoChanged();
+    else if (!p.isViewer) p.setCwdLine();
+  }
+  if (!S.drag) renderRail();
+  renderTabs();
+  if (keep) save();
+}
+
+/** The folders the PC knows, newest first: what the phone's Starts in sheet offers (it cannot browse the PC's disks). */
+function knownFolders() {
+  const by = new Map();
+  const name = (p) => String(p).split(/[\\/]/).filter(Boolean).pop() || String(p);
+  for (const s of S.sessions) {
+    if (!s.cwd || s.archived) continue;
+    const r = by.get(s.cwd) || { path: s.cwd, name: name(s.cwd), last: 0, claude: 0 };
+    r.last = Math.max(r.last, s.lastModified || 0);
+    r.claude += 1;
+    by.set(s.cwd, r);
+  }
+  for (const repo of wtc.repos()) for (const w of repo.worktrees) if (!w.bare && !by.has(w.path)) by.set(w.path, { path: w.path, name: name(w.path), last: 0, claude: 0 });
+  return [...by.values()].sort((a, b) => b.last - a.last).slice(0, 40);
+}
+
+function createDiffViewer(spec, id = newDiffViewerId()) {
+  const v = new DiffPane(id, host, spec);
+  S.panes.set(v.id, v);
+  return v;
+}
+
+/**
+ * View changes: a diff viewer for a worktree beside the conversation it was asked from (the one already showing that
+ * worktree is shown again, and read again). A full tab gets it in a new tab.
+ */
+function openDiff(spec) {
+  const have = [...S.panes.values()].find((x) => x.isDiff && x.spec.path === spec.path);
+  if (have) {
+    const ht = tabOf(have);
+    if (ht && ht.id !== S.active) switchTab(ht);
+    focusPane(have);
+    have.load();
+    return have;
+  }
+  const src = focusedPane();
+  const t = activeTab();
+  if (!t || !t.root || tabFullForViewer(t)) {
+    const nt = createTab(null);
+    const v = createDiffViewer({ ...spec, ownerPane: src && !src.isViewer ? src.id : null });
+    nt.root = L.leaf(v.id);
+    nt.focused = v.id;
+    layout(nt);
+    switchTab(nt);
+    focusPane(v);
+    save();
+    return v;
+  }
+  const v = createDiffViewer({ ...spec, ownerPane: src && !src.isViewer ? src.id : null });
+  const anchor = src && L.has(t.root, src.id) ? src.id : t.focused || L.ids(t.root)[0];
+  t.root = L.insert(t.root, anchor, v.id, 'right');
+  layout(t);
+  focusPane(v);
+  renderTabs();
+  save();
+  return v;
+}
+
+/** A new tab whose conversation starts in a new worktree of the repository the focused pane is in (the sheet asks when there is none). */
+function newTabInWorktree() {
+  const from = focusedPane();
+  const f = from && !from.isViewer ? wtc.forCwd(from.cwd) : null;
+  const t = addTab();
+  const p = S.panes.get(t.focused);
+  if (!p) return;
+  if (f) p.setPendingWorktree({ repo: f.repo.root || f.wt.path, name: f.repo.name, base: f.repo.base || f.wt.base || '' });
+  else host.chooseFolder(p, { mode: 'worktree' });
+}
 
 /* ---------- artifact viewers ---------- */
 
@@ -637,21 +745,22 @@ function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
   return p;
 }
 
-function newConversation(p) {
+function newConversation(p, o = {}) {
   // A new conversation is a new pane in the current tab, next to the focused one (Arthur, 2026-10-11: "a new
   // conversation creates a new pane in the currently active tab, not a new tab"); it no longer replaces the
   // focused conversation. A pane that is already a new, unsent conversation is reused; a full tab opens a new one.
-  if (p && !p.sessionId && !p.busy && !p.isViewer && !p.isBrowser) { focusPane(p); return; }
+  // o.cwd (a worktree's row, 2026-10-12): it starts in that folder instead of the home folder.
+  if (p && !p.sessionId && !p.busy && !p.isViewer && !p.isBrowser) { if (o.cwd) p.setStartFolder(o.cwd); focusPane(p); return; }
   const t = activeTab();
-  if (!t || !t.root) { addTab(); return; }
+  if (!t || !t.root) { addTab({ cwd: o.cwd }); return; }
   if (tabFull(t)) {
     (S.panes.get(t.focused) || p)?.note?.(`${L.MAX_PANES} panes is the most per tab; opened in a new tab instead.`, 'warn');
-    addTab();
+    addTab({ cwd: o.cwd });
     return;
   }
   const base = p || focusedPane();
   // Home folder, like a new terminal ("Starts in" changes it); the model, effort and mode of the pane it came from.
-  const np = createPane({ cwd: '', model: base?.model, effort: base?.effort, mode: base?.mode });
+  const np = createPane({ cwd: o.cwd || '', model: base?.model, effort: base?.effort, mode: base?.mode });
   const anchor = t.focused && L.has(t.root, t.focused) ? t.focused : L.ids(t.root)[0];
   t.root = L.insert(t.root, anchor, np.id, 'right');
   t.focused = np.id;
@@ -952,7 +1061,9 @@ function renderTabs() {
     const unread = panes.some((p) => p.unread);
     const warm = panes.some((p) => p.sessionId && S.warm.has(p.sessionId));
     const tab = el('div', `tab${t.id === S.active ? ' on' : ''}${busy ? ' busy' : ''}${unread ? ' unread' : ''}${warm ? ' warm' : ''}`);
-    tab.title = panes.map((p) => `${p.busy ? 'working: ' : p.unread ? 'finished: ' : ''}${p.title}`).join('\n') || 'Empty tab';
+    // A tab whose conversations all work in one worktree says which (worktree.js tabNote, 2026-10-12).
+    const onBranch = wtc.tabNote(panes.filter((p) => !p.isViewer && p.cwd).map((p) => p.cwd));
+    tab.title = `${onBranch ? `${onBranch}\n` : ''}${panes.map((p) => `${p.busy ? 'working: ' : p.unread ? 'finished: ' : ''}${p.title}`).join('\n') || 'Empty tab'}`;
     tab.innerHTML = `<span class="tab-t">${esc(f?.title || 'Empty tab')}</span>${convs > 1 ? `<span class="tab-n">${convs}</span>` : ''}${warm ? '<span class="warm-ring" aria-hidden="true"></span>' : ''}`;
     // Double-click the name to rename its session (saved in the session, not only here).
     tab.querySelector('.tab-t').ondblclick = (e) => { e.stopPropagation(); if (f && !f.isViewer) beginRename(f.sessionId, tab.querySelector('.tab-t'), { pane: f }); };
@@ -1014,8 +1125,13 @@ function renderTabs() {
     bar.append(tab);
   }
   const plus = el('button', 'tab-plus', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>');
-  plus.title = 'New tab (Ctrl+T) · drop a session here to open it in a new tab';
+  plus.title = 'New tab (Ctrl+T) · right-click for a new tab in a new worktree · drop a session here to open it in a new tab';
   plus.onclick = () => addTab();
+  // The + menu (2026-10-12): the same tab, or one whose conversation starts in a new git worktree.
+  plus.oncontextmenu = (e) => {
+    e.preventDefault();
+    menu(plus, [{ value: 'tab', label: 'New tab', hint: 'Ctrl+T' }, { value: 'worktree', label: 'New tab in a new worktree', hint: 'its own branch and folder' }], { above: false, width: 280, onPick: (v) => (v === 'worktree' ? newTabInWorktree() : addTab()) });
+  };
   plus.addEventListener('dragover', (e) => { const k = dragKind(e); if (k === 'session' || k === 'pane' || k === 'task') { e.preventDefault(); plus.classList.add('drop'); } });
   plus.addEventListener('dragleave', () => plus.classList.remove('drop'));
   plus.addEventListener('drop', (e) => {
@@ -1126,6 +1242,8 @@ function viewList() {
   return [
     { id: 'all', label: 'All', n: live.length },
     { id: 'terminal', label: 'In terminals', n: term },
+    // Worktrees (2026-10-12): repositories with their worktrees and the conversations in each (worktree.js).
+    { id: 'worktrees', label: 'Worktrees', n: wtc.count() },
     // Archived sessions (right-click > Archive) open from a link under the list (renderRail), so the
     // header keeps two switches; while that view shows, the header's x leaves it.
   ];
@@ -1580,6 +1698,7 @@ function inView(s) {
   if (s.archived) return false;
   if (S.view === 'all') return true;
   if (S.view === 'terminal') return Boolean(s.terminal);
+  if (S.view === 'worktrees') return wtc.inLinked(s.cwd);
   const f = S.folders.find((x) => x.id === S.view);
   return Boolean(f && f.sessions.includes(s.id));
 }
@@ -1600,19 +1719,31 @@ function renderRail() {
   } else {
     rows = S.sessions.filter(inView).sort((a, b) => (Boolean(b.terminal) - Boolean(a.terminal)) || (b.lastModified - a.lastModified));
   }
+  // The Worktrees view (2026-10-12): repository and worktree rows with their conversations nested under them (worktree.js).
+  // Searching shows the matches, filtered to the conversations that live in a worktree, as in every other view.
+  const wtView = S.view === 'worktrees' && !S.results;
+  if (wtView) rows = wtc.rows(S.sessions.filter((s) => !s.archived)).map((r) => (r.k === 'kid' ? { ...r.s, wtKid: true } : { wtRow: r }));
   renderFolders();
   const folder = S.folders.find((f) => f.id === S.view);
-  $('sessionsTitle').textContent = S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : S.view === 'archived' ? 'Archived' : 'Sessions';
-  $('sessionsCount').textContent = String(Math.min(rows.length, 400));
+  $('sessionsTitle').textContent = S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : S.view === 'worktrees' ? 'Worktrees' : S.view === 'archived' ? 'Archived' : 'Sessions';
+  $('sessionsCount').textContent = String(wtView ? wtc.count() : Math.min(rows.length, 400));
   $('clearView').hidden = !folder && S.view !== 'archived';
   $('searchState').textContent = S.results ? S.searchInfo : '';
   $('searchState').hidden = !S.results;
   const list = $('sessions');
   list.innerHTML = '';
   const folderName = (id) => S.folders.find((f) => f.id === id)?.name;
+  if (wtView) { const clean = wtc.cleanRowEl(); if (clean) list.append(clean); }
+  const focusedCwd = focusedPane()?.cwd || '';
   for (const s of rows.slice(0, 400)) {
+    // A repository or a worktree row of the Worktrees view; the conversations between them are ordinary rows (below).
+    if (s.wtRow) { list.append(wtc.rowEl(s.wtRow, { focusedCwd })); continue; }
     const li = el('li');
     li.dataset.id = s.id;
+    if (s.wtKid) li.classList.add('wt-kid');
+    // A conversation in a linked worktree says which branch, beside its time (not under its own worktree row, which says it).
+    const tag = !s.wtKid && s.cwd ? wtc.forCwd(s.cwd) : null;
+    const branchTag = tag && hasLinked(tag.repo) ? `<span class="wt-tag" title="${esc(tag.wt.path)}">${tag.wt.main ? '' : GLYPH_WORKTREE}${esc(branchName(tag.wt))}</span>` : '';
     const meta = [
       s.codex ? '<span class="codex">codex · read-only</span>' : '',
       s.terminal ? `<span class="live">terminal${s.terminal.status ? ` · ${esc(s.terminal.status)}` : ''}</span>` : '',
@@ -1620,7 +1751,7 @@ function renderRail() {
       s.bare ? '<span class="headless" title="Its transcript has no messages yet">empty</span>' : '',
       // Claude Code deleted it after 30 days; Apaki's archive kept a copy (engine archivedCopy, 2026-10-12). Words, no badge.
       s.archivedCopy ? `<span class="arch-copy" title="Claude Code deleted the original after 30 days; Apaki's archive kept this copy, without images.${s.restorable ? ' Open it and send a message to restore it.' : ''}">Archived copy</span>` : '',
-      ago(s.lastModified), esc(short(s.cwd)),
+      ago(s.lastModified), branchTag, esc(short(s.cwd)),
       S.view === 'all' && s.folder ? `▸ ${esc(folderName(s.folder) || '')}` : '',
     ].filter(Boolean).join(' · ');
     const byMeaning = s.sources && !s.sources.includes('words');
@@ -1653,10 +1784,12 @@ function renderRail() {
     list.append(li);
     if (subsOpen) for (const sub of subRows(s)) list.append(sub);
   }
-  if (!rows.length) list.append(el('li', 'note', S.results ? 'Nothing matches in this view.' : S.view === 'archived' ? 'Nothing archived.' : 'No sessions here yet.'));
+  if (!rows.length) list.append(el('li', 'note', S.results ? 'Nothing matches in this view.' : S.view === 'archived' ? 'Nothing archived.' : wtView ? (wtc.hasData() ? 'No worktrees yet. Start a conversation in a new worktree to see it here.' : 'Looking for worktrees…') : 'No sessions here yet.'));
+  const newWt = wtView ? wtc.newRowEl() : null;
+  if (newWt) list.append(newWt);
   // Archived sessions: one quiet link at the end of the list opens them (right-click > Unarchive brings one back).
   const archivedN = S.sessions.filter((x) => x.archived).length;
-  if (archivedN && S.view !== 'archived' && !S.results) {
+  if (archivedN && S.view !== 'archived' && !S.results && !wtView) {
     const more = el('li', 'note archived-link', `<button class="link-btn">${archivedN} archived</button>`);
     more.querySelector('button').onclick = () => { S.view = 'archived'; renderRail(); };
     list.append(more);
@@ -2155,7 +2288,7 @@ function snapshot() {
       };
     }),
   }));
-  return { v: 1, savedAt: Date.now(), active: S.tabs.findIndex((t) => t.id === S.active), tabs, rail: { view: S.view, expanded: [...S.expanded], scroll: $('sessions')?.scrollTop || 0, width: S.railW || null, collapsed: Boolean(S.railCollapsed) }, win: S.win || null };
+  return { v: 1, savedAt: Date.now(), active: S.tabs.findIndex((t) => t.id === S.active), tabs, rail: { view: S.view, expanded: [...S.expanded], scroll: $('sessions')?.scrollTop || 0, width: S.railW || null, collapsed: Boolean(S.railCollapsed), wtFolded: wtc.foldedList() }, win: S.win || null };
 }
 
 /** Saves at once: localStorage, and the engine's copy on disk (desktop only). */
@@ -2187,6 +2320,7 @@ function restore(saved = readLocal()) {
   if (saved?.rail) {
     if (typeof saved.rail.view === 'string') S.view = saved.rail.view;
     S.expanded = new Set(Array.isArray(saved.rail.expanded) ? saved.rail.expanded : []);
+    wtc.setFolded(saved.rail.wtFolded);
     S.railScroll = saved.rail.scroll || 0;
     if (Number.isFinite(saved.rail.width)) S.railW = saved.rail.width;
     S.railCollapsed = saved.rail.collapsed === true;
@@ -2200,6 +2334,8 @@ function restore(saved = readLocal()) {
       if (lf.view?.task) return L.leaf(createTaskViewer(lf.view, lf.pane).id);
       // A browser comes back with its page, loaded the first time it is on screen.
       if (lf.web) return L.leaf(createBrowser({ ...lf.web, adopt: S.alive.has(lf.pane) }, lf.pane).id);
+      // A diff viewer comes back reading its worktree's changes again.
+      if (lf.view?.diff) return L.leaf(createDiffViewer(lf.view.diff, lf.pane).id);
       // A viewer comes back showing its artifact's latest revision.
       if (lf.view?.id) return L.leaf(createViewer(lf.view, lf.pane).id);
       // One session per pane, ever: a duplicate in old saved state opens as a new conversation.
@@ -2237,6 +2373,8 @@ let phone = null;
 // Registered before anything is sent: `listen` is async, and events that
 // arrive before it resolves are lost (a reload lost restored panes' opens).
 await listen('engine', ({ payload: e }) => {
+  // Git worktrees (worktree.js): the repositories, and the answers to what this window asked about them.
+  if (wtc.handle(e)) return;
   // Something Claude showed: a card in its conversation, and the viewer beside it.
   if (e.ev === 'artifact' || e.ev === 'openUrl') {
     const p = S.panes.get(e.paneId);
@@ -2281,6 +2419,7 @@ await listen('engine', ({ payload: e }) => {
         }
       }
       send('sessions');
+      send('worktrees');
       phone?.refresh();
       break;
     case 'index':
@@ -2360,7 +2499,7 @@ await listen('engine', ({ payload: e }) => {
     }
     case 'folders':
       S.folders = e.folders;
-      if (S.view !== 'all' && S.view !== 'terminal' && !S.folders.some((f) => f.id === S.view)) S.view = 'all';
+      if (S.view !== 'all' && S.view !== 'terminal' && S.view !== 'worktrees' && !S.folders.some((f) => f.id === S.view)) S.view = 'all';
       send('sessions');
       break;
     case 'search':
@@ -2540,6 +2679,7 @@ for (const id of S.alive) if (!S.panes.get(id)?.isBrowser) invoke('browser', { c
 syncSoon();
 // Ask the engine for its state in case it was ready before this page loaded.
 send('sessions');
+send('worktrees');
 // Sessions open in terminals change on their own: refresh the list now and then.
 // The engine keeps the list live (live.js); this is only a slow safety net, and it no longer waits for idle panes.
 setInterval(() => { if (!S.query && !S.drag) send('sessions'); }, 60000);
@@ -2553,4 +2693,4 @@ $('refreshSessions').onclick = () => {
 // 2026-10-11: focusPane and openFromRail for the phone (apaki/web/src/pager.js focuses the pane a swipe settles on;
 // desktop.js opens a conversation from "On your desktop" the way a tap in the session list does, or follows the desktop
 // pane with followDesktop when the PC offers 'follow'). The window never calls them.
-window.__apaki = { S, L, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, followDesktop, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };
+window.__apaki = { S, L, wt: wtc, openDiff, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, followDesktop, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };

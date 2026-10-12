@@ -415,6 +415,20 @@ PRESETS.search = () => PRESETS.base();
 // The phone client (phone.html, 2026-10-12): the same lived-in PC; the phone starts on its sessions list.
 PRESETS.phone = () => PRESETS.base();
 
+// Git worktrees (2026-10-12): conversations in the worktrees of two invented repositories, the sidebar on its Worktrees view.
+PRESETS.worktrees = () => {
+  const p = PRESETS.base();
+  const web = `${CWD.web}.worktrees`;
+  p.worktrees = true;
+  p.tabs = [
+    { focused: 'pa1', root: leaf('pa1', ID.flaky, { title: 'Fix flaky checkout test', cwd: `${web}\\fix-flaky-checkout` }) },
+    { focused: 'pa2', root: leaf('pa2', ID.uploads, { title: 'Move image uploads to signed URLs', cwd: `${web}\\signed-uploads`, model: 'claude-sonnet-5-5', effort: 'xhigh' }) },
+    { focused: 'pa3', root: leaf('pa3', ID.darkmode, { title: 'Dark mode for the settings screen', cwd: CWD.mobile, model: 'claude-sonnet-5-5' }) },
+  ];
+  p.rail = { view: 'worktrees', expanded: [], scroll: 0, width: 352, collapsed: false };
+  return p;
+};
+
 PRESETS.history = () => {
   const p = PRESETS.base();
   p.tabs = [p.tabs[1], p.tabs[0], p.tabs[2]];

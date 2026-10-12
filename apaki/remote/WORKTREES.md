@@ -60,3 +60,43 @@ shell-level actions.
    on temp repos. 2. Desktop UI: sheet option, sidebar grouping and filter,
    pane branch label and menu, diff viewer. 3. Phone UI for the same, through
    the phone policy. 4. Commit, push, PR, merge flows. 5. Codex threads.
+
+## Status (2026-10-12): steps 1 to 4 are built, step 5 is not
+
+Engine (`apaki/engine/worktrees.js`, ops in `engine.js`): detection from files
+(no git process for a repository without linked worktrees), the numbers per
+worktree, create, remove, commit, push, pull request and merge, each as a plan
+(the exact commands, warnings, blockers) that the engine makes again when it
+runs. Window and phone (`apaki/ui/worktree.js`, `diff.js`, `app.js`,
+`pane.js`, `startfolder.js`; the phone's nav row in `apaki/web/src/pager.js`):
+the Worktrees filter, the branch label and menu, the action sheets, Starts in
+with New worktree, the + menu and tab tooltip, the diff viewer, the cleanup
+prompt. Tests: `test/apaki-worktrees.test.js` (temp repositories),
+`apaki-worktrees-engine.test.js` (end to end and the phone policy),
+`apaki-worktrees-ui.test.js`. Ledger entries: `apaki/parity/features.json`
+(`worktree-*`).
+
+Choices the design left open:
+
+- A worktree row's click starts a conversation in it; hover (always, on the
+  phone) shows New conversation here and the menu. A zero side of the count is
+  left out ("+12", not "+12 -0").
+- Counts are against the branch's base: the repository's default branch, or the
+  base a worktree Apaki made came from (Apaki's own note in
+  `~/.claude/latch/apaki-worktrees.json`, never in the repository's config).
+  New files count by their lines.
+- "Merged" means the branch is inside its base and had work of its own; a branch
+  made a moment ago is not offered for cleanup.
+- Merge goes into the base's own checkout (it must be checked out and clean),
+  after `git merge-tree` shows there is no conflict; nothing is pushed or
+  deleted. A pull request pushes first (shown), then `gh pr create`; Apaki never
+  force-pushes and never passes the force flag to remove.
+- A phone may read at every access level (the list, the diff) and plan or run
+  actions only with Full access; a phone can only name folders the PC already
+  lists, and create never takes a place to put the folder.
+- The `worktrees` event is a broadcast (every window and phone, cached for later
+  ones) and is also the answer to `worktrees` requests.
+
+Not built: EnterWorktree tool uses in a transcript moving the session to that
+worktree (no transcript with a real use was found to check the format against),
+and step 5, Codex threads.

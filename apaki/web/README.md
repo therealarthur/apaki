@@ -39,7 +39,13 @@ Track B part 2, 2026-10-09 (Claude Code, Opus 5.5, for Arthur).
   pages: native horizontal scrolling with snap, a thin segmented bar for the
   position. Settling on a page focuses that pane in app.js; app.js focusing a
   pane scrolls to it. The left screen edge (20 px) stays the swipe back to the
-  list. app.js stays the source of truth (its hidden tab bar is mirrored).
+  list. app.js stays the source of truth (its hidden tab bar is mirrored). Since
+  2026-10-12 the bar also mirrors the visible pane's git branch label ("fix-checkout
+  +42 -7", from `ui/worktree.js`) and a tap opens that pane's worktree menu.
+  Git worktrees on the phone otherwise come from the shared `apaki/ui` code (the
+  Worktrees view, the action sheets, the diff viewer) with touch sizes in
+  `web.css`; what a phone may do is `apaki/engine/remote-policy.js` (reading at
+  every access level, actions with Full access).
 - `src/desktop.js` (2026-10-11): "On your desktop" at the top of the list: the
   desktop window's tabs and panes (the engine's `desktopTabs` event, which
   `shim.js onDesktopTabs` keeps), the tab in front first; a conversation opens
