@@ -79,12 +79,37 @@ const S = {
   tabs: [], active: null, panes: new Map(), drag: null,
 };
 
+/**
+ * "Reconnecting to the engine" as one quiet banner at the top of the window while the window has no engine, and gone
+ * the moment it is back (the next ready). Shown only after 1.5 s, so a reconnect that takes a blink shows nothing.
+ */
+let bannerTimer = null;
+function engineBanner(on) {
+  let b = document.getElementById('engineBanner');
+  if (!on) { clearTimeout(bannerTimer); bannerTimer = null; if (b) b.hidden = true; return; }
+  if (bannerTimer || (b && !b.hidden)) return;
+  bannerTimer = setTimeout(() => {
+    bannerTimer = null;
+    if (!S.engineLost) return;
+    if (!b) {
+      b = document.createElement('div');
+      b.id = 'engineBanner';
+      b.className = 'engine-banner';
+      b.setAttribute('role', 'status');
+      b.textContent = 'Reconnecting to the engine… your conversations keep running, and nothing you type is lost.';
+      document.body.append(b);
+    }
+    b.hidden = false;
+  }, 1500);
+}
+
 function send(op, args = {}) {
   return invoke('engine_send', { msg: { op, reqId: `r${++S.seq}`, ...args } }).catch((e) => {
     // While the window reconnects every command is refused; one quiet line says so, not one per command
     // (Arthur, 2026-10-11, saw "engine is not running" a dozen times while the engine switched over).
     if (/engine is not running/i.test(String(e))) {
-      if (!S.offlineNoted) { S.offlineNoted = true; focusedPane()?.note('Not connected to the engine for a moment; reconnecting. Nothing you type is lost.', 'warn'); }
+      // The banner already says so (engineBanner); nothing is added to the conversation.
+      engineBanner(true);
       return false;
     }
     focusedPane()?.note(String(e), 'error');
@@ -2171,6 +2196,7 @@ await listen('engine', ({ payload: e }) => {
       for (const p of S.panes.values()) p.setVoice(S.voice);
       // The engine restarted: every pane lost its Claude Code process. Reopen
       // each one (without starting Claude Code until its next message).
+      engineBanner(false);
       if (S.engineLost) {
         S.engineLost = false;
         S.offlineNoted = false;
@@ -2332,7 +2358,8 @@ await listen('engine', ({ payload: e }) => {
       S.engineLost = true;
       for (const p of S.panes.values()) p.engineLost();
       // The background engine may still be running (its turns keep going): reconnecting re-attaches the panes.
-      focusedPane()?.note('Lost the engine for a moment; reconnecting…', 'warn');
+      // One banner over the window, gone once it is back (2026-10-11: two notes per attempt piled up in the pane).
+      engineBanner(true);
       break;
     default: break;
   }

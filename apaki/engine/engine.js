@@ -614,6 +614,16 @@ async function sendContextEstimate(p, sessionId) {
   if (ev && !p.runner && p.sessionId === sessionId) emit({ ev: 'context', paneId: p.id, sessionId, ...ev, autoCompact: null, used: [] });
 }
 
+/**
+ * The account behind a pane changed (a Glass swap, an API key, a subscription): its context window can be another
+ * size for the same model (2026-10-11, Arthur is moving to a subscription), so the remembered window is dropped and
+ * the meter measured again.
+ */
+function billingChanged(p) {
+  windowByModel.clear();
+  if (p?.runner) contextSoon(p, 2000);
+}
+
 function contextSoon(p, ms = 400) {
   clearTimeout(p.contextTimer);
   p.contextTimer = setTimeout(() => sendContext(p).catch(() => {}), ms);
@@ -723,8 +733,11 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
       emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
       // What the pane is doing (a turn, background tasks), for attach and the host's idle rules (host.js).
       paneActivity(p, runner, msg);
-      // The context meter: measured once the process is up, after every turn and after a compaction.
+      // The context meter: measured once the process is up, after every turn and after a compaction, and during a
+      // turn after each model step (an assistant message), so it moves while Claude works (2026-10-11, Arthur:
+      // "make sure that context dynamically is displayed"). contextSoon debounces: at most one measure per 1.5 s.
       if (msg?.type === 'result' || (msg?.type === 'system' && (msg.subtype === 'init' || msg.subtype === 'compact_boundary'))) contextSoon(p);
+      else if (msg?.type === 'assistant' && !msg.parent_tool_use_id) contextSoon(p, 1500);
     },
     onStderr: (d) => process.stderr.write(String(d).replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***')),
   });
@@ -762,7 +775,7 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     // The Glass watcher below usually announced this swap already.
     const announced = (p.credential.key ?? null) === (next.key ?? null);
     p.credential = { ...next, follow: true };
-    emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: announced ? undefined : `Myrlin Glass switched Claude to ${next.name}; this conversation continues on it.` });
+    billingChanged(p); emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: announced ? undefined : `Myrlin Glass switched Claude to ${next.name}; this conversation continues on it.` });
   };
   // Taken over by another window since: stop instead of forking the conversation.
   runner.lockGuard = () => (p.sessionId ? lockStolen(p.sessionId) : null);
@@ -963,7 +976,7 @@ const handlers = {
       if (p.runner.running) await p.runner.restart({ env: childEnv(next.key) });
       else p.runner.env = childEnv(next.key);
     }
-    emit({ ev: 'billing', paneId: p.id, ...billingInfo(p) });
+    billingChanged(p); emit({ ev: 'billing', paneId: p.id, ...billingInfo(p) });
   },
   // Where a new conversation starts (ui/startfolder.js, src/places.js).
   // The Codex scan takes ~2 s the first time, so the Claude Code lists go out first.
@@ -1691,7 +1704,7 @@ async function glassChanged() {
     if (!p.credential.follow) continue;
     const moved = (p.credential.key ?? null) !== (next.key ?? null);
     p.credential = next;
-    if (changed || moved) emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: moved ? `Myrlin Glass switched Claude to ${name}; the next message here uses it.` : undefined });
+    if (changed || moved) billingChanged(p); emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: moved ? `Myrlin Glass switched Claude to ${name}; the next message here uses it.` : undefined });
   }
   emit({ ev: 'glass', installed: fs.existsSync(GLASS_CLI), name, source: c.source, plan: account?.plan || null, headroom: account?.headroom ?? null, changed, isKey: Boolean(c.key), claude: view?.claude || null, codex: view?.codex || null, lists: view?.lists || null, mode: view?.mode || null });
 }
