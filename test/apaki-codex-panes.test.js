@@ -407,3 +407,19 @@ test('opening a thread the server cannot find says so and leaves an empty Codex 
   assert.equal(s.codex.byThread.get(THREAD), p);
   assert.equal(CODEX_SHARED, 'codex-shared');
 });
+
+test('a tool server that fails to start for a thread is said once on that pane; ready, other servers and other threads say nothing', async () => {
+  const s = setup();
+  const p = s.pane('p1');
+  await s.codex.open('r', p, `codex:${THREAD}`, null, {});
+  const warnings = () => s.activity.filter((m) => m.subtype === 'informational' && /viewer and browser tools/.test(m.content));
+  s.client.emit('notification', 'mcpServer/startupStatus/updated', { threadId: THREAD, name: 'apaki', status: 'ready' });
+  s.client.emit('notification', 'mcpServer/startupStatus/updated', { threadId: THREAD, name: 'other', status: 'failed', error: 'x' });
+  s.client.emit('notification', 'mcpServer/startupStatus/updated', { name: 'apaki', status: 'failed', error: 'no thread' });
+  assert.equal(warnings().length, 0);
+  s.client.emit('notification', 'mcpServer/startupStatus/updated', { threadId: THREAD, name: 'apaki', status: 'failed', error: 'spawn node ENOENT' });
+  s.client.emit('notification', 'mcpServer/startupStatus/updated', { threadId: THREAD, name: 'apaki', status: 'failed', error: 'again' });
+  assert.equal(warnings().length, 1);
+  assert.match(warnings()[0].content, /ENOENT/);
+  assert.equal(warnings()[0].level, 'warning');
+});

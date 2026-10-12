@@ -779,6 +779,14 @@ export function createCodex(env) {
         if (params.willRetry) sdk(p, informational(`${friendlyError(params.error)} Retrying.`, 'warning'));
         break;
       case 'hook/completed': { const m = hookMessage(params.run); if (m) sdk(p, m); break; }
+      // Apaki's tool server (the viewer and browser tools) did not start for this thread: say so once, instead of Codex quietly
+      // having no show tool (it still works without them; links and files just open outside Apaki).
+      case 'mcpServer/startupStatus/updated':
+        if (params.name === 'apaki' && params.status === 'failed' && !cx.toolsWarned) {
+          cx.toolsWarned = true;
+          sdk(p, informational(`Apaki's viewer and browser tools did not start for this thread${params.error ? `: ${String(params.error).slice(0, 300)}` : ''}`, 'warning'));
+        }
+        break;
       case 'model/rerouted': sdk(p, rerouteMessage(params)); break;
       case 'thread/name/updated':
         if (params.threadName) { p.codexTitle = params.threadName; emit({ ev: 'renamed', paneId: p.id, sessionId: p.sessionId, title: params.threadName, ok: true }); shared.rowsAt = 0; }
