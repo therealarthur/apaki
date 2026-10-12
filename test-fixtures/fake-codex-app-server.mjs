@@ -80,12 +80,26 @@ hist.set(ids.big, Array.from({ length: 200 }, (_, i) => ({
 let turnSeq = 0;
 const active = new Map(); // thread id -> { turnId, release(kind) }
 
+/*
+ * Rollout files (2026-10-12, for the Claude / Codex switch tests): with $FAKE_CODEX_ROLLOUTS set, a thread started here
+ * gets a rollout file there, shaped like codex-cli 0.161's (session_meta, response_item messages, item_completed
+ * commands), its path in thread.path, and every injected item and turn is written to it. thread/inject_items records
+ * the items; $FAKE_CODEX_NO_INJECT=1 makes it an unknown method, as on an older codex.
+ */
+const ROLLOUTS = process.env.FAKE_CODEX_ROLLOUTS || '';
+const roll = (threadId, type, payload) => {
+  const t = threads.get(threadId);
+  if (t?.path) fs.appendFileSync(t.path, `${JSON.stringify({ timestamp: new Date().toISOString(), type, payload })}\n`);
+};
+const injected = new Map(); // thread id -> items
+
 async function runTurn(threadId, input, params) {
   const turnId = `01a00000-0000-7000-8000-${String(9000 + ++turnSeq).padStart(12, '0')}`;
   const text = input.filter((i) => i.type === 'text').map((i) => i.text).join('\n');
   const turn = (status, extra = {}) => ({ id: turnId, items: [], status, error: null, startedAt: NOW, completedAt: status === 'inProgress' ? null : NOW, durationMs: status === 'inProgress' ? null : 1200, ...extra });
   const base = { threadId, turnId };
   note('turn/started', { threadId, turn: turn('inProgress') });
+  roll(threadId, 'response_item', { type: 'message', role: 'user', content: [{ type: 'input_text', text }] });
   note('item/started', { ...base, startedAtMs: Date.now(), item: { type: 'userMessage', id: `um-${turnId}`, clientId: params.clientUserMessageId || null, content: input } });
   note('item/completed', { ...base, completedAtMs: Date.now(), item: { type: 'userMessage', id: `um-${turnId}`, clientId: params.clientUserMessageId || null, content: input } });
   let status = 'completed';
@@ -107,6 +121,7 @@ async function runTurn(threadId, input, params) {
     note('item/commandExecution/outputDelta', { ...base, itemId: item.id, delta: 'line two\n' });
     const bad = /fail/.test(arg);
     note('item/completed', { ...base, completedAtMs: Date.now(), item: { ...item, status: bad ? 'failed' : 'completed', aggregatedOutput: 'line one\nline two\n', exitCode: bad ? 1 : 0, durationMs: 80 } });
+    roll(threadId, 'event_msg', { type: 'item_completed', thread_id: threadId, turn_id: turnId, item: { type: 'CommandExecution', id: item.id, command: ['C:\\pwsh.exe', '-Command', arg], aggregated_output: 'line one\nline two\n', exit_code: bad ? 1 : 0, status: 'completed' } });
   } else if (kind === 'plan') {
     note('turn/plan/updated', { ...base, explanation: null, plan: arg.split('|').map((s, i) => ({ step: s.trim(), status: i === 0 ? 'inProgress' : 'pending' })) });
   } else if (kind === 'patch') {
@@ -157,6 +172,7 @@ async function runTurn(threadId, input, params) {
     const third = Math.ceil(reply.length / 3);
     for (let i = 0; i < reply.length; i += third) { note('item/agentMessage/delta', { ...base, itemId: id, delta: reply.slice(i, i + third) }); await sleep(5); }
     note('item/completed', { ...base, completedAtMs: Date.now(), item: { type: 'agentMessage', id, text: reply, phase: 'final_answer', memoryCitation: null, delivery: null } });
+    roll(threadId, 'response_item', { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: reply }], phase: 'final_answer' });
     note('thread/tokenUsage/updated', { ...base, tokenUsage: { total: { totalTokens: 3000, inputTokens: 2500, cachedInputTokens: 2000, outputTokens: 500, reasoningOutputTokens: 100 }, last: { totalTokens: 1500, inputTokens: 1200, cachedInputTokens: 1000, outputTokens: 300, reasoningOutputTokens: 50 }, modelContextWindow: 10000 } });
   }
   note('turn/completed', { threadId, turn: turn(status, { error }) });
@@ -178,9 +194,11 @@ const handlers = {
   },
   'thread/start': (p) => {
     const id = `01a00000-0000-7000-8000-${String(5000 + threads.size).padStart(12, '0')}`;
-    const t = thread(id, { cwd: p.cwd || process.cwd(), preview: '' });
+    const file = ROLLOUTS ? `${ROLLOUTS}/rollout-2026-10-12T09-00-00-${id}.jsonl` : null;
+    const t = thread(id, { cwd: p.cwd || process.cwd(), preview: '', path: file });
     threads.set(id, t);
     hist.set(id, []);
+    if (file) { fs.mkdirSync(ROLLOUTS, { recursive: true }); roll(id, 'session_meta', { id, cwd: t.cwd, cli_version: '0.161.0', originator: p.serviceName || 'fake' }); }
     return { thread: t, model: p.model || 'gpt-6.1-sol', modelProvider: 'openai', reasoningEffort: 'low', cwd: t.cwd, approvalPolicy: p.approvalPolicy || 'on-request', approvalsReviewer: 'user', sandbox: { type: p.sandbox === 'danger-full-access' ? 'dangerFullAccess' : p.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite' } };
   },
   'thread/turns/list': (p) => {
@@ -210,6 +228,13 @@ const handlers = {
   },
   'thread/name/set': (p) => { const t = threads.get(p.threadId); if (t) { t.name = p.name; note('thread/name/updated', { threadId: p.threadId, threadName: p.name }); } return {}; },
   'thread/unsubscribe': () => ({ status: 'unsubscribed' }),
+  'thread/inject_items': (p) => {
+    if (process.env.FAKE_CODEX_NO_INJECT === '1') throw Object.assign(new Error('Method not found: thread/inject_items'), { code: -32601 });
+    if (!threads.has(p.threadId)) throw Object.assign(new Error('thread not found'), { code: -32600 });
+    injected.set(p.threadId, [...(injected.get(p.threadId) || []), ...(p.items || [])]);
+    for (const it of p.items || []) roll(p.threadId, 'response_item', it);
+    return {};
+  },
   'thread/compact/start': (p) => {
     setTimeout(() => { note('item/started', { threadId: p.threadId, turnId: 'tc', startedAtMs: 1, item: { type: 'contextCompaction', id: 'cc-live' } }); note('item/completed', { threadId: p.threadId, turnId: 'tc', completedAtMs: 2, item: { type: 'contextCompaction', id: 'cc-live' } }); }, 20);
     return {};

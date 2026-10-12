@@ -62,4 +62,35 @@ Steps 1 and 2 alone give you a working "switch to GPT". Want me to start on them
 
 ## Build status
 
-Not built yet (2026-10-12).
+EXPERIMENTAL, parked (2026-10-12). Arthur, the same day: "the switch to codex functionality is experimental and
+should not be focused on right now". What exists lives on the branch `apaki-switch` only and is not merged. No
+switch control is shown anywhere in the window or on the phone; the engine op exists for tests.
+
+Built and tested (engine side, against the fake app-server; no real turn on any account):
+
+- Step 1, ledger and readers: `apaki/engine/ledger.js` reads a Claude transcript and a Codex rollout (0.161 shapes and
+  older ones) into the same events, by byte offset, read only, unknown line types counted and skipped. Checked by
+  hand on real files (counts only): no unknown types, 30 to 120 ms per file. Test: `apaki-ledger`.
+- Step 2, handoff and checkpoint: `handoff.js` (summary, recent turns word for word within a budget, the other
+  side's tools as plain text, artifacts, the real diff); `checkpoint.js` (temporary GIT_INDEX_FILE, commit-tree,
+  refs/apaki/handoff/<n>; never touches the working tree, index, HEAD, branches or stash; skipped outside git).
+  Tests: `apaki-handoff`, `apaki-checkpoint`.
+- Step 2, Claude to Codex: `switch.js` and op `switchAgent { paneId, to }`. The same pane becomes a Codex pane on the
+  link's thread (started, or resumed on later switches) and the handoff goes in with `thread/inject_items` (no turn,
+  nothing billed); a server without it gets the handoff in front of the next message. Links in
+  ~/.claude/latch/switch. Test: `apaki-switch-e2e`.
+- Step 4, the return path: back to the original Claude session; the handoff (everything since Claude's bookmark)
+  rides in front of the next message, once; the bookmark moves when it goes out.
+- Step 3, ledger MCP server: `ledger-mcp-stdio.mjs` (ledger_recent, _search, _event, _tool_output, _links, _skills,
+  _skill, _instructions), passed per process (Codex: `-c mcp_servers.apaki_ledger.*`; a switched Claude pane: SDK
+  mcpServers). Not covered by its own test yet.
+- Step 5, environment parity without writing ~/.codex: `codex-env.js` (Claude's MCP servers as `-c` overrides with
+  secrets in the process environment, the CLAUDE.md layers in compact form as the switched thread's developer
+  instructions, skills through the ledger server). Not covered by its own test yet.
+- Step 6, one view: a switched pane's history shows both sides with a line at each switch, each message tagged with
+  its agent (engine side only; the window does not draw the agent tags yet).
+
+Not built: any window or phone UI (button, menu item, header, lit state from Glass), remote-policy entry for
+switchAgent, parity ledger entries. Open questions for Arthur before it resumes: whether Claude's MCP servers should
+reach every Codex thread (they would, per process) or only switched ones (per thread `config` exists in the
+app-server schema but is untested); and whether a switch should ever be allowed from a phone.

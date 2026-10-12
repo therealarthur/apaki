@@ -156,6 +156,11 @@ import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
 import { findCodex } from './codex-client.js';
 import { CODEX_SHARED, createCodex, isCodexPane } from './codex-panes.js';
 import { threadIdOf } from './codex-map.js';
+// Switching a conversation between Claude Code and Codex (2026-10-12, SWITCH.md): the links, the handoff, the ledger.
+import { createSwitch, linkView } from './switch.js';
+import { HANDOFF_END, withHandoff } from './handoff.js';
+import { rolloutRoots } from './codex-rollouts.js';
+import { codexParity, ledgerServerSpec, workingRules } from './codex-env.js';
 import { searchHybrid, startIndexServer, updateIndex, updateViaServer } from '../../src/deepindex.js';
 import { askSearch, digPrompt } from './asksearch.js';
 import * as folders from '../../src/folders.js';
@@ -357,6 +362,27 @@ try { openServer = await startOpenServer({ store, onOpen: openedByBrowser, onSho
  * command line only (-c overrides, no config file written); one token stands for every Codex thread.
  */
 const MCP_SCRIPT = path.join(ENGINE_ROOT, 'apaki', 'engine', 'apaki-mcp-stdio.mjs');
+// The switch ledger's tool server (ledger-mcp-stdio.mjs): both agents can ask it for the whole record of a switched conversation.
+const LEDGER_SCRIPT = path.join(ENGINE_ROOT, 'apaki', 'engine', 'ledger-mcp-stdio.mjs');
+
+/**
+ * The extra -c overrides and variables of the Codex app-server process (codex-env.js; nothing is written under
+ * ~/.codex): the ledger tool server, and the Claude side's own tool servers and their variables (read only from
+ * ~/.claude.json), so a conversation switched to Codex has the same tools.
+ */
+function codexProcessExtras() {
+  const ledger = fs.existsSync(LEDGER_SCRIPT) ? ledgerServerSpec({ node: process.execPath, script: LEDGER_SCRIPT, dir: path.join(latchDir(), 'switch'), rolloutRoots: rolloutRoots() }) : null;
+  return codexParity({ ledger, log: (line) => process.stderr.write(`apaki: ${line}\n`) });
+}
+
+/** The ledger tool server for a Claude pane whose conversation is a switched one (its own process, this pane only). */
+function claudeLedgerServer(p) {
+  const link = sw.linkOf(p);
+  if (!link || !fs.existsSync(LEDGER_SCRIPT)) return {};
+  const spec = ledgerServerSpec({ node: process.execPath, script: LEDGER_SCRIPT, dir: path.join(latchDir(), 'switch'), rolloutRoots: rolloutRoots() });
+  return { [spec.name]: { type: 'stdio', command: spec.command, args: spec.args, env: { ...spec.env, APAKI_LEDGER_LINK: link.id } } };
+}
+
 const codex = createCodex({
   emit, asks: state.asks, panes, tools: (p) => toolsFor(p), openPage: (p, o) => { openPage(p, o); },
   shared: () => (openServer && fs.existsSync(MCP_SCRIPT)
@@ -369,9 +395,39 @@ const codex = createCodex({
   turnEnded: (p) => { markAway(p, { busy: false, s: p.sessionId || null, away: { at: new Date().toISOString(), sessionId: p.sessionId || null } }); turnEnded(p); },
   attachDir: () => path.join(latchDir(), 'codex-attachments'),
   log: (line) => process.stderr.write(`apaki: ${line}\n`),
+  // The Claude / Codex switch (switch.js, 2026-10-12): the ledger and the Claude side's tool servers for this process,
+  // the switched thread's instructions, its link, the one view across switches, and a handoff waiting for a message.
+  processExtras: () => codexProcessExtras(),
+  // A switched thread also gets the user's CLAUDE.md layers in a compact form (codex-env.js workingRules).
+  threadInstructions: (p) => { const base = sw.codexInstructions(p); return base ? [base, workingRules(p.codex?.cwd || sw.links.get(p.switchLink)?.cwd || '')].filter(Boolean).join('\n\n') : ''; },
+  linkStatus: (sessionId) => sw.status(sessionId),
+  decorateHistory: (p, sessionId, page, o) => sw.decorateHistory(p, sessionId, page, o),
+  handoffFor: (p) => sw.pendingFor(p, 'codex'),
+  handoffDelivered: (p) => sw.delivered(p, 'codex'),
+  handoffEnd: HANDOFF_END,
+  threadStarted: (p, threadId) => sw.codexThreadStarted(p, threadId),
 });
 // Whether Codex is installed here, so the window offers it; looked up once, without starting anything.
 const CODEX_FOUND = Boolean(findCodex());
+
+/*
+ * Switching a conversation between Claude Code and Codex (switch.js; design apaki/remote/SWITCH.md, 2026-10-12).
+ * Both native sessions stay; a link joins them and each switch hands the side taking over what happened since it last
+ * saw the conversation, with a git checkpoint. Nothing is sent by the switch itself.
+ */
+const sw = createSwitch({
+  emit, codex, dir: path.join(latchDir(), 'switch'),
+  openPane: (reqId, paneId, sessionId, cwd, opts) => open(reqId, paneId, sessionId, cwd, opts),
+  busy: (p) => Boolean(p.busy) || (isCodexPane(p) ? Boolean(p.inTurn) : paneTurnBusy(p)),
+  cwdOf: (p) => p.runner?.cwd || p.codex?.cwd || sw.links.get(p.switchLink)?.cwd || '',
+  claudeFile: (sessionId) => historyFileOf(sessionId),
+  codexRoots: () => rolloutRoots(),
+  claudeDefaults: () => ({ model: defaults.model, effort: defaults.effort, mode: defaults.mode }),
+  artifacts: (sessionId) => { try { return store.list(sessionId); } catch { return []; } },
+  codexFound: () => CODEX_FOUND,
+  ledgerTools: () => fs.existsSync(LEDGER_SCRIPT),
+  log: (line) => process.stderr.write(`apaki: ${line}\n`),
+});
 
 /** Opens a web page, or a stored artifact's file, outside Apaki (the system browser or default app). */
 function openOutside(target) {
@@ -643,8 +699,10 @@ async function sendHistory(p, sessionId, { refresh = false, reqId = null } = {})
   const t0 = Date.now();
   // rev: the transcript's revision as sent, so a pane can later ask whether it drifted (historyCheck).
   const rev = await historyRevOf(sessionId);
-  const page = await historyStore.firstPage(sessionId, { limit: HISTORY_PAGE }).catch((e) => { process.stderr.write(`history: ${e.message || e}\n`); return null; });
+  let page = await historyStore.firstPage(sessionId, { limit: HISTORY_PAGE }).catch((e) => { process.stderr.write(`history: ${e.message || e}\n`); return null; });
   if (page) {
+    // A conversation that switched between Claude and Codex: both sides in one view, a line at each switch (switch.js).
+    page = await sw.decorateHistory(p, sessionId, page, { first: true }).catch((e) => { process.stderr.write(`switch history: ${e.message}\n`); return page; });
     emit({ ev: 'history', reqId, paneId: p.id, sessionId, ...page, rev, ...(refresh ? { refresh: true } : {}), ms: Date.now() - t0 });
     sendContextEstimate(p, sessionId);
     return;
@@ -831,13 +889,20 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   }
   if (other) await takeFrom(other, p);
   await closeRunner(p);
+  // A pane opened on a conversation outside the switch it made forgets that switch (switch.js), unless a switch opens it.
+  if (!opts.switch && p.switchLink) {
+    const l = sw.links.get(p.switchLink);
+    const same = l && (isCodexId(sessionId) ? l.codex?.threadId === threadIdOf(sessionId) : (l.claude?.sessionId || null) === (sessionId || null));
+    if (!same) p.switchLink = null;
+  }
   if (wantCodex) {
     // Another conversation in this pane: what was queued for the old one no longer applies (as below for Claude).
     if ((p.sessionId || null) !== (sessionId || null)) resetHeld(p);
     p.createdHere = false;
     p.sessionId = sessionId || null;
     // The picks of a Claude pane are not Codex's: only what the window sends for this pane (model, effort, mode) counts.
-    await codex.open(reqId, p, sessionId || null, cwd || null, { model: opts.model, effort: opts.effort, mode: opts.mode, force: opts.force });
+    // switch: a Claude / Codex switch opened it (switch.js); the window keeps the conversation on screen.
+    await codex.open(reqId, p, sessionId || null, cwd || null, { model: opts.model, effort: opts.effort, mode: opts.mode, force: opts.force, switch: opts.switch });
     return;
   }
   if (opts.model) p.model = opts.model;
@@ -872,8 +937,9 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     sessionId: sessionId || null,
     cwd: cwd || info?.cwd || os.homedir(),
     env: childEnv(p.credential.key),
-    // Apaki's own tools and "open this" catcher, passed at runtime only.
-    mcpServers: tools.mcpServers,
+    // Apaki's own tools and "open this" catcher, passed at runtime only; a conversation that switched between Claude
+    // and Codex also gets the ledger tool server (the whole record of both sides; switch.js, 2026-10-12).
+    mcpServers: () => ({ ...(typeof tools.mcpServers === 'function' ? tools.mcpServers() : tools.mcpServers), ...claudeLedgerServer(p) }),
     appendSystemPrompt: tools.appendSystemPrompt,
     // A phone pane also gets the capability hook (it holds in bypassPermissions too) and its tool limits.
     hooks: capOpts ? { ...tools.hooks, PreToolUse: [...(tools.hooks.PreToolUse || []), capPreToolUse(() => phoneCap(p.id))] } : tools.hooks,
@@ -927,6 +993,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     rememberCreated(id);
     p.sessionId = id;
     p.createdHere = true;
+    // A conversation that began in Codex and switched here: its link learns the Claude session (switch.js).
+    sw.claudeSessionStarted(p, id);
     // Made while no window is connected: the saved workspace learns the new session (host mode).
     markAway(p, { s: id });
     takeLock(id, { force: true });
@@ -946,7 +1014,11 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   p.runner = runner;
   // A pane in a folder the lists have no numbers for yet (a new worktree): the branch label follows within a second.
   wtSoon(600);
-  emit({ ev: 'opened', tookOver: Boolean(opts.force),  reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
+  // switch: a Claude / Codex switch brought this pane back to Claude (kind says so, for a pane that was a Codex one);
+  // link: the switched conversation this session belongs to (switch.js).
+  const link = sw.status(p.sessionId) || (opts.switch ? linkView(sw.links.get(p.switchLink)) : null);
+  emit({ ev: 'opened', tookOver: Boolean(opts.force),  reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [],
+    ...(opts.switch ? { switch: opts.switch, kind: 'claude' } : {}), ...(link ? { link } : {}) });
   if (opts.warm !== false) runner.start();
   // The whole conversation, newest page first (history.js; the SDK's list when the file cannot be read).
   if (sessionId) await sendHistory(p, sessionId);
@@ -976,12 +1048,17 @@ async function send(reqId, paneId, text, images = []) {
     if (!p.runner) return;
   }
   if (!p.runner) await open(null, p.id, null, null);
-  const content = images.length
+  let content = images.length
     ? [...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })), ...(text ? [{ type: 'text', text }] : [])]
     : text;
+  // Back from Codex (switch.js): what happened there rides in front of this message, once. The pane shows only the
+  // person's own words; the history takes the handoff out again (switch.js decorateHistory).
+  const handoff = sw.pendingFor(p, 'claude');
+  if (handoff) content = withHandoff(content, handoff);
   try {
     p.busy = true;
     const r = await p.runner.send(content);
+    if (handoff) sw.delivered(p, 'claude');
     p.busy = false;
     emit({ ev: 'result', reqId, paneId: p.id, sessionId: p.sessionId, subtype: r.subtype, isError: Boolean(r.is_error), durationMs: r.duration_ms, usage: r.usage, cost: r.latchTurnCost ?? null, errors: r.errors || null, result: typeof r.result === 'string' ? r.result.slice(0, 2000) : null });
     if (p.sessionId && state.renames.has(p.sessionId)) applyRename(p.sessionId, state.renames.get(p.sessionId), { paneId: p.id }).catch(() => {});
@@ -1446,6 +1523,8 @@ const handlers = {
     if (p && isCodexPane(p)) await codex.openFile(c, p);
   },
   codexThreads: async (c) => { await codex.list({ refresh: c.refresh === true, reqId: c.reqId || null }); },
+  // Switch a pane's conversation between Claude Code and Codex (switch.js, 2026-10-12). PC only, like billing.
+  switchAgent: async (c) => { const p = panes.get(String(c.paneId || '')); if (p) await sw.switchPane(c.reqId || null, p, c.to === 'claude' ? 'claude' : c.to === 'codex' ? 'codex' : null); },
   // Commands come from a running Claude Code process. A pane that has not
   // started yet (restored, waiting for its first message) gets the list last
   // seen for its folder instead of starting a process just for the menu.
@@ -1514,8 +1593,10 @@ const handlers = {
     if (!p?.sessionId || (c.sessionId && c.sessionId !== p.sessionId)) { emit({ ...base, sessionId: c.sessionId || null, error: 'That conversation is not open in this pane.' }); return; }
     if (!c.before) { emit({ ...base, sessionId: p.sessionId, error: 'Which message to load before is missing.' }); return; }
     const limit = Math.min(5000, Math.max(1, Math.floor(Number(c.limit)) || HISTORY_PAGE));
-    const page = await historyStore.pageBefore(p.sessionId, String(c.before), { limit, all: c.all === true }).catch(() => null);
+    let page = await historyStore.pageBefore(p.sessionId, String(c.before), { limit, all: c.all === true }).catch(() => null);
     if (!page) { emit({ ...base, sessionId: p.sessionId, error: 'The rest of this conversation cannot be read from its transcript.' }); return; }
+    // A switched conversation: the handoffs in it show as the person's own words only (switch.js).
+    page = await sw.decorateHistory(p, p.sessionId, page, { first: false }).catch(() => page);
     emit({ ...base, sessionId: p.sessionId, ...page });
   },
   // One cut tool result, thinking block, summary or image in full, from its own line of the transcript.

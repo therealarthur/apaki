@@ -159,6 +159,15 @@ const safeName = (n) => path.basename(String(n || 'file')).replace(/[^\w.\- ]+/g
  * @param {() => string} [env.attachDir]                   where attached files are saved
  * @param {(line: string) => void} [env.log]
  * @param {(o: object) => object} [env.createClient]       tests give a client that talks to a fake server
+ * The Claude / Codex switch (switch.js, 2026-10-12) adds, all optional:
+ * @param {() => { overrides: string[], env: object }} [env.processExtras]  more -c overrides and variables for the process
+ * @param {(p: object) => string} [env.threadInstructions]  developer instructions added for this pane's thread
+ * @param {(sessionId: string) => object} [env.linkStatus]  the switch link a thread belongs to (ev opened link)
+ * @param {(p, sessionId, page, o) => Promise<object>} [env.decorateHistory]  the one view across switches
+ * @param {(p: object) => (string|null)} [env.handoffFor]  a handoff waiting to ride in front of the next message
+ * @param {(p: object) => void} [env.handoffDelivered]     it went out
+ * @param {string} [env.handoffEnd]                        the line that ends it (ledger.js HANDOFF_END)
+ * @param {(p: object, threadId: string) => void} [env.threadStarted]  a new thread started for a pane
  */
 export function createCodex(env) {
   const { emit, asks, panes, tools, openPage, log = () => {} } = env;
@@ -178,7 +187,9 @@ export function createCodex(env) {
   function getClient() {
     if (client) return client;
     const s = env.shared?.() || null;
-    const opts = { overrides: processOverrides(s), env: processEnv(s), clientInfo: { name: 'myrlin-apaki', title: 'Myrlin Apaki', version: '0.1.0' } };
+    // 2026-10-12 (switch.js, codex-env.js): the ledger tool server and the Claude side's tool servers, for this process only.
+    const extra = env.processExtras?.() || { overrides: [], env: {} };
+    const opts = { overrides: [...processOverrides(s), ...(extra.overrides || [])], env: { ...processEnv(s), ...(extra.env || {}) }, clientInfo: { name: 'myrlin-apaki', title: 'Myrlin Apaki', version: '0.1.0' } };
     client = env.createClient ? env.createClient(opts) : new CodexAppServer(opts);
     client.on('notification', (method, params) => { try { onNotification(method, params); } catch (e) { log(`codex ${method}: ${e.stack || e.message}`); } });
     client.on('request', (id, method, params) => { onRequest(id, method, params).catch((e) => { log(`codex ${method}: ${e.message}`); client.respondError(id, -32603, `Apaki could not handle ${method}`); }); });
@@ -346,7 +357,9 @@ export function createCodex(env) {
   /** Parameters shared by thread/start and thread/resume. */
   function threadParams(p, cwd) {
     const cx = p.codex;
-    const params = { developerInstructions: DEV_INSTRUCTIONS, ...(cwd ? { cwd } : {}) };
+    // A conversation that switches between Claude and Codex (switch.js) also says so, with the user's working rules.
+    const more = env.threadInstructions?.(p) || '';
+    const params = { developerInstructions: more ? `${DEV_INSTRUCTIONS}\n\n${more}` : DEV_INSTRUCTIONS, ...(cwd ? { cwd } : {}) };
     if (cx.touched.model && p.model) params.model = p.model;
     if (cx.touched.mode || restricted(p)) Object.assign(params, threadPermissions(p.mode, { restricted: restricted(p) }));
     return params;
@@ -408,7 +421,10 @@ export function createCodex(env) {
       p.sessionId = null;
       cx.cwd = cwd || os.homedir();
     }
-    emit({ ev: 'opened', reqId, paneId: p.id, sessionId: p.sessionId, cwd: cx.cwd, title, model: p.model, effort: p.effort, mode: p.mode, billing: billingOf(), terminal: [], kind: 'codex', tookOver: Boolean(opts.force) });
+    // switch: a Claude / Codex switch opened it (switch.js), so the window keeps the conversation on screen; link: the
+    // switched conversation this thread belongs to, if any.
+    const link = env.linkStatus?.(p.sessionId) || null;
+    emit({ ev: 'opened', reqId, paneId: p.id, sessionId: p.sessionId, cwd: cx.cwd, title, model: p.model, effort: p.effort, mode: p.mode, billing: billingOf(), terminal: [], kind: 'codex', tookOver: Boolean(opts.force), ...(opts.switch ? { switch: opts.switch } : {}), ...(link ? { link } : {}) });
     if (threadId) await sendHistory(p);
   }
 
@@ -418,8 +434,10 @@ export function createCodex(env) {
     if (!threadId) return;
     try {
       const rev = await revOf(threadId);
-      const page = await history.firstPage(threadId, { limit: HISTORY_PAGE });
+      let page = await history.firstPage(threadId, { limit: HISTORY_PAGE });
       trackFromMessages(p, page.messages);
+      // A switched conversation shows both sides in one view (switch.js decorateHistory).
+      if (env.decorateHistory) page = await env.decorateHistory(p, p.sessionId, page, { first: true });
       emit({ ev: 'history', reqId, paneId: p.id, sessionId: p.sessionId, ...page, rev, ...(refresh ? { refresh: true } : {}) });
     } catch (e) {
       note(p, `Codex could not read this conversation's history: ${e.message || e}`, 'warn');
@@ -488,8 +506,9 @@ export function createCodex(env) {
     if (!threadId || (c.sessionId && c.sessionId !== p.sessionId)) { emit({ ...base, sessionId: c.sessionId || null, error: 'That conversation is not open in this pane.' }); return; }
     const limit = Math.min(5000, Math.max(1, Math.floor(Number(c.limit)) || HISTORY_PAGE));
     try {
-      const page = await history.pageBefore(threadId, String(c.before), { limit, all: c.all === true });
+      let page = await history.pageBefore(threadId, String(c.before), { limit, all: c.all === true });
       trackFromMessages(p, page.messages);
+      if (env.decorateHistory) page = await env.decorateHistory(p, p.sessionId, page, { first: false });
       emit({ ...base, sessionId: p.sessionId, ...page });
     } catch (e) {
       emit({ ...base, sessionId: p.sessionId, error: `Codex could not read the rest of this conversation: ${e.message || e}` });
@@ -530,6 +549,9 @@ export function createCodex(env) {
     byThread.set(cx.threadId, p);
     adopt(p, r);
     if (cx.touched.model && p.model) { /* the pane's own pick stays what the next turn sends */ }
+    // The rollout path the server reports (unstable field), for the switch ledger.
+    cx.path = typeof r.thread?.path === 'string' ? r.thread.path : null;
+    env.threadStarted?.(p, cx.threadId);
     emit({ ev: 'session_id', paneId: p.id, sessionId: p.sessionId });
     settingsEvent(p);
     shared.rowsAt = 0;
@@ -608,6 +630,9 @@ export function createCodex(env) {
       if (skill) text = `$${skill.name} ${call.rest}`.trim();
       const { images, files } = split(attachments);
       const saved = saveFiles(p, files);
+      // A switch's handoff the server would not take as items of its own (switch.js) rides in front of this message, once.
+      const handoff = env.handoffFor?.(p) || null;
+      if (handoff) text = `${handoff.trimEnd()}\n${env.handoffEnd || ''}\n\n${text || ''}`.trim();
       // Files /mention attached ride with this message, once.
       const input = turnInput(text, images, [...saved, ...(cx.mentions || [])]);
       cx.mentions = [];
@@ -619,6 +644,7 @@ export function createCodex(env) {
       p.inTurn = true;
       cx.startedAt = Date.now();
       const r = await rpc('turn/start', { threadId: cx.threadId, input, clientUserMessageId: clientId, summary: 'auto', ...turnOverrides(p) });
+      if (handoff) env.handoffDelivered?.(p);
       const turnId = r?.turn?.id;
       // A turn that already ended (its events came before this answer) must not leave a turn id behind for a later steer to trust.
       if (turnId && p.busy) { cx.turnId = cx.turnId || turnId; cx.reqByTurn.set(turnId, reqId); }
@@ -1197,9 +1223,25 @@ export function createCodex(env) {
     if (client) await client.stop().catch(() => {});
   }
 
+  /* ---------- a switch from Claude (switch.js, 2026-10-12) ---------- */
+
+  /** Starts the pane's thread now (a new conversation otherwise starts with its first message), or loads it again. */
+  async function ensureThread(p) { await ensureLoaded(p); return p.codex.threadId; }
+
+  /**
+   * Adds items to the thread's history without starting a turn (thread/inject_items: raw Responses API items the
+   * model sees from its next turn on). Nothing is billed by this.
+   */
+  async function inject(p, items) {
+    const cx = p.codex;
+    if (!cx?.threadId) throw new Error('This Codex conversation has no thread yet.');
+    await rpc('thread/inject_items', { threadId: cx.threadId, items });
+  }
+
   return {
     isCodexPane, open, attach, send, steer, openFile, interrupt, setModel, setEffort, setMode, models, list, sendContext, historyBefore, historyCheck, sendHistory,
     runTool, openedLink, pickPane, release, close, rename, fork, recap, shutdown, touchIdle, rpc, commands: () => COMMANDS.map((c) => ({ ...c })), commandsFor,
+    ensureThread, inject,
     /** The thread rows read by the last list() (empty until the Codex view asks). */
     cachedRows: () => shared.rows || [],
     /** Tests: the client and the panes by thread. */
