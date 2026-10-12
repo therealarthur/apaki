@@ -1005,8 +1005,13 @@ let wtChain = Promise.resolve();
 /** The folders conversations are open in, desktop and phone. */
 const paneCwds = () => [...panes.values()].map((p) => p.runner?.cwd).filter(Boolean);
 
-async function wtRepos({ force = false, ask = null, full = false } = {}) {
-  if (!state.items) await loadSessions().catch(() => {});
+/**
+ * `load`: read the session list first when it is not loaded yet (a window or phone asked; the timer and "a turn ended"
+ * never do: reading every session is the heavy part, and the list already comes with the window's own requests).
+ */
+let wtLoading = null;
+async function wtRepos({ force = false, ask = null, full = false, load = false } = {}) {
+  if (load && !state.items) await (wtLoading ||= loadSessions().catch(() => {}).finally(() => { wtLoading = null; }));
   if (ask) { wtExtra.add(ask); if (wtExtra.size > 40) wtExtra.delete(wtExtra.values().next().value); }
   const open = paneCwds();
   const cwds = new Set([...(state.items || []).map((it) => it.cwd).filter(Boolean), ...open, ...wtExtra]);
@@ -1015,7 +1020,7 @@ async function wtRepos({ force = false, ask = null, full = false } = {}) {
 
 /** Sends the repositories: to whoever asked (reqId), otherwise to everyone, and only when something changed. */
 async function sendWorktrees(c = {}) {
-  const repos = await wtRepos({ force: c.refresh === true, ask: c.cwd || null, full: c.full === true });
+  const repos = await wtRepos({ force: c.refresh === true, ask: c.cwd || null, full: c.full === true, load: Boolean(c.reqId) });
   const ev = { ev: 'worktrees', reqId: c.reqId ?? null, repos };
   if (ev.reqId) { emit(ev); return; }
   const h = hashText(JSON.stringify(repos));

@@ -80,7 +80,7 @@ export function openFind(pane) {
   if (!root) return;
   const bar = document.createElement('div');
   bar.className = 'find-bar';
-  bar.innerHTML = `<span class="fb-i">${ICON.find}</span><input type="text" spellcheck="false" placeholder="Find in ${pane.isTask ? 'this task' : pane.isViewer ? 'this artifact' : 'this conversation'}" aria-label="Find"><span class="fb-n" aria-live="polite"></span>
+  bar.innerHTML = `<span class="fb-i">${ICON.find}</span><input type="text" spellcheck="false" placeholder="Find in ${pane.isTask ? 'this task' : pane.isDiff ? 'these changes' : pane.isViewer ? 'this artifact' : 'this conversation'}" aria-label="Find"><span class="fb-n" aria-live="polite"></span>
     <button class="fb-case" title="Match case" aria-pressed="false">Aa</button><button class="fb-prev" title="Previous (Shift+Enter)">${ICON.up}</button><button class="fb-next" title="Next (Enter)">${ICON.down}</button><button class="fb-x" title="Close (Esc)">${ICON.close}</button>
     <div class="fb-note" hidden></div>`;
   pane.el.append(bar);

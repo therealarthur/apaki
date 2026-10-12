@@ -13,17 +13,26 @@
  * Usage: const ui = folderSheet(pane, { sheet, send, esc, ago }); route the
  * engine's 'places' and 'dir' events to ui.places(e) / ui.dir(e) while it is
  * open (ui.isOpen()).
+ *
+ * Worktrees (2026-10-12, apaki/remote/WORKTREES.md): with `wt` (worktree.js initWorktrees) the sheet opens on a
+ * switch, This folder or New worktree. New worktree picks a repository and a base branch; the pane then starts in a
+ * worktree it makes on its first message (Pane.setPendingWorktree, worktree.js makeFor), the branch named from that
+ * message. On the phone page (`web`) the folder browser is not available (a phone cannot list the PC's disks), so
+ * This folder lists the folders the PC already knows (`known()`), and New worktree works as on the desktop.
  */
 
 const shortPath = (p) => String(p || '').replace(/^C:\\Users\\[^\\]+/i, '~');
 const SEP = '\\';
 
-export function folderSheet(pane, { sheet, send, esc, ago }) {
-  const state = { open: false, cur: null, showHidden: false, root: null, close: null };
+export function folderSheet(pane, { sheet, send, esc, ago, web = false, wt = null, mode = 'folder', known = () => [] }) {
+  const state = { open: false, cur: null, showHidden: false, root: null, close: null, mode: wt && mode === 'worktree' ? 'worktree' : 'folder' };
   const e$ = (s) => esc(String(s ?? ''));
 
-  const html = `<div class="from">${e$(pane.title)}</div><h2>Start this conversation in</h2>
-    <div class="note">Claude Code works in this folder: its CLAUDE.md, settings and relative paths come from here. The folder is fixed once you send the first message.</div>
+  // Where the conversation starts: the desktop browses the PC's folders; the phone picks among the folders the PC knows.
+  const folderPart = web
+    ? `<div class="note">Claude Code works in this folder: its CLAUDE.md, settings and relative paths come from here. The folder is fixed once you send the first message.</div>
+    <div class="places sf-known"><div class="pl-col"><div class="pl-h">Folders on the PC</div><div class="pl-recent"><div class="pl-wait">None yet</div></div></div></div>`
+    : `<div class="note">Claude Code works in this folder: its CLAUDE.md, settings and relative paths come from here. The folder is fixed once you send the first message.</div>
     <form class="path-go"><input type="text" class="path-in" spellcheck="false" placeholder="Type or paste a folder path"><button type="submit">Go</button></form>
     <div class="places">
       <div class="pl-col"><div class="pl-h">Recent</div><div class="pl-recent"><div class="pl-wait">Loading…</div></div></div>
@@ -37,8 +46,16 @@ export function folderSheet(pane, { sheet, send, esc, ago }) {
         <form class="br-new"><input type="text" placeholder="New folder here" spellcheck="false"><button type="submit">Create</button></form>
       </div>
       <div class="br-err" hidden></div>
-    </div>
-    <div class="row"><button data-k="x">Cancel</button><button data-k="home">Home</button><button class="primary" data-k="here">Start here</button></div>`;
+    </div>`;
+  const worktreePart = `<div class="note">Claude works on its own branch in its own folder, so it never touches your other checkouts. When you send the first message, Apaki suggests a branch name from it and shows the command it will run; nothing is created before that.</div>
+    <label class="wt-f"><span>Repository</span><select data-f="repo"></select></label>
+    <label class="wt-f"><span>Start from</span><select data-f="base"></select></label>
+    <div class="wt-none sf-wt-info" aria-live="polite"></div>`;
+  const html = `<div class="from">${e$(pane.title)}</div><h2>Start this conversation in</h2>
+    ${wt ? `<div class="seg wt-mode" role="radiogroup" aria-label="Where it starts"><button type="button" role="radio" data-mode="folder">This folder</button><button type="button" role="radio" data-mode="worktree">New worktree</button></div>` : ''}
+    <div class="sf-folder">${folderPart}</div>
+    ${wt ? `<div class="sf-worktree" hidden>${worktreePart}</div>` : ''}
+    <div class="row"><button data-k="x">Cancel</button><button data-k="home" data-for="folder">Home</button><button class="primary" data-k="here" data-for="folder">Start here</button>${wt ? '<button class="primary" data-k="wt" data-for="worktree" hidden>Use a new worktree</button>' : ''}</div>`;
 
   const q = (s) => state.root.querySelector(s);
   const go = (p) => send('listDir', { path: p });
@@ -86,22 +103,90 @@ export function folderSheet(pane, { sheet, send, esc, ago }) {
     here.title = `Start in ${cur.path}`;
   };
 
+  /** The phone's This folder: the folders the PC already knows, as rows to tap. */
+  const fillKnown = () => {
+    const list = known().map((k) => ({ path: k.path, name: k.name, last: k.last, claude: k.claude }));
+    fillList(q('.sf-known .pl-recent'), list);
+  };
+
+  /* ---------- New worktree: a repository and a base branch ---------- */
+
+  const wtRepos = () => wt?.repos() || [];
+  const repoSel = () => q('[data-f=repo]');
+  const baseSel = () => q('[data-f=base]');
+  const chosenRepo = () => wtRepos().find((r) => r.id === repoSel()?.value) || null;
+
+  /** The base branches of the chosen repository; the default one first and selected. */
+  const fillBases = () => {
+    const r = chosenRepo();
+    const sel = baseSel();
+    const info = q('.sf-wt-info');
+    if (!r) { sel.innerHTML = ''; return; }
+    const branches = r.branches?.length ? r.branches : (r.base ? [r.base] : []);
+    const list = [...new Set([r.base, ...branches].filter(Boolean))];
+    sel.innerHTML = list.map((b) => `<option value="${e$(b)}"${b === r.base ? ' selected' : ''}>${e$(b)}</option>`).join('');
+    info.textContent = r.light && !r.base ? 'Reading the branches…' : '';
+  };
+
+  /** Lists the repositories the PC knows (plus the folder being browsed), then reads the chosen one in full for its branches. */
+  const loadRepos = async () => {
+    const sel = repoSel();
+    const here = state.cur?.path || pane.cwd || '';
+    // The folder the sheet is looking at may be a repository the PC has not listed yet: asking about it lists it.
+    if (here && !web) await wt.ask('worktrees', { cwd: here, full: true });
+    if (!state.open) return;
+    const repos = wtRepos();
+    const f = here ? wt.forCwd(here) : null;
+    sel.innerHTML = repos.map((r) => `<option value="${e$(r.id)}">${e$(r.name)}</option>`).join('');
+    if (f) sel.value = f.repo.id;
+    q('[data-k=wt]').disabled = !repos.length;
+    q('.sf-wt-info').textContent = repos.length ? '' : 'No git repository is known yet. Start a conversation in a repository folder first, or choose one under This folder.';
+    if (!repos.length) { baseSel().innerHTML = ''; return; }
+    fillBases();
+    const r = chosenRepo();
+    // A repository the PC listed without its branches is read in full once it is chosen.
+    if (r && !r.branches?.length) { await wt.ask('worktrees', { cwd: r.root, full: true }); if (state.open) { sel.value = r.id; fillBases(); } }
+  };
+
+  const setMode = (m) => {
+    state.mode = m;
+    const root = state.root;
+    root.querySelectorAll('.wt-mode button').forEach((b) => { const on = b.dataset.mode === m; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+    q('.sf-folder').hidden = m !== 'folder';
+    q('.sf-worktree').hidden = m !== 'worktree';
+    root.querySelectorAll('.row [data-for]').forEach((b) => { b.hidden = b.dataset.for !== m || (web && b.dataset.k === 'here'); });
+    if (m === 'worktree') loadRepos().catch(() => {});
+  };
+
   sheet(html, (root, close) => {
     state.root = root;
     state.close = close;
     state.open = true;
-    q('.path-go').onsubmit = (ev) => { ev.preventDefault(); const v = q('.path-in').value.trim(); if (v) go(v); };
-    q('.br-hidden input').onchange = (ev) => { state.showHidden = ev.target.checked; render(); };
-    q('.br-new').onsubmit = (ev) => {
-      ev.preventDefault();
-      const name = q('.br-new input').value.trim();
-      if (name && state.cur && !state.cur.error) send('mkdir', { path: state.cur.path, name });
-    };
+    if (!web) {
+      q('.path-go').onsubmit = (ev) => { ev.preventDefault(); const v = q('.path-in').value.trim(); if (v) go(v); };
+      q('.br-hidden input').onchange = (ev) => { state.showHidden = ev.target.checked; render(); };
+      q('.br-new').onsubmit = (ev) => {
+        ev.preventDefault();
+        const name = q('.br-new input').value.trim();
+        if (name && state.cur && !state.cur.error) send('mkdir', { path: state.cur.path, name });
+      };
+    }
     q('[data-k=x]').onclick = done;
     q('[data-k=home]').onclick = () => pick('');
     q('[data-k=here]').onclick = () => { if (state.cur && !state.cur.error) pick(state.cur.path); };
-    send('places');
-    go(pane.cwd || '');
+    if (wt) {
+      root.querySelectorAll('.wt-mode button').forEach((b) => { b.onclick = () => setMode(b.dataset.mode); });
+      repoSel().onchange = () => { fillBases(); const r = chosenRepo(); if (r && !r.branches?.length) loadRepos().catch(() => {}); };
+      q('[data-k=wt]').onclick = () => {
+        const r = chosenRepo();
+        if (!r) return;
+        done();
+        pane.setPendingWorktree({ repo: r.root || r.worktrees[0].path, name: r.name, base: baseSel().value || r.base || '' });
+      };
+      setMode(state.mode);
+    }
+    // The phone cannot browse the PC's disks: it taps one of the folders the PC knows, which starts there at once.
+    if (web) { q('[data-k=here]').hidden = true; fillKnown(); } else { send('places'); go(pane.cwd || ''); }
   });
 
   return {

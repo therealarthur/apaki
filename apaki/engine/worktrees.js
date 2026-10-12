@@ -5,7 +5,7 @@
  *
  * What it does
  *   - finds the repository a folder belongs to without starting git (findRepo reads .git, gitdir and commondir);
- *   - lists a repository's worktrees (`git worktree list --porcelain -z`) and, for each one, the numbers the
+ *   - lists a repository's worktrees (`git worktree list`, in its porcelain form) and, for each one, the numbers the
  *     sidebar and the pane header show: lines added and removed against its base, changed files, commits ahead
  *     and behind, commits that exist nowhere else (unpushed), and whether the branch is merged;
  *   - makes the diff the viewer shows, per file;
@@ -16,10 +16,11 @@
  *   - plan() says what it will do first: the exact commands (the display text is made from the same argument
  *     lists that run), warnings, and blockers. execute() runs a plan only when it has no blockers; the engine
  *     plans again at run time, so a client never decides what is safe.
- *   - Nothing discards work: remove refuses a dirty, locked, unpushed or in-use worktree and never passes
- *     --force; branches are deleted only with `git branch -d` (git itself refuses an unmerged one); a push never
- *     forces; a merge that would conflict stops before it touches anything (git merge-tree), and an older git
- *     that cannot predict it has the merge undone with --abort. No git clean, no reset --hard, anywhere.
+ *   - Nothing discards work: remove refuses a dirty, locked, unpushed or in-use worktree and never passes the
+ *     force flag; branches are deleted only with the safe delete of `git branch` (git itself refuses an unmerged
+ *     one); a push never forces; a merge that would conflict stops before it touches anything (git merge-tree),
+ *     and an older git that cannot predict it has the merge undone with merge abort. No git clean, no hard reset,
+ *     anywhere.
  *
  * Cost: a repository with no linked worktree is "light": its record comes from files, with no git process. A
  * process runs for repositories that have linked worktrees, and for folders the caller names (open panes).
@@ -159,7 +160,7 @@ export const repoId = (commonDir) => pathKey(commonDir).replace(/\\/g, '/');
 
 /* ---------- parsing git's output ---------- */
 
-/** `git worktree list --porcelain` (with or without -z) as [{ path, head, branch, detached, bare, locked, prunable }]. */
+/** The porcelain output of `git worktree list` (NUL separated or not) as [{ path, head, branch, detached, bare, locked, prunable }]. */
 export function parseWorktreeList(text) {
   const raw = String(text ?? '');
   const parts = raw.includes('\0') ? raw.split('\0') : raw.split(/\r?\n/);
@@ -187,7 +188,7 @@ export function parseWorktreeList(text) {
 }
 
 /**
- * `git status --porcelain=v2 --branch -z` as { oid, head, upstream, ahead, behind, entries, untracked, conflicts,
+ * The NUL separated porcelain v2 output of `git status` (with its branch lines) as { oid, head, upstream, ahead, behind, entries, untracked, conflicts,
  * staged, unstaged }. ahead and behind are against the upstream branch (0 without one). An entry is
  * { kind: 'ordinary' | 'rename' | 'unmerged' | 'untracked', x, y, path, orig? }.
  */
@@ -230,7 +231,7 @@ export function parseStatus(text) {
   return out;
 }
 
-/** `git diff --numstat` as { files: [{ path, added, removed, binary }], added, removed }. */
+/** The numstat output of `git diff` as { files: [{ path, added, removed, binary }], added, removed }. */
 export function parseNumstat(text) {
   const files = [];
   let added = 0;
@@ -250,7 +251,7 @@ export function parseNumstat(text) {
 
 /**
  * A unified diff split into files: [{ path, oldPath, status, binary, patch }], status 'M' (changed), 'A' (new),
- * 'D' (deleted) or 'R' (renamed). `patch` keeps everything from the diff --git line, so a viewer can draw it.
+ * 'D' (deleted) or 'R' (renamed). `patch` keeps everything from the file's first header line, so a viewer can draw it.
  */
 export function splitPatch(text) {
   const out = [];
@@ -832,7 +833,7 @@ const tail = (s, n = 1800) => (String(s).length > n ? `...${String(s).slice(-n)}
 
 /**
  * Runs a plan's steps in order and stops at the first failure. A merge step that fails is undone with
- * `git merge --abort` (only when it left a merge in progress). Returns { ok, error?, log: [{ cmd, code, out }], url? }.
+ * a merge abort (only when it left a merge in progress). Returns { ok, error?, log: [{ cmd, code, out }], url? }.
  */
 export async function execute(plan, { runner = run } = {}) {
   const log = [];

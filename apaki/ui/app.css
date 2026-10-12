@@ -2636,3 +2636,136 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
   .composer-row > .chips { order: -1; flex: 1 0 100%; }
   .composer-row > .send { margin-left: auto; }
 }
+
+/* ---------- git worktrees (2026-10-12; worktree.js, diff.js, apaki/remote/WORKTREES.md) ----------
+   Arthur: "The best approach to AI development is using git worktrees to tackle multiple features simultaneously."
+   A worktree row shows the branch name and the change count and nothing else. Colour is only for trouble
+   (conflicts, behind the base, a folder that is gone): everything else is ink, soft ink or faint ink. No status
+   pill with a dot, and no stripe down the left of a row (a nested conversation is indented, nothing more). */
+
+/* The glyphs: two kinds of branch, drawn in the text's own colour. */
+.wt-g, .wt-chev { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+/* The header's branch label, and the same label in the phone's nav row (web.css .cn-wtb). */
+.meta-line .wt-btn, .cn-wtb {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 62%; padding: 0 6px; margin-left: -6px; border: 0; border-radius: 6px; background: none; cursor: pointer;
+  font: 620 var(--fs-micro)/1.6 var(--font-body); color: var(--faint); transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.meta-line .wt-btn[hidden] { display: none; }
+.meta-line .wt-btn:hover { background: var(--tint); color: var(--brand-deep); }
+.meta-line .wt-btn:focus-visible, .cn-wtb:focus-visible { outline: 2px solid hsla(var(--pearl-stop-blue), .5); outline-offset: 1px; }
+.wt-btn .wt-b, .cn-wtb .wt-b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--soft); font-weight: 680; }
+.wt-btn .wt-n, .cn-wtb .wt-n { flex: none; font-family: var(--font-mono); font-weight: 560; white-space: nowrap; }
+.wt-btn .wt-t, .cn-wtb .wt-t { flex: none; font-weight: 720; white-space: nowrap; color: var(--action-strong); }
+
+/* The Worktrees view: a repository, its worktrees (branch, change count), and the conversations in each. */
+.sessions li.wt-repo { display: flex; align-items: center; gap: 6px; margin: 8px 0 2px; padding: 6px 10px 4px; border-color: transparent; background: none; cursor: pointer; }
+.sessions li.wt-repo:hover { background: none; }
+.sessions li.wt-repo:first-child { margin-top: 0; }
+.wt-repo .wt-chev { width: 11px; height: 11px; stroke: var(--faint); stroke-width: 1.8; transform: rotate(90deg); transition: transform var(--dur-fast) var(--ease-hover); }
+.wt-repo.folded .wt-chev { transform: none; }
+.wt-repo .wt-rn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 var(--fs-micro)/1.3 var(--font-display); font-stretch: 112%; letter-spacing: .09em; text-transform: uppercase; color: var(--soft); }
+.wt-repo .wt-rc { margin-left: auto; flex: none; font: 560 var(--fs-micro)/1 var(--font-mono); color: var(--faint); }
+.sessions li.wt-row { position: relative; display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 10px; }
+.wt-row > .wt-g { color: var(--faint); }
+.wt-row.is-main > .wt-g { color: var(--soft); }
+.wt-row .wt-bn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-small); font-weight: 650; color: var(--ink); }
+.wt-row .wt-nn { flex: none; font: 560 var(--fs-micro)/1 var(--font-mono); color: var(--faint); white-space: nowrap; }
+.wt-row .wt-tr { flex: none; font-size: var(--fs-micro); font-weight: 720; color: var(--action-strong); white-space: nowrap; }
+/* The two actions appear on hover over the count, as in Linear's rows; the phone shows them always. */
+.wt-acts { position: absolute; right: 4px; top: 50%; display: flex; gap: 1px; padding-left: 14px; transform: translateY(-50%); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-hover); }
+.wt-row:hover .wt-acts, .wt-row:focus-within .wt-acts { opacity: 1; pointer-events: auto; }
+.wt-row:hover .wt-nn, .wt-row:focus-within .wt-nn, .wt-row:hover .wt-tr, .wt-row:focus-within .wt-tr { opacity: 0; }
+.wt-act { display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 6px; background: var(--card); color: var(--soft); cursor: pointer; transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover); }
+.wt-act:hover { background: var(--tint-deep); color: var(--brand-deep); }
+.wt-act:focus-visible { outline: 2px solid hsla(var(--pearl-stop-blue), .5); outline-offset: 1px; }
+.wt-act svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.wt-act svg circle { fill: currentColor; stroke: none; }
+/* A conversation under its worktree is indented and nothing else. */
+.sessions li.wt-kid { margin-left: 18px; }
+.sessions li.wt-showmore { margin: 0 0 4px 22px; padding: 0; border-color: transparent; background: none; cursor: default; }
+.sessions li.wt-showmore:hover { background: none; }
+.sessions li.wt-clean { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; padding: 8px 10px; background: var(--tint); font-size: var(--fs-small); color: var(--soft); }
+.sessions li.wt-clean:hover { background: var(--tint-deep); }
+.sessions li.wt-newrow { margin-top: 6px; padding: 2px 4px; border-color: transparent; background: none; cursor: default; }
+.sessions li.wt-newrow:hover { background: none; }
+/* A conversation's branch beside its time, in the All view. */
+.sessions .wt-tag { display: inline-flex; align-items: center; gap: 3px; font-weight: 650; color: var(--soft); vertical-align: top; }
+.sessions .wt-tag .wt-g { width: 11px; height: 11px; }
+
+/* Under the narrowest sidebars the view switch takes its own line instead of crowding the title out. */
+.rail-sessions .sec-head { flex-wrap: wrap; row-gap: 6px; }
+.rail-sessions .sec-head .sec-t { flex: none; }
+.rail-sessions .views { flex: 1 1 auto; min-width: max-content; justify-content: flex-end; }
+
+/* The action sheets: fields, then the commands that will run, then what to watch for. */
+.sheet .wt-note { margin: 4px 0 6px; font-size: var(--fs-small); line-height: 1.5; color: var(--soft); }
+.sheet .wt-f { display: grid; gap: 5px; margin-top: 12px; font-size: var(--fs-small); }
+.sheet .wt-f > span { font-weight: 650; color: var(--soft); }
+.sheet .wt-f input[type=text], .sheet .wt-f select, .sheet .wt-f textarea {
+  width: 100%; margin: 0; padding: 8px 10px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); background: var(--ground); color: var(--ink); font: 520 var(--fs-small)/1.4 var(--font-body);
+}
+.sheet .wt-f textarea { resize: vertical; min-height: 4.4em; }
+.sheet .wt-f select:focus, .sheet .wt-f textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px hsla(var(--pearl-stop-blue), .14); }
+.sheet .wt-f select:disabled { opacity: .55; }
+.sheet .wt-c { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; font-size: var(--fs-small); color: var(--ink); cursor: pointer; }
+.sheet .wt-c input { margin: 2px 0 0; accent-color: var(--brand-strong); }
+.sheet .wt-c small { display: block; margin-top: 2px; color: var(--faint); }
+.sheet .wt-k { margin: 16px 0 6px; font: 800 var(--fs-micro)/1.2 var(--font-display); font-stretch: 112%; letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
+.sheet .wt-cmds { margin: 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--tint); color: var(--ink-deep); font: 520 var(--fs-small)/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22vh; overflow-y: auto; }
+.sheet .wt-sum { margin: 12px 0 0; font-size: var(--fs-small); line-height: 1.5; color: var(--soft); }
+.sheet .wt-sum + .wt-k { margin-top: 12px; }
+.sheet ul.wt-warn, .sheet ul.wt-block, .sheet ul.wt-ok { margin: 10px 0 0; padding: 0; list-style: none; font-size: var(--fs-small); line-height: 1.5; }
+.sheet ul.wt-warn li { color: var(--soft); }
+.sheet ul.wt-block li { color: var(--action-strong); font-weight: 600; }
+.sheet ul.wt-ok li { color: var(--ink); font-weight: 600; }
+.sheet ul.wt-warn li + li, .sheet ul.wt-block li + li, .sheet ul.wt-ok li + li { margin-top: 4px; }
+.sheet .wt-files { max-height: 26vh; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--radius-sm); }
+.sheet .wt-file { display: flex; align-items: center; gap: 10px; padding: 5px 10px; font-size: var(--fs-small); cursor: pointer; }
+.sheet .wt-file:hover { background: var(--tint); }
+.sheet .wt-file input { margin: 0; accent-color: var(--brand-strong); }
+.sheet .wt-fs { flex: none; width: 62px; font-size: var(--fs-micro); font-weight: 650; color: var(--faint); }
+.sheet .wt-fp { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 520 var(--fs-micro)/1.4 var(--font-mono); color: var(--ink); }
+.sheet .wt-none, .sheet .wt-wait { padding: 8px 2px; font-size: var(--fs-small); color: var(--faint); }
+.sheet .wt-link { padding: 6px 0 0; border: 0; background: none; cursor: pointer; text-align: left; font: 650 var(--fs-small) var(--font-body); color: var(--brand-strong); }
+.sheet .wt-link:hover { color: var(--brand-deep); }
+.sheet .wt-url { color: var(--brand-strong); overflow-wrap: anywhere; }
+.sheet details.wt-log { margin-top: 10px; }
+.sheet details.wt-log summary { cursor: pointer; font-size: var(--fs-small); color: var(--faint); }
+.sheet details.wt-log pre { margin: 6px 0 0; padding: 10px 12px; max-height: 24vh; overflow: auto; border-radius: var(--radius-sm); background: var(--tint); font: 520 var(--fs-micro)/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sheet .wt-mode { margin: 10px 0 2px; }
+.sheet .row button[hidden] { display: none; }
+.sheet .sf-worktree[hidden], .sheet .sf-folder[hidden] { display: none; }
+
+/* The diff viewer. Same colours as the diffs inside a conversation (.diff .add, .diff .del). */
+.diff-viewer .df-ground { overflow: auto; }
+.df-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: hsla(var(--w), .88); border-bottom: 1px solid var(--hairline); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+.df-gap { flex: 1; }
+.df-btn { padding: 5px 11px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); background: var(--ground); color: var(--ink); cursor: pointer; font: 650 var(--fs-small)/1.2 var(--font-body); transition: border-color var(--dur-fast) var(--ease-hover); }
+.df-btn:hover:not(:disabled) { border-color: var(--brand); }
+.df-btn:disabled { opacity: .45; cursor: default; }
+.df-refresh svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.df-files { padding: 4px 12px 0; }
+.df-file { margin-top: 8px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--card); overflow: hidden; }
+.df-file > summary { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; list-style: none; font-size: var(--fs-small); }
+.df-file > summary::-webkit-details-marker { display: none; }
+.df-file > summary:hover { background: var(--tint); }
+.df-s { flex: none; width: 58px; font-size: var(--fs-micro); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.df-p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 650 var(--fs-small)/1.4 var(--font-mono); color: var(--ink); }
+.df-d { font-weight: 480; color: var(--faint); }
+.df-n { flex: none; font: 560 var(--fs-micro)/1 var(--font-mono); color: var(--faint); white-space: nowrap; }
+.df-n i { font-style: normal; }
+.df-pre { margin: 0; padding: 4px 0 6px; overflow-x: auto; border-top: 1px solid var(--hairline); font: 500 var(--fs-small)/1.55 var(--font-mono); }
+.df-pre span { display: block; padding: 0 12px 0 0; white-space: pre; }
+.df-pre span[data-n]::before { content: attr(data-n); display: inline-block; min-width: 4.4ch; margin-right: 12px; text-align: right; color: var(--faint); opacity: .75; user-select: none; }
+.df-pre .ctx { color: var(--soft); }
+.df-pre .note { color: var(--faint); font-style: italic; }
+.df-pre .df-h { padding: 2px 12px; background: var(--tint); color: var(--brand-strong); font-size: var(--fs-micro); }
+.df-note { padding: 10px 14px; font-size: var(--fs-small); color: var(--faint); }
+.df-empty { display: grid; gap: 4px; justify-items: center; padding: 64px 24px; text-align: center; font-size: var(--fs-small); color: var(--faint); }
+.df-empty b { font-size: var(--fs-body); color: var(--ink); }
+.df-meta { overflow: hidden; text-overflow: ellipsis; }
+:root[data-theme="dark"] .df-bar { background: hsla(var(--w), .8); }
+@media (prefers-reduced-motion: reduce) {
+  .wt-acts, .wt-act, .wt-repo .wt-chev, .meta-line .wt-btn, .df-btn { transition: none; }
+}

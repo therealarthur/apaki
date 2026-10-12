@@ -3,12 +3,12 @@
  * order steps 1 and 4). Every test that touches git runs on a temp repository made here, with the user's own git
  * but no global or system config and an identity of its own, and removes it afterwards.
  *
- *   parsing           git worktree list --porcelain (with and without -z), status v2, numstat, patches
+ *   parsing           the worktree list (NUL separated and not), status v2, numstat, patches
  *   names and places  branch names, folder names, Claude Code's place or the <repo>.worktrees sibling
  *   looking           findRepo reads files only; a repository with no linked worktree costs no process;
  *                     numbers against the base (lines, files, ahead and behind, unpushed, merged)
  *   create            the plan shows the exact command it runs; blockers; an existing branch
- *   remove            refuses the main checkout, a dirty, locked, unpushed or in-use worktree; never --force
+ *   remove            refuses the main checkout, a dirty, locked, unpushed or in-use worktree; never forces
  *   commit, push      the files first; a message is required to run; a subset; push never forces
  *   merge             predicts conflicts before touching anything; a merge that conflicts anyway is undone
  *   pull request      gh is injected; blockers and the command shown
@@ -356,7 +356,7 @@ test('remove: refuses the main checkout, a locked, dirty, unpushed or in-use wor
   assert.ok(fs.existsSync(dirty) && fs.existsSync(ahead) && fs.existsSync(locked), 'nothing was touched');
 });
 
-test('remove: git worktree remove without --force; a merged branch can go with it, an unmerged one stays', async (t) => {
+test('remove: never forced; a merged branch can go with it, an unmerged one stays', async (t) => {
   const r = repo(t);
   const merged = addWt(r, 'merged');
   write(merged, 'm.txt', 'm\n');
@@ -518,7 +518,7 @@ test('merge: conflicts are found before anything is touched, and the run is refu
   assert.equal(fs.readFileSync(path.join(r.root, 'a.txt'), 'utf8').replace(/\r/g, ''), 'one\nMAIN\nthree\n');
 });
 
-test('merge: a merge that conflicts anyway (git could not predict it) is undone with --abort', async (t) => {
+test('merge: a merge that conflicts anyway (git could not predict it) is undone with merge abort', async (t) => {
   const r = repo(t);
   const w = addWt(r, 'feat');
   write(w, 'a.txt', 'one\nFEATURE\nthree\n');
