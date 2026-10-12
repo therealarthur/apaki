@@ -64,7 +64,9 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
   let listening = false;
 
   const later = (ms, ev) => setTimeout(() => send(ev), ms);
-  const emit = (ev) => send(ev);
+  // What Claude last did in the pretend browser (a browserActivity line): the phone's Browser view draws the page to match.
+  let browserDid = '';
+  const emit = (ev) => { if (ev?.ev === 'browserActivity') browserDid += ` ${ev.text || ev.action || ''}`; send(ev); };
 
   /* billing, Glass */
 
@@ -265,6 +267,92 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     later(2800, { ev: 'askSearch', query: c.query, results, considered: 24, model: 'Haiku 5.5', billing: billing().name, ms: 2810, cost: 0.004, terms, note: 'Searched for: checkout confirmation · flaky end to end test · race condition' });
   }
 
+  /* the phone's session menu and browser view (2026-10-12) */
+
+  /** Fork: a copy of the session, listed with it; the phone opens the copy in a new tab (the real engine's forked event). */
+  function forkSession(c) {
+    const s = sessions.find((x) => x.id === c.sessionId);
+    if (!s) { later(40, { ev: 'error', reqId: c.reqId, paneId: null, message: 'Could not fork it: that session is not on this PC.' }); return; }
+    const id = nextId('session').replace('_demo_', '-demo-');
+    sessions.unshift({ ...s, id, title: `${s.title} (fork)`, lastModified: now(), terminal: null, running: false, folder: null });
+    later(80, { ev: 'forked', reqId: c.reqId, from: s.id, sessionId: id });
+    sendSessions(null, 140);
+  }
+
+  /**
+   * The picture a phone's Browser view gets, drawn on a canvas as a JPEG: the demo shop's checkout page, with the
+   * email typed and the confirmation banner up once Claude has typed and clicked there. Null where there is no canvas.
+   */
+  function pageShot(did) {
+    if (typeof document === 'undefined') return null;
+    const w = 1200;
+    const h = 760;
+    const cv = document.createElement('canvas');
+    cv.width = w;
+    cv.height = h;
+    const g = cv.getContext('2d');
+    if (!g) return null;
+    const font = (px, weight = 400) => { g.font = `${weight} ${px}px system-ui, "Segoe UI", sans-serif`; };
+    g.fillStyle = '#f4f5fa';
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = '#ffffff';
+    g.fillRect(0, 0, w, 76);
+    g.fillStyle = '#e3e5f6';
+    g.fillRect(0, 76, w, 2);
+    g.fillStyle = '#2c3578';
+    font(34, 800);
+    g.fillText('Acme Store', 56, 50);
+    font(22, 500);
+    g.fillStyle = '#63647d';
+    g.fillText('Cart', w - 260, 48);
+    g.fillText('Help', w - 170, 48);
+    // The checkout card.
+    g.fillStyle = '#ffffff';
+    g.fillRect(150, 126, 900, 560);
+    g.strokeStyle = '#d5d8ef';
+    g.lineWidth = 2;
+    g.strokeRect(150, 126, 900, 560);
+    g.fillStyle = '#171717';
+    font(40, 800);
+    g.fillText('Checkout', 200, 196);
+    g.fillStyle = '#63647d';
+    font(24, 500);
+    g.fillText('2 items · $84.00', 200, 236);
+    const field = (label, y, text) => {
+      g.fillStyle = '#55566b';
+      font(21, 600);
+      g.fillText(label, 200, y);
+      g.fillStyle = '#fdfdff';
+      g.fillRect(200, y + 12, 800, 52);
+      g.strokeStyle = '#d5d8ef';
+      g.strokeRect(200, y + 12, 800, 52);
+      if (text) { g.fillStyle = '#171717'; font(24, 500); g.fillText(text, 218, y + 47); }
+    };
+    field('Email', 290, /type/i.test(did) ? 'sam@acme.example' : '');
+    field('Card number', 390, '4242 4242 4242 4242');
+    g.fillStyle = '#5361c9';
+    g.fillRect(200, 520, 220, 60);
+    g.fillStyle = '#ffffff';
+    font(26, 700);
+    g.fillText('Pay now', 258, 559);
+    if (/pay/i.test(did)) {
+      g.fillStyle = '#e2f4ea';
+      g.fillRect(200, 604, 800, 56);
+      g.fillStyle = '#2e6b47';
+      font(23, 700);
+      g.fillText('Payment confirmed.   Order #', 222, 640);
+    }
+    return { image: cv.toDataURL('image/jpeg', 0.8).split(',')[1], width: w, height: h };
+  }
+
+  function browserView(c) {
+    const state = { url: 'http://localhost:3000/checkout', title: 'Checkout · Acme Store', loading: false, error: null, status: 200, canGoBack: true };
+    const shot = pageShot(browserDid);
+    later(520, shot
+      ? { ev: 'browserView', reqId: c.reqId, paneId: c.paneId, ok: true, text: '', state, mime: 'image/jpeg', ...shot, at: now() }
+      : { ev: 'browserView', reqId: c.reqId, paneId: c.paneId, ok: false, text: 'This page has no canvas to draw the demo page on.', state: null, image: null, at: now() });
+  }
+
   /* phone access */
 
   const remote = {
@@ -358,6 +446,8 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
         break;
       }
       case 'archive': { const s = sessions.find((x) => x.id === c.sessionId); if (s) s.archived = Boolean(c.archived); sendSessions(); break; }
+      case 'forkSession': forkSession(c); break;
+      case 'browserView': browserView(c); break;
       case 'folder': folderOp(c); break;
       case 'billingOptions':
         later(80, { ev: 'billingOptions', paneId: c.paneId, options: [{ label: 'Follow Myrlin Glass', value: { follow: true } }, ...glass.claude.map((a) => ({ label: a.isKey ? `${a.name} (API key)` : `${a.name} (${a.plan})`, value: { account: a.id } }))] });

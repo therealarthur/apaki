@@ -256,6 +256,21 @@ const SCRIPTS = {
     t.finish({ cost: 0.142, cached: 24_100, fresh: 2_100 });
   },
 
+  /**
+   * The same checkout visit as a phone's conversation sees it (2026-10-12): the Browser tool lines and the browserActivity
+   * lines the real engine sends, and no pretend browser pane (the phone has none; its Browser view asks for a picture).
+   */
+  async 'browse-phone'(t) {
+    const act = (action, text) => t.emit({ ev: 'browserActivity', browserId: 'b-demo', action, text });
+    await t.think(500);
+    await t.tool('mcp__apaki__browser_open', { url: 'http://localhost:3000/checkout' }, 'Opened http://localhost:3000/checkout in Apaki\'s browser beside this conversation.', { think: 200, run: 900, during: () => act('open', 'Opened localhost:3000/checkout') });
+    await t.tool('mcp__apaki__browser_read', {}, CHECKOUT_OUTLINE, { think: 160, run: 400, during: () => act('read', 'Read the page') });
+    await t.tool('mcp__apaki__browser_type', { ref: 3, text: 'sam@acme.example' }, 'Typed into [3] Email.', { think: 160, run: 700, during: () => act('type', 'Typed into Email') });
+    await t.tool('mcp__apaki__browser_click', { ref: 7 }, 'Clicked [7] button "Pay now". The page now shows a confirmation with an empty order number.', { think: 160, run: 1300, during: () => act('click', 'Clicked Pay now') });
+    await t.say('Reproduced. The confirmation banner is already up while **Order #** is still blank, which is exactly what the test trips over.', { cps: 200 });
+    t.finish({ cost: 0.142, cached: 24_100, fresh: 2_100 });
+  },
+
   /** A background turn for the split scene: invoices. Long enough to stay busy for the whole clip. */
   async 'background-invoices'(t) {
     await t.think(500);

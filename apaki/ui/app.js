@@ -43,7 +43,7 @@ import { findStep, openFind } from './find.js';
 // The permission sheet (Allow once, Always allow, Deny) for a tool Claude Code asks about (permission.js, 2026-10-12).
 import { ARM_MS, denyLabel, permissionHtml, permissionKey, permissionReply, permissionView } from './permission.js';
 import { DRAG_TASK, KIND_LABEL, TaskPane, closeTasksPanel, newTaskViewerId, specKey, taskGlyph, tasksPanel, tasksPanelPane } from './tasks.js';
-import { ArtifactPane, newViewerId } from './artifacts.js';
+import { ArtifactPane, isPublicWebUrl, newViewerId } from './artifacts.js';
 import { BrowserPane } from './browser.js';
 // Git worktrees (2026-10-12): the branch label, the Worktrees view, the actions, and the diff viewer.
 import { GLYPH_WORKTREE, branchName, hasLinked, initWorktrees } from './worktree.js';
@@ -124,6 +124,17 @@ function send(op, args = {}) {
     return false;
   });
 }
+
+/* What this phone may do (the phone page only; 2026-10-12) */
+
+/** What this phone may do on the PC: 'full', 'noshell' or 'chat' (the desktop window can do everything). */
+const phoneCap = () => (WEB ? (window.__apakiLink?.cap?.() || 'full') : 'full');
+/** True when the PC takes this command from a phone (its hello lists it); always true in the desktop window. */
+const phoneCan = (op) => !WEB || Boolean(window.__apakiLink?.supports?.(`op:${op}`));
+/** A short line at the top of the phone's screen (native.js draws it). */
+const phoneToast = (text, ok = true) => window.dispatchEvent(new CustomEvent('apaki:toast', { detail: { text, ok } }));
+/** Shows the conversation screen of the phone's stack (native.js), after something opened one from a menu. */
+const phoneShowChat = () => window.dispatchEvent(new CustomEvent('apaki:chat'));
 
 /* ---------- formatting helpers ---------- */
 
@@ -431,10 +442,24 @@ function createBrowser(o, id) {
  */
 function openUrlHere(url, from = null, { focus = true, reason = 'card' } = {}) {
   if (!/^(https?:\/\/|file:\/\/\/)/i.test(String(url || ''))) return;
+  // The phone has no built-in browser (2026-10-12): a card's Open opens a public page in the phone's own browser, and a
+  // page that exists only on the PC as the PC browser view. Never unasked: Claude's own shows only draw the card.
+  if (WEB) { if (reason === 'card') openOnPhone(url, from); return; }
   let owner = from || focusedPane();
   if (owner?.isViewer) owner = S.panes.get(owner.sourcePane) || null;
   invoke('browser', { cmd: 'open', args: { owner: owner?.id || null, url, focus, reason } })
     .catch(() => send('openExternal', { url }));
+}
+
+/** A web page link card's Open on the phone (openUrlHere): the phone's own browser, or the PC browser view for a PC-only page. */
+function openOnPhone(url, from) {
+  if (isPublicWebUrl(url)) { window.open(url, '_blank', 'noopener,noreferrer'); return; }
+  const owner = from?.isViewer ? S.panes.get(from.sourcePane) : from || focusedPane();
+  if (owner?.el?.dataset.browser === '1' && phoneCan('browserView') && phoneCap() === 'full') {
+    window.dispatchEvent(new CustomEvent('apaki:browser-view', { detail: { pane: owner.id } }));
+    return;
+  }
+  phoneToast('That page only exists on your PC. Ask Claude to open it in the browser, then use Browser at the top.', false);
 }
 
 /**
@@ -1264,6 +1289,11 @@ function moveToFolder(sessionId, folderId) {
 }
 
 function startNewFolder(sessionId = null) {
+  // The phone asks for the name in a sheet (the sidebar's inline field is not on screen there) and may only create (2026-10-12).
+  if (WEB) {
+    nameSheet({ heading: 'New folder', placeholder: 'Folder name', cta: 'Create', maxLength: 60, onDone: (name) => send('folder', { action: 'create', name, ...(sessionId ? { sessionId } : {}) }) });
+    return;
+  }
   folderUI.creating = true;
   folderUI.pendingSession = sessionId;
   renderFolders();
@@ -1550,6 +1580,8 @@ function setSessionTitle(sessionId, title) {
  * yet keeps the name and saves it once its first message makes the session.
  */
 function beginRename(sessionId, anchor, { pane = null } = {}) {
+  // The phone has no title to edit in place (the pane bar is replaced by the conversation bar): a sheet asks (2026-10-12).
+  if (WEB) { renameSheet(sessionId, { pane }); return; }
   if (!anchor || anchor.querySelector?.('input.rename')) return;
   const current = (pane?.title || S.sessions.find((s) => s.id === sessionId)?.title || '').replace(/^New conversation$/, '');
   const input = document.createElement('input');
@@ -1603,6 +1635,8 @@ function beginRename(sessionId, anchor, { pane = null } = {}) {
 function sessionMenu(s, e) {
   e.preventDefault();
   if (s.codex) return;
+  // The phone's own menu (below): a long press on a row opens it as a sheet.
+  if (WEB) { phoneSessionMenu(s, { x: e.clientX, y: e.clientY }); return; }
   const cur = s.folder || null;
   const pane = paneBySession(s.id);
   const runningHere = Boolean(pane?.busy);
@@ -1654,6 +1688,132 @@ function sessionMenu(s, e) {
   });
 }
 
+/* The session menu on the phone (2026-10-12) */
+
+// Arthur: every desktop feature also works on the phone. The desktop's menu is a right click; a phone has none. Its
+// menu opens from a long press on a row of the list (native.js turns the press into the same contextmenu event) and
+// from the ... button in the conversation bar (pager.js, event apaki:pane-menu), as a sheet from the bottom.
+
+/**
+ * A one-field sheet: a heading, a text box holding `value`, Cancel and a button. Enter saves. onDone(text) runs with
+ * the cleaned text unless it is empty or unchanged. The phone's Rename and New folder (the desktop edits in place).
+ */
+function nameSheet({ heading, from = '', value = '', placeholder = '', cta = 'Save', maxLength = 200, onDone, onClose = null }) {
+  sheet(`${from ? `<div class="from">${esc(from)}</div>` : ''}<h2>${esc(heading)}</h2>
+    <input type="text" data-k="name" value="${esc(value)}" placeholder="${esc(placeholder)}" maxlength="${maxLength}" spellcheck="false" autocomplete="off" autocapitalize="sentences" enterkeyhint="done" aria-label="${esc(heading)}">
+    <div class="row"><button data-k="x">Cancel</button><button class="primary" data-k="go">${esc(cta)}</button></div>`, (root, close) => {
+    const input = root.querySelector('[data-k=name]');
+    const go = () => {
+      const text = input.value.replace(/\s+/g, ' ').trim();
+      close();
+      if (text && text !== value.trim()) onDone(text);
+    };
+    root.querySelector('[data-k=x]').onclick = close;
+    root.querySelector('[data-k=go]').onclick = go;
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); go(); }
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    input.focus();
+    input.select();
+  }, null, onClose);
+}
+
+/** Rename on the phone: the same save as the desktop's inline editor (setSessionTitle, then the rename op). */
+function renameSheet(sessionId, { pane = null } = {}) {
+  const current = (pane?.title || S.sessions.find((s) => s.id === sessionId)?.title || '').replace(/^New conversation$/, '');
+  if (pane) pane.renaming = true;
+  nameSheet({
+    heading: 'Rename session', value: current, placeholder: 'Name this session', cta: 'Rename',
+    onClose: () => { if (pane) pane.renaming = false; },
+    onDone: (title) => {
+      // A conversation with no session yet keeps the name and saves it once its first message makes the session.
+      if (!sessionId) {
+        if (!pane) return;
+        pane.pendingName = title;
+        pane.setTitle(title);
+        renderTabs();
+        pane.note(`"${title}" becomes this session's name when your first message starts it.`);
+        return;
+      }
+      setSessionTitle(sessionId, title);
+      send('rename', { sessionId, title, paneId: pane?.id || null });
+    },
+  });
+}
+
+/**
+ * The session menu on the phone: a sheet with what a phone can do safely. s: the session's list record (or the pane's
+ * own when it has none yet); at: where the press was (the sheet ignores it); pane: given when the ... button of an open
+ * conversation asked, which adds Find. Rename, fork, archive and folders need Full or No shell access on the PC and a PC
+ * that takes them (hello ops): otherwise the item is left out, or shown dimmed with the reason when it is the access.
+ * Left out on purpose: Show folder (it opens Explorer on the PC), and Stop for a turn that runs on the PC.
+ */
+function phoneSessionMenu(s, at, { pane = null } = {}) {
+  const here = pane || paneBySession(s.id);
+  const writes = phoneCap() !== 'chat';
+  // An access-limited item stays visible but cannot be picked; a PC that lacks the op never shows it.
+  const gated = (op, item) => (!phoneCan(op) ? null : writes ? item : { ...item, value: null, disabled: 'Chat only access cannot change sessions', hint: 'Chat only reads' });
+  const items = [{ heading: (s.title || here?.title || 'Session').slice(0, 48) }];
+  if (here) items.push({ value: 'find', label: 'Find in conversation', hint: 'words in this chat' });
+  if (!pane && s.id) {
+    items.push(here ? { value: 'show', label: 'Show it', hint: 'it is open here' } : { value: 'open', label: 'Open' });
+    if (!here && !tabFull(activeTab())) items.push({ value: 'split', label: 'Open in a new pane', hint: 'beside this tab\'s others' });
+  }
+  if (here?.busy) items.push({ divider: true }, { value: 'stop', label: 'Stop', hint: 'stop Claude here', danger: true });
+  else if (s.running || s.terminal) items.push({ divider: true }, { value: null, label: 'Stop', hint: 'it runs on the PC', disabled: 'It runs on the PC; stop it there' });
+  if (here && !pane) items.push({ value: 'close', label: 'Close its pane', hint: here.busy ? 'asks first: it is working' : '' });
+  const edits = s.codex ? [] : [
+    gated('rename', { value: 'rename', label: 'Rename…', hint: 'saved in the session' }),
+    ...(s.id && !s.archivedCopy ? [gated('forkSession', { value: 'fork', label: 'Fork into a new conversation', hint: 'makes a copy' })] : []),
+    ...(s.id ? [gated('archive', s.archived ? { value: 'unarchive', label: 'Unarchive', hint: 'back in the lists' } : { value: 'archive', label: 'Archive', hint: 'hide it; nothing is deleted' })] : []),
+  ].filter(Boolean);
+  if (edits.length) items.push({ divider: true }, ...edits);
+  if (s.id) items.push({ divider: true }, { value: 'copy-id', label: 'Copy session id' }, { value: 'copy-resume', label: 'Copy resume command', hint: 'claude --resume' });
+  if (s.id && phoneCan('folder')) {
+    const cur = s.folder || null;
+    // Chat only: one dimmed row says why, not a dimmed row per folder.
+    if (!writes) items.push({ divider: true }, { value: null, label: 'Move to folder…', hint: 'Chat only reads', disabled: 'Chat only access cannot change sessions' });
+    else {
+      items.push({ divider: true }, { heading: 'Move to folder' },
+        ...S.folders.map((f) => ({ value: `f:${f.id}`, label: f.name, checked: f.id === cur })),
+        { value: 'new', label: 'New folder…' },
+        ...(cur ? [{ value: 'out', label: 'Remove from folder' }] : []));
+    }
+  }
+  menu(at, items.filter(Boolean), {
+    above: false,
+    width: 270,
+    onPick: (v) => {
+      if (v === 'find') { openFind(here); return; }
+      if (v === 'show') { focusPane(here); phoneShowChat(); return; }
+      if (v === 'open' || v === 'split') { openFromRail(s, v === 'split' ? { shiftKey: true } : {}); phoneShowChat(); return; }
+      if (v === 'stop') here?.stop();
+      else if (v === 'close') closePane(here);
+      else if (v === 'rename') renameSheet(s.id || null, { pane: here });
+      else if (v === 'fork') send('forkSession', { sessionId: s.id });
+      else if (v === 'archive' || v === 'unarchive') send('archive', { sessionId: s.id, archived: v === 'archive' });
+      else if (v === 'copy-id') copyText(s.id, 'Session id copied.');
+      else if (v === 'copy-resume') copyText(`${s.cwd ? `cd "${s.cwd}" && ` : ''}claude --resume ${s.id}`, 'Resume command copied.');
+      else if (v === 'new') startNewFolder(s.id);
+      else if (v === 'out') moveToFolder(s.id, null);
+      else if (typeof v === 'string' && v.startsWith('f:')) moveToFolder(s.id, v.slice(2));
+    },
+  });
+}
+
+if (WEB) {
+  // The ... button of the conversation bar (pager.js) asks for the menu of the conversation on screen.
+  window.addEventListener('apaki:pane-menu', (e) => {
+    const p = S.panes.get(e.detail?.pane);
+    if (!p || p.isViewer) return;
+    const s = S.sessions.find((x) => x.id === p.sessionId) || { id: p.sessionId || null, title: p.title, cwd: p.cwd };
+    // A Codex conversation is read only here: Find is all its menu offers.
+    phoneSessionMenu(s.codex ? { id: null, title: s.title, codex: true } : s, { x: 0, y: 0 }, { pane: p });
+  });
+}
+
 /**
  * The sign-in card (2026-10-10, for a PC where Claude Code has never been
  * signed in): it sits at the top of the window until the engine reports a
@@ -1680,7 +1840,8 @@ function renderSignIn(e) {
 
 /** Copies text, and says so in the focused pane (a textarea fallback where the clipboard API is refused). */
 function copyText(text, said) {
-  const done = () => focusedPane()?.note(said, '');
+  // The phone says so in a toast: the pane's note would be out of sight when the copy came from the list (2026-10-12).
+  const done = () => (WEB ? phoneToast(said) : focusedPane()?.note(said, ''));
   const fallback = () => {
     const t = el('textarea');
     t.value = text;
@@ -1771,7 +1932,8 @@ function renderRail() {
     li.oncontextmenu = (e) => sessionMenu(s, e);
     li.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); openFromRail(s, { ctrlKey: true }); } };
     if (!s.codex) {
-      li.draggable = true;
+      // Not on the phone (2026-10-12): iOS lifts a draggable row after a long press, and that press opens the menu there.
+      li.draggable = !WEB;
       li.title = `Click: open (a new tab, or the empty pane) · Shift+click: split right · drag onto a pane edge to split, or onto a folder · right-click: stop, rename, fork, archive and more${S.warm.has(s.id) ? '\nKeep-warm is keeping its prompt cache warm' : ''}`;
       li.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData(DRAG_SESSION, JSON.stringify({ id: s.id, cwd: s.cwd, title: s.title }));
@@ -1881,6 +2043,12 @@ function renderLens() {
   if (S.ai) { info.innerHTML = `<b>Claude</b> · ${esc(S.ai.summary)}`; return; }
   const r = S.lastSearch;
   info.innerHTML = r && r.query === S.query ? `<b>${r.n}</b> · ${esc(r.how)} · ${r.ms} ms` : 'Searching…';
+}
+
+/** The line after a search's results that points at Ask Claude: Ctrl+Enter in the window, the button on the phone (and none for a PC without it). */
+function askHint() {
+  if (!phoneCan('askSearch')) return '';
+  return WEB ? ' Not it? Tap Ask Claude.' : ' Not it? Ask Claude (Ctrl+Enter).';
 }
 
 function askClaude() {
@@ -2278,12 +2446,12 @@ function snapshot() {
       const p = S.panes.get(lf.pane);
       if (p?.isBrowser) return { type: 'leaf', pane: lf.pane, web: p.saved() };
       if (p?.isViewer) return { type: 'leaf', pane: lf.pane, view: p.saved() };
-      const g = p?.$?.ground;
       return {
         // A pane following a desktop pane (followDesktop) is kept as an empty one: reopening its session would take it over.
         type: 'leaf', pane: lf.pane, s: (!p?.following && p?.sessionId) || null, cwd: p?.cwd || '', title: p?.following ? '' : p?.title || '', model: p?.model, effort: p?.effort, mode: p?.mode,
         draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ id: q.id, text: q.text })),
-        scroll: g ? { atEnd: g.scrollHeight - g.scrollTop - g.clientHeight < 40, top: Math.round(g.scrollTop) } : null,
+        // A pane in a background tab has no box to measure: its remembered place is saved, not "at the end, 0" (pane.js scrollState, 2026-10-12).
+        scroll: p?.scrollState ? p.scrollState() : null,
         busy: Boolean(p?.busy), pendingName: p?.pendingName || null,
       };
     }),
@@ -2507,7 +2675,7 @@ await listen('engine', ({ payload: e }) => {
       S.results = e.results;
       S.searchTerms = e.terms || null;
       S.lastSearch = { query: e.query, n: e.results.length, ms: e.elapsed, how: e.semantic ? 'words + meaning' : e.deep ? 'words' : 'titles only' };
-      S.searchInfo = e.deep ? `Every conversation, subagent and Codex session${e.semantic ? ', matched by words and by meaning' : ''}. Not it? Ask Claude (Ctrl+Enter).` : 'The conversation index is unavailable; matching titles only.';
+      S.searchInfo = e.deep ? `Every conversation, subagent and Codex session${e.semantic ? ', matched by words and by meaning' : ''}.${askHint()}` : 'The conversation index is unavailable; matching titles only.';
       renderLens();
       renderRail();
       break;
@@ -2567,8 +2735,15 @@ await listen('engine', ({ payload: e }) => {
     case 'auth': renderSignIn(e); break;
     case 'auth_signin': renderSignIn({ ...(S.auth || {}), note: e.message, noteOk: e.ok }); break;
     // A fork from the session menu: open it next to the original.
-    case 'forked': addTab({ session: { id: e.sessionId, title: 'Fork', cwd: S.sessions.find((x) => x.id === e.from)?.cwd || '' } }); break;
-    case 'error': focusedPane()?.note(e.message, 'error'); break;
+    case 'forked':
+      addTab({ session: { id: e.sessionId, title: 'Fork', cwd: S.sessions.find((x) => x.id === e.from)?.cwd || '' } });
+      if (WEB) phoneShowChat();
+      break;
+    case 'error':
+      focusedPane()?.note(e.message, 'error');
+      // A phone's menu action the PC refused (access, an older PC): the pane's note may be off screen, so a toast says it too.
+      if (WEB && e.refused) phoneToast(e.message, false);
+      break;
     // The engine is about to move to a newer build that was installed while Apaki was open (host.js codeStamp).
     case 'engineRestarting': S.engineUpdating = true; break;
     case 'engine_exit':

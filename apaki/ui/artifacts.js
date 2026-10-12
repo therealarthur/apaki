@@ -78,6 +78,27 @@ export function parseOpened(text) {
   return out;
 }
 
+/**
+ * True for an address a phone's own browser can reach: http(s) to a name or address on the internet. False for a page that
+ * only exists on the PC (localhost, a LAN or link-local address, a name with no dot such as a dev machine, a .local or
+ * .internal name), a file: address and anything that is not http(s). The phone page uses it to decide between opening a
+ * link card in the phone's browser and showing the PC's browser (2026-10-12, app.js openOnPhone).
+ */
+export function isPublicWebUrl(url) {
+  let u;
+  try { u = new URL(String(url || '')); } catch { return false; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.lan') || host.endsWith('.home.arpa')) return false;
+  if (host.includes(':')) return !(host === '::1' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host === '::' || /^::ffff:/.test(host));
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return !(a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224);
+  }
+  return host.includes('.');
+}
+
 /* ---------- cards in the conversation ---------- */
 
 /**
