@@ -422,7 +422,7 @@ async function main() {
           let n = 0;
           for (const p of ids) {
             if (p.session === 'a1c4e7b2-0001-4f3a-9c6d-2b8e5f0d7101' || p.session === 'a1c4e7b2-0005-4f3a-9c6d-2b8e5f0d7105') continue;
-            if (n >= 4) break;
+            if (n >= Number(args.streams ?? 4)) break;
             if (await page.evaluate((id) => window.__startStream(id), p.id)) n++;
           }
           results.streamingPanes = n;
@@ -441,7 +441,7 @@ async function main() {
           await sleep(1500);
         }
         console.log(`${name}: measuring ${SECS}s ...`);
-        results.scenarios[name] = await measure(browser, page, { seconds: SECS, typing: name === 'stream' || name === 'busy' || name === 'heavy', trace: args.trace !== '0', typeSel: name === 'heavy' ? '[data-pane="pa1"] textarea' : undefined });
+        results.scenarios[name] = await measure(browser, page, { seconds: SECS, typing: args.typing !== '0' && (name === 'stream' || name === 'busy' || name === 'heavy'), trace: args.trace !== '0', typeSel: name === 'heavy' ? '[data-pane="pa1"] textarea' : undefined });
         if (!args.quiet) console.log(JSON.stringify({ [name]: results.scenarios[name] }, null, 1));
       } finally {
         await page.evaluate(() => window.__stopStreams?.()).catch(() => {});

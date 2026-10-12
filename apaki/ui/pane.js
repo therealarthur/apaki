@@ -27,6 +27,12 @@ import { CODEX_LOCAL, CODEX_MODES, codexFooter, codexMode, earlierText, effortNa
 // The branch label in the header when the conversation's folder is in a git repository (worktree.js, 2026-10-12).
 import { GLYPH_WORKTREE, branchLabel, branchName, changeText, relPath, tooltip, trouble } from './worktree.js';
 import { setTip } from './tooltip.js';
+// Every streaming reply in the window is painted by one painter (streampaint.js, 2026-10-12, input lag).
+import { createStreamPainter } from './streampaint.js';
+
+const painter = createStreamPainter();
+// A key press slows the stream updates for a moment, so typing never waits behind a paint.
+if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('keydown', () => painter.typed(), true);
 
 // Images go in at most this many pixels on the long edge (the API's sweet
 // spot, and under the 2000 px limit that breaks a session).
@@ -953,14 +959,15 @@ Click for changes, commit, push, pull request, merge`;
    * until it is shown: the text just collects in a._raw (flushUnpainted draws it in one go).
    */
   paintStream(a) {
-    if (a._raf) return;
     if (!this.isShown()) { (this._unpainted ||= new Set()).add(a); return; }
-    a._raf = requestAnimationFrame(() => {
+    // One painter for every pane (streampaint.js): at most ~20 updates a second per reply, a time budget per frame,
+    // and one layout for all of them, instead of each pane forcing its own.
+    a._raf = 1;
+    painter.queue(a, () => {
       a._raf = 0;
       if (!this.isShown()) { (this._unpainted ||= new Set()).add(a); return; }
       this.drawStream(a);
-      this.scrollDown();
-    });
+    }, (this._settleStream ||= () => this.scrollDown()));
   }
 
   /** The reply as it is now: the finished blocks stay where they are, the tail after the last safe cut is parsed again. */
@@ -1000,7 +1007,7 @@ Click for changes, commit, push, pull request, merge`;
 
   /** The finished text of a reply that streamed: drawn whole, once (the stream's parts are replaced by the final render). */
   finishStream(live, text) {
-    cancelAnimationFrame(live._raf);
+    painter.cancel(live);
     live._raf = 0;
     live.classList.remove('streaming');
     live._final = null;
@@ -1820,7 +1827,7 @@ Click for changes, commit, push, pull request, merge`;
           if (live) {
             // A hidden pane keeps the final text for when it is shown (flushUnpainted); a shown one draws it now.
             if (this.isShown()) this.finishStream(live, b.text);
-            else { cancelAnimationFrame(live._raf); live._raf = 0; live.classList.remove('streaming'); live._final = b.text; (this._unpainted ||= new Set()).add(live); }
+            else { painter.cancel(live); live._raf = 0; live.classList.remove('streaming'); live._final = b.text; (this._unpainted ||= new Set()).add(live); }
             this.streams.delete(key);
           } else this.addAssistant(b.text);
         } else if (b.type === 'tool_use') {
@@ -2277,6 +2284,7 @@ Click for changes, commit, push, pull request, merge`;
           this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode;
           this.renderChips();
         }
+        for (const live of this.streams.values()) painter.cancel(live);
         this.streams.clear(); this.tools.clear(); this.cardKeys.clear();
         this.setTitle(e.title || 'New conversation');
         this.setCwdLine();
@@ -2391,6 +2399,7 @@ Click for changes, commit, push, pull request, merge`;
   }
 
   destroy() {
+    for (const live of this.streams.values()) painter.cancel(live);
     clearInterval(this.tick);
     this.stopDriftWatch();
     this.el.remove();
