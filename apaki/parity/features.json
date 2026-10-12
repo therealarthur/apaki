@@ -475,13 +475,22 @@
       "title": "Rename a session by double-clicking its title; saved in the session like /rename",
       "product": "claude-sdk",
       "upstream": ["claude-sdk:export:renameSession", "claude-sdk:control-request:rename_session", "claude-sdk:option:title"],
-      "status": "partial",
-      "surfaces": { "desktop": "supported", "phone": "planned" },
-      "where": ["apaki/engine/engine.js", "apaki/ui/app.js", "apaki/ui/pane.js"],
-      "commits": ["eb3e1c0", "655bd06"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": [
+        "apaki/engine/engine.js",
+        "apaki/engine/remote-policy.js",
+        "apaki/ui/app.js",
+        "apaki/ui/pane.js",
+        "apaki/web/src/native.js",
+        "apaki/web/src/pager.js",
+        "test/apaki-phone-ops.test.js",
+        "test/apaki-phone-parity.test.js"
+      ],
+      "commits": ["eb3e1c0", "655bd06", "119e8b8", "cf3a10d"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "One name, saved with the SDK renameSession so Claude Code, latch and Apaki agree. Phone: the rename op is not in PHONE_OPS."
+      "notes": "One name, saved with the SDK renameSession so Claude Code, latch and Apaki agree. Phone (2026-10-12): Rename is in the session menu (long press on a list row, or the ... button of a conversation) and asks in a sheet; the rename op is a phone op for Full and No shell access and is refused for Chat only (remote-policy.js capAllowsOp). The page shows it only for a PC whose hello lists the op."
     },
     {
       "id": "session-menu-stop-fork-archive",
@@ -494,12 +503,22 @@
         "claude-sdk:export:tagSession"
       ],
       "status": "partial",
-      "surfaces": { "desktop": "supported", "phone": "planned" },
-      "where": ["apaki/engine/engine.js", "apaki/engine/archive.js", "apaki/ui/app.js", "apaki/ui/menu.js"],
-      "commits": ["3410214"],
+      "surfaces": { "desktop": "supported", "phone": "partial" },
+      "where": [
+        "apaki/engine/engine.js",
+        "apaki/engine/archive.js",
+        "apaki/engine/remote-policy.js",
+        "apaki/ui/app.js",
+        "apaki/ui/menu.js",
+        "apaki/web/src/native.js",
+        "apaki/web/src/pager.js",
+        "test/apaki-phone-ops.test.js",
+        "test/apaki-phone-parity.test.js"
+      ],
+      "commits": ["3410214", "119e8b8", "cf3a10d"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "Arthur 2026-10-10: \"think of what codex and claude desktop would let you do\". A click opens a session in a new tab; right click offers the menu. Phone: stopSession, forkSession, archive and revealFolder are not in PHONE_OPS."
+      "notes": "Arthur 2026-10-10: \"think of what codex and claude desktop would let you do\". A click opens a session in a new tab; right click offers the menu. Phone (2026-10-12): the same menu as a sheet from the bottom, opened by a long press on a list row (native.js makes the contextmenu event iOS never sends) or the ... button in the conversation bar: Find, Open, Open in a new pane of the current tab, Stop (this phone's own turn), Close, Rename, Fork, Archive, Copy session id, Copy resume command, Move to folder. forkSession and archive are phone ops for Full and No shell; Chat only sees them dimmed with the reason. Left out on purpose, so the phone stays partial: Show folder (it opens Explorer on the PC) and Stop for a turn that runs in another window (stopSession acts on panes the phone does not own)."
     },
     {
       "id": "session-folders",
@@ -508,11 +527,11 @@
       "upstream": [],
       "status": "partial",
       "surfaces": { "desktop": "supported", "phone": "partial" },
-      "where": ["src/folders.js", "apaki/engine/engine.js", "apaki/ui/app.js", "apaki/ui/menu.js"],
-      "commits": ["0ba0d9a", "0493a56"],
+      "where": ["src/folders.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/ui/app.js", "apaki/ui/menu.js", "test/apaki-phone-ops.test.js"],
+      "commits": ["0ba0d9a", "0493a56", "119e8b8", "cf3a10d"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": {  },
-      "notes": "Folders live in ~/.claude/latch/folders.json (Apaki's own, not Claude Code's). Phone: the folders list arrives as a broadcast (BROADCAST_EVENTS) so a phone shows the grouping, but the folder op is not allowed, so it cannot change it."
+      "notes": "Folders live in ~/.claude/latch/folders.json (Apaki's own, not Claude Code's). Phone: the folders list arrives as a broadcast (BROADCAST_EVENTS) so a phone shows the grouping. Since 2026-10-12 the session menu moves a session into a folder, takes it out, and makes a folder (New folder asks in a sheet): the folder op takes only the actions move and create, for Full and No shell access. Still on the PC, so the phone stays partial: renaming and deleting folders, and dragging."
     },
     {
       "id": "search-keyword-and-meaning",
@@ -525,7 +544,7 @@
       "commits": ["bb94ca5", "b3d6152", "6beebdd"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": {  },
-      "notes": "latch-index is a Rust (tantivy) full text index over every Claude Code transcript (8,739 files, 18.7 GB on the build PC), plus a local embedding model for meaning. Phones use the search op and the index and meaning broadcasts. The index reads transcripts directly, so it follows transcript format changes, not SDK changes."
+      "notes": "latch-index is a Rust (tantivy) full text index over every Claude Code transcript (8,739 files, 18.7 GB on the build PC), plus a local embedding model for meaning. Phones use the search op and the index and meaning broadcasts (checked on the phone page in the demo harness 2026-10-12: results by words and by meaning, with the by-meaning mark). The index reads transcripts directly, so it follows transcript format changes, not SDK changes."
     },
     {
       "id": "ask-claude-and-dig-deeper-search",
@@ -533,12 +552,20 @@
       "product": "apaki",
       "upstream": [],
       "status": "partial",
-      "surfaces": { "desktop": "supported", "phone": "planned" },
-      "where": ["apaki/engine/asksearch.js", "apaki/engine/engine.js", "apaki/ui/app.js"],
-      "commits": ["6beebdd"],
+      "surfaces": { "desktop": "supported", "phone": "partial" },
+      "where": [
+        "apaki/engine/asksearch.js",
+        "apaki/engine/engine.js",
+        "apaki/engine/remote-policy.js",
+        "apaki/engine/remote.js",
+        "apaki/ui/app.js",
+        "apaki/web/src/native.js",
+        "test/apaki-phone-ops.test.js"
+      ],
+      "commits": ["6beebdd", "119e8b8", "cf3a10d"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": {  },
-      "notes": "Spends the selected subscription or API credit to find sessions like \"the forge.myrlin.io marketing and growth sessions\". Excluded from phones on purpose (remote-policy.js: they spend outside a conversation); a phone version would need the PC owner's consent per phone."
+      "notes": "Spends the selected subscription or API credit to find sessions like \"the forge.myrlin.io marketing and growth sessions\". Phone (2026-10-12): Ask Claude is a button under the search box for a PC whose hello lists askSearch (body.can-ask), open to every access level because it is a Haiku call with no tools over the PC's own indexes (about a cent, billed to the phone's focused pane or the live account, like a message from it) and one question at a time per phone (AskGate). Dig deeper stays on the PC (it opens an Opus session that needs the shell tools), so the phone is partial. Decision for Arthur: the earlier note wanted the PC owner's consent per phone for Ask Claude; this treats the phone's pairing and access level as that consent."
     },
     {
       "id": "sessions-outlive-the-window",
@@ -574,10 +601,10 @@
       "status": "partial",
       "surfaces": { "desktop": "supported", "phone": "partial" },
       "where": ["apaki/ui/layout-tree.js", "apaki/ui/app.js", "apaki/ui/pane.js", "test/apaki-layout.test.js"],
-      "commits": ["9aa0e2f", "2010439", "12eb702", "cd671e0", "3410214"],
+      "commits": ["9aa0e2f", "2010439", "12eb702", "cd671e0", "3410214", "bb30acd"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-desktop": "2.31226.1.0" },
-      "notes": "Resizable splits, drag a pane by its grip, drag tabs to reorder (12eb702), a new conversation opens as a new pane in the current tab (2010439), a click on a session opens a new tab unless the focused pane is empty (3410214). Tab and pane counts count conversations only; viewers and browsers come on top up to 10 panes. Phone: up to 6 panes (MAX_PHONE_PANES) and the desktop's tabs are shown (desktopTabs) but not arranged."
+      "notes": "Resizable splits, drag a pane by its grip, drag tabs to reorder (12eb702), a new conversation opens as a new pane in the current tab (2010439), a click on a session opens a new tab unless the focused pane is empty (3410214). Tab and pane counts count conversations only; viewers and browsers come on top up to 10 panes. Phone: up to 6 panes (MAX_PHONE_PANES) and the desktop's tabs are shown (desktopTabs) but not arranged. 2026-10-12 (bb30acd): a tab opened in the background or restored with the window opened scrolled to the top of its conversation, because a background tab is display: none and a hidden pane has no scroll position; the pane now remembers the reader's place and applies it when it gets a box (pane.js settleScroll, test/apaki-pane-scroll.test.js), on the desktop and the phone, and the saved workspace keeps that place."
     },
     {
       "id": "phone-sees-desktop-tabs",
@@ -815,32 +842,37 @@
         "chatgpt-desktop:feature:browser"
       ],
       "status": "partial",
-      "surfaces": { "desktop": "supported", "phone": "planned" },
+      "surfaces": { "desktop": "supported", "phone": "partial" },
       "where": [
         "apaki/src/browser.rs",
         "apaki/engine/browser-tools.js",
         "apaki/engine/browser-page.js",
         "apaki/engine/shell-channel.js",
+        "apaki/engine/remote-policy.js",
         "apaki/ui/browser.js",
-        "test/apaki-browser-outline.test.js"
+        "apaki/web/src/browserview.js",
+        "apaki/web/src/pager.js",
+        "test/apaki-browser-outline.test.js",
+        "test/apaki-phone-ops.test.js",
+        "test/apaki-phone-parity.test.js"
       ],
-      "commits": ["f1db3b7", "198526b", "12eb702"],
+      "commits": ["f1db3b7", "198526b", "12eb702", "119e8b8", "cf3a10d"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "claude-desktop": "2.31226.1.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "A WebView2 child webview per browser pane; pages read as an outline with numbered links, buttons and fields; pages have no access to the app or sessions. Phone: the six browser tools are blocked for No shell and Chat only phones (APAKI_BROWSER_TOOLS) and no phone UI shows a PC browser pane. Counts as a phone gap."
+      "notes": "A WebView2 child webview per browser pane; pages read as an outline with numbered links, buttons and fields; pages have no access to the app or sessions. Phone: the six browser tools are blocked for No shell and Chat only phones (APAKI_BROWSER_TOOLS). 2026-10-12: a live WebView2 cannot run on a phone, so the phone gets a read-only view of the page a Full phone's own conversation opened: a Browser button in the conversation bar once Claude has used the browser there (pane.js markBrowser), opening a sheet with the page's title and address, one JPEG of the part in view (engine op browserView, browser-tools.js view, quiet so the desktop strip says nothing), what Claude just did, and Refresh; it refreshes itself a moment after each browserActivity line, so it follows Claude through the page. A web page card's Open opens a public address in the phone's own browser and a PC-only one (localhost) as this view. Left out, so the phone stays partial: clicking or typing in the PC's browser from the phone, and seeing a browser pane that a desktop conversation opened (it belongs to another window; the desktop's own pane list shows it as a quiet Browser row)."
     },
     {
       "id": "find-in-pane",
       "title": "Ctrl+F finds text in the focused pane",
       "product": "apaki",
       "upstream": [],
-      "status": "partial",
-      "surfaces": { "desktop": "supported", "phone": "planned" },
-      "where": ["apaki/ui/find.js", "apaki/ui/pane.js"],
-      "commits": ["b7f2763", "d077b7a"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/find.js", "apaki/ui/pane.js", "apaki/ui/app.js", "apaki/web/src/web.css", "test/apaki-phone-parity.test.js"],
+      "commits": ["b7f2763", "d077b7a", "cf3a10d"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": {  },
-      "notes": "Frosted bar top right: every match marked, Enter and F3 step, Aa matches case, a collapsed tool block holding the match opens. Phone: the bar opens only from Ctrl+F and F3 (find.js, app.js key handlers), so a touch-only phone has no way to open it."
+      "notes": "Frosted bar top right: every match marked, Enter and F3 step, Aa matches case, a collapsed tool block holding the match opens. Phone (2026-10-12): Find in conversation is the first item of the conversation menu (the ... button); the same bar runs full width under the conversation bar with 44 px targets, the keyboard's Search key steps, no case toggle, Previous and Next keep the keyboard, and Done does not give it to the message box."
     },
     {
       "id": "voice-dictation",
@@ -1125,7 +1157,7 @@
       "commits": ["d077b7a", "07aa64c", "abb8f33"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "The PC enforces the capability whatever the phone page does: tools removed from the pane's Claude Code (disallowedTools) and refused by a PreToolUse hook that holds in every permission mode. Any new Claude Code tool that edits files or runs commands must be added to CAP_BLOCKED_TOOLS: when the tool-input list gains a tool, review it here."
+      "notes": "The PC enforces the capability whatever the phone page does: tools removed from the pane's Claude Code (disallowedTools) and refused by a PreToolUse hook that holds in every permission mode. Any new Claude Code tool that edits files or runs commands must be added to CAP_BLOCKED_TOOLS: when the tool-input list gains a tool, review it here. 2026-10-12: the access level also decides which phone ops are allowed (remote-policy.js capAllowsOp): rename, forkSession, archive and folder need Full or No shell, browserView needs Full, askSearch is open to every level; a new phone op that changes what the PC keeps belongs in SESSION_WRITE_OPS."
     },
     {
       "id": "phone-ios-app",
