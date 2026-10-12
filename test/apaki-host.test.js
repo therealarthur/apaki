@@ -26,7 +26,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
-  DEFAULT_APP_ID, HostServer, MAX_LINE_BYTES, clientMac, connectHost, createLifecycle, engineStamp, hostFile, macEqual, noteSdkMessage,
+  DEFAULT_APP_ID, HostServer, MAX_LINE_BYTES, clientMac, codeStamp, connectHost, createLifecycle, engineStamp, hostFile, macEqual, noteSdkMessage,
   paneTurnBusy, paneWorking, patchWorkspaceLeaves, pidAlive, planIdle, readHostInfo, removeHostInfo, restoreAsAttach, serverMac, taskReplay, writeHostInfo,
 } from '../apaki/engine/host.js';
 import { createShell } from '../apaki/engine/shell-channel.js';
@@ -346,6 +346,69 @@ test('lifecycle: grace before exit, a window resets it, quit and quit now', () =
   lc3.windowConnected();
   lc3.requestQuit({ now: true });
   assert.deepEqual(exits3, ['quit-now']);
+});
+
+test('update while open: a newer build on disk moves the host once idle and quiet, even with a window connected', () => {
+  let t = 100000;
+  let changed = false;
+  const exits = [];
+  const logs = [];
+  const panes = [{ id: 'p1', open: true, working: true, asks: 0, lastActiveAt: t }];
+  const lc = createLifecycle({ now: () => t, tickMs: 0, quitGraceMs: 100, swapQuietMs: 60000, codeCheckMs: 30000,
+    view: () => ({ remoteOn: true, panes }), closeIdle: () => {}, exit: (why) => exits.push(why), log: (l) => logs.push(l), codeChanged: () => changed });
+  lc.windowConnected();
+  t += 30000; lc.tick();
+  assert.equal(lc.status().swap, false, 'same build: nothing to do');
+  changed = true;
+  t += 10000; lc.tick();
+  assert.equal(lc.status().swap, false, 'the files are looked at every codeCheckMs only');
+  t += 20000; lc.tick();
+  assert.equal(lc.status().swap, true);
+  assert.match(logs.join('\n'), /newer build/);
+  assert.deepEqual(lc.status().plan.waiting.map((w) => w.why), ['working', 'a pane was active in the last minute']);
+  panes[0].working = false; panes[0].lastActiveAt = t;
+  t += 59000; lc.tick(); t += 200; lc.tick();
+  assert.deepEqual(exits, [], 'quiet for less than a minute: stays');
+  t += 1000; lc.tick(); t += 200; lc.tick();
+  assert.deepEqual(exits, ['update']);
+
+  // A question waiting keeps the old build, however long it waits.
+  const exits2 = [];
+  const asking = [{ id: 'p1', open: true, working: false, asks: 1, lastActiveAt: 0 }];
+  const lc2 = createLifecycle({ now: () => t, tickMs: 0, quitGraceMs: 100, codeCheckMs: 0,
+    view: () => ({ panes: asking }), closeIdle: () => {}, exit: (why) => exits2.push(why), codeChanged: () => true });
+  lc2.windowConnected();
+  t += 3600000; lc2.tick(); t += 200; lc2.tick();
+  assert.deepEqual(exits2, []);
+  asking[0].asks = 0;
+  t += 10; lc2.tick(); t += 200; lc2.tick();
+  assert.deepEqual(exits2, ['update']);
+});
+
+test('codeStamp: changes when a file in a watched folder changes, is added or goes; dotfiles and .tmp files do not count', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-codestamp-'));
+  try {
+    const sub = path.join(dir, 'engine');
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, 'a.js'), 'one');
+    const single = path.join(dir, 'build.mjs');
+    fs.writeFileSync(single, 'x');
+    const s0 = codeStamp([sub, single]);
+    assert.equal(codeStamp([sub, single]), s0, 'stable');
+    fs.writeFileSync(path.join(sub, '.x.swp'), 'z');
+    fs.writeFileSync(path.join(sub, 'a.js.123.tmp'), 'z');
+    assert.equal(codeStamp([sub, single]), s0, 'dotfiles and temp files are ignored');
+    fs.writeFileSync(path.join(sub, 'a.js'), 'one plus');
+    const s1 = codeStamp([sub, single]);
+    assert.notEqual(s1, s0, 'a changed size');
+    fs.writeFileSync(path.join(sub, 'b.css'), 'b');
+    const s2 = codeStamp([sub, single]);
+    assert.notEqual(s2, s1, 'a new file');
+    fs.rmSync(single);
+    assert.notEqual(codeStamp([sub, single]), s2, 'a file gone');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /* ------------------------------------------------------------ end to end: engine.js --host */

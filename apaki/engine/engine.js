@@ -113,7 +113,7 @@ import { createApakiTools } from './apaki-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createShell } from './shell-channel.js';
 import {
-  DEFAULT_APP_ID, HostServer, connectHost, createLifecycle, engineStamp, hostFile, latchDir, noteSdkMessage, paneTurnBusy, paneWorking,
+  DEFAULT_APP_ID, HostServer, codeStamp, connectHost, createLifecycle, engineStamp, hostFile, latchDir, noteSdkMessage, paneTurnBusy, paneWorking,
   patchWorkspaceLeaves, restoreAsAttach, taskReplay,
 } from './host.js';
 import { startOpenServer } from './open-server.js';
@@ -2047,10 +2047,23 @@ async function startHostMode() {
     onGone: hostWindowGone,
     control: (c) => hostControl(c),
   });
+  // Everything this host loaded from disk; a newer build copied in under it (an update installed while Apaki is
+  // open) makes the host move to it once idle (host.js codeStamp, 2026-10-12).
+  const codePaths = [
+    path.join(ENGINE_ROOT, 'apaki', 'engine'), path.join(ENGINE_ROOT, 'apaki', 'remote'),
+    path.join(ENGINE_ROOT, 'apaki', 'scripts', 'build-web.mjs'), path.join(ENGINE_ROOT, 'apaki', 'web', 'src'),
+    path.join(ENGINE_ROOT, 'src'), path.join(ENGINE_ROOT, 'src', 'ui'),
+  ];
+  const startedCode = codeStamp(codePaths);
   lifecycle = createLifecycle({
     view: hostView,
     closeIdle: closeIdlePane,
-    exit: (reason) => { shutdown(reason); },
+    codeChanged: () => codeStamp(codePaths) !== startedCode,
+    exit: (reason) => {
+      // The window hears why first, so it says "updating" rather than "lost the engine" while it reconnects.
+      if (reason === 'update') { emit({ ev: 'engineRestarting', why: 'update' }); setTimeout(() => shutdown(reason), 150); return; }
+      shutdown(reason);
+    },
     log: (line) => process.stderr.write(`apaki host: ${line}\n`),
   });
   await host.start();

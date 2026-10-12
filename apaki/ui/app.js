@@ -98,9 +98,12 @@ function engineBanner(on) {
       b.id = 'engineBanner';
       b.className = 'engine-banner';
       b.setAttribute('role', 'status');
-      b.textContent = 'Reconnecting to the engine… your conversations keep running, and nothing you type is lost.';
       document.body.append(b);
     }
+    // An update moving the engine to the new build (engineRestarting) reads differently from a lost connection.
+    b.textContent = S.engineUpdating
+      ? 'Moving to the Apaki update you installed… back in a few seconds; nothing you type is lost.'
+      : 'Reconnecting to the engine… your conversations keep running, and nothing you type is lost.';
     b.hidden = false;
   }, 1500);
 }
@@ -2267,6 +2270,7 @@ await listen('engine', ({ payload: e }) => {
       // The engine restarted: every pane lost its Claude Code process. Reopen
       // each one (without starting Claude Code until its next message).
       engineBanner(false);
+      S.engineUpdating = false;
       if (S.engineLost) {
         S.engineLost = false;
         S.offlineNoted = false;
@@ -2426,6 +2430,8 @@ await listen('engine', ({ payload: e }) => {
     // A fork from the session menu: open it next to the original.
     case 'forked': addTab({ session: { id: e.sessionId, title: 'Fork', cwd: S.sessions.find((x) => x.id === e.from)?.cwd || '' } }); break;
     case 'error': focusedPane()?.note(e.message, 'error'); break;
+    // The engine is about to move to a newer build that was installed while Apaki was open (host.js codeStamp).
+    case 'engineRestarting': S.engineUpdating = true; break;
     case 'engine_exit':
       S.engineLost = true;
       for (const p of S.panes.values()) p.engineLost();

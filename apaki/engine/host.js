@@ -114,6 +114,12 @@ export const EXIT_GRACE_MS = Number(process.env.APAKI_HOST_EXIT_MS) || 60 * 1000
 // A quit was asked and the host is idle: exits after this long (lets the last events settle).
 export const QUIT_GRACE_MS = 1000;
 export const TICK_MS = Number(process.env.APAKI_HOST_TICK_MS) || 5000;
+// A newer build was copied in under a running host (an update installed while Apaki is open): the host moves
+// to it on its own once nothing has happened in any pane for this long, even with a window connected; the
+// window reconnects to the fresh host by itself (2026-10-12, see codeStamp).
+export const SWAP_QUIET_MS = Number(process.env.APAKI_HOST_SWAP_MS) || 60 * 1000;
+// How often the host looks at its own files for a newer build.
+export const CODE_CHECK_MS = 30 * 1000;
 export const HANDSHAKE_MS = 5000;
 export const PRE_AUTH_MAX_BYTES = 4096;
 // A line after authentication (a message with images, a screenshot for the browser).
@@ -573,19 +579,51 @@ export function patchWorkspaceLeaves(ws, paneId, patch = {}) {
   return { ...ws, tabs, savedAt: (Number(ws.savedAt) || 0) + 1 };
 }
 
+/**
+ * One stamp for everything a running host has loaded from disk: size and modified time (whole seconds) of every
+ * file directly in each folder given (dotfiles and .tmp files aside), plus any single files given. A file that cannot be read counts
+ * as missing, so an update half copied in still differs from the startup stamp.
+ *
+ * WHY (2026-10-12): engineStamp looks at engine.js alone, and a host retired for an update only once its window
+ * closed. Arthur keeps Apaki open for days, so an update's engine fixes (the live context meter, the full message
+ * count in the prompt pin) never ran: his host was still the one started the afternoon before. A host compares
+ * this stamp with the one it started with and moves to the new build once idle.
+ */
+export function codeStamp(paths = []) {
+  const parts = [];
+  const add = (f) => {
+    try { const st = fs.statSync(f); parts.push(`${f}:${st.size}:${Math.floor(st.mtimeMs / 1000)}`); } catch { parts.push(`${f}:missing`); }
+  };
+  for (const p of paths) {
+    let st = null;
+    try { st = fs.statSync(p); } catch { /* missing: noted below */ }
+    if (st?.isDirectory()) {
+      let names = [];
+      try { names = fs.readdirSync(p, { withFileTypes: true }).filter((e) => e.isFile() && !e.name.startsWith('.') && !e.name.endsWith('.tmp')).map((e) => e.name).sort(); } catch { /* unreadable: no files */ }
+      parts.push(`${p}/:${names.length}`);
+      for (const n of names) add(path.join(p, n));
+    } else {
+      add(p);
+    }
+  }
+  return crypto.createHash('sha256').update(parts.join('\n')).digest('hex').slice(0, 16);
+}
+
 /* ---------- when idle processes close and when the host exits ---------- */
 
 /**
  * One look at the host's state. panes: [{ id, phone, open, working, asks, lastActiveAt }].
  * Returns the desktop panes to close now and whether the host may exit.
  */
-export function planIdle({ window = false, remoteOn = false, quit = false, panes = [], windowGoneAt = 0, now = Date.now(), idleCloseMs = IDLE_CLOSE_MS } = {}) {
+export function planIdle({ window = false, remoteOn = false, quit = false, panes = [], windowGoneAt = 0, now = Date.now(), idleCloseMs = IDLE_CLOSE_MS, swap = false, swapQuietMs = SWAP_QUIET_MS } = {}) {
   const close = [];
   const waiting = [];
   let working = 0;
   let asks = 0;
   let open = 0;
+  let lastActive = 0;
   for (const p of panes) {
+    lastActive = Math.max(lastActive, p.lastActiveAt || 0);
     if (p.working) { working += 1; waiting.push({ id: p.id, why: 'working' }); }
     if (p.asks) { asks += p.asks; waiting.push({ id: p.id, why: 'question' }); }
     if (!p.open) continue;
@@ -597,10 +635,13 @@ export function planIdle({ window = false, remoteOn = false, quit = false, panes
     if (quit || idleFor >= idleCloseMs) close.push(p.id);
   }
   const openAfter = open - close.length;
-  const exitReady = !window && working === 0 && asks === 0 && (quit || (!remoteOn && openAfter === 0));
+  // A newer build is on disk (swap): exit for it once nothing runs, nothing is asked and every pane has been quiet
+  // a while, window or not. The window reconnects to a host started from the new files.
+  const swapReady = Boolean(swap) && working === 0 && asks === 0 && now - lastActive >= swapQuietMs;
+  const exitReady = swapReady || (!window && working === 0 && asks === 0 && (quit || (!remoteOn && openAfter === 0)));
   if (!exitReady && !window && remoteOn && !quit) waiting.push({ id: null, why: 'phone access is on' });
-  if (window) waiting.push({ id: null, why: 'a window is connected' });
-  return { close, exitReady, waiting, working, asks, open };
+  if (window && !swapReady) waiting.push({ id: null, why: swap ? 'a pane was active in the last minute' : 'a window is connected' });
+  return { close, exitReady, swapReady, waiting, working, asks, open };
 }
 
 /**
@@ -618,6 +659,8 @@ export function createLifecycle(o) {
   const idleCloseMs = o.idleCloseMs ?? IDLE_CLOSE_MS;
   const exitGraceMs = o.exitGraceMs ?? EXIT_GRACE_MS;
   const quitGraceMs = o.quitGraceMs ?? QUIT_GRACE_MS;
+  const swapQuietMs = o.swapQuietMs ?? SWAP_QUIET_MS;
+  const codeCheckMs = o.codeCheckMs ?? CODE_CHECK_MS;
   const log = o.log || (() => {});
   let window = false;
   let windowGoneAt = now();
@@ -625,25 +668,41 @@ export function createLifecycle(o) {
   let readySince = null;
   let exiting = false;
   let last = null;
+  // A newer build on disk (o.codeChanged), looked at every codeCheckMs; once seen it stays seen.
+  let swap = false;
+  let codeCheckedAt = 0;
   const timer = o.tickMs === 0 ? null : setInterval(() => tick(), o.tickMs ?? TICK_MS);
   timer?.unref?.();
+
+  function lookForNewBuild(t) {
+    if (swap || !o.codeChanged || t - codeCheckedAt < codeCheckMs) return;
+    codeCheckedAt = t;
+    let changed = false;
+    try { changed = Boolean(o.codeChanged()); } catch { changed = false; }
+    if (changed) {
+      swap = true;
+      log('a newer build was copied in; moving to it once nothing runs and the panes have been quiet a minute');
+    }
+  }
 
   function tick() {
     if (exiting) return last;
     const t = now();
+    lookForNewBuild(t);
     const v = o.view();
-    const plan = planIdle({ window, remoteOn: Boolean(v.remoteOn), quit: Boolean(quit), panes: v.panes || [], windowGoneAt, now: t, idleCloseMs });
+    const plan = planIdle({ window, remoteOn: Boolean(v.remoteOn), quit: Boolean(quit), panes: v.panes || [], windowGoneAt, now: t, idleCloseMs, swap, swapQuietMs });
     for (const id of plan.close) {
       log(`closing the idle Claude Code process of pane ${id}`);
       try { o.closeIdle(id); } catch (e) { log(`closeIdle ${id}: ${e.message}`); }
     }
     if (plan.exitReady) {
       if (readySince === null) readySince = t;
-      if (t - readySince >= (quit ? quitGraceMs : exitGraceMs)) {
+      if (t - readySince >= (quit || plan.swapReady ? quitGraceMs : exitGraceMs)) {
         exiting = true;
         if (timer) clearInterval(timer);
-        log(`exiting (${quit ? 'asked to quit' : 'idle with no window'})`);
-        o.exit(quit ? 'quit' : 'idle');
+        const why = plan.swapReady && (window || !quit) ? 'update' : quit ? 'quit' : 'idle';
+        log(`exiting (${why === 'update' ? 'moving to the newer build' : why === 'quit' ? 'asked to quit' : 'idle with no window'})`);
+        o.exit(why);
       }
     } else {
       readySince = null;
@@ -667,7 +726,7 @@ export function createLifecycle(o) {
     },
     get exiting() { return exiting; },
     status() {
-      return { window, windowGoneAt, quit, readySince, exiting, idleCloseMs, exitGraceMs, plan: last };
+      return { window, windowGoneAt, quit, readySince, exiting, idleCloseMs, exitGraceMs, swap, plan: last };
     },
     stop() { if (timer) clearInterval(timer); exiting = true; },
   };
