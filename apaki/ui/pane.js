@@ -14,7 +14,7 @@
  *   engineQueue (true in the desktop window: the pane tells the engine its queue, see syncQueue).
  */
 
-import { esc, md } from './markdown.js';
+import { esc, md, streamCut, streamState } from './markdown.js';
 import { EFFORTS, effortGrid, menu } from './menu.js';
 import { pickVerb } from './verbs.js';
 // What Claude Code shows that is not Claude's reply: blocked prompts, hook errors, retries, limits (2026-10-11).
@@ -589,7 +589,9 @@ Click for changes, commit, push, pull request, merge`;
 
   scrollDown(force = false) {
     // Earlier messages drawn off-screen to go on top (prependHistory) keep the reader where they are.
-    if (this._prepending) return;
+    // A conversation being drawn from history is scrolled once, at its end (renderHistory): asking for the end after
+    // every message made the browser lay the whole page out again each time (2400 messages took half a minute).
+    if (this._prepending || this._replaying) return;
     const g = this.$.ground;
     // No box (a background tab): there is nothing to scroll yet; the reader is put at the end when it shows (settleScroll).
     if (!this.hasBox()) { if (force) this.scrollMemo = { atEnd: true, top: 0 }; return; }
@@ -631,6 +633,8 @@ Click for changes, commit, push, pull request, merge`;
   settleScroll() {
     const had = this._hadBox;
     this._hadBox = this.hasBox();
+    // Shown again after being hidden: replies that kept collecting text are drawn now, in one go (flushUnpainted).
+    if (this._hadBox && had === false) this.flushUnpainted();
     if (!this._hadBox || had !== false) return;
     const want = this.scrollMemo || { atEnd: true, top: 0 };
     const g = this.$.ground;
@@ -836,14 +840,66 @@ Click for changes, commit, push, pull request, merge`;
     return u;
   }
 
-  /** Redraws a streaming reply as markdown, once per animation frame. */
+  /**
+   * Redraws a streaming reply as markdown, once per animation frame (2026-10-12, input lag): only the growing
+   * tail is parsed and replaced (drawStream), and a pane with no box on screen (a background tab) draws nothing
+   * until it is shown: the text just collects in a._raw (flushUnpainted draws it in one go).
+   */
   paintStream(a) {
     if (a._raf) return;
+    if (!this.isShown()) { (this._unpainted ||= new Set()).add(a); return; }
     a._raf = requestAnimationFrame(() => {
       a._raf = 0;
-      a.innerHTML = md(a._raw || '');
+      if (!this.isShown()) { (this._unpainted ||= new Set()).add(a); return; }
+      this.drawStream(a);
       this.scrollDown();
     });
+  }
+
+  /** The reply as it is now: the finished blocks stay where they are, the tail after the last safe cut is parsed again. */
+  drawStream(a) {
+    const raw = a._raw || '';
+    const st = a._md || (a._md = { scan: streamState(), done: 0, nodes: 0 });
+    const cut = streamCut(raw, st.scan);
+    const dropTail = () => { while (a.childNodes.length > st.nodes) a.lastChild.remove(); };
+    if (cut > st.done) {
+      dropTail();
+      a.insertAdjacentHTML('beforeend', md(raw.slice(st.done, cut)));
+      st.nodes = a.childNodes.length;
+      st.done = cut;
+    }
+    dropTail();
+    const tail = md(raw.slice(st.done));
+    if (tail) a.insertAdjacentHTML('beforeend', tail);
+  }
+
+  /** True while the conversation has a box (its tab is showing). Cached from the ground's ResizeObserver, so asking costs no layout. */
+  isShown() {
+    return this._hadBox !== false;
+  }
+
+  /** The pane came into view: every reply that collected text while it was hidden is drawn now, once. */
+  flushUnpainted() {
+    const pending = this._unpainted;
+    if (!pending?.size) return;
+    this._unpainted = null;
+    for (const a of pending) {
+      if (!a.isConnected) continue;
+      if (a._final != null) { this.finishStream(a, a._final); continue; }
+      this.drawStream(a);
+    }
+    this.scrollDown();
+  }
+
+  /** The finished text of a reply that streamed: drawn whole, once (the stream's parts are replaced by the final render). */
+  finishStream(live, text) {
+    cancelAnimationFrame(live._raf);
+    live._raf = 0;
+    live.classList.remove('streaming');
+    live._final = null;
+    live._md = null;
+    live.innerHTML = md(text);
+    this.host.linkSessions?.(live);
   }
 
   addAssistant(text) {
@@ -1654,7 +1710,12 @@ Click for changes, commit, push, pull request, merge`;
         if (!this.streams.has(key)) key = [...this.streams.keys()].find((k) => k.startsWith(`${id}:`)) || key;
         const live = this.streams.get(key);
         if (b.type === 'text') {
-          if (live) { cancelAnimationFrame(live._raf); live.classList.remove('streaming'); live.innerHTML = md(b.text); this.host.linkSessions?.(live); this.streams.delete(key); } else this.addAssistant(b.text);
+          if (live) {
+            // A hidden pane keeps the final text for when it is shown (flushUnpainted); a shown one draws it now.
+            if (this.isShown()) this.finishStream(live, b.text);
+            else { cancelAnimationFrame(live._raf); live._raf = 0; live.classList.remove('streaming'); live._final = b.text; (this._unpainted ||= new Set()).add(live); }
+            this.streams.delete(key);
+          } else this.addAssistant(b.text);
         } else if (b.type === 'tool_use') {
           this.addTool(b);
         } else if (b.type === 'thinking' && b.thinking && msg.codex) {

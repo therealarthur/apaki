@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { highlight, inline, md } from '../apaki/ui/markdown.js';
+import { highlight, inline, md, streamCut, streamState } from '../apaki/ui/markdown.js';
 
 test('bold that contains inline code renders as bold (the reported bug)', () => {
   const html = inline('**Built this turn (pushed in `43b1d8d` and `40e313c`; installs when you next close Apaki)**');
@@ -71,4 +71,56 @@ test('fenced code: language label, escaping, syntax colours', () => {
   assert.match(html, /<span class="tok-fn">foo<\/span>\(<span class="tok-num">42<\/span>\)/);
   assert.equal(md('```\n<script>\n```'), '<pre class="code"><code>&lt;script&gt;</code></pre>');
   assert.equal(highlight('x = 1', 'nope'), 'x = 1');
+});
+
+test('an empty list item (a lone "- " while a reply streams) does not throw', () => {
+  assert.equal(md('- '), '<ul><li></li></ul>');
+  assert.equal(md('1. one\n2. '), '<ol><li>one</li><li></li></ol>');
+  assert.equal(md('Intro\n\n- a\n- \n'), '<p>Intro</p>\n<ul><li>a</li><li></li></ul>');
+});
+
+/* ---------- streamCut: the finished part of a growing reply ---------- */
+
+const REPLIES = [
+  '## Found it\n\nThe hook reads `cart.items` too early.\n\n- first\n- second\n\nThen a paragraph.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n> quote line\n> more\n\n1. one\n2. two\n\n3. three after a blank\n\nLast words.\n',
+  'Para one\nstill para one\n\nPara two\n\n---\n\n# Heading\nright under\n\n   indented after blank\n\n- loose\n\n- list\n\nAfter the list.',
+  '~~~sh\nnpm test\n\n~~~\n\nnext\n\n````md\n```\ninner\n```\n````\n\nend',
+  'a\n\n\n\nb\n\n- x\n  - y\n\n    deeper continuation\n\nnormal',
+];
+
+test('streamCut: the parts before and after the cut render to the whole, for every prefix of a reply', () => {
+  for (const reply of REPLIES) {
+    const st = streamState();
+    let lastCut = 0;
+    for (let n = 1; n <= reply.length; n++) {
+      const raw = reply.slice(0, n);
+      const cut = streamCut(raw, st);
+      assert.ok(cut >= lastCut, 'the cut never moves back');
+      lastCut = cut;
+      assert.ok(cut === 0 || raw[cut - 1] === '\n', 'a cut is at a line start');
+      const whole = md(raw);
+      const parts = [md(raw.slice(0, cut)), md(raw.slice(cut))].filter(Boolean).join('\n');
+      assert.equal(parts, whole, `prefix ${n} of ${JSON.stringify(reply.slice(0, 24))}`);
+    }
+  }
+});
+
+test('streamCut: a cut is found after a paragraph, never inside a code fence or before a list item', () => {
+  const st = streamState();
+  assert.equal(streamCut('First paragraph.\n\nSecond starts here', st), 0, 'the second line is not complete yet');
+  assert.equal(streamCut('First paragraph.\n\nSecond starts here\n', st), 18);
+  const fenced = streamState();
+  assert.equal(streamCut('Intro\n\n```js\nfoo()\n\nbar()\n\nstill code\n', fenced), 7, 'the fence opens at a cut but nothing inside it is cut');
+  assert.equal(streamCut('Intro\n\n```js\nfoo()\n\nbar()\n\nstill code\n```\n\nafter\n', fenced), 7 + 'Intro\n\n```js\nfoo()\n\nbar()\n\nstill code\n```\n\n'.length - 7);
+  const list = streamState();
+  assert.equal(streamCut('Intro\n\n- a\n\n- b\n', list), 0, 'a list item after a blank line may continue a list');
+});
+
+test('streamCut: scanning in pieces gives the same cut as scanning at once', () => {
+  const reply = REPLIES[0];
+  const once = streamCut(reply, streamState());
+  const st = streamState();
+  let cut = 0;
+  for (let n = 0; n < reply.length; n += 7) cut = streamCut(reply.slice(0, n + 7), st);
+  assert.equal(cut, once);
 });

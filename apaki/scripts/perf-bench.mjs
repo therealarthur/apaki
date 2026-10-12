@@ -118,6 +118,31 @@ function pageStreamer({ corpus }) {
   window.__stopStreams = () => { for (const h of window.__streams) clearInterval(h); window.__streams = []; };
 }
 
+/**
+ * Gives a pane a long conversation the way the engine's history event does: `turns` rounds of a prompt, a reply
+ * with markdown, a tool call and its result (4 messages a round). Returns how long drawing it took.
+ */
+function pageHistory({ paneId, turns, corpus }) {
+  const pane = window.__apaki.S.panes.get(paneId);
+  if (!pane) return null;
+  const now = Date.now();
+  const messages = [];
+  const tools = ['Read', 'Grep', 'Bash', 'Edit'];
+  for (let i = 0; i < turns; i++) {
+    const at = new Date(now - (turns - i) * 60000).toISOString();
+    const tid = `toolu_${paneId}_${i}`;
+    const name = tools[i % tools.length];
+    const input = name === 'Bash' ? { command: `npm test -- --grep case${i}` } : name === 'Edit' ? { file_path: `src/mod${i % 40}.ts`, old_string: `const a${i} = 1;`, new_string: `const a${i} = 2;` } : name === 'Grep' ? { pattern: `thing${i}`, path: 'src' } : { file_path: `src/mod${i % 40}.ts` };
+    messages.push({ type: 'user', uuid: `u-${paneId}-${i}`, at, prompt: { text: `Round ${i}: please look at module ${i % 40} and tell me what you find about case ${i}.` }, message: { content: [{ type: 'text', text: `Round ${i}` }] } });
+    messages.push({ type: 'assistant', at, message: { content: [{ type: 'text', text: corpus.slice((i * 137) % 600, ((i * 137) % 600) + 900 + (i % 5) * 300) }, { type: 'tool_use', id: tid, name, input }] } });
+    messages.push({ type: 'user', at, message: { content: [{ type: 'tool_result', tool_use_id: tid, content: `line one of ${name} output ${i}\nline two\nline three\nline four\nline five` }] } });
+    messages.push({ type: 'assistant', at, message: { content: [{ type: 'text', text: `Done with round ${i}. The change is small and the tests still pass.` }] } });
+  }
+  const t0 = performance.now();
+  pane.handle({ ev: 'history', paneId, sessionId: pane.sessionId, messages, total: messages.length, source: 'transcript', first: 0, hasMore: false, earlier: 0, rev: `bench-${paneId}-${turns}`, refresh: true });
+  return { ms: Math.round(performance.now() - t0), messages: messages.length };
+}
+
 /** Installed before the measurement: long tasks, key-to-frame timings and event timing. */
 function pageRecorder() {
   const rec = { longTasks: [], keys: [], slowEvents: [], loaf: [] };
@@ -217,6 +242,15 @@ async function openWindow(browser, baseUrl, { ws = 'split', theme = 'light' } = 
   await page.waitForFunction(() => window.__demo?.ready?.(), null, { timeout: 30000 });
   // css=<rules>: injected after load, to try a change without editing app.css (A/B runs).
   if (args.css) await page.addStyleTag({ content: args.css });
+  // rings=<n>: n sidebar rows get a keep-warm ring (Arthur keeps about 19 warm), to cost the ring at his scale.
+  if (args.rings) {
+    await page.waitForSelector('.sessions li', { timeout: 15000 });
+    await sleep(800);
+    await page.evaluate((n) => {
+      const rows = [...document.querySelectorAll('.sessions li')].filter((li) => !li.querySelector('.warm-ring')).slice(0, n);
+      for (const li of rows) { li.classList.add('warm'); const r = document.createElement('span'); r.className = 'warm-ring'; li.append(r); }
+    }, Number(args.rings));
+  }
   await page.evaluate(pageStreamer, { corpus: CORPUS });
   await sleep(1200);
   return { ctx, page };
@@ -246,6 +280,33 @@ const SETUP = {
   async stream(page) {
     await SETUP.busy(page);
   },
+  /** Arthur's load: 3 tabs, 6 panes, long transcripts, 4 streaming at once, typing in a visible pane. */
+  async heavy(page) {
+    const turns = Number(args.turns || 600);
+    // Tab 1 gets two more panes (3), tab 2 one more (2), tab 3 stays at one: 6 panes in 3 tabs.
+    for (const id of [ID.invoices, ID.push]) {
+      await page.click(`.sessions li[data-id="${id}"]`, { modifiers: ['Shift'] });
+      await page.waitForFunction((sid) => window.__demo.state().panes.some((p) => p.sessionId === sid), id);
+      await sleep(300);
+    }
+    await page.click('#tabs .tab:nth-child(2)');
+    await sleep(300);
+    await page.click(`.sessions li[data-id="${ID.review}"]`, { modifiers: ['Shift'] });
+    await page.waitForFunction((sid) => window.__demo.state().panes.some((p) => p.sessionId === sid), ID.review);
+    await sleep(300);
+    await page.click('#tabs .tab:nth-child(1)');
+    await sleep(500);
+    const list = await page.evaluate(() => [...window.__apaki.S.panes.values()].map((p) => ({ id: p.id, sid: p.sessionId })));
+    const drawn = [];
+    for (const p of list) {
+      const r = await page.evaluate(pageHistory, { paneId: p.id, turns, corpus: CORPUS });
+      drawn.push({ pane: p.id, ...r });
+      await sleep(200);
+    }
+    await page.evaluate(() => { for (const p of window.__apaki.S.panes.values()) p.scrollDown?.(true); });
+    await sleep(1500);
+    SETUP.heavyInfo = { panes: list.length, history: drawn };
+  },
   async blurred(page) {
     await SETUP.busy(page);
     await page.evaluate(() => { window.dispatchEvent(new Event('blur')); });
@@ -253,7 +314,7 @@ const SETUP = {
   },
 };
 
-async function measure(browser, page, { seconds, typing = false, trace = true }) {
+async function measure(browser, page, { seconds, typing = false, trace = true, typeSel = '.pane.focused textarea' }) {
   const cdp = await page.context().newCDPSession(page);
   const bcdp = await browser.newBrowserCDPSession();
   await cdp.send('Performance.enable');
@@ -266,7 +327,7 @@ async function measure(browser, page, { seconds, typing = false, trace = true })
   const typer = (async () => {
     if (!typing) return;
     await sleep(3000);
-    await page.focus('.pane.focused textarea');
+    await page.focus(typeSel);
     const text = 'Please check the retry path as well and tell me what you find. ';
     const end = Date.now() + Math.max(2000, (seconds - 6) * 1000);
     let i = 0;
@@ -303,6 +364,27 @@ async function measure(browser, page, { seconds, typing = false, trace = true })
   }
   await cdp.send('Performance.disable');
 
+  // profile=1: a JS CPU profile of a few seconds, the busiest functions by self time (JS only; layout and paint are in the trace).
+  if (args.profile) {
+    const pcdp = await page.context().newCDPSession(page);
+    await pcdp.send('Profiler.enable');
+    await pcdp.send('Profiler.setSamplingInterval', { interval: 500 });
+    await pcdp.send('Profiler.start');
+    await sleep(6000);
+    const { profile } = await pcdp.send('Profiler.stop');
+    const self = new Map();
+    const byId = new Map(profile.nodes.map((n) => [n.id, n]));
+    const dt = profile.timeDeltas;
+    profile.samples.forEach((id, i) => {
+      const n = byId.get(id);
+      const f = n.callFrame;
+      const key = `${f.functionName || '(anon)'} ${String(f.url).split('/').pop()}:${f.lineNumber + 1}`;
+      self.set(key, (self.get(key) || 0) + (dt[i] || 0));
+    });
+    out.profile = [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14).map(([k, us]) => [k, r1(us / 1000 / 6)]);
+    await pcdp.send('Profiler.disable');
+  }
+
   // A second, short pass with a trace on for frames per second and where the main thread's time goes (tracing perturbs, so not in the CPU numbers).
   if (trace) {
     const tf = path.join(os.tmpdir(), `apaki-perf-trace-${process.pid}.json`);
@@ -334,6 +416,19 @@ async function main() {
       const { ctx, page } = await openWindow(browser, server.url);
       try {
         await SETUP[name](page);
+        if (name === 'heavy') {
+          const ids = await page.evaluate(() => [...window.__apaki.S.panes.values()].map((p) => ({ id: p.id, session: p.sessionId })));
+          // Four stream (two in the visible tab, two in a background tab); the typing pane and the sixth stay quiet.
+          let n = 0;
+          for (const p of ids) {
+            if (p.session === 'a1c4e7b2-0001-4f3a-9c6d-2b8e5f0d7101' || p.session === 'a1c4e7b2-0005-4f3a-9c6d-2b8e5f0d7105') continue;
+            if (n >= 4) break;
+            if (await page.evaluate((id) => window.__startStream(id), p.id)) n++;
+          }
+          results.streamingPanes = n;
+          results.heavyInfo = SETUP.heavyInfo;
+          await sleep(1500);
+        }
         if (name === 'stream') {
           // Three visible working panes and two background tabs stream together.
           const ids = await page.evaluate(() => [...window.__apaki.S.panes.values()].map((p) => ({ id: p.id, hasBox: p.hasBox(), session: p.sessionId, tab: window.__apaki.S.tabs.find((t) => window.__apaki.L.ids(t.root).includes(p.id))?.id, active: window.__apaki.S.active })));
@@ -346,7 +441,7 @@ async function main() {
           await sleep(1500);
         }
         console.log(`${name}: measuring ${SECS}s ...`);
-        results.scenarios[name] = await measure(browser, page, { seconds: SECS, typing: name === 'stream' || name === 'busy', trace: args.trace !== '0' });
+        results.scenarios[name] = await measure(browser, page, { seconds: SECS, typing: name === 'stream' || name === 'busy' || name === 'heavy', trace: args.trace !== '0', typeSel: name === 'heavy' ? '[data-pane="pa1"] textarea' : undefined });
         if (!args.quiet) console.log(JSON.stringify({ [name]: results.scenarios[name] }, null, 1));
       } finally {
         await page.evaluate(() => window.__stopStreams?.()).catch(() => {});
