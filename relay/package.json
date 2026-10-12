@@ -2,6 +2,7 @@
   "name": "apaki-relay",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Myrlin Apaki relay: a Cloudflare Worker + Durable Object that forwards opaque end-to-end encrypted frames between a PC and its paired phones.",
   "type": "module",
   "scripts": {

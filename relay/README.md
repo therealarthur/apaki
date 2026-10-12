@@ -203,8 +203,8 @@ the site's word for it (since 2026-10-10):
   without notice. Only a native app can pin its code.
 - **Open source.** With the client, the protocol and this relay published,
   anyone can build the bundle and compare hashes with the `manifest.json` of
-  each version. The repository (therealarthur/claude-latch) is private today,
-  so this one applies once it is published.
+  each version. The repository (github.com/therealarthur/apaki) has been
+  public since 2026-10-12, so this one applies now.
 - **Least power on the phone** (in place): the device key is non-extractable
   (WebCrypto keeps it out of reach of page scripts; IndexedDB stores the key
   object, not the bytes), and the PC decides what a phone may do

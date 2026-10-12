@@ -7,7 +7,7 @@
     relay Worker). Written by hand on 2026-10-12 by Claude Code (Opus 5.5) for Arthur; a phone page release
     (apaki/scripts/build-web.mjs --release) no longer touches it, it rewrites /app/ instead.
     Every recording on it shows Apaki's real window on invented demo data (apaki/demo, node apaki/demo/capture.mjs).
-    PLACEHOLDER(Arthur): the links marked PLACEHOLDER below (GitHub releases, TestFlight, the public repository).
+    The repository is public at github.com/therealarthur/apaki (2026-10-12); Download goes to its releases page.
   -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -51,8 +51,7 @@
         <a href="#self-host">Self-host</a>
       </nav>
       <div class="head-actions">
-        <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-        <a class="head-link" href="https://github.com/therealarthur/claude-latch">GitHub</a>
+        <a class="head-link" href="https://github.com/therealarthur/apaki">GitHub</a>
         <a class="btn btn-small" href="app/">Open the web app</a>
       </div>
     </div>
@@ -73,12 +72,10 @@
         <div class="hero-right">
         <p class="hero-sub">Apaki finds your sessions, switches accounts with Myrlin Glass, gives Claude a browser pane of its own, and puts your sessions on your phone through an encrypted relay. It is free and open source, and you can run the relay yourself.</p>
         <div class="hero-actions">
-          <!-- PLACEHOLDER(Arthur): GitHub releases of the public repository. -->
-          <a class="btn btn-primary" href="https://github.com/therealarthur/claude-latch/releases/latest">Download for Windows</a>
+          <a class="btn btn-primary" href="https://github.com/therealarthur/apaki/releases">Download for Windows</a>
           <a class="btn btn-secondary" href="app/">Open the web app</a>
         </div>
-        <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-        <p class="hero-fine">For Claude Code on Windows. iPhone app in TestFlight. Codex sessions are listed today; Codex panes are coming. <a href="https://github.com/therealarthur/claude-latch">Read the source</a>.</p>
+        <p class="hero-fine">For Claude Code on Windows. iPhone app in TestFlight. Codex sessions are listed today; Codex panes are coming. <a href="https://github.com/therealarthur/apaki">Read the source</a>.</p>
         </div>
         </div>
 
@@ -122,9 +119,8 @@
           <p>The desktop app, the phone app and the relay live in one public repository. Apaki needs no account, and pairing a phone through our hosted relay costs nothing.</p>
           <p>If you would rather not depend on us at all, the relay is a single Cloudflare Worker. Deploy it to your own account (the free plan is enough for a few people), point Apaki at it with two settings, and the phone page comes from your server instead of ours.</p>
           <p class="links">
-            <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/self-hosting.md">Self-hosting guide</a>
-            <a href="https://github.com/therealarthur/claude-latch/blob/master/relay/README.md">The relay's README</a>
+            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/self-hosting.md">Self-hosting guide</a>
+            <a href="https://github.com/therealarthur/apaki/blob/master/relay/README.md">The relay's README</a>
           </p>
         </div>
         <figure class="code-card" data-reveal="2">
@@ -385,10 +381,9 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
           <p><strong>Where the trust sits.</strong> The phone web page is code that apaki.myrlin.io serves, as with any web app. Before your PC shows a pairing code, it builds that page from its own code and checks that the site serves exactly that, and while phone access is on it checks again every hour. The iPhone app carries its own copy of the code and loads none of it from our site. If you would rather not trust our site at all, run your own relay and page.</p>
           <p class="fine">P-256 key exchange, AES-256-GCM, fresh keys for every connection. The one-time pairing secret travels only in the part of the QR link after #, which browsers never send to a server. Claude Code itself still talks to Anthropic as it always does; this encryption covers the path between your phone and your PC.</p>
           <p class="links">
-            <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/security.md">Security in plain words</a>
-            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/SECURITY.md">The full security review</a>
-            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/remote/PROTOCOL.md">The protocol</a>
+            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/security.md">Security in plain words</a>
+            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/SECURITY.md">The full security review</a>
+            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/remote/PROTOCOL.md">The protocol</a>
           </p>
         </div>
       </div>
@@ -431,8 +426,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
             <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="4" y="6" width="24" height="16" rx="2.5"/><path d="M12 26h8M16 22v4"/></svg>
             <h3>Apaki for Windows</h3>
             <p>The desktop app, with Claude Code and Myrlin Glass in the package. Sign in with Claude Code's own login, or use an Anthropic API key.</p>
-            <!-- PLACEHOLDER(Arthur): GitHub releases of the public repository. -->
-            <a class="btn btn-primary" href="https://github.com/therealarthur/claude-latch/releases/latest">Download for Windows</a>
+            <a class="btn btn-primary" href="https://github.com/therealarthur/apaki/releases">Download for Windows</a>
           </article>
           <article class="card card-get" data-reveal="2">
             <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="10" y="3" width="12" height="26" rx="2.5"/><path d="M14.5 25.5h3"/></svg>
@@ -456,8 +450,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
       <div class="wrap faq-grid">
         <div class="section-head" data-reveal>
           <h2 id="faq-title">Questions</h2>
-          <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-          <p><a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/faq.md">More in the FAQ</a></p>
+          <p><a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/faq.md">More in the FAQ</a></p>
         </div>
         <div class="faq" data-reveal="2">
           <details>
@@ -492,11 +485,10 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
         <p><b>Myrlin Apaki</b>, a Myrlin Labs project.</p>
       </div>
       <nav class="foot-links" aria-label="More">
-        <!-- PLACEHOLDER(Arthur): the public repository's address. -->
-        <a href="https://github.com/therealarthur/claude-latch">Source on GitHub</a>
-        <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/README.md">Docs</a>
-        <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/self-hosting.md">Self-hosting</a>
-        <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/SECURITY.md">Security review</a>
+        <a href="https://github.com/therealarthur/apaki">Source on GitHub</a>
+        <a href="https://github.com/therealarthur/apaki#readme">Docs</a>
+        <a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/self-hosting.md">Self-hosting</a>
+        <a href="https://github.com/therealarthur/apaki/blob/master/apaki/SECURITY.md">Security review</a>
         <a href=".well-known/security.txt">Report a security problem</a>
         <a href="app/">Open the web app</a>
       </nav>

@@ -532,7 +532,7 @@ test('security.txt is served from site/.well-known (RFC 9116)', async () => {
   assert.ok(expires && Date.parse(expires[1]) > Date.now(), 'not expired');
   assert.ok(Date.parse(expires[1]) <= Date.now() + 366 * 86_400_000, 'at most a year out');
   assert.match(body, /^Preferred-Languages: en$/m);
-  assert.match(body, /^Policy: https:\/\/github\.com\/therealarthur\/claude-latch\/blob\/master\/apaki\/SECURITY\.md$/m);
+  assert.match(body, /^Policy: https:\/\/github\.com\/therealarthur\/apaki\/blob\/master\/apaki\/SECURITY\.md$/m);
   assert.doesNotMatch(body, /\r/, 'LF line endings');
 });
 

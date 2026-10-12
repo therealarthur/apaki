@@ -552,7 +552,7 @@ The program, in order, with what we can say after each step:
    your PC without your approval on the PC. Your PC shows no pairing code
    unless it verified the exact page. You decide on the PC what each phone may
    make Claude do."
-2. **Open source (S, a decision).** Publish therealarthur/claude-latch, or at
+2. **Open source (S, a decision).** Publish therealarthur/apaki, or at
    least apaki/remote, apaki/web, apaki/engine/remote*.js and relay/. After:
    "Anyone can read the code that runs on your PC, on the phone and on our
    relay."
