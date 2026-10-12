@@ -2070,7 +2070,7 @@ function glassAccount(a) {
   const isKey = /api credits/i.test(a.plan || '');
   const seen = new Set();
   const windows = (a.windows || []).filter((w) => { const k = `${w.label}:${Math.round(w.percent)}`; if (seen.has(k)) return false; seen.add(k); return true; })
-    .map((w) => ({ label: w.label, percent: Math.round(w.percent ?? 0), resetsAt: w.resetsAt || null }));
+    .map((w) => ({ label: w.label, percent: Math.round(w.percent ?? 0), resetsAt: w.resetsAt || null, seconds: Number(w.windowSeconds) || null }));
   return {
     id: a.id, name: accountName(a), plan: isKey ? 'API key' : (a.plan || ''), isKey, state: a.state || 'ok',
     headroom: a.headroom == null ? null : Math.round(a.headroom), detail: a.stateDetail || '', windows, active: Boolean(a.active),
