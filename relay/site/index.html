@@ -2,40 +2,506 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--
+    The product home page of Myrlin Apaki at apaki.myrlin.io (relay/site, served as static files by the
+    relay Worker). Written by hand on 2026-10-12 by Claude Code (Opus 5.5) for Arthur; a phone page release
+    (apaki/scripts/build-web.mjs --release) no longer touches it, it rewrites /app/ instead.
+    Every recording on it shows Apaki's real window on invented demo data (apaki/demo, node apaki/demo/capture.mjs).
+    PLACEHOLDER(Arthur): the links marked PLACEHOLDER below (GitHub releases, TestFlight, the public repository).
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
-  <title>Myrlin Apaki phone access</title>
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#FDFDFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121120" media="(prefers-color-scheme: dark)">
+  <title>Myrlin Apaki: every Claude Code session on your PC, in one window</title>
+  <meta name="description" content="Apaki is a free, open source desktop app for Claude Code on Windows. It lists every session on your PC, switches accounts with Myrlin Glass, gives Claude a browser pane, and puts your sessions on your phone through an end to end encrypted relay you can host yourself.">
+  <meta property="og:title" content="Myrlin Apaki">
+  <meta property="og:description" content="Every Claude Code session on your PC, in one window. Free, open source, and yours to run.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://apaki.myrlin.io/">
+  <meta property="og:image" content="https://apaki.myrlin.io/assets/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/apaki-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="preload" href="assets/fonts/Archivo-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/Archivo-italic.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="assets/theme.js"></script>
   <link rel="stylesheet" href="site.css">
+  <script src="assets/site.js" defer></script>
 </head>
 <body>
-  <main>
-    <h1>Myrlin Apaki</h1>
-    <p class="lead">Your PC's Claude Code sessions, on your phone or any browser, end to end encrypted.</p>
-    <p class="cta"><a class="btn" href="v/f73fd94db469/">Open Apaki</a></p>
-    <p class="cta-note">Sign in with your Apaki account (a passkey) to see your PCs and connect, or pair a new phone with the code Apaki shows on your PC (Phone, at the bottom of its sidebar).</p>
-    <h2>What this site can and cannot see</h2>
-    <ul>
-      <li>It serves the phone page and relays frames between your PC and your phones. Everything in those frames is end-to-end encrypted between the two; this site cannot read them and keeps nothing about your conversations. If you make an Apaki account, it stores the account's name, its passkeys' public keys and a vault it cannot open.</li>
-      <li>The one-time pairing secret is in the part of the link after #, which browsers never send to a server.</li>
-      <li>Your Claude and Codex logins never leave your PC. A paired phone works in conversations on your PC as you would there, so Claude can run commands and edit files for it; billing, accounts and pairing stay on the PC.</li>
-      <li>Every version of the phone page has its own address and never changes. Before your PC shows a pairing code, it builds the page it expects from its own code and checks, file by file, that this site serves exactly that.</li>
-    </ul>
-    <h2>Published phone pages</h2>
-    <ul class="versions">
-      <li><code>f73fd94db469</code> <span>2026-10-12 · 43 files · relay apaki.myrlin.io</span> <a href="v/f73fd94db469/manifest.json">file hashes</a></li>
-      <li><code>db087014653a</code> <span>2026-10-11 · 43 files · relay apaki.myrlin.io</span> <a href="v/db087014653a/manifest.json">file hashes</a></li>
-      <li><code>aca988ed5470</code> <span>2026-10-11 · 43 files · relay apaki.myrlin.io</span> <a href="v/aca988ed5470/manifest.json">file hashes</a></li>
-      <li><code>37d6d3142ce3</code> <span>2026-10-11 · 43 files · relay apaki.myrlin.io</span> <a href="v/37d6d3142ce3/manifest.json">file hashes</a></li>
-      <li><code>2dcca3145379</code> <span>2026-10-11 · 43 files · relay apaki.myrlin.io</span> <a href="v/2dcca3145379/manifest.json">file hashes</a></li>
-      <li><code>013046d35cd4</code> <span>2026-10-11 · 39 files · relay apaki.myrlin.io</span> <a href="v/013046d35cd4/manifest.json">file hashes</a></li>
-      <li><code>a15da895bd1a</code> <span>2026-10-11 · 39 files · relay apaki.myrlin.io</span> <a href="v/a15da895bd1a/manifest.json">file hashes</a></li>
-      <li><code>5d7feb922f78</code> <span>2026-10-11 · 39 files · relay apaki.myrlin.io</span> <a href="v/5d7feb922f78/manifest.json">file hashes</a></li>
-      <li><code>cab37e8659c3</code> <span>2026-10-10 · 38 files · relay apaki.myrlin.io</span> <a href="v/cab37e8659c3/manifest.json">file hashes</a></li>
-      <li><code>0a64d8514a08</code> <span>2026-10-10 · 36 files · relay apaki.myrlin.io</span> <a href="v/0a64d8514a08/manifest.json">file hashes</a></li>
-      <li><code>ac45f97a9b01</code> <span>2026-10-10 · 35 files · relay apaki.myrlin.io</span> <a href="v/ac45f97a9b01/manifest.json">file hashes</a></li>
-    </ul>
-    <p class="small">Anyone can run their own copy: the relay and this page come from the Apaki source (relay/ and apaki/web/), and Apaki can point at another address.</p>
+  <a class="skip" href="#main">Skip to the content</a>
+
+  <header class="site-head">
+    <div class="wrap head-row">
+      <a class="head-brand" href="./" aria-label="Myrlin Apaki, home">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 32 15" class="m-mark" aria-hidden="true"><defs><linearGradient id="mflare-head" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#07B6D5"/><stop offset="1" stop-color="#3C83F6"/></linearGradient></defs><path class="m-fold" d="M12.292 9 C13.331 9 14.221 9.801 14.28 10.788 L14.554 15.346 L12.18 22.327 C11.916 23.105 11.452 23.858 11.15 24 L11.115 24 C9.996 24 9.36 23.019 9.246 21.115 L9.029 17.495 L10.838 12.173 C11.395 10.538 11.996 9.141 12.206 9 L12.292 9Z"/><path class="m-stroke" d="M0.5 24 L6.904 24 L10.925 12.173 C11.481 10.538 12.083 9.141 12.292 9 L7.042 9 C6.18 9 5.413 9.549 5.136 10.366Z"/><path class="m-fold" d="M23.369 9 C24.408 9 25.298 9.801 25.357 10.788 L25.745 17.258 C25.133 17.737 24.444 18.836 24.013 20.106 L23.257 22.327 C22.993 23.105 22.529 23.858 22.227 24 L22.192 24 C21.073 24 20.437 23.019 20.323 21.115 L20.106 17.495 L21.915 12.173 C22.471 10.538 23.073 9.141 23.283 9 L23.369 9Z"/><path class="m-stroke" d="M11.115 24 L16.538 24 C17.401 24 18.167 23.451 18.445 22.634 L22.002 12.173 C22.558 10.538 23.16 9.141 23.369 9 L18.119 9 C17.257 9 16.49 9.549 16.213 10.366 L12.146 22.327 C11.881 23.105 11.418 23.858 11.115 24Z"/><path d="M22.192 24 L27.615 24 C28.478 24 29.244 23.451 29.522 22.634 L31.438 17 L26.303 17 C25.605 17 24.559 18.398 23.978 20.106 L23.223 22.327 C22.958 23.105 22.494 23.858 22.192 24Z" fill="url(#mflare-head)"/></svg>
+        <span class="head-word">Apaki</span>
+      </a>
+      <nav class="head-nav" aria-label="On this page">
+        <a href="#glass">Glass</a>
+        <a href="#sessions">Sessions</a>
+        <a href="#browser">Browser</a>
+        <a href="#phone">Phone</a>
+        <a href="#security">Security</a>
+        <a href="#self-host">Self-host</a>
+      </nav>
+      <div class="head-actions">
+        <!-- PLACEHOLDER(Arthur): the public repository's address. -->
+        <a class="head-link" href="https://github.com/therealarthur/claude-latch">GitHub</a>
+        <a class="btn btn-small" href="app/">Open the web app</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- ===== Hero ===== -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="wrap">
+        <p class="hero-kicker">Open source, free to use and to self-host</p>
+        <h1 class="wordmark" id="hero-title">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 32 15" class="m-mark wordmark-mark" aria-hidden="true"><defs><linearGradient id="mflare-hero" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#07B6D5"/><stop offset="1" stop-color="#3C83F6"/></linearGradient></defs><path class="m-fold" d="M12.292 9 C13.331 9 14.221 9.801 14.28 10.788 L14.554 15.346 L12.18 22.327 C11.916 23.105 11.452 23.858 11.15 24 L11.115 24 C9.996 24 9.36 23.019 9.246 21.115 L9.029 17.495 L10.838 12.173 C11.395 10.538 11.996 9.141 12.206 9 L12.292 9Z"/><path class="m-stroke" d="M0.5 24 L6.904 24 L10.925 12.173 C11.481 10.538 12.083 9.141 12.292 9 L7.042 9 C6.18 9 5.413 9.549 5.136 10.366Z"/><path class="m-fold" d="M23.369 9 C24.408 9 25.298 9.801 25.357 10.788 L25.745 17.258 C25.133 17.737 24.444 18.836 24.013 20.106 L23.257 22.327 C22.993 23.105 22.529 23.858 22.227 24 L22.192 24 C21.073 24 20.437 23.019 20.323 21.115 L20.106 17.495 L21.915 12.173 C22.471 10.538 23.073 9.141 23.283 9 L23.369 9Z"/><path class="m-stroke" d="M11.115 24 L16.538 24 C17.401 24 18.167 23.451 18.445 22.634 L22.002 12.173 C22.558 10.538 23.16 9.141 23.369 9 L18.119 9 C17.257 9 16.49 9.549 16.213 10.366 L12.146 22.327 C11.881 23.105 11.418 23.858 11.115 24Z"/><path d="M22.192 24 L27.615 24 C28.478 24 29.244 23.451 29.522 22.634 L31.438 17 L26.303 17 C25.605 17 24.559 18.398 23.978 20.106 L23.223 22.327 C22.958 23.105 22.494 23.858 22.192 24Z" fill="url(#mflare-hero)"/></svg>
+          <span class="sr-only">Myrlin </span><span class="wordmark-word">Apaki</span>
+        </h1>
+        <div class="hero-grid">
+        <p class="hero-lead">Every Claude Code session on your PC, in one window.</p>
+        <div class="hero-right">
+        <p class="hero-sub">Apaki finds your sessions, switches accounts with Myrlin Glass, gives Claude a browser pane of its own, and puts your sessions on your phone through an encrypted relay. It is free and open source, and you can run the relay yourself.</p>
+        <div class="hero-actions">
+          <!-- PLACEHOLDER(Arthur): GitHub releases of the public repository. -->
+          <a class="btn btn-primary" href="https://github.com/therealarthur/claude-latch/releases/latest">Download for Windows</a>
+          <a class="btn btn-secondary" href="app/">Open the web app</a>
+        </div>
+        <!-- PLACEHOLDER(Arthur): the public repository's address. -->
+        <p class="hero-fine">For Claude Code on Windows. iPhone app in TestFlight. Codex sessions are listed today; Codex panes are coming. <a href="https://github.com/therealarthur/claude-latch">Read the source</a>.</p>
+        </div>
+        </div>
+
+        <div class="hero-stage">
+          <div class="player window window-hero" data-play-at="0.12" role="group" aria-label="Recording: four Claude Code conversations working side by side in one tab">
+            <div class="clip is-current">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/split-dark-1200.webp 1200w, assets/media/split-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
+                <img src="assets/media/split-light-1200.webp" srcset="assets/media/split-light-1200.webp 1200w, assets/media/split-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="Apaki with four Claude Code conversations in a grid, three of them writing replies at once" fetchpriority="high" decoding="async">
+              </picture>
+              <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/split-light.mp4" data-dark="assets/media/split-dark.mp4"></video>
+            </div>
+            <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+          </div>
+
+
+          <div class="float float-phone">
+            <div class="phone player" data-play-at="0.3" role="group" aria-label="Recording: Apaki on a phone, opening a session and sending a message to Claude Code on the PC">
+              <div class="phone-screen">
+                <div class="clip is-current">
+                  <picture>
+                    <source media="(prefers-color-scheme: dark)" srcset="assets/media/phone-list-dark.webp">
+                    <img src="assets/media/phone-list-light.webp" width="780" height="1688" alt="The Apaki phone app: the PC's sessions as a list, with Myrlin Glass at the bottom" decoding="async">
+                  </picture>
+                  <video muted playsinline preload="none" width="390" height="844" aria-hidden="true" data-light="assets/media/phone-light.mp4" data-dark="assets/media/phone-dark.mp4"></video>
+                </div>
+              </div>
+              <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+            </div>
+          </div>
+        </div>
+        <p class="stage-note">Recorded from the real app on made-up demo data.</p>
+      </div>
+    </section>
+
+    <!-- ===== Open source ===== -->
+    <section class="band" id="self-host" aria-labelledby="oss-title">
+      <div class="wrap band-grid">
+        <div class="band-copy" data-reveal>
+          <h2 id="oss-title">Open source, and yours to run</h2>
+          <p>The desktop app, the phone app and the relay live in one public repository. Apaki needs no account, and pairing a phone through our hosted relay costs nothing.</p>
+          <p>If you would rather not depend on us at all, the relay is a single Cloudflare Worker. Deploy it to your own account (the free plan is enough for a few people), point Apaki at it with two settings, and the phone page comes from your server instead of ours.</p>
+          <p class="links">
+            <!-- PLACEHOLDER(Arthur): the public repository's address. -->
+            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/self-hosting.md">Self-hosting guide</a>
+            <a href="https://github.com/therealarthur/claude-latch/blob/master/relay/README.md">The relay's README</a>
+          </p>
+        </div>
+        <figure class="code-card" data-reveal="2">
+          <figcaption>Run your own relay</figcaption>
+<pre><code><span class="c"># relay/wrangler.jsonc: set "routes" to your hostname</span>
+cd relay
+node ../apaki/scripts/build-web.mjs --release \
+  --relay wss://relay.example.com
+npx wrangler deploy --env=""
+
+<span class="c"># then start Apaki with</span>
+APAKI_RELAY_URL=wss://relay.example.com
+APAKI_WEB_URL=https://relay.example.com/</code></pre>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ===== Glass ===== -->
+    <section class="feature" id="glass" aria-labelledby="glass-title">
+      <div class="wrap">
+        <div class="feature-head" data-reveal>
+          <div>
+            <h2 id="glass-title">See every account, and switch in one click</h2>
+          </div>
+          <p>Myrlin Glass is built in. Its card at the bottom of the sidebar shows the live Claude and Codex accounts and how much each has left. Pick another subscription, or move to an Anthropic API key when a limit is close, and the conversation's billing follows. When Glass switches by itself, open conversations move with it before their next message.</p>
+        </div>
+        <div class="feature-media" data-reveal>
+          <div class="player window" role="group" aria-label="Recording: opening the Myrlin Glass panel and switching Claude to a team subscription, then to an API key">
+            <div class="clip is-current">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/glass-swap-dark-1200.webp 1200w, assets/media/glass-swap-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
+                <img src="assets/media/glass-swap-light-1200.webp" srcset="assets/media/glass-swap-light-1200.webp 1200w, assets/media/glass-swap-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="The Myrlin Glass panel in Apaki: the live Claude account, two more subscriptions and an API key, each with what it has left" loading="lazy" decoding="async">
+              </picture>
+              <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/glass-swap-light.mp4" data-dark="assets/media/glass-swap-dark.mp4"></video>
+            </div>
+            <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+          </div>
+        </div>
+        <ul class="points points-grid" data-reveal>
+          <li>A conversation that moves to an API key keeps its context. It continues in the same Claude Code session file, so nothing forks, and you can move it back.</li>
+          <li>Billing is per conversation: one pane can run on your subscription while another runs on a key, labelled with the dollars it has left.</li>
+          <li>Apaki can keep an idle API-key session's prompt cache warm, with a daily cap. Measured on Opus 5.5 after 68 minutes: the next turn of a kept-warm conversation cost $0.125, and the same conversation left cold cost $0.478.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===== Sessions ===== -->
+    <section class="feature" id="sessions" aria-labelledby="sessions-title">
+      <div class="wrap">
+        <div class="feature-head" data-reveal>
+          <div>
+            <h2 id="sessions-title">Every session on this PC, already listed</h2>
+          </div>
+          <p>Apaki reads Claude Code's own transcripts, so the list has the sessions you started in a terminal, headless runs and background workers too. A session open in a terminal window shows up within about two seconds, marked working or waiting, and opens in a pane with a click.</p>
+        </div>
+        <div class="feature-media" data-reveal>
+          <div class="player reel">
+            <div class="reel-tabs" role="tablist" aria-label="Recordings">
+              <button type="button" role="tab" id="tab-sessions" aria-selected="true" aria-controls="clip-sessions"><span>The session list</span><i class="reel-bar" aria-hidden="true"></i></button>
+              <button type="button" role="tab" id="tab-search" aria-selected="false" aria-controls="clip-search" tabindex="-1"><span>Search by meaning</span><i class="reel-bar" aria-hidden="true"></i></button>
+            </div>
+            <div class="window">
+              <div class="clip is-current" id="clip-sessions" role="tabpanel" aria-labelledby="tab-sessions">
+                <picture>
+                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/sessions-dark-1200.webp 1200w, assets/media/sessions-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
+                  <img src="assets/media/sessions-light-1200.webp" srcset="assets/media/sessions-light-1200.webp 1200w, assets/media/sessions-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="The Apaki sidebar: folders, sessions working in terminal windows, and a Codex session marked read-only" loading="lazy" decoding="async">
+                </picture>
+                <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/sessions-light.mp4" data-dark="assets/media/sessions-dark.mp4"></video>
+              </div>
+              <div class="clip" id="clip-search" role="tabpanel" aria-labelledby="tab-search" aria-hidden="true">
+                <picture>
+                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/search-dark-1200.webp 1200w, assets/media/search-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
+                  <img src="assets/media/search-light-1200.webp" srcset="assets/media/search-light-1200.webp 1200w, assets/media/search-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="A search for payment page randomly failing, with the matching sessions found by meaning" loading="lazy" decoding="async">
+                </picture>
+                <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/search-light.mp4" data-dark="assets/media/search-dark.mp4"></video>
+              </div>
+              <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+            </div>
+          </div>
+          <div class="float float-detail float-right" aria-hidden="true">
+            <picture>
+              <source media="(prefers-color-scheme: dark)" srcset="assets/media/search-hits-dark.webp">
+              <img src="assets/media/search-hits-light.webp" width="690" height="600" alt="" loading="lazy" decoding="async">
+            </picture>
+          </div>
+        </div>
+        <ul class="points points-grid" data-reveal>
+          <li>Search finds sessions by words and by meaning. The index and the embedding model run on your PC, and nothing is uploaded to search.</li>
+          <li>Not sure which one it was? Ask Claude: it reads the best matches and says why each one fits.</li>
+          <li>Sessions stay in Claude Code's files. Continue one in a terminal with /resume, then come back to it here.</li>
+          <li>Codex sessions are listed and searchable today, read-only. Opening them in panes is coming.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===== Tabs and panes ===== -->
+    <section class="feature" id="panes" aria-labelledby="panes-title">
+      <div class="wrap">
+        <div class="feature-head" data-reveal>
+          <div>
+            <h2 id="panes-title">Up to six conversations in every tab</h2>
+          </div>
+          <p>Shift-click a session to open it beside the others, or drag it onto the edge of a pane to split. Each pane is a full Claude Code conversation with its own model, effort and permission mode, and each one streams on its own.</p>
+        </div>
+        <div class="feature-media" data-reveal>
+          <div class="player reel">
+            <div class="reel-tabs" role="tablist" aria-label="Recordings">
+              <button type="button" role="tab" id="tab-steer" aria-selected="true" aria-controls="clip-steer"><span>Queue and steer</span><i class="reel-bar" aria-hidden="true"></i></button>
+              <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="clip-history" tabindex="-1"><span>The whole transcript</span><i class="reel-bar" aria-hidden="true"></i></button>
+            </div>
+            <div class="window">
+              <div class="clip is-current" id="clip-steer" role="tabpanel" aria-labelledby="tab-steer">
+                <picture>
+                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/steer-dark-1200.webp 1200w, assets/media/steer-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
+                  <img src="assets/media/steer-light-1200.webp" srcset="assets/media/steer-light-1200.webp 1200w, assets/media/steer-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="A message steered into a running turn, and a subagent at work" loading="lazy" decoding="async">
+                </picture>
+                <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/steer-light.mp4" data-dark="assets/media/steer-dark.mp4"></video>
+              </div>
+              <div class="clip" id="clip-history" role="tabpanel" aria-labelledby="tab-history" aria-hidden="true">
+                <picture>
+                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/history-dark-1200.webp 1200w, assets/media/history-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
+                  <img src="assets/media/history-light-1200.webp" srcset="assets/media/history-light-1200.webp 1200w, assets/media/history-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="A long transcript with a Stop hook's feedback, an API retry and a usage warning shown as system lines" loading="lazy" decoding="async">
+                </picture>
+                <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/history-light.mp4" data-dark="assets/media/history-dark.mp4"></video>
+              </div>
+              <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+            </div>
+          </div>
+        </div>
+        <ul class="points points-grid" data-reveal>
+          <li>Enter queues your next message while Claude works. Ctrl+Enter steers it into the turn that is running.</li>
+          <li>What Claude Code reports shows in the conversation: hook output, API retries, usage warnings and compaction.</li>
+          <li>A Tasks button lists each conversation's subagents and background shells, and opens any of them in a viewer that follows it live.</li>
+          <li>Close the window and the sessions keep running. Tabs, splits, drafts and scroll positions are saved as you work and come back after a crash.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===== Browser ===== -->
+    <section class="feature" id="browser" aria-labelledby="browser-title">
+      <div class="wrap">
+        <div class="feature-head" data-reveal>
+          <div>
+            <h2 id="browser-title">Claude browses in a pane, not in your Chrome</h2>
+          </div>
+          <p>Ask Claude to check a page and it opens in a browser pane beside the conversation. Claude reads the page as an outline of numbered links, buttons and fields, then clicks, types, goes back and takes screenshots while you watch the same page.</p>
+        </div>
+        <div class="feature-media" data-reveal>
+          <div class="player window" role="group" aria-label="Recording: Claude opens a checkout page in a browser pane, types an email address, presses Pay now and reproduces a bug">
+            <div class="clip is-current">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/browser-dark-1200.webp 1200w, assets/media/browser-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
+                <img src="assets/media/browser-light-1200.webp" srcset="assets/media/browser-light-1200.webp 1200w, assets/media/browser-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="A conversation on the left and a checkout page in Apaki's browser pane on the right, with Claude typing into it" loading="lazy" decoding="async">
+              </picture>
+              <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/browser-light.mp4" data-dark="assets/media/browser-dark.mp4"></video>
+            </div>
+            <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+          </div>
+        </div>
+        <ul class="points points-grid" data-reveal>
+          <li>Pages in the pane cannot reach the app or your sessions.</li>
+          <li>When Claude or a tool tries to open your system browser (<code>vite --open</code>, or Python's <code>webbrowser</code>), the page opens in Apaki instead.</li>
+          <li>Pages, documents, SVG, images and PDFs that Claude wants to show you open in a viewer beside the conversation, with every revision kept.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===== Phone ===== -->
+    <section class="feature feature-phone" id="phone" aria-labelledby="phone-title">
+      <div class="wrap">
+        <div class="phone-head" data-reveal>
+          <h2 id="phone-title">Pick up the same sessions on your phone</h2>
+          <p>Open the Phone sheet on your PC and scan its code with the Apaki iPhone app or your phone's camera. Both screens show the same six digits; you allow the phone on the PC, and it stays paired until you remove it. The phone gets the session list, the conversations and the same Claude Code that runs on the PC.</p>
+        </div>
+        <div class="phone-grid">
+          <div class="phone-desk" data-reveal>
+            <div class="player window" role="group" aria-label="Recording: pairing a phone from Apaki's Phone sheet with a QR code and a six digit code">
+              <div class="clip is-current">
+                <picture>
+                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/phone-pair-dark-1200.webp 1200w, assets/media/phone-pair-dark-2000.webp 2000w" sizes="(min-width: 1240px) 860px, 94vw">
+                  <img src="assets/media/phone-pair-light-1200.webp" srcset="assets/media/phone-pair-light-1200.webp 1200w, assets/media/phone-pair-light-2000.webp 2000w" sizes="(min-width: 1240px) 860px, 94vw" width="1440" height="900" alt="Apaki's Phone sheet: a phone asks to connect, both screens show the code 482 913, with Deny and Allow" loading="lazy" decoding="async">
+                </picture>
+                <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/phone-pair-light.mp4" data-dark="assets/media/phone-pair-dark.mp4"></video>
+              </div>
+              <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+            </div>
+          </div>
+          <div class="phone-side" data-reveal="2">
+            <div class="phone">
+              <div class="phone-screen">
+                <picture>
+                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/phone-reply-dark.webp">
+                  <img src="assets/media/phone-reply-light.webp" width="780" height="1688" alt="A conversation in the Apaki phone app: Claude reads the code and explains the fix it is about to make" loading="lazy" decoding="async">
+                </picture>
+              </div>
+            </div>
+          </div>
+        </div>
+        <ul class="points points-grid" data-reveal>
+          <li>Free, with no account. The connection is end to end encrypted between the phone and the PC.</li>
+          <li>You choose on the PC what each phone may do: Full, No shell, or Chat only. The PC enforces it whatever the phone sends, and billing, accounts and pairing stay on the PC.</li>
+          <li>An Apaki account is optional: a passkey, with no email and no password. Sign in on another phone and your PCs are listed there, once you allow it on the PC.</li>
+          <li><span class="soon">Coming</span> Sign in from any browser with your phone's passkey. Nothing is saved in that browser, and it signs out after 30 minutes without input (you can choose 5 to 240 minutes).</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===== Security ===== -->
+    <section class="feature feature-security" id="security" aria-labelledby="security-title">
+      <div class="wrap">
+        <div class="security-head" data-reveal>
+          <h2 id="security-title">Nobody in between can read it, including us</h2>
+          <p>Phone access is end to end encrypted between your phone and your PC. Your PC never accepts incoming connections: it keeps one outgoing connection to the relay, and the relay forwards sealed frames it cannot open.</p>
+        </div>
+
+        <div class="flow" data-reveal aria-hidden="true">
+          <div class="flow-node">
+            <svg viewBox="0 0 32 32" class="flow-icon"><rect x="4" y="6" width="24" height="16" rx="2.5"/><path d="M12 26h8M16 22v4"/></svg>
+            <b>Your PC</b>
+            <span>Claude Code, your logins and the keys</span>
+          </div>
+          <div class="flow-line"><i class="flow-lane"><em></em></i><i class="flow-lane flow-back"><em></em></i></div>
+          <div class="flow-node flow-relay">
+            <svg viewBox="0 0 32 32" class="flow-icon"><circle cx="16" cy="16" r="10"/><path d="M6 16h20M16 6c3 3 4.5 6.5 4.5 10S19 23 16 26M16 6c-3 3-4.5 6.5-4.5 10S13 23 16 26"/></svg>
+            <b>The relay</b>
+            <span>Ours or yours. Forwards sealed frames</span>
+          </div>
+          <div class="flow-line"><i class="flow-lane"><em></em></i><i class="flow-lane flow-back"><em></em></i></div>
+          <div class="flow-node">
+            <svg viewBox="0 0 32 32" class="flow-icon"><rect x="10" y="3" width="12" height="26" rx="2.5"/><path d="M14.5 25.5h3"/></svg>
+            <b>Your phone</b>
+            <span>Its own key, made on the phone</span>
+          </div>
+        </div>
+        <p class="sr-only">Your PC and your phone each hold their own keys. Between them, the relay passes along frames that only the two ends can open.</p>
+
+        <div class="ledger" data-reveal>
+          <div>
+            <h3>What the relay cannot do</h3>
+            <ul>
+              <li>Read your prompts, replies, files or session list.</li>
+              <li>Change, replay or reorder a frame without the connection failing.</li>
+              <li>Pair a phone, pose as your PC or your phone, or connect to your PC.</li>
+              <li>Touch your Claude or Codex logins. They never leave the PC.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>What it can see</h3>
+            <ul>
+              <li>IP addresses, when your PC and phones connect, and how much data moves.</li>
+              <li>With an Apaki account: its name, its passkeys' public keys, and a vault it cannot open.</li>
+              <li>Our relay code keeps no logs and platform logging is off. That part you have to take on trust.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="trust" data-reveal>
+          <p><strong>Where the trust sits.</strong> The phone web page is code that apaki.myrlin.io serves, as with any web app. Before your PC shows a pairing code, it builds that page from its own code and checks that the site serves exactly that, and while phone access is on it checks again every hour. The iPhone app carries its own copy of the code and loads none of it from our site. If you would rather not trust our site at all, run your own relay and page.</p>
+          <p class="fine">P-256 key exchange, AES-256-GCM, fresh keys for every connection. The one-time pairing secret travels only in the part of the QR link after #, which browsers never send to a server. Claude Code itself still talks to Anthropic as it always does; this encryption covers the path between your phone and your PC.</p>
+          <p class="links">
+            <!-- PLACEHOLDER(Arthur): the public repository's address. -->
+            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/security.md">Security in plain words</a>
+            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/SECURITY.md">The full security review</a>
+            <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/remote/PROTOCOL.md">The protocol</a>
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Coming ===== -->
+    <section class="feature" id="next" aria-labelledby="next-title">
+      <div class="wrap">
+        <div class="section-head" data-reveal>
+          <h2 id="next-title">Coming next</h2>
+        </div>
+        <div class="cards">
+          <article class="card" data-reveal>
+            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="3.5" y="6" width="25" height="20" rx="3"/><path d="M8.5 13l4 3-4 3M15 19.5h7"/></svg>
+            <h3>Codex, side by side</h3>
+            <p>Codex threads open as panes next to Claude's, with Codex's own model, effort and approval choices, its questions and approvals as sheets, and the same browser pane and viewer.</p>
+          </article>
+          <article class="card" data-reveal="2">
+            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><circle cx="9" cy="7" r="2.6"/><circle cx="9" cy="25" r="2.6"/><circle cx="23" cy="12" r="2.6"/><path d="M9 9.6v12.8M23 14.6c0 5-6 5.4-12.2 8.6"/></svg>
+            <h3>Worktrees</h3>
+            <p>Start a conversation in a new git worktree, see your work grouped by repository and branch, and view changes, commit, push or open a pull request from the pane. The phone gets the same.</p>
+          </article>
+          <article class="card" data-reveal="3">
+            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><path d="M9.5 24.5h13.5a5.5 5.5 0 0 0 .6-11A7.5 7.5 0 0 0 9.2 12a6.3 6.3 0 0 0 .3 12.5z"/></svg>
+            <h3>Apaki Cloud</h3>
+            <p>Sign in from any browser and leave nothing behind, a Cloud button on the desktop that lists your machines, and a push to your phone when Claude asks or finishes. A paid option on our relay; a relay you run gets every feature.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Download ===== -->
+    <section class="feature" id="download" aria-labelledby="download-title">
+      <div class="wrap">
+        <div class="section-head" data-reveal>
+          <h2 id="download-title">Get Apaki</h2>
+        </div>
+        <div class="cards">
+          <article class="card card-get" data-reveal>
+            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="4" y="6" width="24" height="16" rx="2.5"/><path d="M12 26h8M16 22v4"/></svg>
+            <h3>Apaki for Windows</h3>
+            <p>The desktop app, with Claude Code and Myrlin Glass in the package. Sign in with Claude Code's own login, or use an Anthropic API key.</p>
+            <!-- PLACEHOLDER(Arthur): GitHub releases of the public repository. -->
+            <a class="btn btn-primary" href="https://github.com/therealarthur/claude-latch/releases/latest">Download for Windows</a>
+          </article>
+          <article class="card card-get" data-reveal="2">
+            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="10" y="3" width="12" height="26" rx="2.5"/><path d="M14.5 25.5h3"/></svg>
+            <h3>Apaki for iPhone</h3>
+            <p>Pairs with your PC by scanning its code and keeps its key in the Secure Enclave. In TestFlight now; the App Store comes later.</p>
+            <!-- PLACEHOLDER(Arthur): the TestFlight public link, once a public beta group exists. Until then no button, so nothing points at a dead link. -->
+            <p class="fine">TestFlight is by invite for now.</p>
+          </article>
+          <article class="card card-get" data-reveal="3">
+            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="4" y="6" width="24" height="20" rx="3"/><path d="M4 11.5h24"/><circle cx="7.6" cy="8.8" r=".9"/><circle cx="10.6" cy="8.8" r=".9"/></svg>
+            <h3>The web app</h3>
+            <p>Runs in any phone browser. Pair it from your PC's Phone sheet, or sign in with your passkey to see your PCs.</p>
+            <a class="btn btn-secondary" href="app/">Open the web app</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== FAQ ===== -->
+    <section class="feature feature-faq" id="faq" aria-labelledby="faq-title">
+      <div class="wrap faq-grid">
+        <div class="section-head" data-reveal>
+          <h2 id="faq-title">Questions</h2>
+          <!-- PLACEHOLDER(Arthur): the public repository's address. -->
+          <p><a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/faq.md">More in the FAQ</a></p>
+        </div>
+        <div class="faq" data-reveal="2">
+          <details>
+            <summary>Is Apaki made by Anthropic?</summary>
+            <p>No. Apaki is a Myrlin Labs project and is not affiliated with or endorsed by Anthropic or OpenAI. It runs the Claude Code you sign in to with your own account.</p>
+          </details>
+          <details>
+            <summary>Does it change Claude Code?</summary>
+            <p>No. Apaki runs Claude Code unmodified through Anthropic's Agent SDK, with Claude Code's own system prompt and every settings source, so your CLAUDE.md, skills, plugins, hooks, MCP servers and slash commands work as they do in a terminal.</p>
+          </details>
+          <details>
+            <summary>What does it cost?</summary>
+            <p>Apaki is free, and so is pairing a phone through our relay. Your Claude and Codex usage is billed by Anthropic and OpenAI as usual. Apaki Cloud, when it ships, will be a paid option on our hosted relay; a relay you run yourself gets the same features at no cost.</p>
+          </details>
+          <details>
+            <summary>What leaves my PC?</summary>
+            <p>Claude Code talks to Anthropic as it always does. Search, its index and its embedding model run locally. With phone access on, encrypted frames pass through the relay; without it, Apaki makes no connection to us.</p>
+          </details>
+          <details>
+            <summary>Which platforms?</summary>
+            <p>The desktop app is for Windows. The phone side is the iPhone app (TestFlight for now) or the web app in any phone browser.</p>
+          </details>
+        </div>
+      </div>
+    </section>
   </main>
+
+  <footer class="site-foot">
+    <div class="wrap foot-grid">
+      <div class="foot-brand">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 32 15" class="m-mark" aria-hidden="true"><defs><linearGradient id="mflare-foot" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#07B6D5"/><stop offset="1" stop-color="#3C83F6"/></linearGradient></defs><path class="m-fold" d="M12.292 9 C13.331 9 14.221 9.801 14.28 10.788 L14.554 15.346 L12.18 22.327 C11.916 23.105 11.452 23.858 11.15 24 L11.115 24 C9.996 24 9.36 23.019 9.246 21.115 L9.029 17.495 L10.838 12.173 C11.395 10.538 11.996 9.141 12.206 9 L12.292 9Z"/><path class="m-stroke" d="M0.5 24 L6.904 24 L10.925 12.173 C11.481 10.538 12.083 9.141 12.292 9 L7.042 9 C6.18 9 5.413 9.549 5.136 10.366Z"/><path class="m-fold" d="M23.369 9 C24.408 9 25.298 9.801 25.357 10.788 L25.745 17.258 C25.133 17.737 24.444 18.836 24.013 20.106 L23.257 22.327 C22.993 23.105 22.529 23.858 22.227 24 L22.192 24 C21.073 24 20.437 23.019 20.323 21.115 L20.106 17.495 L21.915 12.173 C22.471 10.538 23.073 9.141 23.283 9 L23.369 9Z"/><path class="m-stroke" d="M11.115 24 L16.538 24 C17.401 24 18.167 23.451 18.445 22.634 L22.002 12.173 C22.558 10.538 23.16 9.141 23.369 9 L18.119 9 C17.257 9 16.49 9.549 16.213 10.366 L12.146 22.327 C11.881 23.105 11.418 23.858 11.115 24Z"/><path d="M22.192 24 L27.615 24 C28.478 24 29.244 23.451 29.522 22.634 L31.438 17 L26.303 17 C25.605 17 24.559 18.398 23.978 20.106 L23.223 22.327 C22.958 23.105 22.494 23.858 22.192 24Z" fill="url(#mflare-foot)"/></svg>
+        <p><b>Myrlin Apaki</b>, a Myrlin Labs project.</p>
+      </div>
+      <nav class="foot-links" aria-label="More">
+        <!-- PLACEHOLDER(Arthur): the public repository's address. -->
+        <a href="https://github.com/therealarthur/claude-latch">Source on GitHub</a>
+        <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/README.md">Docs</a>
+        <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/docs/self-hosting.md">Self-hosting</a>
+        <a href="https://github.com/therealarthur/claude-latch/blob/master/apaki/SECURITY.md">Security review</a>
+        <a href=".well-known/security.txt">Report a security problem</a>
+        <a href="app/">Open the web app</a>
+      </nav>
+      <p class="foot-fine">Apaki is an independent project, not affiliated with or endorsed by Anthropic or OpenAI. Claude and Claude Code are trademarks of Anthropic. The recordings on this page show the real app on made-up data.</p>
+    </div>
+  </footer>
 </body>
 </html>

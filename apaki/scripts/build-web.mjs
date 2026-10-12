@@ -16,7 +16,10 @@
  *   node apaki/scripts/build-web.mjs --serve 8790        then serve dist on 127.0.0.1:8790 (local testing)
  *   node apaki/scripts/build-web.mjs --release [--relay wss://apaki.myrlin.io] [--site <dir>] [--serve 8790]
  *        publish this build at <site>/v/<version>/ (relay/site by default, which
- *        the relay Worker serves), keeping every earlier version
+ *        the relay Worker serves), keeping every earlier version, and rewrite
+ *        <site>/app/index.html, the web app's entry with every published
+ *        version (since 2026-10-12; the site's front page is the product's
+ *        home page and a release leaves it alone)
  *
  * Trust (2026-10-10, Arthur: "a trustless solution where other users can use
  * this to reach their remote computers"): a build is reproducible (text files
@@ -235,28 +238,47 @@ export function versionsOf(site = DEFAULT_SITE) {
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-/** The site's front page: what this is, how it stays private, and every published version with its manifest. */
+/** The Myrlin M for the /app/ page's header (apaki/ui/mark.js, the same mark the phone page shows). */
+function markSvg() {
+  const src = fs.readFileSync(path.join(UI, 'mark.js'), 'utf8').replace(/\r\n/g, '\n');
+  return JSON.parse(src.slice(src.indexOf('"'), src.lastIndexOf('"') + 1));
+}
+
+/**
+ * The web app's entry, /app/ (2026-10-12): the way into the newest published phone page, what this site can
+ * and cannot see, and every published version with its manifest. Until 2026-10-12 this was the site's front
+ * page; the front page (relay/site/index.html) is now the product's home page, written by hand, and a release
+ * never touches it. Pairing links from PCs open /v/<version>/ directly and do not pass through here.
+ * A site folder with no front page yet (a fresh self-hosted copy) gets a small one that points here.
+ */
 export function writeLanding(site = DEFAULT_SITE) {
   // The newest published page is where "Open Apaki" goes (Arthur, 2026-10-10: "make sure users can login on
   // apaki to see their connected machines"): signing in or pairing both start there.
   const newest = versionsOf(site)[0] || null;
-  const list = versionsOf(site).map((v) => `<li><code>${esc(v.version)}</code> <span>${esc(String(v.publishedAt || '').slice(0, 10))} · ${v.files} files · relay ${esc(new URL(v.relay).host)}</span> <a href="v/${esc(v.version)}/manifest.json">file hashes</a></li>`).join('\n      ');
+  const list = versionsOf(site).map((v) => `<li><code>${esc(v.version)}</code> <span>${esc(String(v.publishedAt || '').slice(0, 10))} · ${v.files} files · relay ${esc(new URL(v.relay).host)}</span> <a href="../v/${esc(v.version)}/manifest.json">file hashes</a></li>`).join('\n        ');
   const html = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>Myrlin Apaki phone access</title>
-  <link rel="stylesheet" href="site.css">
+  <meta name="color-scheme" content="light dark">
+  <title>Open the Apaki web app</title>
+  <link rel="icon" href="../assets/apaki-icon.svg" type="image/svg+xml">
+  <script src="../assets/theme.js"></script>
+  <link rel="stylesheet" href="../site.css">
 </head>
-<body>
-  <main>
-    <h1>Myrlin Apaki</h1>
+<body class="app-page">
+  <header class="app-head">
+    <a class="app-brand" href="../" aria-label="Myrlin Apaki home">${markSvg()}<span>Apaki</span></a>
+    <a class="app-home" href="../">About Apaki</a>
+  </header>
+  <main class="app-main">
+    <h1>The Apaki web app</h1>
     <p class="lead">Your PC's Claude Code sessions, on your phone or any browser, end to end encrypted.</p>
-    ${newest ? `<p class="cta"><a class="btn" href="v/${esc(newest.version)}/">Open Apaki</a></p>
-    <p class="cta-note">Sign in with your Apaki account (a passkey) to see your PCs and connect, or pair a new phone with the code Apaki shows on your PC (Phone, at the bottom of its sidebar).</p>` : ''}
+    ${newest ? `<p class="cta"><a class="btn" href="../v/${esc(newest.version)}/">Open Apaki</a></p>
+    <p class="cta-note">Sign in with your Apaki account (a passkey) to see your PCs and connect, or pair a new phone with the code Apaki shows on your PC (Phone, at the bottom of its sidebar).</p>` : '<p class="cta-note">No phone page is published on this site yet.</p>'}
     <h2>What this site can and cannot see</h2>
     <ul>
       <li>It serves the phone page and relays frames between your PC and your phones. Everything in those frames is end-to-end encrypted between the two; this site cannot read them and keeps nothing about your conversations. If you make an Apaki account, it stores the account's name, its passkeys' public keys and a vault it cannot open.</li>
@@ -266,19 +288,44 @@ export function writeLanding(site = DEFAULT_SITE) {
     </ul>
     <h2>Published phone pages</h2>
     <ul class="versions">
-      ${list || '<li>None yet.</li>'}
+        ${list || '<li>None yet.</li>'}
     </ul>
     <p class="small">Anyone can run their own copy: the relay and this page come from the Apaki source (relay/ and apaki/web/), and Apaki can point at another address.</p>
   </main>
 </body>
 </html>
 `;
-  fs.mkdirSync(site, { recursive: true });
-  fs.writeFileSync(path.join(site, 'index.html'), html);
+  fs.mkdirSync(path.join(site, 'app'), { recursive: true });
+  fs.writeFileSync(path.join(site, 'app', 'index.html'), html);
+  // A fresh site folder (someone running their own relay) has no front page: give it one line and a link here.
+  const front = path.join(site, 'index.html');
+  if (!fs.existsSync(front)) {
+    fs.writeFileSync(front, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Myrlin Apaki</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body class="app-page">
+  <main class="app-main">
+    <h1>Myrlin Apaki</h1>
+    <p class="lead">This site relays Apaki's end-to-end encrypted phone connections and serves its phone page.</p>
+    <p class="cta"><a class="btn" href="app/">Open the web app</a></p>
+  </main>
+</body>
+</html>
+`);
+  }
   return html;
 }
 
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json',
+  // The home page's media (relay/site/assets, 2026-10-12), so --serve shows the whole site.
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.webp': 'image/webp', '.avif': 'image/avif', '.jpg': 'image/jpeg', '.gif': 'image/gif', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
 
 /**
  * A static server for local testing. It logs every path it is asked for:

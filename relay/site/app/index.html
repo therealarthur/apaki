@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light dark">
+  <title>Open the Apaki web app</title>
+  <link rel="icon" href="../assets/apaki-icon.svg" type="image/svg+xml">
+  <script src="../assets/theme.js"></script>
+  <link rel="stylesheet" href="../site.css">
+</head>
+<body class="app-page">
+  <header class="app-head">
+    <a class="app-brand" href="../" aria-label="Myrlin Apaki home"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 32 15" class="m-mark" aria-hidden="true"><defs><linearGradient id="mflare" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#07B6D5"/><stop offset="1" stop-color="#3C83F6"/></linearGradient></defs><path class="m-fold" d="M12.292 9 C13.331 9 14.221 9.801 14.28 10.788 L14.554 15.346 L12.18 22.327 C11.916 23.105 11.452 23.858 11.15 24 L11.115 24 C9.996 24 9.36 23.019 9.246 21.115 L9.029 17.495 L10.838 12.173 C11.395 10.538 11.996 9.141 12.206 9 L12.292 9Z"/><path class="m-stroke" d="M0.5 24 L6.904 24 L10.925 12.173 C11.481 10.538 12.083 9.141 12.292 9 L7.042 9 C6.18 9 5.413 9.549 5.136 10.366Z"/><path class="m-fold" d="M23.369 9 C24.408 9 25.298 9.801 25.357 10.788 L25.745 17.258 C25.133 17.737 24.444 18.836 24.013 20.106 L23.257 22.327 C22.993 23.105 22.529 23.858 22.227 24 L22.192 24 C21.073 24 20.437 23.019 20.323 21.115 L20.106 17.495 L21.915 12.173 C22.471 10.538 23.073 9.141 23.283 9 L23.369 9Z"/><path class="m-stroke" d="M11.115 24 L16.538 24 C17.401 24 18.167 23.451 18.445 22.634 L22.002 12.173 C22.558 10.538 23.16 9.141 23.369 9 L18.119 9 C17.257 9 16.49 9.549 16.213 10.366 L12.146 22.327 C11.881 23.105 11.418 23.858 11.115 24Z"/><path class="m-flare" d="M22.192 24 L27.615 24 C28.478 24 29.244 23.451 29.522 22.634 L31.438 17 L26.303 17 C25.605 17 24.559 18.398 23.978 20.106 L23.223 22.327 C22.958 23.105 22.494 23.858 22.192 24Z" fill="url(#mflare)"/></svg><span>Apaki</span></a>
+    <a class="app-home" href="../">About Apaki</a>
+  </header>
+  <main class="app-main">
+    <h1>The Apaki web app</h1>
+    <p class="lead">Your PC's Claude Code sessions, on your phone or any browser, end to end encrypted.</p>
+    <p class="cta"><a class="btn" href="../v/f73fd94db469/">Open Apaki</a></p>
+    <p class="cta-note">Sign in with your Apaki account (a passkey) to see your PCs and connect, or pair a new phone with the code Apaki shows on your PC (Phone, at the bottom of its sidebar).</p>
+    <h2>What this site can and cannot see</h2>
+    <ul>
+      <li>It serves the phone page and relays frames between your PC and your phones. Everything in those frames is end-to-end encrypted between the two; this site cannot read them and keeps nothing about your conversations. If you make an Apaki account, it stores the account's name, its passkeys' public keys and a vault it cannot open.</li>
+      <li>The one-time pairing secret is in the part of the link after #, which browsers never send to a server.</li>
+      <li>Your Claude and Codex logins never leave your PC. A paired phone works in conversations on your PC as you would there, so Claude can run commands and edit files for it; billing, accounts and pairing stay on the PC.</li>
+      <li>Every version of the phone page has its own address and never changes. Before your PC shows a pairing code, it builds the page it expects from its own code and checks, file by file, that this site serves exactly that.</li>
+    </ul>
+    <h2>Published phone pages</h2>
+    <ul class="versions">
+        <li><code>f73fd94db469</code> <span>2026-10-12 · 43 files · relay apaki.myrlin.io</span> <a href="../v/f73fd94db469/manifest.json">file hashes</a></li>
+        <li><code>db087014653a</code> <span>2026-10-11 · 43 files · relay apaki.myrlin.io</span> <a href="../v/db087014653a/manifest.json">file hashes</a></li>
+        <li><code>aca988ed5470</code> <span>2026-10-11 · 43 files · relay apaki.myrlin.io</span> <a href="../v/aca988ed5470/manifest.json">file hashes</a></li>
+        <li><code>37d6d3142ce3</code> <span>2026-10-11 · 43 files · relay apaki.myrlin.io</span> <a href="../v/37d6d3142ce3/manifest.json">file hashes</a></li>
+        <li><code>2dcca3145379</code> <span>2026-10-11 · 43 files · relay apaki.myrlin.io</span> <a href="../v/2dcca3145379/manifest.json">file hashes</a></li>
+        <li><code>013046d35cd4</code> <span>2026-10-11 · 39 files · relay apaki.myrlin.io</span> <a href="../v/013046d35cd4/manifest.json">file hashes</a></li>
+        <li><code>a15da895bd1a</code> <span>2026-10-11 · 39 files · relay apaki.myrlin.io</span> <a href="../v/a15da895bd1a/manifest.json">file hashes</a></li>
+        <li><code>5d7feb922f78</code> <span>2026-10-11 · 39 files · relay apaki.myrlin.io</span> <a href="../v/5d7feb922f78/manifest.json">file hashes</a></li>
+        <li><code>cab37e8659c3</code> <span>2026-10-10 · 38 files · relay apaki.myrlin.io</span> <a href="../v/cab37e8659c3/manifest.json">file hashes</a></li>
+        <li><code>0a64d8514a08</code> <span>2026-10-10 · 36 files · relay apaki.myrlin.io</span> <a href="../v/0a64d8514a08/manifest.json">file hashes</a></li>
+        <li><code>ac45f97a9b01</code> <span>2026-10-10 · 35 files · relay apaki.myrlin.io</span> <a href="../v/ac45f97a9b01/manifest.json">file hashes</a></li>
+    </ul>
+    <p class="small">Anyone can run their own copy: the relay and this page come from the Apaki source (relay/ and apaki/web/), and Apaki can point at another address.</p>
+  </main>
+</body>
+</html>

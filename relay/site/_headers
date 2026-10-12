@@ -12,6 +12,24 @@
   X-Frame-Options: DENY
   Cross-Origin-Opener-Policy: same-origin
 
+# The home page (2026-10-12): its own files only. Fonts, posters and the muted recordings come from
+# /assets/ on this origin; scripts are assets/theme.js and assets/site.js, no inline script or style.
+# The same policy is in the page's meta tag; this copy adds frame-ancestors, which a meta tag cannot.
+/
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+
+# The web app's entry (/app/, written by apaki/scripts/build-web.mjs writeLanding on every release).
+/app/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+
+# The home page's recordings and posters change only when they are captured again (apaki/demo).
+/assets/media/*
+  Cache-Control: public, max-age=14400
+
+# The app's own fonts (apaki/ui/fonts), which do not change.
+/assets/fonts/*
+  Cache-Control: public, max-age=2592000
+
 # The iOS and Android apps' association files (apaki/mobile, 2026-10-10): JSON with no
 # extension for Apple, served as it is (no redirect), refreshed by Apple's CDN about daily.
 /.well-known/apple-app-site-association

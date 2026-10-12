@@ -23,7 +23,9 @@ Apaki at a copy you run yourself (see the end).
 ## Endpoints
 
 ```
-GET /                          the front page (site/index.html): what this is, and every published phone page
+GET /                          the product home page (site/index.html, kept by hand since 2026-10-12; its files in site/assets/)
+GET /app/                      the web app's entry: Open Apaki (the newest phone page) and every published phone page (site/app/index.html, rewritten by each release)
+GET /assets/media/<file>       the home page's recordings; the one part of the site that runs the Worker first (run_worker_first), so Range requests get 206 (src/media.js; Safari plays an MP4 only that way)
 GET /v/<version>/              a published phone page; each version is its own folder and never changes
 GET /health                    one line saying what this is
 GET /.well-known/security.txt  where to report a security problem (RFC 9116; site/.well-known/)
@@ -485,7 +487,7 @@ phone's parts (apaki/web) or the protocol makes a new version, and a PC on
 that Apaki refuses to pair until the site has it.
 
 ```
-node apaki/scripts/build-web.mjs --release      # adds relay/site/v/<version>/ (commit it)
+node apaki/scripts/build-web.mjs --release      # adds relay/site/v/<version>/ and rewrites relay/site/app/ (commit both)
 cd relay && npx wrangler deploy --env=""        # uploads only the new files
 ```
 

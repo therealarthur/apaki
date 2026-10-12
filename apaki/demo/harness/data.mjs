@@ -412,6 +412,8 @@ PRESETS.steer = () => PRESETS.base();
 PRESETS['glass-swap'] = () => PRESETS.base();
 PRESETS['phone-pair'] = () => PRESETS.base();
 PRESETS.search = () => PRESETS.base();
+// The phone client (phone.html, 2026-10-12): the same lived-in PC; the phone starts on its sessions list.
+PRESETS.phone = () => PRESETS.base();
 
 PRESETS.history = () => {
   const p = PRESETS.base();

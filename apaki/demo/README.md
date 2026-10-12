@@ -58,6 +58,7 @@ then open `http://127.0.0.1:8765/desktop.html?ws=steer&theme=dark`. Query string
 | `browser` | Ask Claude to try the checkout page: a browser pane opens beside the conversation, Claude types and clicks in it ("Claude, type [3]" above the page), and the page shows the bug. | `browsing` (hero), `reproduced` |
 | `phone-pair` | The Phone sheet: Pair a phone, the QR code with its countdown, the phone that scanned it asks to connect (the code on both screens), Allow, and it shows as connected. | `qr` (hero), `approve`, `paired` |
 | `split` | Three tabs, then three working sessions shift-clicked into split panes, all streaming at once, the Even grid button, and Ctrl+B to hide the sidebar for room. | `four`, `grid` (hero) |
+| `phone` | The phone client (`phone.html`, at 390x844 with touch): the sessions list as home, a conversation slides in, a message is typed and sent, and Claude's reply streams back. The pointer is drawn as a touch. Clips are 390x844 (Playwright records CSS pixels); stills are 780x1688. | `list`, `working`, `reply` (hero) |
 | `history` | A long transcript: thinking, tool calls, a diff, a subagent, a table, and what Claude Code says itself (a blocked prompt, an API retry, a Stop hook, a usage warning), up to the compaction with its summary. | `summary`, `system-lines` (hero), `diff`, `compaction` |
 
 The scenes are in `scenes.mjs`. A scene is `run(s)` with a small director: `s.begin()` marks where the clip starts (everything before it is setup and is cut), then `s.click(...)`, `s.type(...)`, `s.press('Control+Enter')`, `s.scrollTo(...)`, `s.waitFor(...)`, `s.pause(ms)` and `s.still('label')`. The pointer glides on an eased arc with real mouse events, typing runs at about 55 ms a key with small swings, and the rhythm repeats from run to run (seeded). `scenes.mjs` can be used on its own: `runScene(page, 'steer')` on any Playwright page that has the harness open.
@@ -68,6 +69,8 @@ The scenes are in `scenes.mjs`. A scene is `run(s)` with a small director: `s.be
 
 | File | Role |
 | - | - |
+| `phone.html`, `harness/phone-boot.mjs` | The phone client (2026-10-12): the same UI with the phone's own parts from `apaki/web/src` (web.css, native.js, pager.js, desktop.js), composed by the server the way `build-web.mjs` builds the phone page, and started the way `boot.js` starts it once a PC is connected. |
+| `site-media.mjs`, `brand-images.mjs` | Turn a capture into the site's media (`relay/site/assets/media`: MP4 clips, WebP posters at 1200 and 2000 px, crops) and the README's (`apaki/docs/media`: WebP stills, animated WebP loops), and draw the wordmark and the link preview. |
 | `desktop.html` | The page template. The server fills in the head and body of `apaki/ui/index.html` at request time, so the demo always shows the UI as it is now. Nothing from `apaki/ui` is copied. |
 | `server.mjs` | Serves `/ui/` (read only), `/harness/` and the composed `/desktop.html`. `startServer()` for scripts. |
 | `harness/shim.mjs` | Installs `window.__TAURI__`, a fixed clock (10:42 on Tuesday 13 October 2026, ticking) and a seeded `Math.random`, so pictures repeat. Exposes `window.__demo` for the scene runner. Unknown shell APIs answer with a harmless no-op, so a new window call in the UI does not break it. |
@@ -81,6 +84,16 @@ The scenes are in `scenes.mjs`. A scene is `run(s)` with a small director: `s.be
 A starting workspace is delivered the way the real window gets its saved one (the `loadState` op), so each scene starts with the tabs, panes and sidebar width it needs. The sidebar starts at 352 px: at the default 312 px the real UI cuts the "Sessions" heading to "SESSIO...".
 
 To add a scene: add a preset to `PRESETS` if it needs its own workspace, add a script to `turns.mjs` if Claude should do something new, then add an entry to `SCENES` in `scenes.mjs`. Run it with `scene=<name> theme=light` and look at the stills.
+
+## From a capture to the site
+
+```
+node apaki/demo/capture.mjs ffmpeg=<exe>
+node apaki/demo/site-media.mjs ffmpeg=<exe>      # relay/site/assets/media and apaki/docs/media
+node apaki/demo/brand-images.mjs ffmpeg=<exe>    # docs/media/wordmark-*.png and relay/site/assets/og.jpg
+```
+
+ffmpeg needs libx264 and libwebp (the `ffmpeg-static` package has both). The site uses each clip's MP4 as captured, the hero still of each scene as its poster, and the phone scene's `list` and `reply` stills.
 
 ## What it cannot fake yet
 

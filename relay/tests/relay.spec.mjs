@@ -28,6 +28,7 @@ import {
   CLOSE, DEFAULT_LIMITS, Bucket, readLimits, splitConn, prefixConn, originAllowed, parseProtocols, tokenFrom, roomIdForToken as relayRoomId, costOf, busyAdd, utcDay,
   clientKey, relayOnly, leaseMsOf, hoursToMidnight, nextUtcMidnight, NO_ORIGIN, PRICES, AWAKE_MS,
 } from '../src/lib.js';
+import { MEDIA_PATH, parseRange } from '../src/media.js';
 
 process.env.WRANGLER_SEND_METRICS = 'false';
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -533,6 +534,53 @@ test('security.txt is served from site/.well-known (RFC 9116)', async () => {
   assert.match(body, /^Preferred-Languages: en$/m);
   assert.match(body, /^Policy: https:\/\/github\.com\/therealarthur\/claude-latch\/blob\/master\/apaki\/SECURITY\.md$/m);
   assert.doesNotMatch(body, /\r/, 'LF line endings');
+});
+
+test('media: parseRange (one range; suffix and open ranges; several ranges send the whole file)', () => {
+  assert.equal(parseRange(null, 100), null);
+  assert.deepEqual(parseRange('bytes=0-1', 100), { start: 0, end: 1 });
+  assert.deepEqual(parseRange('bytes=10-', 100), { start: 10, end: 99 });
+  assert.deepEqual(parseRange('bytes=90-500', 100), { start: 90, end: 99 }, 'an end past the file is cut to it');
+  assert.deepEqual(parseRange('bytes=-10', 100), { start: 90, end: 99 });
+  assert.deepEqual(parseRange('bytes=-500', 100), { start: 0, end: 99 });
+  assert.equal(parseRange('bytes=0-1, 4-5', 100), null);
+  assert.equal(parseRange('items=0-1', 100), null);
+  assert.equal(parseRange('bytes=100-', 100), 'unsatisfiable');
+  assert.equal(parseRange('bytes=5-2', 100), 'unsatisfiable');
+  assert.equal(parseRange('bytes=-0', 100), 'unsatisfiable');
+  assert.ok(MEDIA_PATH.test('/assets/media/split-light.mp4'));
+  assert.ok(!MEDIA_PATH.test('/assets/media/../site.css') && !MEDIA_PATH.test('/assets/media/a/b.mp4') && !MEDIA_PATH.test('/v/x/index.html'));
+});
+
+test('media: the home page\'s recordings answer Range with 206 (Safari plays an MP4 only from such a server)', async () => {
+  const dir = path.join(relayDir, 'site', 'assets', 'media');
+  const mp4 = fs.existsSync(dir) ? fs.readdirSync(dir).find((f) => f.endsWith('.mp4')) : null;
+  if (!mp4) return; // a site without the home page's media (a self-hosted copy that removed it)
+  const size = fs.statSync(path.join(dir, mp4)).size;
+  const get = (init) => normal.worker.fetch(`http://127.0.0.1/assets/media/${mp4}`, init);
+  const two = await get({ headers: { Range: 'bytes=0-1' } });
+  assert.equal(two.status, 206);
+  assert.equal(two.headers.get('content-range'), `bytes 0-1/${size}`);
+  assert.equal((await two.arrayBuffer()).byteLength, 2);
+  const tail = await get({ headers: { Range: 'bytes=100-' } });
+  assert.equal(tail.status, 206);
+  assert.equal((await tail.arrayBuffer()).byteLength, size - 100);
+  const whole = await get();
+  assert.equal(whole.status, 200);
+  assert.equal(whole.headers.get('accept-ranges'), 'bytes');
+  assert.match(whole.headers.get('content-type') || '', /^video\/mp4/);
+  assert.equal((await whole.arrayBuffer()).byteLength, size);
+  const past = await get({ headers: { Range: `bytes=${size}-` } });
+  assert.equal(past.status, 416);
+  assert.equal(past.headers.get('content-range'), `bytes */${size}`);
+  await past.arrayBuffer();
+  const missing = await normal.worker.fetch('http://127.0.0.1/assets/media/no-such-clip.mp4');
+  assert.equal(missing.status, 404);
+  await missing.arrayBuffer();
+  // The rest of the site is untouched: the home page and a phone page are still plain files.
+  const home = await normal.worker.fetch('http://127.0.0.1/');
+  assert.equal(home.status, 200);
+  assert.match(await home.text(), /<html/i);
 });
 
 test('no PC: a phone in a room without its PC is closed after NO_PC_MS, and at once when it sends a frame', async () => {

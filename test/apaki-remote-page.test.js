@@ -18,13 +18,19 @@ const RELAY = 'wss://relay.example';
 test('a release lives at /v/<version>/ with its file hashes, and a published version never changes', () => {
   const site = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-site-'));
   try {
+    // The site's front page is the product's home page (2026-10-12): a release never rewrites it.
+    const home = '<!doctype html><title>home</title>\n';
+    fs.writeFileSync(path.join(site, 'index.html'), home);
     const r = release({ relay: RELAY, site });
     const dir = path.join(site, 'v', r.version);
     const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
     assert.equal(manifest.version, r.version);
     assert.equal(manifest.relay, RELAY);
     assert.ok(manifest.files['index.html'] && manifest.files['boot.js'] && manifest.files['sw.js']);
-    assert.ok(fs.readFileSync(path.join(site, 'index.html'), 'utf8').includes(r.version), 'the front page lists the version');
+    assert.equal(fs.readFileSync(path.join(site, 'index.html'), 'utf8'), home, 'the front page is left alone');
+    const app = fs.readFileSync(path.join(site, 'app', 'index.html'), 'utf8');
+    assert.ok(app.includes(`href="../v/${r.version}/"`), 'the web app page opens the newest version');
+    assert.ok(app.includes(`../v/${r.version}/manifest.json`), 'the web app page lists the version with its hashes');
     assert.deepEqual(versionsOf(site).map((v) => v.version), [r.version]);
     // The PC's own build is the same version, file for file.
     const e = expected({ relay: RELAY });
@@ -34,6 +40,15 @@ test('a release lives at /v/<version>/ with its file hashes, and a published ver
     assert.equal(release({ relay: RELAY, site }).version, r.version);
     fs.appendFileSync(path.join(dir, 'boot.js'), '\n// changed');
     assert.throws(() => release({ relay: RELAY, site }), /never changes/);
+  } finally { fs.rmSync(site, { recursive: true, force: true }); }
+});
+
+test('a fresh site folder (a self-hosted relay) gets a small front page that points at the web app', () => {
+  const site = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-site-'));
+  try {
+    release({ relay: RELAY, site });
+    assert.match(fs.readFileSync(path.join(site, 'index.html'), 'utf8'), /href="app\/"/);
+    assert.ok(fs.existsSync(path.join(site, 'app', 'index.html')));
   } finally { fs.rmSync(site, { recursive: true, force: true }); }
 });
 

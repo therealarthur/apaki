@@ -391,6 +391,40 @@ export const SCENES = {
     },
   },
 
+  /**
+   * The phone client (2026-10-12): phone.html, Apaki's own window as the phone runs it (apaki/web/src native.js),
+   * at a phone's size. capture.mjs opens it at 390x844 because of device: 'phone'.
+   */
+  phone: {
+    title: 'Apaki on a phone',
+    shows: 'The phone app: the sessions list is home, a conversation slides in, a message goes to Claude Code on the PC and the reply streams back.',
+    ws: 'phone',
+    device: 'phone',
+    hero: 'reply',
+    async run(s) {
+      await s.waitFor(() => document.body.classList.contains('native') && document.querySelectorAll('.sessions li').length > 8);
+      await s.begin();
+      await s.pause(900);
+      await s.still('list');
+      await s.click(row(ID.flaky), { ms: 600, hold: 140 });
+      await s.waitFor(() => document.body.classList.contains('at-chat') && document.querySelector('.pane.focused .turn-assistant'));
+      await s.pause(1000);
+      await s.click(COMPOSER, { ms: 500, hold: 120 });
+      await s.pause(150);
+      await s.type('Fix the hook, then run it ten times', { ms: 46 });
+      await s.pause(300);
+      const tools = await s.evaluate(() => document.querySelectorAll('.pane.focused .tool').length);
+      await s.click('.pane.focused .send', { ms: 450, hold: 120 });
+      await s.waitFor((n) => document.querySelectorAll('.pane.focused .tool').length > n, tools, 15000);
+      await s.pause(700);
+      await s.still('working');
+      const r = replyDone('which I will leave until the hook is fixed');
+      await s.waitFor(r.fn, r.text, 20000);
+      await s.pause(1000);
+      await s.still('reply');
+    },
+  },
+
   history: {
     title: 'A long transcript',
     shows: 'The whole conversation: tool calls and a diff, a subagent, and what Claude Code says itself (a hook, an API retry, a usage warning), up to the compaction at the top.',

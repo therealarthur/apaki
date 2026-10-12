@@ -1,0 +1,126 @@
+/**
+ * site-media.mjs: turns the demo harness's recordings (node apaki/demo/capture.mjs, D:\apaki-media by
+ * default) into the media the product page and the README use. Written 2026-10-12 by Claude Code
+ * (Opus 5.5) for Arthur.
+ *
+ *   relay/site/assets/media/   the home page (apaki.myrlin.io): each clip as H.264 MP4 (muted,
+ *                              faststart, as captured), its poster as WebP at 1200 and 2000 px wide,
+ *                              the phone's stills at 780 px, a few crisp crops of the UI that float
+ *                              over the clips, light and dark (assets/og.jpg comes from brand-images.mjs)
+ *   apaki/docs/media/          the README: stills as WebP at 1440 px, and three short loops as
+ *                              animated WebP (desktop 760 px wide at 12 fps, phone 300 px); the
+ *                              wordmark there comes from brand-images.mjs
+ *
+ * Usage (key=value, all optional):
+ *   node apaki/demo/site-media.mjs ffmpeg=<exe> [in=D:\apaki-media] [site=1] [docs=1]
+ * ffmpeg: as capture.mjs finds it ($FFMPEG, ffmpeg on the PATH, or the ffmpeg-static package); it
+ * needs libwebp and libx264. Nothing here reads anything but the folder the harness wrote, which holds
+ * only invented demo data.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const REPO = path.resolve(HERE, '..', '..');
+const args = Object.fromEntries(process.argv.slice(2).map((a) => { const i = a.indexOf('='); return i < 0 ? [a, '1'] : [a.slice(0, i), a.slice(i + 1)]; }));
+const IN = path.resolve(args.in || process.env.APAKI_MEDIA_DIR || (process.platform === 'win32' ? 'D:\\apaki-media' : path.join(process.env.HOME || '', 'apaki-media')));
+const SITE = path.join(REPO, 'relay', 'site', 'assets', 'media');
+const DOCS = path.join(REPO, 'apaki', 'docs', 'media');
+const THEMES = ['light', 'dark'];
+
+/** Which still is each clip's poster (the moment that says the most when nothing plays). */
+const CLIPS = {
+  split: 'grid',
+  sessions: 'overview',
+  search: 'results',
+  steer: 'steered',
+  history: 'system-lines',
+  'glass-swap': 'panel',
+  browser: 'browsing',
+  'phone-pair': 'approve',
+  phone: null, // the phone's clip is 390x844; its stills are made below at 780 px
+};
+
+/**
+ * Crops of the 2880x1800 stills that float over the page's clips, at the stills' 2x pixels: just inside
+ * the panel's own edge, so no window shows around it (the page draws the border and the corners).
+ * [name, still, x, y, w, h]
+ */
+const CROPS = [
+  ['search-hits', 'search-results', 4, 800, 690, 600],
+];
+
+function findFfmpeg() {
+  const cands = [args.ffmpeg, process.env.FFMPEG, 'ffmpeg'].filter(Boolean);
+  try { cands.push(createRequire(import.meta.url)('ffmpeg-static')); } catch { /* not installed here */ }
+  for (const c of cands) {
+    const r = spawnSync(c, ['-version'], { encoding: 'utf8' });
+    if (!r.error && r.status === 0) return c;
+  }
+  throw new Error('No ffmpeg found: pass ffmpeg=<exe> (it needs libwebp and libx264).');
+}
+
+const FF = findFfmpeg();
+function ff(argv) {
+  const r = spawnSync(FF, ['-y', '-hide_banner', '-loglevel', 'error', ...argv], { encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`ffmpeg ${argv.join(' ')}\n${r.stderr}`);
+}
+const need = (f) => { if (!fs.existsSync(f)) throw new Error(`missing ${f}: run node apaki/demo/capture.mjs first`); return f; };
+const still = (name, theme) => need(path.join(IN, 'stills', `${name}-${theme}.png`));
+const clip = (scene, theme) => need(path.join(IN, 'video', `${scene}-${theme}.mp4`));
+const kb = (f) => `${(fs.statSync(f).size / 1024).toFixed(0)} KB`;
+const made = [];
+const note = (f) => { made.push(f); console.log(`  ${path.relative(REPO, f).replace(/\\/g, '/')}  ${kb(f)}`); };
+
+/** A still to WebP at a width (height follows), at a quality. */
+function webp(src, out, width, q = 80, crop = null) {
+  const vf = [crop ? `crop=${crop[2]}:${crop[3]}:${crop[0]}:${crop[1]}` : null, width ? `scale=${width}:-2:flags=lanczos` : null].filter(Boolean).join(',');
+  ff(['-i', src, ...(vf ? ['-vf', vf] : []), '-c:v', 'libwebp', '-quality', String(q), '-compression_level', '6', '-preset', 'picture', out]);
+  note(out);
+}
+
+function site() {
+  fs.mkdirSync(SITE, { recursive: true });
+  for (const theme of THEMES) {
+    for (const [scene, label] of Object.entries(CLIPS)) {
+      const mp4 = path.join(SITE, `${scene}-${theme}.mp4`);
+      fs.copyFileSync(clip(scene, theme), mp4);
+      note(mp4);
+      if (!label) continue;
+      const src = still(`${scene}-${label}`, theme);
+      webp(src, path.join(SITE, `${scene}-${theme}-1200.webp`), 1200, 80);
+      webp(src, path.join(SITE, `${scene}-${theme}-2000.webp`), 2000, 78);
+    }
+    for (const label of ['list', 'reply']) webp(still(`phone-${label}`, theme), path.join(SITE, `phone-${label}-${theme}.webp`), 780, 82);
+    for (const [name, from, x, y, w, h] of CROPS) webp(still(from, theme), path.join(SITE, `${name}-${theme}.webp`), null, 86, [x, y, w, h]);
+  }
+  // The link preview (assets/og.jpg) and the README's wordmark are drawn by brand-images.mjs, which needs a browser.
+}
+
+/** A loop for the README: animated WebP from the MP4, smaller and slower than the page's clip. */
+function loop(scene, theme, out, width, fps, q) {
+  ff(['-i', clip(scene, theme), '-vf', `fps=${fps},scale=${width}:-2:flags=lanczos`, '-c:v', 'libwebp_anim', '-loop', '0', '-quality', String(q), '-compression_level', '6', '-an', out]);
+  note(out);
+}
+
+function docs() {
+  fs.mkdirSync(DOCS, { recursive: true });
+  for (const theme of THEMES) {
+    for (const [name, from] of [['hero', 'split-grid'], ['sessions', 'search-results'], ['browser', 'browser-browsing'], ['phone-pair', 'phone-pair-approve'], ['history', 'history-system-lines']]) {
+      webp(still(from, theme), path.join(DOCS, `${name}-${theme}.webp`), 1440, 80);
+    }
+    loop('glass-swap', theme, path.join(DOCS, `glass-swap-${theme}.webp`), 760, 12, 62);
+    loop('steer', theme, path.join(DOCS, `steer-${theme}.webp`), 760, 12, 62);
+    loop('phone', theme, path.join(DOCS, `phone-loop-${theme}.webp`), 300, 12, 66);
+  }
+}
+
+console.log(`From ${IN}, with ${FF}`);
+if (args.site !== '0') site();
+if (args.docs !== '0') docs();
+const total = made.reduce((n, f) => n + fs.statSync(f).size, 0);
+console.log(`${made.length} files, ${(total / 1e6).toFixed(1)} MB in all.`);

@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { composeDesktop } from './server.mjs';
+import { composeDesktop, composePhone, startServer } from './server.mjs';
 import { buildSessions, buildGlass, buildHistory, ID, PRESETS } from './harness/data.mjs';
 import { createEngine } from './harness/engine.mjs';
 import { Turn } from './harness/turns.mjs';
@@ -20,7 +20,9 @@ import { Turn } from './harness/turns.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HARNESS = path.join(HERE, 'harness');
 const files = fs.readdirSync(HARNESS).filter((f) => f.endsWith('.mjs') || f.endsWith('.css')).map((f) => path.join(HARNESS, f));
-const sources = [...files, path.join(HERE, 'scenes.mjs'), path.join(HERE, 'capture.mjs'), path.join(HERE, 'server.mjs'), path.join(HERE, 'desktop.html')];
+const sources = [...files, path.join(HERE, 'scenes.mjs'), path.join(HERE, 'capture.mjs'), path.join(HERE, 'server.mjs'), path.join(HERE, 'desktop.html'),
+  // 2026-10-12: the phone page and the scripts that make the site's media.
+  path.join(HERE, 'phone.html'), path.join(HERE, 'site-media.mjs'), path.join(HERE, 'brand-images.mjs')];
 
 const DOUBLE_HYPHEN = '-'.repeat(2);
 const EM_DASH = String.fromCharCode(0x2014);
@@ -83,6 +85,24 @@ test('desktop.html composes from the live UI index', () => {
   assert.ok(/<script type="module" src="app\.js">/.test(html), 'app.js is loaded once');
   assert.equal(html.split('src="app.js"').length - 1, 1);
   assert.ok(!html.includes('{{UI_'), 'no placeholder is left');
+});
+
+test('phone.html composes the phone client from the live UI and the phone parts (2026-10-12)', async () => {
+  const html = composePhone();
+  assert.ok(html.includes('<body class="web">'), 'the phone shell');
+  assert.ok(html.includes('id="pairScreen"') && html.includes('pair-mark'), 'the phone shell with the Myrlin M');
+  assert.ok(html.includes('href="web.css"'), 'the phone stylesheet after app.css');
+  assert.ok(html.includes('id="drawerBtn"') && html.includes('id="pcLine"'), 'the swaps build-web.mjs makes');
+  assert.ok(html.includes('/harness/phone-boot.mjs') && !/src="app\.js"/.test(html), 'phone-boot loads app.js, nothing else does');
+  assert.ok(!/\{\{[A-Z_]+\}\}|%MARK%/.test(html), 'no placeholder is left');
+  // The phone's own modules are served under /ui/ next to the window's, as in the built page.
+  const server = await startServer();
+  try {
+    for (const f of ['native.js', 'pager.js', 'desktop.js', 'shim.js', 'web.css', 'app.js']) {
+      assert.equal((await fetch(`${server.url}/ui/${f}`)).status, 200, f);
+    }
+    assert.equal((await fetch(`${server.url}/ui/../../package.json`)).status, 404, 'nothing outside the folders');
+  } finally { await server.close(); }
 });
 
 test('the pretend engine answers a window start: sessions, open with history, a scripted send, a stop', async () => {

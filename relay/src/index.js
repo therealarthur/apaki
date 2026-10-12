@@ -31,6 +31,10 @@
  *                                 Workers static assets before this runs;
  *                                 GET / falls back to the line when there is no site
  *                                 (/.well-known/security.txt is one of those files)
+ *   GET /assets/media/<file>      the home page's recordings, the one part of the site
+ *                                 that runs this Worker first (wrangler.jsonc
+ *                                 run_worker_first, 2026-10-12): media.js answers
+ *                                 Range requests, which Safari needs to play an MP4
  *
  * Idle rooms cost nothing: sockets are accepted with the WebSocket
  * Hibernation API, and "ping" is answered by the runtime without waking the
@@ -87,6 +91,7 @@ import {
 } from './lib.js';
 import { ACCOUNT_PATH, PRESENCE_PATH } from './account-lib.js';
 import { handleAccount, handlePresence } from './account.js';
+import { MEDIA_PATH, serveMedia } from './media.js';
 
 // The Account Durable Object class (wrangler.jsonc binding ACCOUNTS) must be exported by the main module.
 export { Account } from './account.js';
@@ -108,6 +113,8 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const only = relayOnly(env);
+    // The home page's recordings, with byte ranges (media.js). Only where the site's assets are bound (not the Private relay).
+    if (env.ASSETS && MEDIA_PATH.test(url.pathname)) return serveMedia(request, env);
     if (url.pathname === '/' || url.pathname === '/health') return text(200, only ? PRIVATE_ABOUT_TEXT : ABOUT_TEXT);
     // Accounts and presence answer JSON (account.js); everything below is the WebSocket relay.
     // A relay-only Worker (the Private relay) has no account routes at all.

@@ -15,7 +15,10 @@
   "routes": [{ "pattern": "apaki.myrlin.io", "custom_domain": true }],
   // Files that exist are served as they are (the Worker is not run for them);
   // everything else (/v1/rooms/..., /health) reaches the Worker.
-  "assets": { "directory": "./site", "html_handling": "auto-trailing-slash", "not_found_handling": "none" },
+  // Except /assets/media/* (2026-10-12): the home page's recordings go through the Worker first
+  // (src/media.js reads them from the ASSETS binding) so Range requests get 206, which Safari needs
+  // to play an MP4. The phone pages (/v/*) and everything else stay served without the Worker.
+  "assets": { "directory": "./site", "binding": "ASSETS", "html_handling": "auto-trailing-slash", "not_found_handling": "none", "run_worker_first": ["/assets/media/*"] },
   "durable_objects": {
     "bindings": [
       { "name": "ROOMS", "class_name": "Room" },

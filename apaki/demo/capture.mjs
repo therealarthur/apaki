@@ -40,6 +40,17 @@ import { SCENES, runScene, sceneNames } from './scenes.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const VIEWPORT = { width: 1440, height: 900 };
+/**
+ * What each kind of scene is shown on (2026-10-12). A scene with device: 'phone' (scenes.mjs) opens
+ * phone.html at an iPhone's 390x844 with touch (stills at 2x, 780x1688). Playwright's recorder
+ * captures CSS pixels, so the clip is 390x844 (asking for more only pads the frame). Desktop scenes
+ * are as before.
+ */
+const DEVICES = {
+  desktop: { page: 'desktop.html', viewport: VIEWPORT, record: VIEWPORT, scale: 2, touch: false },
+  phone: { page: 'phone.html', viewport: { width: 390, height: 844 }, record: { width: 390, height: 844 }, scale: 2, touch: true },
+};
+const deviceOf = (scene) => DEVICES[SCENES[scene]?.device] || DEVICES.desktop;
 const MAX_CLIP_BYTES = 4_000_000;
 const MIN_SECONDS = 8;
 const MAX_SECONDS = 14;
@@ -128,8 +139,8 @@ function probe(ffmpeg, file) {
 }
 
 /** Cuts [start, start+len) from a raw recording and encodes it under the size limit; steps the quality down until it fits. */
-async function encode(ffmpeg, raw, base, start, len) {
-  const vf = 'fps=30,scale=1440:900:flags=lanczos,format=yuv420p';
+async function encode(ffmpeg, raw, base, start, len, size = VIEWPORT) {
+  const vf = `fps=30,scale=${size.width}:${size.height}:flags=lanczos,format=yuv420p`;
   const outs = [];
   const targets = [
     { ext: 'webm', crfs: [31, 35, 39, 43], build: (crf, out) => ['-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', String(crf), '-deadline', 'good', '-cpu-used', '2', '-row-mt', '1', '-an', out] },
@@ -182,8 +193,9 @@ Screenshots and short screen recordings of Myrlin Apaki's desktop window, for th
 
 ## What is here
 
-- \`stills/\`: PNG screenshots at 2880x1800 (1440x900 at 2x), \`<scene>-<theme>.png\` for each scene's hero shot and \`<scene>-<label>-<theme>.png\` for its other moments. Light and dark.
-- \`video/\`: the same scenes as clips, \`<scene>-<theme>.webm\` (VP9) and \`.mp4\` (H.264), 1440x900, 30 fps, 8 to 14 seconds, each under 4 MB.
+- \`stills/\`: PNG screenshots at 2880x1800 (1440x900 at 2x), \`<scene>-<theme>.png\` for each scene's hero shot and \`<scene>-<label>-<theme>.png\` for its other moments. Light and dark. The \`phone\` scene is the phone client at 780x1688.
+- \`video/\`: the same scenes as clips, \`<scene>-<theme>.webm\` (VP9) and \`.mp4\` (H.264), 1440x900 (the \`phone\` scene 390x844), 30 fps, 8 to 14 seconds, each under 4 MB.
+- \`node apaki/demo/site-media.mjs\` converts these into the repo (relay/site/assets/media, apaki/docs/media); those are copies.
 - \`manifest.json\`: every file with its size, duration and the scene and theme it belongs to.
 
 ## Where it comes from
@@ -213,9 +225,11 @@ See ../_WHY_THIS_IS_HERE.md. Safe to delete; regenerate with that command.
 /* running a scene */
 
 async function openScene(browser, { scene, theme, baseUrl, recordDir }) {
+  const dev = deviceOf(scene);
   const ctx = await browser.newContext({
-    viewport: VIEWPORT, deviceScaleFactor: 2, locale: 'en-US', timezoneId: 'America/New_York', colorScheme: theme,
-    ...(recordDir ? { recordVideo: { dir: recordDir, size: VIEWPORT } } : {}),
+    viewport: dev.viewport, deviceScaleFactor: dev.scale, locale: 'en-US', timezoneId: 'America/New_York', colorScheme: theme,
+    ...(dev.touch ? { hasTouch: true, isMobile: true } : {}),
+    ...(recordDir ? { recordVideo: { dir: recordDir, size: dev.record } } : {}),
   });
   const startedAt = Date.now();
   const page = await ctx.newPage();
@@ -224,7 +238,7 @@ async function openScene(browser, { scene, theme, baseUrl, recordDir }) {
   page.on('pageerror', (e) => problems.push(`page error: ${e.message}`));
   page.on('requestfailed', (r) => problems.push(`request failed: ${r.url()}`));
   page.on('response', (r) => { if (r.status() >= 400 && !r.url().endsWith('favicon.ico')) problems.push(`HTTP ${r.status()}: ${r.url()}`); });
-  await page.goto(`${baseUrl}/desktop.html?ws=${encodeURIComponent(SCENES[scene].ws)}&theme=${theme}`);
+  await page.goto(`${baseUrl}/${dev.page}?ws=${encodeURIComponent(SCENES[scene].ws)}&theme=${theme}`);
   await page.waitForFunction(() => window.__demo?.ready?.(), null, { timeout: 20000 });
   // Context meters, history and the Glass card settle in over the first second or two.
   await page.waitForTimeout(2200);
@@ -271,7 +285,8 @@ async function main() {
             },
           });
           await ctx.close();
-          for (const s of saved) manifest.push({ scene: name, theme, kind: 'still', hero: s.label === SCENES[name].hero, label: s.label, file: path.relative(OUT, s.file).replace(/\\/g, '/'), bytes: s.bytes, width: 2880, height: 1800 });
+          const dv = deviceOf(name);
+          for (const s of saved) manifest.push({ scene: name, theme, kind: 'still', hero: s.label === SCENES[name].hero, label: s.label, file: path.relative(OUT, s.file).replace(/\\/g, '/'), bytes: s.bytes, width: dv.viewport.width * dv.scale, height: dv.viewport.height * dv.scale });
           console.log(`  ${name} / ${theme}: ${saved.length} stills (${((Date.now() - t0) / 1000).toFixed(1)} s, scene ${result.seconds.toFixed(1)} s)`);
           for (const p of probs) problems.push(`${name}/${theme} stills: ${p}`);
         }
@@ -287,7 +302,7 @@ async function main() {
           const len = Math.min(MAX_SECONDS, result.seconds + CUT_LEAD_SECONDS + 0.3);
           if (result.seconds < MIN_SECONDS || result.seconds > MAX_SECONDS + 1) console.warn(`    note: ${name} runs ${result.seconds.toFixed(1)} s; the target is ${MIN_SECONDS} to ${MAX_SECONDS}`);
           const base = path.join(OUT, 'video', `${name}-${theme}`);
-          const outs = await encode(ffmpeg, raw, base, start, len);
+          const outs = await encode(ffmpeg, raw, base, start, len, deviceOf(name).record);
           for (const o of outs) {
             const info = probe(ffmpeg, o.file);
             manifest.push({ scene: name, theme, kind: 'video', file: path.relative(OUT, o.file).replace(/\\/g, '/'), bytes: o.bytes, seconds: info.seconds, width: info.width, height: info.height, codec: info.codec, crf: o.crf });
