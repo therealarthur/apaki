@@ -244,6 +244,10 @@ if ($Now -and (& $isRunning)) { 'Apaki is open: files it uses are moved aside, a
 # With -Now it stays: it may be serving the open window, and Move-LockedAside
 # lets the copy go around the files it holds.
 $hostWasRunning = if ($Now) { $false } else { Stop-ApakiBackgroundHost }
+# The engine build before the copy (size and modified time of engine.js, as the window compares builds), so -Now
+# can tell whether the engine itself changed (2026-10-11).
+$engineJs = Join-Path $dest 'engine\apaki\engine\engine.js'
+$engineBefore = if (Test-Path -LiteralPath $engineJs) { $i = Get-Item -LiteralPath $engineJs; "$($i.Length)-$($i.LastWriteTimeUtc.Ticks)" } else { '' }
 
 # Mirror the package in, keeping voice\ (its files come from setup\voice below,
 # never over the user's). setup\ and the installer itself stay in the package.
@@ -269,6 +273,19 @@ if ($LASTEXITCODE -ge 8) {
   throw 'copy into the install folder failed'
 }
 Remove-AsideLeftovers $dest
+
+# -Now with a new engine (2026-10-11): the running background engine keeps the old code until it exits, and it only
+# exits idle with no window. Ask it now to retire once idle, so the next time Apaki is closed it exits within seconds
+# and the next window starts the new engine: one restart instead of two, and no long wait.
+if ($Now -and -not $TestProfile) {
+  $engineAfter = if (Test-Path -LiteralPath $engineJs) { $i = Get-Item -LiteralPath $engineJs; "$($i.Length)-$($i.LastWriteTimeUtc.Ticks)" } else { '' }
+  $ctlNow = Join-Path $dest 'engine\apaki\engine\host-ctl.js'
+  $nodeNow = Join-Path $dest 'node\node.exe'
+  if ($engineBefore -and $engineAfter -ne $engineBefore -and (Test-Path -LiteralPath $ctlNow) -and (Test-Path -LiteralPath $nodeNow)) {
+    $null = Invoke-Quiet $nodeNow @($ctlNow, 'quit', '--when-idle')
+    'engine updated: the background engine retires the next time Apaki is closed with nothing running, and the next window starts the new one'
+  }
+}
 
 # Voice (2026-10-10): add what is missing, never replace (/XC /XN /XO copy only new files).
 if (Test-Path (Join-Path $voiceBundle 'bin\Release\whisper-cli.exe')) {
