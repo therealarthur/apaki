@@ -47,8 +47,6 @@ node apaki/demo/server.mjs port=8765
 
 then open `http://127.0.0.1:8765/desktop.html?ws=steer&theme=dark`. For the phone client at 390x844: `http://127.0.0.1:8765/phone.html?ws=phone&theme=light`; `ws=phone-browser` makes the first conversation play a visit to the demo shop as the real engine reports it (Browser tool lines and activity), so the phone's Browser button and view can be tried (the engine answers `browserView` with a drawn picture, and `forkSession` with a copy). Query string: `ws=<workspace>` (a name from `PRESETS` in `harness/data.mjs`), `theme=light|dark|auto`, `cursor=0` hides the pointer overlay, `seed=` and `now=` override the dice and the clock. It is a working window: type, send, steer, open the Glass panel.
 
-The shared view (a phone following a desktop pane without taking it over): `phone.html?ws=follow-phone&follow=1` is a phone whose PC can follow. Tap a working conversation under On your desktop and the phone pane streams it with its Watching bar and Take over; `cap=noshell` or `cap=chat` is a restricted phone (View only). Without `follow=1` the PC has no such feature and a tap takes the conversation over, as before. On the desktop page, `window.__demo.engine.followers('ph1', ['Maya\'s iPhone'])` draws the Also on line in a `ws=handoff` pane, and `peerMessage` and `followClosed` do the same for what a phone pane hears.
-
 ## The scenes
 
 | Scene | What it shows | Stills |
