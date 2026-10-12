@@ -55,6 +55,10 @@ import { initTooltips, setTip } from './tooltip.js';
 import {
   GLYPH, createOpenState, detailLine, detailsHtml, folderMenuItems, groupRows, leadHtml, navKey, rowTip, sessionFacts, sessionMenuItems, shortTime,
 } from './sessionlist.js';
+// Decorative motion rests while the window is hidden or unfocused (2026-10-12, input lag).
+import { initRest } from './rest.js';
+
+initRest();
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -1152,7 +1156,7 @@ function renderTabs() {
     // A tab whose conversations all work in one worktree says which (worktree.js tabNote, 2026-10-12).
     const onBranch = wtc.tabNote(panes.filter((p) => !p.isViewer && p.cwd).map((p) => p.cwd));
     tab.title = `${onBranch ? `${onBranch}\n` : ''}${panes.map((p) => `${p.busy ? 'working: ' : p.unread ? 'finished: ' : ''}${p.title}`).join('\n') || 'Empty tab'}`;
-    tab.innerHTML = `<span class="tab-t">${esc(f?.title || 'Empty tab')}</span>${convs > 1 ? `<span class="tab-n">${convs}</span>` : ''}${warm ? '<span class="warm-ring" aria-hidden="true"></span>' : ''}`;
+    tab.innerHTML = `<span class="tab-t">${esc(f?.title || 'Empty tab')}</span>${convs > 1 ? `<span class="tab-n">${convs}</span>` : ''}${warm ? '<span class="warm-ring" aria-hidden="true"></span>' : ''}${busy ? '<span class="tab-sweep" aria-hidden="true"><i></i></span>' : ''}`;
     // Double-click the name to rename its session (saved in the session, not only here).
     tab.querySelector('.tab-t').ondblclick = (e) => { e.stopPropagation(); if (f && !f.isViewer) beginRename(f.sessionId, tab.querySelector('.tab-t'), { pane: f }); };
     const x = el('button', 'tab-x', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>');

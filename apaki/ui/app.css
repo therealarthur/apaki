@@ -622,7 +622,11 @@ body { background: hsl(var(--w)); isolation: isolate; font-weight: 460; }
 body::before {
   content: ""; position: fixed; inset: 0 -40% 0 -40%; z-index: -2; pointer-events: none;
   background: var(--pearl-gradient);
-  animation: pearl-drift 48s var(--ease-hover) infinite alternate; will-change: transform;
+  /* Stepped, about 6 moves a second (2026-10-12, input lag): every frosted surface (the sidebar, pane headers, the
+     composers, the cards) blurs what is behind it, so each time the pearl moves the GPU blurs all of them again. The
+     drift is 14 px a second and the pearl is a few percent of tint under the white overlay, so 6 moves a second look the
+     same as 60 and cost a tenth. */
+  animation: pearl-drift 48s steps(288, end) infinite alternate; will-change: transform;
 }
 body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: var(--halftone), var(--pearl-overlay); }
 .stages { background: none; }
@@ -631,8 +635,13 @@ body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-event
 
 /* ---------- sidebar: a frosted pane in clear sections ---------- */
 .rail {
-  background: var(--rail-frost);
-  -webkit-backdrop-filter: blur(28px) saturate(1.6); backdrop-filter: blur(28px) saturate(1.6);
+  /* The frost is baked (2026-10-12, input lag). It was var(--rail-frost) over a live backdrop-filter: blur(28px)
+     saturate(1.6); but the pearl behind it shows through at about one percent, and the blur only softened the halftone
+     dots, so a plain white with a faint purple cast at the foot is the same picture (measured: at most 8 of 255 in one
+     channel, in light and dark). A live blur meant the GPU blurred this whole column again each frame that anything in it
+     moved: a working row's spinner, a keep-warm ring. Those now cost nothing extra. */
+  background: linear-gradient(180deg, transparent 45%, hsla(var(--pearl-stop-purple), .03)), hsl(var(--w));
+  -webkit-backdrop-filter: none; backdrop-filter: none;
   border-right: 1px solid var(--sec-line);
   box-shadow: inset -1px 0 0 hsla(var(--w), .75), 6px 0 28px -22px rgba(var(--shadow-rgb), .35);
   overflow: hidden;
@@ -1613,6 +1622,58 @@ button.pin-n:focus-visible { outline: 2px solid var(--brand); outline-offset: 1p
 .tab .warm-ring { inset: 0; padding: 1.25px; }
 @keyframes warm-spin { to { --warm-a: 360deg; } }
 
+/* The same ring, turned on the compositor (2026-10-12, input lag). Animating the conic gradient's angle repainted
+   every ring on the main thread at 60 fps, and Arthur keeps about 19 sessions warm: the main thread was busy nearly
+   all the time, so a key press waited for a paint. The ring is now a static mask with a larger conic layer inside it
+   that only rotates (a transform: no main-thread work). The picture is the same ring; the old rules above stay as the fallback. */
+.warm-ring { background: none; animation: none; overflow: hidden; }
+.warm-ring::before {
+  content: ""; position: absolute; left: 50%; top: 50%; width: calc(100% + 40px); aspect-ratio: 1; pointer-events: none;
+  background: conic-gradient(transparent 0deg, hsla(var(--pearl-stop-blue), .55) 60deg, var(--brand) 120deg, var(--peach-glow) 165deg, transparent 220deg, transparent 360deg);
+  transform: translate(-50%, -50%) rotate(0deg); animation: warm-turn 7s linear infinite; will-change: transform;
+}
+@keyframes warm-turn { to { transform: translate(-50%, -50%) rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .warm-ring::before { display: none; } }
+/* 30 moves a second is as smooth as the eye needs for a slow ring, and half the frames to produce. */
+.warm-ring::before { animation-timing-function: steps(210, end); }
+
+/* The effort grid's ripple, as one moving band (2026-10-12, input lag). Fifteen dots each animated on their own, and
+   every pane at max effort carries a grid that never stops (plus one per working pane), so a window with six panes
+   moved a couple of hundred layers every frame, and the dots' background colour kept it on the main thread as well.
+   Now the dots hold still, a peach band sweeps across them diagonally and the grid is masked to its own dots, so the
+   band shows only on them: two layers per grid, a transform only, 20 moves a second. The dots rest at the middle of
+   the old pulse (the old keyframes swung between .45 and 1). */
+.egrid { position: relative; }
+.egrid.max i.lit, .egrid.live i { opacity: .66; animation: none; }
+.egrid.max, .egrid.live {
+  -webkit-mask: linear-gradient(90deg, #000 3px, transparent 3px) 0 0 / 5px 100% repeat-x, linear-gradient(180deg, #000 3px, transparent 3px) 0 0 / 100% 5px repeat-y;
+  -webkit-mask-composite: source-in;
+  mask: linear-gradient(90deg, #000 3px, transparent 3px) 0 0 / 5px 100% repeat-x, linear-gradient(180deg, #000 3px, transparent 3px) 0 0 / 100% 5px repeat-y;
+  mask-composite: intersect;
+}
+.egrid.max::after, .egrid.live::after {
+  content: ""; position: absolute; top: -2px; bottom: -2px; left: 0; width: 14px; pointer-events: none;
+  background: linear-gradient(100deg, transparent, var(--peach-glow) 50%, transparent);
+  transform: translateX(-14px); animation: egrid-wave var(--dur-grid) steps(14, end) infinite; will-change: transform;
+}
+@keyframes egrid-wave { 0% { transform: translateX(-14px); } 45%, 100% { transform: translateX(24px); } }
+
+/* A working tab's sweep, compositor only: the bar was a background-position animation (main thread, every frame).
+   A moving child inside a clipping track does the same sweep with a transform (tab-sweep, app.js renderTabs). */
+.tab.busy::after { content: none; animation: none; }
+.tab-sweep { display: none; position: absolute; left: 12px; right: 12px; bottom: 2px; height: 2px; border-radius: 2px; overflow: hidden; pointer-events: none; }
+.tab.busy .tab-sweep { display: block; }
+.tab-sweep i {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 50%;
+  background: linear-gradient(90deg, transparent, var(--brand), var(--peach-glow), transparent);
+  transform: translateX(-60%); animation: tab-sweep 1.6s var(--ease-hover) infinite alternate; will-change: transform;
+}
+@keyframes tab-sweep { from { transform: translateX(-60%); } to { transform: translateX(160%); } }
+@media (prefers-reduced-motion: reduce) { .tab-sweep { display: none !important; } }
+
+/* Rest (rest.js, 2026-10-12): while the window is hidden or not focused, every decorative loop is paused. */
+html.rest *, html.rest *::before, html.rest *::after { animation-play-state: paused !important; }
+
 /* The live list. */
 .sessions .headless { color: var(--soft); font-weight: 600; letter-spacing: .02em; }
 .sec-refresh { display: grid; place-items: center; width: 22px; height: 22px; margin-left: -2px; border: 0; border-radius: 6px; background: none; cursor: pointer; flex: none; }
@@ -2393,7 +2454,8 @@ body.rail-collapsed .signin-card { left: 22px; }
   transform: translate3d(0, 18px, 0);
   transition: opacity 1400ms var(--ease-out), transform 1400ms var(--ease-out);
 }
-.pane.busy::before { opacity: .8; transform: translate3d(0, 6px, 0); animation: pane-glow 11s ease-in-out infinite alternate; }
+/* Stepped, about 16 moves a second (2026-10-12): the glow sits behind the composer's frosted strip, which is blurred again each time the glow moves. */
+.pane.busy::before { opacity: .8; transform: translate3d(0, 6px, 0); animation: pane-glow 11s steps(88, end) infinite alternate; }
 @keyframes pane-glow {
   0% { transform: translate3d(-3%, 10px, 0) scale(1); opacity: .5; }
   50% { transform: translate3d(1.5%, 2px, 0) scale(1.05); opacity: .85; }
@@ -2930,7 +2992,8 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
 .srow .sr-lead.sr-waiting { color: var(--sl-warn); }
 .srow .sr-lead.sr-archived-copy { color: var(--faint); }
 .srow .sr-lead .trk { stroke-opacity: .22; }
-.srow .sr-lead .arc { stroke-width: 1.8; transform-origin: 8px 8px; animation: sr-spin 1s linear infinite; }
+/* Twelve ticks a turn (2026-10-12, input lag): a spinner this size reads the same as a smooth one, and it is 12 frames a second to produce, not 60. */
+.srow .sr-lead .arc { stroke-width: 1.8; transform-origin: 8px 8px; animation: sr-spin 1s steps(12, end) infinite; }
 @keyframes sr-spin { to { transform: rotate(360deg); } }
 
 /* Quiet marks after the name: pinned (outside Pinned), a linked worktree. */
