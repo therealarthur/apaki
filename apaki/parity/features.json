@@ -106,7 +106,7 @@
     },
     {
       "id": "tool-permission-prompts",
-      "title": "Allow or deny sheet when Claude Code asks to use a tool",
+      "title": "Allow or deny card in the pane when Claude Code asks to use a tool",
       "product": "claude-sdk",
       "upstream": [
         "claude-sdk:option:canUseTool",
@@ -116,15 +116,15 @@
       ],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["apaki/engine/permissions.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/ui/permission.js", "apaki/ui/app.js", "src/runner.js", "test/apaki-permissions.test.js"],
-      "commits": ["655bd06", "1734636"],
+      "where": ["apaki/engine/permissions.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/ui/permission.js", "apaki/ui/app.js", "src/runner.js", "test/apaki-permissions.test.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["655bd06", "1734636", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "2026-10-12: built. engine.js passes every pane the callback from permissions.js, which holds the call, sends an ask event with a permission block (the SDK's title, displayName, description, decisionReason, blockedPath, defaultToNo and the suggestions as words) and settles it from the window's or phone's answer op: Allow once, Always allow (the SDK's suggestions returned as updatedPermissions, never rules from the client; suppressAlwaysAllowRule is respected) or Deny with a note (the note is Claude's message). Enter allows once (not in the first 600 ms, not when defaultToNo) and Esc denies. Answered once; the sheet drops (ask_gone) when the signal aborts, the main turn ends or the process ends; a subagent's prompt survives a main result. A phone's blocked tools are refused first (capCanUseTool); only a Full phone may save a rule. Apaki's own show tool (mcp__apaki__show, from the in-process server) is allowed without a prompt; its browser tools are asked about like any MCP tool. Before this, anything that would prompt was auto-allowed (observed 2026-10-11). Not covered: the permission_denied message still shows as a Permission line, not a sheet; AskUserQuestion and ExitPlanMode keep their own sheets."
+      "notes": "2026-10-12: built. engine.js passes every pane the callback from permissions.js, which holds the call, sends an ask event with a permission block (the SDK's title, displayName, description, decisionReason, blockedPath, defaultToNo and the suggestions as words) and settles it from the window's or phone's answer op: Allow once, Always allow (the SDK's suggestions returned as updatedPermissions, never rules from the client; suppressAlwaysAllowRule is respected) or Deny with a note (the note is Claude's message). Enter allows once (not in the first 600 ms, not when defaultToNo) and Esc denies. Answered once; the sheet drops (ask_gone) when the signal aborts, the main turn ends or the process ends; a subagent's prompt survives a main result. A phone's blocked tools are refused first (capCanUseTool); only a Full phone may save a rule. Apaki's own show tool (mcp__apaki__show, from the in-process server) is allowed without a prompt; its browser tools are asked about like any MCP tool. Before this, anything that would prompt was auto-allowed (observed 2026-10-11). Not covered: the permission_denied message still shows as a Permission line, not a sheet; AskUserQuestion and ExitPlanMode keep their own sheets. 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "ask-user-question",
-      "title": "AskUserQuestion sheet, answered once, waits up to 7 days",
+      "title": "AskUserQuestion card in the pane, answered once, waits up to 7 days",
       "product": "claude-sdk",
       "upstream": [
         "claude-sdk:tool-input:AskUserQuestion",
@@ -135,24 +135,24 @@
       ],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["src/runner.js", "apaki/engine/engine.js", "apaki/ui/app.js", "test/runner-options.test.js"],
-      "commits": ["85f01fd", "73e81ff", "c8ecdd7"],
+      "where": ["src/runner.js", "apaki/engine/engine.js", "apaki/ui/app.js", "test/runner-options.test.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["85f01fd", "73e81ff", "c8ecdd7", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "In bypassPermissions the SDK never calls canUseTool, so AskUserQuestion and ExitPlanMode are answered from a programmatic PreToolUse hook (matcher AskUserQuestion|ExitPlanMode). The hook timeout is ASK_TIMEOUT_S = 7 days (src/runner.js) so a slow answer is never dropped and asked again. The engine settles questions nobody waits for and the window drops the stale sheet (ask_gone). Sheet supports multiple questions, multi-select and a typed answer."
+      "notes": "In bypassPermissions the SDK never calls canUseTool, so AskUserQuestion and ExitPlanMode are answered from a programmatic PreToolUse hook (matcher AskUserQuestion|ExitPlanMode). The hook timeout is ASK_TIMEOUT_S = 7 days (src/runner.js) so a slow answer is never dropped and asked again. The engine settles questions nobody waits for and the window drops the stale sheet (ask_gone). Sheet supports multiple questions, multi-select and a typed answer. 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "exit-plan-mode-approval",
-      "title": "Plan approval sheet (Ready to code?)",
+      "title": "Plan approval card in the pane (Ready to code?)",
       "product": "claude-sdk",
       "upstream": ["claude-sdk:tool-input:ExitPlanMode", "claude-sdk:hook-event:PreToolUse", "claude-sdk:permission-mode:plan"],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["apaki/ui/app.js", "apaki/engine/engine.js", "src/runner.js"],
-      "commits": ["85f01fd", "73e81ff"],
+      "where": ["apaki/ui/app.js", "apaki/engine/engine.js", "src/runner.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["85f01fd", "73e81ff", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "Approve switches the pane out of plan mode; Keep planning denies. A chat-only phone cannot carry out a plan: the engine answers ExitPlanMode before asking that phone (engine.js)."
+      "notes": "Approve switches the pane out of plan mode; Keep planning denies. A chat-only phone cannot carry out a plan: the engine answers ExitPlanMode before asking that phone (engine.js). 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "steer-running-turn",
@@ -1944,7 +1944,7 @@
     },
     {
       "id": "codex-request-user-input",
-      "title": "Codex question sheet (request_user_input), same as Claude's AskUserQuestion",
+      "title": "Codex question card in the pane (request_user_input), same as Claude's AskUserQuestion",
       "product": "codex",
       "upstream": [
         "codex:server-request:item/tool/requestUserInput",
@@ -1953,11 +1953,11 @@
       ],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-e2e.test.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-e2e.test.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "The same sheet as Claude's AskUserQuestion (options, a typed answer), headed by whose question it is; isSecret questions hide what is typed; answered once; a skip answers nothing; serverRequest/resolved drops a stale sheet. Multi-select does not exist in Codex's questions."
+      "notes": "The same sheet as Claude's AskUserQuestion (options, a typed answer), headed by whose question it is; isSecret questions hide what is typed; answered once; a skip answers nothing; serverRequest/resolved drops a stale sheet. Multi-select does not exist in Codex's questions. 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "codex-approval-requests",
@@ -1973,11 +1973,11 @@
       ],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "apaki/ui/permission.js", "test/apaki-codex-e2e.test.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "apaki/ui/permission.js", "test/apaki-codex-e2e.test.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Command, file change, permissions and the older exec and patch approvals use the permission sheet with Codex's words (Approve once, Approve for this session, Deny) and the command or the diff shown; an unreadable answer declines; Deny with a note sends the note to the model as a steer. A request nobody can answer (a thread with no pane) is declined at once. Not done: acceptWithExecpolicyAmendment (offered as the session approval where the server lists no session decision)."
+      "notes": "Command, file change, permissions and the older exec and patch approvals use the permission sheet with Codex's words (Approve once, Approve for this session, Deny) and the command or the diff shown; an unreadable answer declines; Deny with a note sends the note to the model as a steer. A request nobody can answer (a thread with no pane) is declined at once. Not done: acceptWithExecpolicyAmendment (offered as the session approval where the server lists no session decision). 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "codex-mcp-elicitation",
@@ -1986,11 +1986,11 @@
       "upstream": ["codex:server-request:mcpServer/elicitation/request"],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-map.test.js", "test/apaki-codex-e2e.test.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-map.test.js", "test/apaki-codex-e2e.test.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "A tool-call approval (Codex marks it in _meta) is a permission sheet, a form is the question sheet (one question per field; enums, yes or no and text), a link asks first and then opens in Apaki's browser. The shapes were written from the schema and run end to end against the fake app-server; none was seen live (no turn was started on a real account). The openai/form variants and user verification are declined, never left waiting."
+      "notes": "A tool-call approval (Codex marks it in _meta) is a permission sheet, a form is the question sheet (one question per field; enums, yes or no and text), a link asks first and then opens in Apaki's browser. The shapes were written from the schema and run end to end against the fake app-server; none was seen live (no turn was started on a real account). The openai/form variants and user verification are declined, never left waiting. 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "claude-mcp-elicitation",

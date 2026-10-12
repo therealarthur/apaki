@@ -43,6 +43,8 @@ test('the tab strip names each tab by its focused pane, "Tab N" when it has none
   assert.deepEqual(m.map((t) => t.n), [3, 1, 1]);
   assert.deepEqual(m.map((t) => [t.on, t.busy, t.unread]), [[true, true, false], [false, false, false], [false, false, true]]);
   assert.deepEqual(m.map((t) => t.i), [0, 1, 2]);
+  // A question waiting for you in one of its panes (askcard.js, 2026-10-12): the chip says so.
+  assert.deepEqual(stripModel([{ title: 'A', waiting: true }, { title: 'B' }]).map((t) => t.waiting), [true, false]);
 });
 
 test('the pager: the page a scroll position shows, and how lit each segment is', async () => {

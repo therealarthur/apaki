@@ -27,7 +27,7 @@ import {
   INPUT_CUT_CHARS, permissionPayload, permissionResult, ruleText, slimInput,
 } from '../apaki/engine/permissions.js';
 import { capCanUseTool, checkPhoneCommand, routeEvent } from '../apaki/engine/remote-policy.js';
-import { ARM_MS, denyLabel, mcpParts, permissionHtml, permissionKey, permissionReply, permissionView } from '../apaki/ui/permission.js';
+import { ARM_MS, denyLabel, mcpParts, permissionChoices, permissionHtml, permissionKey, permissionReply, permissionView } from '../apaki/ui/permission.js';
 import { connectHost, readHostInfo } from '../apaki/engine/host.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -220,6 +220,8 @@ test('gate: a call Claude Code cancelled drops its sheet (ask_gone) and is refus
   assert.equal(asks.size, 0);
   assert.deepEqual(events.map((e) => e.ev), ['ask', 'ask_gone']);
   assert.deepEqual([events[1].askId, events[1].paneId], ['ask-1', 'p1']);
+  // Why it went, so the pane's card can leave its one line (askcard.js goneNote, 2026-10-12).
+  assert.equal(events[1].why, 'cancelled');
   // A late answer to the sheet that went away does nothing.
   const done = new AbortController();
   done.abort();
@@ -393,29 +395,46 @@ test('permissionHtml: escapes everything, shows the three buttons only when they
   assert.ok(html.includes('Always allow saves'));
   assert.ok(html.includes('Allow Bash(echo:*) for this project, kept on this PC'));
   assert.ok(html.includes('data-note'));
-  assert.ok(html.includes('Enter allows once. Esc denies.'));
+  // Inline in the pane since 2026-10-12 (askcard.js): numbered rows in Claude Code's order, and Esc only leaves the card.
+  assert.ok(html.includes('Enter allows once. Esc goes back to your message.'));
+  const nums = [...html.matchAll(/data-k="(\w+)"[^>]*><span class="ask-n" aria-hidden="true">(\d)<\/span>/g)].map((m) => `${m[2]} ${m[1]}`);
+  assert.deepEqual(nums, ['1 once', '2 always', '3 deny']);
+  assert.deepEqual(permissionChoices(view), ['once', 'always', 'deny']);
   const plain = permissionHtml(permissionView({ toolName: 'Bash', input: { command: 'x' }, permission: { defaultToNo: true } }));
   assert.ok(!plain.includes('data-k="always"'), 'no suggestion, no Always allow');
   assert.ok(plain.includes('Enter does not approve this one.'));
+  assert.ok(plain.includes('<span class="ask-n" aria-hidden="true">2</span>') && !plain.includes('>3</span>'), 'without Always allow, Deny is 2');
+  assert.ok(!/<h2|class="row perm-row"/.test(html), 'not the old sheet');
   assert.ok(!html.includes('\u2014') && !html.includes('-'.repeat(2)), 'no em dashes or double hyphens in the words');
 });
 
-test('permissionKey: Enter allows once, Esc denies; a stray Enter, a focused button and a default of no approve nothing', () => {
+test('permissionKey: Enter allows once, numbers pick their row, Esc leaves the card; a stray Enter, a focused button and a default of no approve nothing', () => {
   const k = (o) => permissionKey({ armed: true, ...o });
   assert.equal(k({ key: 'Enter' }), 'once');
-  assert.equal(k({ key: 'Escape' }), 'deny');
-  assert.equal(k({ key: 'Escape', target: 'field', noteText: 'x' }), 'deny');
+  // Esc goes back to the message box without answering (2026-10-12, the card in the pane): it never denies now.
+  assert.equal(k({ key: 'Escape' }), 'leave');
+  assert.equal(k({ key: 'Escape', target: 'field', noteText: 'x' }), 'leave');
   assert.equal(k({ key: 'Enter', armed: false }), null, 'the first moments: a keystroke meant for the message box');
-  assert.equal(k({ key: 'Escape', armed: false }), 'deny');
+  assert.equal(k({ key: 'Escape', armed: false }), 'leave');
   assert.equal(k({ key: 'Enter', target: 'button' }), null, 'the focused button\'s own click');
   assert.equal(k({ key: 'Enter', target: 'field', noteText: '  ' }), null);
   assert.equal(k({ key: 'Enter', target: 'field', noteText: 'use pnpm' }), 'deny', 'a typed note goes with Deny');
   assert.equal(k({ key: 'Enter', defaultToNo: true }), null, 'the SDK asked for a default of no: no one-key approve');
-  assert.equal(k({ key: 'Escape', defaultToNo: true }), 'deny');
+  assert.equal(k({ key: 'Escape', defaultToNo: true }), 'leave');
   assert.equal(k({ key: 'Enter', shiftKey: true }), null);
   assert.equal(k({ key: 'Enter', ctrlKey: true }), null);
   assert.equal(k({ key: 'Enter', repeat: true }), null);
   assert.equal(k({ key: 'a' }), null);
+  // The numbers: Claude Code's 1, 2, 3, on the card or a row, never while typing a note, never in the first moments.
+  assert.equal(k({ key: '1' }), 'once');
+  assert.equal(k({ key: '2' }), 'always');
+  assert.equal(k({ key: '3', target: 'button' }), 'deny');
+  assert.equal(k({ key: '2', choices: ['once', 'deny'] }), 'deny', 'without Always allow, Deny is 2');
+  assert.equal(k({ key: '3', choices: ['once', 'deny'] }), null);
+  assert.equal(k({ key: '1', target: 'field' }), null, 'typing a note');
+  assert.equal(k({ key: '1', armed: false }), null);
+  assert.equal(k({ key: '1', repeat: true }), null);
+  assert.equal(k({ key: '1', altKey: true }), null);
   assert.ok(ARM_MS >= 300 && ARM_MS <= 1500);
 });
 
@@ -656,6 +675,7 @@ test('end to end: a prompt that waits is shown again to a window that reattaches
   await p.result(req);
   const gone = await waitFor(w, 'ask_gone after the turn ended', (m) => m.ev === 'ask_gone' && m.askId === stale.askId, 10000, mark);
   assert.equal(gone.paneId, 'pB');
+  assert.equal(gone.why, 'turn', 'the card says the turn ended');
   w.send({ op: 'answer', askId: stale.askId, result: { behavior: 'allow' } });
   req = p.send('perm:late');
   const late = JSON.parse(String((await p.result(req)).result).slice('late '.length));
@@ -669,6 +689,7 @@ test('end to end: a prompt that waits is shown again to a window that reattaches
   const cancelled = await p.ask(mark);
   const gone2 = await waitFor(w, 'ask_gone after a cancel', (m) => m.ev === 'ask_gone' && m.askId === cancelled.askId, 10000, mark);
   assert.equal(gone2.paneId, 'pB');
+  assert.equal(gone2.why, 'cancelled');
   assert.equal(jsonAfter(await p.result(req), 'perm').behavior, 'deny');
   w.close();
 });
@@ -695,6 +716,7 @@ test('end to end: questions and plan approvals are answered as before; closing a
   w.send({ op: 'close', reqId: 'cl1', paneId: 'pC' });
   const gone = await waitFor(w, 'ask_gone after closing the pane', (m) => m.ev === 'ask_gone' && m.askId === open.askId, 10000, mark);
   assert.equal(gone.paneId, 'pC');
+  assert.equal(gone.why, 'closed');
   await waitFor(w, 'closed', (m) => m.ev === 'closed' && m.paneId === 'pC', 10000, mark);
   w.close();
 });
@@ -723,5 +745,6 @@ test('end to end: a prompt from a subagent outlives the main turn; the end of th
   w.send({ op: 'effort', reqId: 'ef1', paneId: 'pD', effort: 'low' });
   const gone = await waitFor(w, 'ask_gone after the process ended', (m) => m.ev === 'ask_gone' && m.askId === left.askId, 10000, mark);
   assert.equal(gone.paneId, 'pD');
+  assert.equal(gone.why, 'stopped');
   w.close();
 });
