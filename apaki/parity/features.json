@@ -620,6 +620,40 @@
       "notes": "Per tab: panes in layout order, kind, title, session id, working, focus. Drafts, queues, folders and browser addresses stay on the PC."
     },
     {
+      "id": "phone-shared-view",
+      "title": "Follow a conversation open on the desktop from the phone, without taking it over",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": {
+        "desktop": "supported",
+        "phone": "supported"
+      },
+      "where": [
+        "apaki/engine/remote.js",
+        "apaki/engine/remote-policy.js",
+        "apaki/engine/engine.js",
+        "apaki/engine/codex-panes.js",
+        "apaki/ui/pane.js",
+        "apaki/ui/app.js",
+        "apaki/web/src/desktop.js",
+        "apaki/web/src/shim.js",
+        "apaki/web/src/web.css",
+        "test/apaki-follow.test.js",
+        "test/apaki-follow-phone.test.js"
+      ],
+      "commits": [
+        "9512b38",
+        "2affcea",
+        "7f39b58"
+      ],
+      "sessions": [
+        "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
+      ],
+      "verifiedAgainst": {},
+      "notes": "Tapping a desktop pane on the phone sends op follow: the phone pane shows that conversation live (messages, tool lines, thinking, questions) while the desktop keeps the pane and its one Claude Code. Take over is an action in the pane (a confirm sheet, then unfollow and a forced open), and the PC pane then says it moved. Desktop: a quiet Also on <phone> line in the pane header, and a Sent from <phone> tag on a message typed there; no pill, no dot. Access: Full may send, steer, stop and answer from the followed pane; No shell and Chat only watch (View only line, questions answered on the PC); the model, effort and mode of a followed pane are the desktop's for every level. A followed Claude or Codex pane both work. A phone that reconnects or reloads follows again instead of reopening. Looked at in the demo harness (phone.html?ws=follow-phone&follow=1, cap=chat for a restricted phone), light and dark at 390 by 844."
+    },
+    {
       "id": "notification-ding",
       "title": "Ding when a session comes back or needs an answer",
       "product": "apaki",
@@ -1020,12 +1054,12 @@
       "product": "apaki",
       "upstream": [],
       "status": "supported",
-      "surfaces": { "desktop": "supported", "phone": "n/a" },
+      "surfaces": { "desktop": "supported", "phone": "supported" },
       "where": ["src/sessions.js", "apaki/engine/engine.js", "apaki/ui/pane.js"],
       "commits": ["6beebdd", "c8ecdd7"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": {  },
-      "notes": "Arthur: the \"another latch or Apaki window has this session open\" error needs a force takeover. A pane whose session was taken over refuses to send (TAKEN_OVER) so a stale window cannot fork the conversation. Locks are Apaki's own files, not a Claude Code surface."
+      "notes": "Arthur: the \"another latch or Apaki window has this session open\" error needs a force takeover. A pane whose session was taken over refuses to send (TAKEN_OVER) so a stale window cannot fork the conversation. Locks are Apaki's own files, not a Claude Code surface. Phone (2026-10-12): the same Session in use card and Take over here on the phone page, or Take over from a followed desktop pane (phone-shared-view)."
     },
     {
       "id": "apaki-install-and-package",

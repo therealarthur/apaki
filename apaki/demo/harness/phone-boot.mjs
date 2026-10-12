@@ -50,8 +50,9 @@ window.__apakiLink = {
   pcName: () => PC_NAME,
   drop: () => {},
   wake: () => {},
-  supports: (f) => f !== 'follow',
-  cap: () => 'full',
+  // follow=1 (2026-10-12, the shared view): a PC that can show a desktop pane without taking it over; cap=noshell|chat is a restricted phone.
+  supports: (f) => f !== 'follow' || q.get('follow') === '1',
+  cap: () => q.get('cap') || 'full',
 };
 
 const $ = (id) => document.getElementById(id);

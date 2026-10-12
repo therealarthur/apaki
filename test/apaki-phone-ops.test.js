@@ -279,5 +279,6 @@ test('wiring: the engine answers browserView through the pane\'s own browser too
   assert.match(engine, /browserView: async \(c\) => \{\n\s+const p = getPane\(c\.paneId\);\n\s+const b = toolsFor\(p\)\.browser;\n\s+const r = b \? await b\.view\(\)/);
   for (const op of ['rename', 'forkSession', 'archive', 'folder', 'askSearch', 'browserView']) assert.match(engine, new RegExp(`\\n  ${op}: (async )?\\(c\\)`), `engine.js has a ${op} handler`);
   // Every op a phone may send has a handler in the engine (artifactGet is the one it checks for at run time).
-  for (const op of PHONE_OPS) assert.match(engine, new RegExp(`\\n  ${op}: `), `engine.js handles ${op}`);
+  // unfollow is the exception (the shared view): it ends a registry entry in remote.js (endFollow) and never reaches the engine.
+  for (const op of PHONE_OPS.filter((o) => o !== 'unfollow')) assert.match(engine, new RegExp(`\\n  ${op}: `), `engine.js handles ${op}`);
 });

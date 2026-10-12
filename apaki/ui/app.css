@@ -2880,3 +2880,5 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
 .u-v { font: 500 var(--fs-micro)/1.35 var(--font-mono); color: var(--soft); }
 .u-in { color: var(--faint); }
 @media (prefers-reduced-motion: reduce) { .u-ring .u-a { transition: none; } }
+/* The shared view (2026-10-11): a phone is watching this conversation. Plain text in the meta line, no dot, no badge, no motion. */
+.meta-line .also-on { flex: none; font-family: var(--font-mono); font-size: var(--fs-micro); font-weight: 600; line-height: 1.4; color: var(--faint); white-space: nowrap; }
