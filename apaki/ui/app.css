@@ -2541,7 +2541,8 @@ body.rail-collapsed .signin-card { left: 22px; }
 .todos-err { margin: 6px 4px 2px; font-size: var(--fs-small); color: var(--action-strong); }
 @media (max-width: 640px) { .todos { margin-left: 0; max-width: none; } }
 
-/* ===================================================================   2026-10-12 polish pass (with the type scale at the top of this file).
+/* ==========================================================================
+   2026-10-12 polish pass (with the type scale at the top of this file).
    The sidebar's section heading, the Glass card's columns, the session
    rows' titles, the wordmark at narrow widths, the prompt pin, the mode chip
    in a narrow message box, and archived copies. No dot, no stripe.
