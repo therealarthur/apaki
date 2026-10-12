@@ -50,7 +50,11 @@ import { BrowserPane } from './browser.js';
 // Git worktrees (2026-10-12): the branch label, the Worktrees view, the actions, and the diff viewer.
 import { GLYPH_WORKTREE, branchName, hasLinked, initWorktrees } from './worktree.js';
 import { DiffPane, newDiffViewerId } from './diff.js';
-import { initTooltips } from './tooltip.js';
+import { initTooltips, setTip } from './tooltip.js';
+// The session list in the ChatGPT app's manner, folders that open in place, the session menu and Details (2026-10-12).
+import {
+  GLYPH, createOpenState, detailLine, detailsHtml, folderMenuItems, groupRows, leadHtml, navKey, rowTip, sessionFacts, sessionMenuItems, shortTime,
+} from './sessionlist.js';
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -87,6 +91,10 @@ const S = {
   tabs: [], active: null, panes: new Map(), drag: null,
   // Codex (2026-10-12): installed here (the engine's ready event), and the model list it read (event codexModels).
   codexAvailable: false, codex: null,
+  // The session list (2026-10-12, sessionlist.js): what the engine read for Details (sessionInfo, by session id), the
+  // questions and permission prompts waiting for an answer (askId -> paneId: a row says "waiting"), and whether the
+  // folder list has arrived (the open folders are pruned only against a real list).
+  info: new Map(), waiting: new Map(), foldersKnown: false,
 };
 
 /**
@@ -117,6 +125,8 @@ function engineBanner(on) {
 }
 
 function send(op, args = {}) {
+  // An answer settles its question: the row stops saying "waiting" (sessionlist.js rowStates).
+  if (op === 'answer' && args.askId && S.waiting.delete(args.askId) && !S.drag) queueMicrotask(() => renderRail());
   return invoke('engine_send', { msg: { op, reqId: `r${++S.seq}`, ...args } }).catch((e) => {
     // While the window reconnects every command is refused; one quiet line says so, not one per command
     // (Arthur, 2026-10-11, saw "engine is not running" a dozen times while the engine switched over).
@@ -202,6 +212,11 @@ const host = {
   renameSession: (p, anchor) => beginRename(p.sessionId, anchor, { pane: p }),
   focus: (p) => focusPane(p, { scroll: false }),
   close: (p) => closePane(p),
+  // A pane that follows a pane on the PC asks to take its conversation over (the phone's shared view; takeOver below).
+  takeOver: (p) => takeOver(p),
+  // The Session in use card on a phone offers Watch live when a pane of the PC's window has the conversation (desktop.js deskPaneFor).
+  deskPaneFor: (sessionId) => (WEB && window.__apakiLink?.supports?.('follow') ? window.__apaki?.deskPaneFor?.(sessionId) || null : null),
+  watchLive: (p, desktopPaneId) => watchLive(p, desktopPaneId),
   voice: (p) => toggleVoice(p),
   folder: (p, value) => paneFolder(p, value),
   folderMenu: (p, anchor) => folderMenu(p.sessionId, anchor),
@@ -748,12 +763,12 @@ function closeTab(t, { confirmBusy = true } = {}) {
 }
 
 /**
- * The phone follows a desktop pane (2026-10-11, apaki/web/src/desktop.js; the engine op follow, planned on the PC side,
- * used only when the PC lists 'follow' in hello): a pane of the phone's own that shows that desktop pane's
- * conversation live, without taking it over. Followed already: shown. Otherwise a new page next to the focused one in
- * the tab in front (a new tab past six panes). viewOnly (the phone's access is No shell or Chat only): the composer
- * gives way to a quiet "View only" line. Closing it sends unfollow (closePane). It is not saved as a session of its own
- * (snapshot), so the phone never reopens, and so takes over, a followed conversation on its next start. Phone only.
+ * The phone follows a desktop pane (apaki/web/src/desktop.js; the engine op follow, used only when the PC lists 'follow' in
+ * hello): a pane of the phone's own that shows that desktop pane's conversation live, without taking it over. Followed
+ * already: shown. Otherwise a new page next to the focused one in the tab in front (a new tab past six panes). viewOnly (the
+ * phone's access is No shell or Chat only): the composer gives way to a quiet "View only" line. Closing it sends unfollow
+ * (closePane); Take over (takeOver below) ends it and opens the conversation here. It is saved as a follower (snapshot, restore),
+ * never as a session of its own, so a reload follows again instead of reopening, and so taking over, the conversation. Phone only.
  */
 function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
   if (!desktopPaneId) return null;
@@ -762,12 +777,8 @@ function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
   const t = activeTab();
   const base = focusedPane();
   const p = createPane({ cwd: '', ...inheritable(base) });
-  p.following = desktopPaneId;
-  p.el.classList.add('following');
-  if (viewOnly) {
-    p.el.classList.add('view-only');
-    p.$.wrap?.append(el('div', 'view-only-note', '<b>View only</b><span>This phone follows the pane on the PC. Its access there lets it read, not send.</span>'));
-  }
+  // The bar ("Watching live on <PC>", Take over), the read only chips and, for a restricted phone, the "View only" line (pane.js).
+  p.setFollowing(desktopPaneId, { readOnly: viewOnly });
   if (title) p.setTitle(title);
   if (!t || !t.root || L.count(t.root) >= L.MAX_PANES) {
     const nt = createTab(L.leaf(p.id));
@@ -784,6 +795,42 @@ function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
   renderTabs();
   save();
   return p;
+}
+
+/**
+ * Watch live, from the Session in use card (pane.js showLocked): the pane asked to open a conversation a pane of the PC has, and
+ * chose to watch it instead of taking it over. A new pane follows (followDesktop, or the one that follows it already is shown) and
+ * the pane that met the lock closes, so the engine never has a half opened pane of this phone where the follower is to be.
+ */
+function watchLive(p, desktopPaneId) {
+  if (!p || !desktopPaneId || !S.panes.has(p.id)) return;
+  const title = p.title === 'New conversation' ? '' : p.title;
+  const f = followDesktop({ desktopPaneId, title, viewOnly: phoneCap() !== 'full' });
+  if (f && f !== p && S.panes.has(p.id)) closePane(p, { confirmBusy: false });
+}
+
+/**
+ * Take over (the phone's shared view, 2026-10-12): the pane that follows a conversation on the PC moves that conversation here. It asks
+ * first, because it stops the PC's pane (the same hand-over as opening a conversation the PC holds and choosing Take over here).
+ * Phone only: a window never has a pane that follows.
+ */
+function takeOver(p) {
+  if (!p?.following || !S.panes.has(p.id)) return;
+  const pc = String(window.__apakiLink?.pcName?.() || '').trim() || 'the PC';
+  sheet(`<div class="from">${esc(p.title)}</div><h2>Take over from ${esc(pc)}?</h2>
+    <p>${p.busy ? 'It is working on the PC right now, and taking over stops that. ' : ''}The pane there stops before its next message and says the conversation moved to this phone, so nothing forks. Everything it already did is saved and loads here.</p>
+    <div class="row"><button data-k="x">Keep watching</button><button class="primary" data-k="go">Take over</button></div>`, (root, close) => {
+    root.querySelector('[data-k=x]').onclick = close;
+    root.querySelector('[data-k=go]').onclick = () => { close(); if (S.panes.has(p.id)) p.takeOver(); };
+  });
+}
+
+// The PC changed what this phone may do (boot.js cap): the panes that follow a PC pane become view only, or send again.
+if (WEB) {
+  window.addEventListener('apaki:cap', (e) => {
+    const readOnly = (e.detail?.cap || 'full') !== 'full';
+    for (const p of S.panes.values()) if (p.following) p.setFollowing(p.following, { readOnly });
+  });
 }
 
 function newConversation(p, o = {}) {
@@ -1282,7 +1329,8 @@ function viewList() {
   const term = live.filter((s) => s.terminal).length;
   const codex = live.filter((s) => s.codex).length;
   return [
-    { id: 'all', label: 'All', n: live.length - (S.codexAvailable ? codex : 0) },
+    // Codex threads are in All with Claude's, under the same recency headings (2026-10-12); the Codex view shows them alone.
+    { id: 'all', label: 'All', n: live.length },
     { id: 'terminal', label: 'In terminals', n: term },
     // Codex threads (2026-10-12): their own view, next to Claude's, read from the Codex app-server when it is opened.
     ...(S.codexAvailable ? [{ id: 'codex', label: 'Codex', n: codex }] : []),
@@ -1314,7 +1362,16 @@ function loadCodexThreads(refresh = false) {
 // pane's grip) onto a folder to move it in, onto All to take it out. Click a
 // folder to show it, double-click to rename, the x deletes it (its sessions
 // stay). Right-click a session for the same moves.
+//
+// Since 2026-10-12 (Arthur: "the folders should expand when clicked on and contract when clicked on again instead of
+// just transitioning the entire sidepanel") a click opens a folder in place, its sessions under it, and a second click
+// closes it; several can be open, and the open ones come back after a restart (sessionlist.js createOpenState, and the
+// saved workspace). Right-click a folder for Show only this folder (the old view), Rename and Delete. Keys: arrows
+// move, Enter or Space opens and closes, Right and Left open and close, F2 renames.
 const folderUI = { creating: false, pendingSession: null, renaming: null };
+const folderOpen = createOpenState(window.localStorage, { onChange: () => save() });
+// Most sessions drawn under an open folder; the rest are one click away (Show only this folder).
+const FOLDER_ROWS = 60;
 
 function moveToFolder(sessionId, folderId) {
   if (!sessionId) return;
@@ -1355,6 +1412,10 @@ function folderDropTarget(node, onSession) {
 
 function renderFolders() {
   const box = $('folders');
+  // The list is drawn again on every sessions event: the keyboard's place and the scroll stay where they were.
+  const keepFocus = navFocusKey(box);
+  const keepScroll = box.querySelector('.folder-list')?.scrollTop || 0;
+  if (S.foldersKnown) folderOpen.prune(S.folders.map((f) => f.id));
   box.innerHTML = '';
   const head = el('div', 'sec-head folders-head', `<span class="sec-t">Folders</span><span class="sec-n">${S.folders.length || ''}</span>`);
   const add = el('button', 'folder-add', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>');
@@ -1364,6 +1425,8 @@ function renderFolders() {
   head.append(add);
   box.append(head);
   const list = el('ul', 'folder-list');
+  list.setAttribute('role', 'tree');
+  list.setAttribute('aria-label', 'Folders');
   if (folderUI.creating) {
     const li = el('li', 'folder-row editing');
     const input = el('input');
@@ -1383,7 +1446,11 @@ function renderFolders() {
     setTimeout(() => input.focus(), 0);
   }
   for (const f of S.folders) {
-    const li = el('li', `folder-row${S.view === f.id ? ' on' : ''}`);
+    const open = folderOpen.isOpen(f.id);
+    // A folder is an item of the tree: its row, and its sessions under it (drawn only while it is open).
+    const item = el('li', `folder${open ? ' open' : ''}`);
+    item.dataset.folder = f.id;
+    const li = el('div', `folder-row${S.view === f.id ? ' on' : ''}`);
     if (folderUI.renaming === f.id) {
       const input = el('input');
       input.value = f.name;
@@ -1393,31 +1460,107 @@ function renderFolders() {
         if (ok && name && name !== f.name) send('folder', { action: 'rename', folderId: f.id, name });
         renderFolders();
       };
-      input.onkeydown = (e) => { if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); };
+      input.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); };
       input.onblur = () => done(true);
       li.classList.add('editing');
       li.append(input);
       setTimeout(() => { input.focus(); input.select(); }, 0);
     } else {
-      li.innerHTML = `<svg class="fi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5c0-.8.7-1.5 1.5-1.5h3l1.5 1.5h4.5c.8 0 1.5.7 1.5 1.5v5.5c0 .8-.7 1.5-1.5 1.5h-9c-.8 0-1.5-.7-1.5-1.5z"/></svg><span class="fn">${esc(f.name)}</span><span class="count">${f.sessions.length}</span>`;
+      li.innerHTML = `${GLYPH.chevron}${GLYPH.folder}<span class="fn">${esc(f.name)}</span><span class="count">${f.sessions.length}</span>`;
       const x = el('button', 'folder-x', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>');
       x.title = 'Delete folder (its sessions stay)';
+      x.tabIndex = -1;
       x.onclick = (e) => {
         e.stopPropagation();
-        if (!window.confirm(`Delete folder "${f.name}"? Its ${f.sessions.length} session(s) stay, just without a folder.`)) return;
-        send('folder', { action: 'delete', folderId: f.id });
-        if (S.view === f.id) S.view = 'all';
+        deleteFolder(f);
       };
       li.append(x);
-      li.onclick = () => { S.view = S.view === f.id ? 'all' : f.id; renderRail(); };
+      // A double click renames: its second click does not close the folder the first one opened.
+      li.onclick = (e) => { if (e.detail > 1) return; toggleFolder(f.id); };
       li.ondblclick = () => { folderUI.renaming = f.id; renderFolders(); };
-      li.title = 'Click to show · double-click to rename · drop sessions here to move them in';
+      li.oncontextmenu = (e) => { e.preventDefault(); folderContextMenu(f, { x: e.clientX, y: e.clientY }); };
+      li.title = 'Click to open or close · double-click to rename · drop sessions here to move them in · right-click for more';
+      li.dataset.nav = 'folder';
+      li.dataset.folder = f.id;
+      li.tabIndex = -1;
+      li.setAttribute('role', 'treeitem');
+      li.setAttribute('aria-expanded', String(open));
+      item.append(li);
+      const kids = el('div', 'folder-kids');
+      const inner = el('ul', 'folder-sess');
+      inner.setAttribute('role', 'group');
+      kids.append(inner);
+      kids.inert = !open;
+      item.append(kids);
+      if (open) fillFolder(item, f);
     }
-    folderDropTarget(li, (sid) => moveToFolder(sid, f.id));
-    list.append(li);
+    if (li.classList.contains('editing')) item.append(li);
+    folderDropTarget(item, (sid) => moveToFolder(sid, f.id));
+    list.append(item);
   }
   if (!S.folders.length && !folderUI.creating) list.append(el('li', 'folder-empty', 'Drag sessions onto + to group them.'));
   box.append(list);
+  list.scrollTop = keepScroll;
+  restoreNavFocus(box, keepFocus);
+}
+
+/** Draws an open folder's sessions under its row, newest first, as compact rows (sessionRow). */
+function fillFolder(item, f) {
+  const inner = item.querySelector('.folder-sess');
+  if (!inner) return;
+  inner.innerHTML = '';
+  const ids = new Set(f.sessions);
+  const rows = S.sessions.filter((s) => ids.has(s.id) && !s.archived).sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
+  for (const s of rows.slice(0, FOLDER_ROWS)) {
+    inner.append(sessionRow(s, { inFolder: f.id }));
+    if (S.expanded.has(s.id)) for (const sub of subRows(s)) inner.append(sub);
+  }
+  if (rows.length > FOLDER_ROWS) {
+    const more = el('li', 'folder-note', `<button class="link-btn">${rows.length - FOLDER_ROWS} more: show only this folder</button>`);
+    more.querySelector('button').onclick = () => { S.view = f.id; renderRail(); };
+    inner.append(more);
+  }
+  if (!rows.length) inner.append(el('li', 'folder-note', 'Empty. Drag sessions here, or right-click one: Move to folder.'));
+  renderRailMarks();
+}
+
+/** Opens or closes a folder in place, with its height easing open (CSS grid rows 0fr to 1fr), and remembers it. */
+function toggleFolder(id, on = null) {
+  const item = $('folders').querySelector(`li.folder[data-folder="${CSS.escape(id)}"]`);
+  const f = S.folders.find((x) => x.id === id);
+  if (!item || !f) return;
+  const next = on === null ? !folderOpen.isOpen(id) : Boolean(on);
+  folderOpen.set(id, next);
+  const kids = item.querySelector('.folder-kids');
+  if (next && !item.querySelector('.folder-sess')?.children.length) fillFolder(item, f);
+  if (kids) kids.inert = !next;
+  item.querySelector('.folder-row')?.setAttribute('aria-expanded', String(next));
+  // The rows are in place before the class changes, so the height eases from nothing to all of them.
+  requestAnimationFrame(() => item.classList.toggle('open', next));
+}
+
+/** Deletes a folder after asking (its sessions stay). */
+function deleteFolder(f) {
+  if (!window.confirm(`Delete folder "${f.name}"? Its ${f.sessions.length} session(s) stay, just without a folder.`)) return;
+  send('folder', { action: 'delete', folderId: f.id });
+  folderOpen.set(f.id, false);
+  if (S.view === f.id) S.view = 'all';
+}
+
+/** Right-click on a folder: open or close it, show it alone in the list (the old folder view), rename, delete. */
+function folderContextMenu(f, at) {
+  const alone = S.view === f.id;
+  // The phone leaves out Rename and Delete: renaming and deleting folders stay on the PC (remote-policy.js).
+  menu(at, folderMenuItems(f, { open: folderOpen.isOpen(f.id), shownAlone: alone, web: WEB }), {
+    above: false,
+    width: 230,
+    onPick: (v) => {
+      if (v === 'toggle') toggleFolder(f.id);
+      else if (v === 'alone') { S.view = alone ? 'all' : f.id; renderRail(); }
+      else if (v === 'rename') { folderUI.renaming = f.id; renderFolders(); }
+      else if (v === 'delete') deleteFolder(f);
+    },
+  });
 }
 
 /** The folder menu for one session: move into a folder, a new folder, or out. */
@@ -1664,60 +1807,157 @@ function beginRename(sessionId, anchor, { pane = null } = {}) {
  * it where it runs, rename, fork it into a new conversation, move it between
  * folders, archive it (hidden from the lists, nothing deleted), copy its id or
  * resume command, and show its folder.
+ *
+ * 2026-10-12 (Arthur: "think about everything a user might want to do with a session"): the menu is
+ * sessionlist.js sessionMenuItems, which adds Open beside, Open in a new tab, Open in a terminal, Pin to top, Move to
+ * folder (one item that opens the folder menu, so the menu stays short with many folders), Ask Claude about it, Export
+ * as Markdown, its subagents, Show folder in Explorer and Details. The same menu opens from the row's ... button and
+ * from the context menu key. row: the row it was asked on (Rename edits that row's name in place).
  */
-function sessionMenu(s, e) {
+function sessionMenu(s, e, row = null) {
   e.preventDefault();
   // The phone's own menu (below): a long press on a row opens it as a sheet.
   if (WEB) { phoneSessionMenu(s, { x: e.clientX, y: e.clientY }); return; }
-  const cur = s.folder || null;
   const pane = paneBySession(s.id);
   const runningHere = Boolean(pane?.busy);
-  const running = runningHere || Boolean(s.running);
-  let stopItem = { value: null, label: 'Stop', hint: 'nothing is running', disabled: true };
-  if (running) stopItem = { value: 'stop', label: 'Stop', hint: runningHere ? 'stop Claude here (Esc)' : 'stop its running turn', danger: true };
-  else if (s.terminal) stopItem = { value: null, label: 'Stop', hint: 'runs in a terminal; stop it there', disabled: 'It runs in a Claude Code terminal window; stop it there' };
-  const items = [
-    { heading: (s.title || 'Session').slice(0, 48) },
-    { value: 'tab', label: pane ? 'Show it' : 'Open', hint: pane ? 'it is open in a pane' : 'new tab, click' },
-    ...(pane ? [] : [{ value: 'here', label: 'Open here', hint: 'replaces the focused pane' }]),
-    ...(pane ? [] : [{ value: 'split', label: 'Split right', hint: 'Shift+click' }]),
-    { divider: true },
-    stopItem,
-    ...(pane ? [{ value: 'close', label: 'Close its pane', hint: pane.busy ? 'asks first: it is working' : '' }] : []),
-    { divider: true },
-    { value: 'rename', label: 'Rename…', hint: 'saved in the session' },
-    ...(WEB ? [] : [{ value: 'fork', label: 'Fork into a new conversation', hint: 'a copy to take elsewhere' }]),
-    ...(WEB ? [] : [s.codexArchived ? { value: null, label: 'Archived in Codex', hint: 'unarchive it in the Codex app', disabled: 'Archived in the Codex app; unarchive it there' } : s.archived ? { value: 'unarchive', label: 'Unarchive', hint: 'back in the lists' } : { value: 'archive', label: 'Archive', hint: 'hide it; nothing is deleted' }]),
-    { divider: true },
-    { value: 'copy-id', label: 'Copy session id' },
-    { value: 'copy-resume', label: 'Copy resume command', hint: s.codex ? 'codex resume' : 'claude --resume' },
-    ...(WEB || !s.cwd ? [] : [{ value: 'reveal', label: 'Show folder', hint: short(s.cwd) }]),
-    { divider: true },
-    { heading: 'Move to folder' },
-    ...S.folders.map((f) => ({ value: `f:${f.id}`, label: f.name, checked: f.id === cur })),
-    { value: 'new', label: 'New folder…' },
-    ...(cur ? [{ value: 'out', label: 'Remove from folder' }] : []),
-  ];
-  menu({ x: e.clientX, y: e.clientY }, items, {
+  const at = { x: e.clientX, y: e.clientY };
+  const items = sessionMenuItems(s, {
+    pane: pane && !pane.isViewer ? { busy: pane.busy } : null,
+    running: Boolean(s.running),
+    folderName: folderNameOf(s),
+    subagents: s.subagents || 0,
+    subsOpen: S.expanded.has(s.id),
+    tabFull: tabFull(activeTab()),
+    shortCwd: short(s.cwd),
+  });
+  row?.classList.add('menu-open');
+  const menuEl = menu(at, items, {
     above: false,
-    width: 270,
+    width: 280,
     onPick: (v) => {
-      if (v === 'rename') { const row = [...$('sessions').children].find((li) => li.dataset.id === s.id); beginRename(s.id, row?.querySelector('.t') || null); return; }
-      if (v === 'here') openFromRail(s, { here: true });
+      if (v === 'rename') { const r = row?.isConnected ? row : findRow(s.id); beginRename(s.id, r?.querySelector('.t') || null); return; }
+      if (v === 'open') { if (pane) focusPane(pane); else openFromRail(s, {}); }
+      else if (v === 'here') openFromRail(s, { here: true });
       else if (v === 'tab') { if (pane) focusPane(pane); else openFromRail(s, { ctrlKey: true }); }
       else if (v === 'split') openFromRail(s, { shiftKey: true });
+      // openTerminal is built with the console toggle (another branch; reconciled at merge): the exact session in an
+      // external terminal window, with the pane's model, effort, mode and billing when it is open in one. PC only.
+      else if (v === 'terminal') send('openTerminal', { sessionId: s.id, kind: s.codex ? 'codex' : 'claude', ...(pane && !pane.isViewer ? { paneId: pane.id } : {}) });
       else if (v === 'stop') { if (runningHere) pane.stop(); else send('stopSession', { sessionId: s.id }); }
       else if (v === 'close') closePane(pane);
+      else if (v === 'pin' || v === 'unpin') setPinned(s, v === 'pin');
+      else if (v === 'move') folderMenu(s.id, at);
       else if (v === 'fork') send('forkSession', { sessionId: s.id });
       else if (v === 'archive' || v === 'unarchive') send('archive', { sessionId: s.id, archived: v === 'archive' });
+      else if (v === 'ask') askAbout(s);
+      else if (v === 'export') exportSession(s);
+      else if (v === 'subs') toggleSubs(s.id);
       else if (v === 'copy-id') copyText(s.id, 'Session id copied.');
       else if (v === 'copy-resume') copyText(`${s.cwd ? `cd "${s.cwd}" && ` : ''}${s.codex ? `codex resume ${s.id.replace(/^codex:/, '')}` : `claude --resume ${s.id}`}`, 'Resume command copied.');
       else if (v === 'reveal') send('revealFolder', { cwd: s.cwd });
+      else if (v === 'details') detailsSheet(s);
       else if (v === 'new') startNewFolder(s.id);
       else if (v === 'out') moveToFolder(s.id, null);
-      else if (v.startsWith('f:')) moveToFolder(s.id, v.slice(2));
+      else if (typeof v === 'string' && v.startsWith('f:')) moveToFolder(s.id, v.slice(2));
     },
   });
+  // The row keeps its "menu open" look until the menu goes (closeMenu removes it after its exit).
+  if (row && menuEl) {
+    const watch = new MutationObserver(() => { if (!menuEl.isConnected || menuEl.classList.contains('out')) { row.classList.remove('menu-open'); watch.disconnect(); } });
+    watch.observe(menuEl, { attributes: true, attributeFilter: ['class'] });
+    watch.observe(document.body, { childList: true });
+  }
+}
+
+/** The drawn row of a session (the list, then the open folders), or null. */
+function findRow(id) {
+  const sel = `li.srow[data-id="${CSS.escape(id)}"]`;
+  return $('sessions').querySelector(sel) || $('folders').querySelector(sel);
+}
+
+/** Pin to top or unpin (engine pins.js): the row moves at once, the engine's list follows. */
+function setPinned(s, on) {
+  for (const x of S.sessions) if (x.id === s.id) x.pinned = on;
+  s.pinned = on;
+  if (!S.drag) renderRail();
+  send('pin', { sessionId: s.id, pinned: on });
+}
+
+/**
+ * Ask Claude about it: a new conversation in the session's folder, its message box holding where the session is, for
+ * your question (nothing is sent until you send it). Claude reads the transcript with its own tools.
+ */
+function askAbout(s) {
+  const t = addTab({ cwd: s.cwd || null });
+  const p = S.panes.get(t?.focused);
+  if (!p?.$?.input) return;
+  const info = S.info.get(s.id);
+  const where = s.codex
+    ? `Codex thread ${s.id.replace(/^codex:/, '')}${info?.transcript ? `, rollout ${info.transcript}` : ', its rollout is under ~/.codex/sessions'}`
+    : `Claude Code session ${s.id}${info?.transcript ? `, transcript ${info.transcript}` : `, transcript ${s.id}.jsonl under ~/.claude/projects`}`;
+  p.$.input.value = `About "${s.title || 'this session'}" (${where}): `;
+  p.autosize?.();
+  p.$.input.focus();
+  p.$.input.setSelectionRange(p.$.input.value.length, p.$.input.value.length);
+  if (WEB) phoneShowChat();
+}
+
+/** Export as Markdown: the engine saves it in Downloads and shows it (the desktop), or sends the text back (the phone). */
+function exportSession(s) {
+  send('exportSession', { sessionId: s.id });
+  if (!WEB) focusedPane()?.note(`Exporting "${s.title || 'the session'}" as Markdown…`);
+}
+
+/** A file the phone saves (Export as Markdown): the browser's own download of a text blob. */
+function downloadText(name, text) {
+  try {
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+    const a = el('a');
+    a.href = url;
+    a.download = name;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+    phoneToast(`Saved ${name}`);
+  } catch (err) {
+    phoneToast(`Could not save it: ${err.message || err}`, false);
+  }
+}
+
+/* ---------- Details (2026-10-12, sessionlist.js sessionFacts) ---------- */
+
+/** What the window knows about a session for Details: the pane holding it, its worktree, its folder's name. */
+function factsCtx(s) {
+  const p = paneBySession(s.id);
+  const { branch, worktree } = branchOf(s);
+  return {
+    pane: p && !p.isViewer ? { model: p.model || '', effort: p.effort || '', mode: p.mode || '', billing: p.billing?.name || '', busy: Boolean(p.busy) } : null,
+    branch, worktree, folderName: folderNameOf(s), web: WEB,
+  };
+}
+
+/** Draws (or draws again) the Details sheet's contents and wires its buttons. */
+function fillDetails(root, close, s) {
+  const f = sessionFacts(s, S.info.has(s.id) ? S.info.get(s.id) : null, factsCtx(s));
+  root.innerHTML = detailsHtml(f, { web: WEB });
+  root.querySelector('[data-k=x]').onclick = close;
+  for (const b of root.querySelectorAll('[data-copy]')) b.onclick = () => { const v = f.copies[b.dataset.copy]; if (v) copyText(v, 'Copied.'); };
+  root.querySelector('[data-act=reveal]')?.addEventListener('click', () => send('revealFolder', { cwd: s.cwd }));
+  root.querySelector('[data-act=export]')?.addEventListener('click', () => exportSession(s));
+}
+
+/**
+ * Details: everything known about a session (Arthur: "all information available somewhere in details/properties when
+ * right clicking"). It opens at once with what the list knows and fills in what the engine reads (op sessionInfo:
+ * prompts, replies, tokens, created, size on disk, transcript path...). Read only, on the phone too.
+ */
+let detailsFor = null;
+function detailsSheet(s) {
+  const key = `details:${s.id}`;
+  if (sheetKey === key) return;
+  if (!WEB || phoneCan('sessionInfo')) { S.info.delete(s.id); send('sessionInfo', { sessionId: s.id }); } else S.info.set(s.id, { error: 'The Apaki on your PC is older: update it there to see the rest.' });
+  sheet('', (root, close) => { detailsFor = s; fillDetails(root, close, s); }, key, () => { detailsFor = null; });
 }
 
 /* The session menu on the phone (2026-10-12) */
@@ -1798,10 +2038,17 @@ function phoneSessionMenu(s, at, { pane = null } = {}) {
   if (here && !pane) items.push({ value: 'close', label: 'Close its pane', hint: here.busy ? 'asks first: it is working' : '' });
   const edits = [
     gated('rename', { value: 'rename', label: 'Rename…', hint: 'saved in the session' }),
+    // Pin to top (2026-10-12, engine pins.js): the PC keeps the pins, so the desktop shows them too.
+    ...(s.id ? [gated('pin', s.pinned ? { value: 'unpin', label: 'Unpin', hint: 'back in its time group' } : { value: 'pin', label: 'Pin to top', hint: 'under Pinned' })] : []),
     ...(s.id && !s.archivedCopy ? [gated('forkSession', { value: 'fork', label: 'Fork into a new conversation', hint: 'makes a copy' })] : []),
     ...(s.id ? [gated('archive', s.codexArchived ? { value: null, label: 'Archived in Codex', hint: 'unarchive it in the Codex app', disabled: 'Archived in the Codex app; unarchive it there' } : s.archived ? { value: 'unarchive', label: 'Unarchive', hint: 'back in the lists' } : { value: 'archive', label: 'Archive', hint: 'hide it; nothing is deleted' })] : []),
   ].filter(Boolean);
   if (edits.length) items.push({ divider: true }, ...edits);
+  // Ask Claude about it and Export as Markdown (2026-10-12): a new conversation here; the Markdown comes back to the phone.
+  if (s.id) {
+    items.push({ divider: true }, { value: 'ask', label: 'Ask Claude about it', hint: 'a new conversation' });
+    if (phoneCan('exportSession')) items.push({ value: 'export', label: 'Export as Markdown', hint: 'saved on this phone' });
+  }
   if (s.id) items.push({ divider: true }, { value: 'copy-id', label: 'Copy session id' }, { value: 'copy-resume', label: 'Copy resume command', hint: s.codex ? 'codex resume' : 'claude --resume' });
   if (s.id && phoneCan('folder')) {
     const cur = s.folder || null;
@@ -1814,6 +2061,8 @@ function phoneSessionMenu(s, at, { pane = null } = {}) {
         ...(cur ? [{ value: 'out', label: 'Remove from folder' }] : []));
     }
   }
+  // Details (2026-10-12): everything known about it, read only at every access level (engine sessionInfo).
+  if (s.id) items.push({ divider: true }, { value: 'details', label: 'Details', hint: 'everything about it' });
   menu(at, items.filter(Boolean), {
     above: false,
     width: 270,
@@ -1824,6 +2073,10 @@ function phoneSessionMenu(s, at, { pane = null } = {}) {
       if (v === 'stop') here?.stop();
       else if (v === 'close') closePane(here);
       else if (v === 'rename') renameSheet(s.id || null, { pane: here });
+      else if (v === 'pin' || v === 'unpin') setPinned(s, v === 'pin');
+      else if (v === 'ask') askAbout(s);
+      else if (v === 'export') exportSession(s);
+      else if (v === 'details') detailsSheet(s);
       else if (v === 'fork') send('forkSession', { sessionId: s.id });
       else if (v === 'archive' || v === 'unarchive') send('archive', { sessionId: s.id, archived: v === 'archive' });
       else if (v === 'copy-id') copyText(s.id, 'Session id copied.');
@@ -1889,14 +2142,191 @@ function inView(s) {
   if (S.view === 'archived') return Boolean(s.archived);
   if (s.archived) return false;
   if (S.view === 'codex') return Boolean(s.codex);
-  // Codex threads have their own view; a search shows its hits wherever they are (every agent's), a folder shows what is in it.
-  if (s.codex && S.view === 'all' && !S.results && S.codexAvailable) return false;
+  // Codex threads are listed in All with Claude's (2026-10-12, Arthur: integrated exactly like Claude's; the engine lists
+  // them from their rollouts at startup, codex-list.js), marked Codex; the Codex view shows them alone, a search shows
+  // its hits wherever they are (every agent's), a folder shows what is in it.
   if (S.view === 'all') return true;
   if (S.view === 'terminal') return Boolean(s.terminal);
   if (S.view === 'worktrees') return wtc.inLinked(s.cwd);
   const f = S.folders.find((x) => x.id === S.view);
   return Boolean(f && f.sessions.includes(s.id));
 }
+
+/* ---------- a session row, compact (2026-10-12, sessionlist.js) ---------- */
+
+// The record each drawn row stands for (a search hit carries its snippet), for the keys and the ... button.
+const rowSession = new WeakMap();
+
+/** What this window knows live about a session: a turn running in its pane here, a question waiting for an answer. */
+function liveOf(s) {
+  const p = paneBySession(s.id);
+  return { runningHere: Boolean(p?.busy), waiting: Boolean(p) && [...S.waiting.values()].includes(p.id), pane: p || null };
+}
+
+/** The worktree and branch a session's folder is on (a linked worktree's branch, else the list's branch). */
+function branchOf(s) {
+  const tag = s.cwd ? wtc.forCwd(s.cwd) : null;
+  if (tag && hasLinked(tag.repo)) return { branch: branchName(tag.wt), worktree: tag.wt.main ? '' : tag.wt.path };
+  return { branch: s.branch || '', worktree: '' };
+}
+
+const folderNameOf = (s) => (s.folder ? S.folders.find((f) => f.id === s.folder)?.name || '' : '');
+
+/**
+ * One session as a compact row: state glyphs, the name cut with an ellipsis, the last message's time (and a ... button
+ * in its place on hover), then one more line (folder, branch, model, size; its subagents) that shows on the row open in
+ * the focused pane and on the row under the keyboard. Hover shows the card (rowTip), right click the menu.
+ * o: { grouped: under a recency heading, inFolder: drawn under an open folder }
+ */
+function sessionRow(s, o = {}) {
+  const li = el('li', 'srow');
+  li.dataset.id = s.id;
+  li.dataset.nav = 'session';
+  li.tabIndex = -1;
+  if (o.grouped) li.dataset.grouped = '1';
+  if (o.inFolder) li.dataset.folder = o.inFolder;
+  if (s.wtKid) li.classList.add('wt-kid');
+  rowSession.set(li, s);
+  const live = liveOf(s);
+  const { branch, worktree } = branchOf(s);
+  const folderName = o.inFolder ? '' : folderNameOf(s);
+  const at = s.lastModified || 0;
+  const pane = live.pane && !live.pane.isViewer ? live.pane : null;
+  const model = pane?.model || s.model || '';
+  const byMeaning = s.sources && !s.sources.includes('words');
+  const snip = s.snippet ? `<div class="snip">${byMeaning ? '<span class="by-meaning" title="Found by what it is about, not by your words">by meaning</span> ' : ''}${esc(kindLabel(s.kind, s.codex))}: ${highlight(s.snippet, S.query)}${s.hits > 1 ? ` <span class="mono">(${s.hits})</span>` : ''}</div>` : '';
+  const detail = detailLine(s, { branch: s.wtKid ? '' : branch, model, folderName, shortPath: short });
+  // A conversation in a linked worktree keeps a quiet worktree mark (its branch is in the second line and the card),
+  // except under its own worktree row in the Worktrees view, which says it.
+  const wtMark = worktree && !s.wtKid ? `<span class="sr-s sr-wt" role="img" aria-label="${esc(`In the worktree of ${branch}`)}">${GLYPH_WORKTREE}</span>` : '';
+  // Glass's row (2026-10-12): one leading glyph for the provider and the state, the name, then quiet marks and the time.
+  const pinMark = !o.grouped && s.pinned ? `<span class="sr-s sr-pinned" role="img" aria-label="Pinned">${GLYPH.pinned}</span>` : '';
+  li.innerHTML = `<div class="sr-line">${leadHtml(s, live)}<span class="t">${esc(s.title || '(untitled)')}</span>${pinMark}${wtMark}<span class="sr-end"><time class="sr-time" data-at="${at}">${esc(shortTime(at, Date.now(), { grouped: Boolean(o.grouped) }))}</time><button class="sr-more" tabindex="-1" aria-label="More for this session">${GLYPH.more}</button></span></div>`
+    + `<div class="sr-detail"><div class="sr-detail-in"><div class="m">${esc(detail)}</div></div></div>${s.why ? `<div class="why">${esc(s.why)}</div>` : snip}`;
+  // Its subagents (2026-10-10): a count to click open, in the row's second line; the list follows the row.
+  const subsOpen = S.expanded.has(s.id);
+  if (subsOpen) li.classList.add('subs-open');
+  if (s.subagents > 0) {
+    const sb = el('button', `subs-n${subsOpen ? ' open' : ''}`, `${taskGlyph('agent')}<span>${s.subagents} subagent${s.subagents === 1 ? '' : 's'}</span><svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>`);
+    sb.title = subsOpen ? 'Hide its subagents' : 'Show its subagents (and shells)';
+    sb.tabIndex = -1;
+    sb.onclick = (e) => { e.stopPropagation(); toggleSubs(s.id); };
+    li.querySelector('.sr-detail-in').append(sb);
+  }
+  // Keep-warm is holding this session's prompt cache: a slow moving border (2026-10-09).
+  if (S.warm.has(s.id)) { li.classList.add('warm'); li.append(el('span', 'warm-ring')); }
+  li.querySelector('.sr-more').onclick = (e) => {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    sessionMenu(s, { preventDefault() {}, clientX: r.left, clientY: r.bottom }, li);
+  };
+  li.onclick = (e) => openFromRail(s, e);
+  li.oncontextmenu = (e) => sessionMenu(s, e, li);
+  li.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); openFromRail(s, { ctrlKey: true }); } };
+  setTip(li, rowTip(s, { folderName: folderNameOf(s), branch, worktree, model, live, pane, web: WEB }));
+  {
+    // Not on the phone (2026-10-12): iOS lifts a draggable row after a long press, and that press opens the menu there.
+    li.draggable = !WEB;
+    li.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData(DRAG_SESSION, JSON.stringify({ id: s.id, cwd: s.cwd, title: s.title }));
+      e.dataTransfer.effectAllowed = 'copyMove';
+      S.drag = { kind: 'session', id: s.id };
+      document.body.classList.add('dragging');
+    });
+    li.addEventListener('dragend', endDrag);
+  }
+  return li;
+}
+
+/** A recency heading in the list (Pinned, Today, Yesterday...). */
+function groupHead(label) {
+  const li = el('li', 'sr-group');
+  li.setAttribute('role', 'presentation');
+  li.textContent = label;
+  return li;
+}
+
+/** The list items the keys move between in a container: rows and folder rows that are on screen. */
+function navItems(box) {
+  return [...box.querySelectorAll('[data-nav]')].filter((x) => !x.closest('.folder:not(.open) .folder-kids') && x.offsetParent !== null);
+}
+
+/** What has the keyboard in a list, to find again after it is drawn again. */
+function navFocusKey(box) {
+  const a = document.activeElement;
+  const item = a && box.contains(a) ? a.closest('[data-nav]') : null;
+  if (!item) return null;
+  return { id: item.dataset.id || null, folder: item.dataset.folder || null, nav: item.dataset.nav };
+}
+
+/** Gives the keyboard back to the same item after a redraw, and keeps one item of the list reachable with Tab. */
+function restoreNavFocus(box, key) {
+  const items = [...box.querySelectorAll('[data-nav]')];
+  let target = null;
+  if (key) target = items.find((x) => x.dataset.nav === key.nav && (x.dataset.id || null) === key.id && (x.dataset.folder || null) === key.folder) || null;
+  for (const x of items) x.tabIndex = -1;
+  const tabStop = target || items.find((x) => x.classList.contains('on')) || items[0];
+  if (tabStop) tabStop.tabIndex = 0;
+  if (target) target.focus({ preventScroll: true });
+}
+
+/** Moves the keyboard to an item of a list (roving tab stop). */
+function navTo(box, item) {
+  if (!item) return;
+  for (const x of box.querySelectorAll('[data-nav]')) x.tabIndex = -1;
+  item.tabIndex = 0;
+  item.focus({ preventScroll: false });
+  item.scrollIntoView({ block: 'nearest' });
+}
+
+/** The keys of the session list and the folder tree (sessionlist.js navKey): move, open, toggle, menu, details, rename. */
+function wireListKeys(box) {
+  box.addEventListener('keydown', (e) => {
+    const item = e.target?.closest?.('[data-nav]');
+    if (!item || !box.contains(item) || e.target !== item) return;
+    const kind = item.dataset.nav;
+    const fid = item.dataset.folder || null;
+    const r = navKey(e, { kind, open: kind === 'folder' && folderOpen.isOpen(fid), inFolder: kind === 'session' && Boolean(fid) });
+    if (!r) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const items = navItems(box);
+    const at = items.indexOf(item);
+    const s = kind === 'session' ? rowSession.get(item) : null;
+    const f = kind === 'folder' ? S.folders.find((x) => x.id === fid) : null;
+    const point = () => { const b = item.getBoundingClientRect(); return { x: b.left + 16, y: b.bottom }; };
+    switch (r.act) {
+      case 'move': navTo(box, r.by === 'first' ? items[0] : r.by === 'last' ? items[items.length - 1] : items[Math.max(0, Math.min(items.length - 1, at + r.by))]); break;
+      case 'open': if (s) openFromRail(s, {}); break;
+      case 'toggle': if (f) toggleFolder(f.id); break;
+      case 'expand': if (f) toggleFolder(f.id, true); break;
+      case 'collapse': if (f) toggleFolder(f.id, false); break;
+      case 'parent': navTo(box, box.querySelector(`.folder-row[data-folder="${CSS.escape(fid)}"]`)); break;
+      case 'menu': if (s) { const p = point(); sessionMenu(s, { preventDefault() {}, clientX: p.x, clientY: p.y }, item); } else if (f) folderContextMenu(f, point()); break;
+      case 'details': if (s) detailsSheet(s); break;
+      case 'rename': if (s) beginRename(s.id, item.querySelector('.t')); else if (f) { folderUI.renaming = f.id; renderFolders(); } break;
+      default: break;
+    }
+  });
+  // The row with the keyboard is the list's tab stop.
+  box.addEventListener('focusin', (e) => {
+    const item = e.target?.closest?.('[data-nav]');
+    if (!item || e.target !== item) return;
+    for (const x of box.querySelectorAll('[data-nav]')) if (x !== item) x.tabIndex = -1;
+    item.tabIndex = 0;
+  });
+}
+wireListKeys($('sessions'));
+wireListKeys($('folders'));
+
+// The short times say "now" and "12m": they move on every minute without drawing the list again.
+setInterval(() => {
+  const now = Date.now();
+  for (const t of document.querySelectorAll('.srow .sr-time[data-at]')) {
+    const text = shortTime(Number(t.dataset.at) || 0, now, { grouped: t.closest('.srow')?.dataset.grouped === '1' });
+    if (t.textContent !== text) t.textContent = text;
+  }
+}, 60 * 1000);
 
 function renderRail() {
   const views = $('views');
@@ -1912,7 +2342,9 @@ function renderRail() {
   if (S.results) {
     rows = S.results.filter((r) => inView(r.item)).map((r) => ({ ...r.item, kind: r.kind, snippet: r.snippet, hits: r.hits, why: r.why || '', sources: r.sources || null }));
   } else {
-    rows = S.sessions.filter(inView).sort((a, b) => (Boolean(b.terminal) - Boolean(a.terminal)) || (b.lastModified - a.lastModified));
+    // Newest first, under recency headings (2026-10-12, groupRows below); sessions in terminals are in their time group,
+    // marked, and all together under In terminals.
+    rows = S.sessions.filter(inView).sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
   }
   // The Worktrees view (2026-10-12): repository and worktree rows with their conversations nested under them (worktree.js).
   // Searching shows the matches, filtered to the conversations that live in a worktree, as in every other view.
@@ -1926,60 +2358,29 @@ function renderRail() {
   $('searchState').textContent = S.results ? S.searchInfo : '';
   $('searchState').hidden = !S.results;
   const list = $('sessions');
+  // The list is drawn again on every sessions event: the keyboard's place stays where it was.
+  const keepFocus = navFocusKey(list);
   list.innerHTML = '';
-  const folderName = (id) => S.folders.find((f) => f.id === id)?.name;
   if (wtView) { const clean = wtc.cleanRowEl(); if (clean) list.append(clean); }
   const focusedCwd = focusedPane()?.cwd || '';
-  for (const s of rows.slice(0, 400)) {
-    // A repository or a worktree row of the Worktrees view; the conversations between them are ordinary rows (below).
-    if (s.wtRow) { list.append(wtc.rowEl(s.wtRow, { focusedCwd })); continue; }
-    const li = el('li');
-    li.dataset.id = s.id;
-    if (s.wtKid) li.classList.add('wt-kid');
-    // A conversation in a linked worktree says which branch, beside its time (not under its own worktree row, which says it).
-    const tag = !s.wtKid && s.cwd ? wtc.forCwd(s.cwd) : null;
-    const branchTag = tag && hasLinked(tag.repo) ? `<span class="wt-tag" title="${esc(tag.wt.path)}">${tag.wt.main ? '' : GLYPH_WORKTREE}${esc(branchName(tag.wt))}</span>` : '';
-    const meta = [
-      s.codex ? '<span class="codex">codex</span>' : '',
-      s.terminal ? `<span class="live">terminal${s.terminal.status ? ` · ${esc(s.terminal.status)}` : ''}</span>` : '',
-      s.headless ? '<span class="headless" title="Started headless and never typed into: claude -p, a worker, or a window with relay on from its first message">claude -p</span>' : '',
-      s.bare ? '<span class="headless" title="Its transcript has no messages yet">empty</span>' : '',
-      // Claude Code deleted it after 30 days; Apaki's archive kept a copy (engine archivedCopy, 2026-10-12). Words, no badge.
-      s.archivedCopy ? `<span class="arch-copy" title="Claude Code deleted the original after 30 days; Apaki's archive kept this copy, without images.${s.restorable ? ' Open it and send a message to restore it.' : ''}">Archived copy</span>` : '',
-      ago(s.lastModified), branchTag, esc(short(s.cwd)),
-      S.view === 'all' && s.folder ? `▸ ${esc(folderName(s.folder) || '')}` : '',
-    ].filter(Boolean).join(' · ');
-    const byMeaning = s.sources && !s.sources.includes('words');
-    const snip = s.snippet ? `<div class="snip">${byMeaning ? '<span class="by-meaning" title="Found by what it is about, not by your words">by meaning</span> ' : ''}${esc(kindLabel(s.kind, s.codex))}: ${highlight(s.snippet, S.query)}${s.hits > 1 ? ` <span class="mono">(${s.hits})</span>` : ''}</div>` : '';
-    li.innerHTML = `<div class="t">${esc(s.title || '(untitled)')}</div><div class="m">${meta}</div>${s.why ? `<div class="why">${esc(s.why)}</div>` : snip}`;
-    // Keep-warm is holding this session's prompt cache: a slow moving border (2026-10-09).
-    if (S.warm.has(s.id)) { li.classList.add('warm'); li.append(el('span', 'warm-ring')); }
-    // Its subagents (2026-10-10): a count to click open; the list follows the row.
-    const subsOpen = S.expanded.has(s.id);
-    if (s.subagents > 0) {
-      const sb = el('button', `subs-n${subsOpen ? ' open' : ''}`, `${taskGlyph('agent')}<span>${s.subagents} subagent${s.subagents === 1 ? '' : 's'}</span><svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>`);
-      sb.title = subsOpen ? 'Hide its subagents' : 'Show its subagents (and shells)';
-      sb.onclick = (e) => { e.stopPropagation(); toggleSubs(s.id); };
-      li.append(sb);
+  const addRow = (s, grouped) => {
+    list.append(sessionRow(s, { grouped }));
+    if (S.expanded.has(s.id)) for (const sub of subRows(s)) list.append(sub);
+  };
+  if (!S.results && !wtView) {
+    // The ChatGPT app's order (2026-10-12): Pinned, Today, Yesterday, Previous 7 days, Previous 30 days, then by month.
+    for (const g of groupRows(rows.slice(0, 400), Date.now(), { pinned: S.view !== 'archived' })) {
+      list.append(groupHead(g.label));
+      for (const s of g.rows) addRow(s, true);
     }
-    li.onclick = (e) => openFromRail(s, e);
-    li.oncontextmenu = (e) => sessionMenu(s, e);
-    li.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); openFromRail(s, { ctrlKey: true }); } };
-    {
-      // Not on the phone (2026-10-12): iOS lifts a draggable row after a long press, and that press opens the menu there.
-      li.draggable = !WEB;
-      li.title = `Click: open (a new tab, or the empty pane) · Shift+click: split right · drag onto a pane edge to split, or onto a folder · right-click: stop, rename, fork, archive and more${S.warm.has(s.id) ? '\nKeep-warm is keeping its prompt cache warm' : ''}`;
-      li.addEventListener('dragstart', (e) => {
-        e.dataTransfer.setData(DRAG_SESSION, JSON.stringify({ id: s.id, cwd: s.cwd, title: s.title }));
-        e.dataTransfer.effectAllowed = 'copyMove';
-        S.drag = { kind: 'session', id: s.id };
-        document.body.classList.add('dragging');
-      });
-      li.addEventListener('dragend', endDrag);
+  } else {
+    for (const s of rows.slice(0, 400)) {
+      // A repository or a worktree row of the Worktrees view; the conversations between them are ordinary rows.
+      if (s.wtRow) { list.append(wtc.rowEl(s.wtRow, { focusedCwd })); continue; }
+      addRow(s, false);
     }
-    list.append(li);
-    if (subsOpen) for (const sub of subRows(s)) list.append(sub);
   }
+  restoreNavFocus(list, keepFocus);
   if (!rows.length) list.append(el('li', 'note', S.results ? 'Nothing matches in this view.' : S.view === 'archived' ? 'Nothing archived.' : wtView ? (wtc.hasData() ? 'No worktrees yet. Start a conversation in a new worktree to see it here.' : 'Looking for worktrees…') : 'No sessions here yet.'));
   const newWt = wtView ? wtc.newRowEl() : null;
   if (newWt) list.append(newWt);
@@ -2005,6 +2406,12 @@ function renderRailMarks() {
   const open = new Set([...S.panes.values()].map((p) => p.sessionId).filter(Boolean));
   const cur = focusedPane()?.sessionId;
   for (const li of $('sessions').children) {
+    const id = li.dataset.id;
+    li.classList.toggle('on', Boolean(id) && id === cur);
+    li.classList.toggle('shown', Boolean(id) && id !== cur && open.has(id));
+  }
+  // The rows under open folders too (2026-10-12): the one in the focused pane shows its second line there as well.
+  for (const li of $('folders').querySelectorAll('li.srow')) {
     const id = li.dataset.id;
     li.classList.toggle('on', Boolean(id) && id === cur);
     li.classList.toggle('shown', Boolean(id) && id !== cur && open.has(id));
@@ -2489,11 +2896,13 @@ function snapshot() {
         draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ id: q.id, text: q.text })),
         // A pane in a background tab has no box to measure: its remembered place is saved, not "at the end, 0" (pane.js scrollState, 2026-10-12).
         scroll: p?.scrollState ? p.scrollState() : null,
-        busy: Boolean(p?.busy), pendingName: p?.pendingName || null,
+        busy: Boolean(p?.busy && !p?.following), pendingName: p?.pendingName || null,
+        // The shared view: what the pane follows, and the conversation it showed (for its Open here if the PC's pane is gone by then).
+        ...(p?.following ? { follow: p.following, fs: p.sessionId || null, ft: p.title || '' } : {}),
       };
     }),
   }));
-  return { v: 1, savedAt: Date.now(), active: S.tabs.findIndex((t) => t.id === S.active), tabs, rail: { view: S.view, expanded: [...S.expanded], scroll: $('sessions')?.scrollTop || 0, width: S.railW || null, collapsed: Boolean(S.railCollapsed), wtFolded: wtc.foldedList() }, win: S.win || null };
+  return { v: 1, savedAt: Date.now(), active: S.tabs.findIndex((t) => t.id === S.active), tabs, rail: { view: S.view, expanded: [...S.expanded], scroll: $('sessions')?.scrollTop || 0, width: S.railW || null, collapsed: Boolean(S.railCollapsed), wtFolded: wtc.foldedList(), foldersOpen: folderOpen.list() }, win: S.win || null };
 }
 
 /** Saves at once: localStorage, and the engine's copy on disk (desktop only). */
@@ -2526,6 +2935,8 @@ function restore(saved = readLocal()) {
     if (typeof saved.rail.view === 'string') S.view = saved.rail.view;
     S.expanded = new Set(Array.isArray(saved.rail.expanded) ? saved.rail.expanded : []);
     wtc.setFolded(saved.rail.wtFolded);
+    // The folders that were open (2026-10-12); localStorage keeps them too, the saved workspace wins after a crash.
+    if (Array.isArray(saved.rail.foldersOpen)) folderOpen.load(saved.rail.foldersOpen);
     S.railScroll = saved.rail.scroll || 0;
     if (Number.isFinite(saved.rail.width)) S.railW = saved.rail.width;
     S.railCollapsed = saved.rail.collapsed === true;
@@ -2543,6 +2954,13 @@ function restore(saved = readLocal()) {
       if (lf.view?.diff) return L.leaf(createDiffViewer(lf.view.diff, lf.pane).id);
       // A viewer comes back showing its artifact's latest revision.
       if (lf.view?.id) return L.leaf(createViewer(lf.view, lf.pane).id);
+      // A pane that followed a pane on the PC follows it again (the shared view); opening its conversation here would take it over.
+      if (typeof lf.follow === 'string' && lf.follow) {
+        const fp = createPane({ id: lf.pane, sessionId: lf.fs || null, cwd: lf.cwd, title: lf.ft, model: lf.model, effort: lf.effort, mode: lf.mode, kind: lf.kind });
+        fp.setFollowing(lf.follow, { readOnly: phoneCap() !== 'full' });
+        send('follow', { paneId: fp.id, desktopPaneId: lf.follow });
+        return L.leaf(fp.id);
+      }
       // One session per pane, ever: a duplicate in old saved state opens as a new conversation.
       const sid = lf.s && !seen.has(lf.s) ? lf.s : null;
       if (sid) seen.add(sid);
@@ -2570,7 +2988,7 @@ function restore(saved = readLocal()) {
 
 /* ---------- engine events ---------- */
 
-const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context', 'historyPage', 'historyBlock', 'historyPrompts', 'historyCount']);
+const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context', 'historyPage', 'historyBlock', 'historyPrompts', 'historyCount', 'followers', 'peerMessage']);
 
 /** Phone access (phone.js), set up at start; null in the phone web client. */
 let phone = null;
@@ -2625,6 +3043,8 @@ await listen('engine', ({ payload: e }) => {
         for (const p of S.panes.values()) {
           // Viewers load again from the new engine's server address.
           if (p.isViewer) { p.engineBack(); continue; }
+          // A pane that follows a PC pane follows it again (opening its conversation would take it over).
+          if (p.following) { send('follow', { paneId: p.id, desktopPaneId: p.following }); continue; }
           p.open(p.sessionId ? { id: p.sessionId, cwd: p.cwd, title: p.title } : null, { warm: false });
         }
       }
@@ -2646,6 +3066,7 @@ await listen('engine', ({ payload: e }) => {
     case 'sessions':
       if (e.voice !== undefined) { S.voice = Boolean(e.voice); for (const p of S.panes.values()) p.setVoice(S.voice); }
       S.sessions = e.items; S.folders = e.folders;
+      S.foldersKnown = Array.isArray(e.folders);
       if (e.billing) S.defaults.billing = S.defaults.billing || e.billing;
       for (const p of S.panes.values()) {
         p.renderFolderSelect(S.folders, S.sessions);
@@ -2726,6 +3147,7 @@ await listen('engine', ({ payload: e }) => {
     }
     case 'folders':
       S.folders = e.folders;
+      S.foldersKnown = Array.isArray(e.folders);
       if (S.view !== 'all' && S.view !== 'terminal' && S.view !== 'worktrees' && !S.folders.some((f) => f.id === S.view)) S.view = 'all';
       send('sessions');
       break;
@@ -2771,11 +3193,26 @@ await listen('engine', ({ payload: e }) => {
     case 'ask': {
       const p = S.panes.get(e.paneId);
       if (p) cameBack(p, 'ask');
+      // A phone that may only watch (follows a PC pane at No shell or Chat only) cannot answer it: the PC refuses. One line says where.
+      if (e.readOnly) { p?.note('Claude is asking a question on the PC. This phone can watch, not answer: answer it there, or take the conversation over here.'); break; }
+      // Its row in the list says "waiting for your answer" until it is answered or gone (2026-10-12).
+      if (e.askId && e.paneId && !S.waiting.has(e.askId)) { S.waiting.set(e.askId, e.paneId); if (!S.drag) renderRail(); }
       askSheet(e);
       break;
     }
     // A question nobody waits for any more (the turn ended, or Claude asked again): take its sheet away.
-    case 'ask_gone': dropSheet(e.askId); break;
+    case 'ask_gone': dropSheet(e.askId); if (S.waiting.delete(e.askId) && !S.drag) renderRail(); break;
+    // Details (2026-10-12): what the engine read about a session; the open Details sheet fills in.
+    case 'sessionInfo':
+      S.info.set(e.sessionId, e.ok ? e.info : { error: e.message || 'Could not read it.' });
+      if (detailsFor?.id === e.sessionId && sheetKey === `details:${e.sessionId}` && sheetClose) fillDetails($('sheet'), sheetClose, detailsFor);
+      break;
+    // Export as Markdown (2026-10-12): saved in Downloads and shown in Explorer (the desktop), or the text (the phone).
+    case 'exported':
+      if (!e.ok) { if (WEB) phoneToast(e.message || 'Could not export it.', false); else focusedPane()?.note(e.message || 'Could not export it.', 'error'); break; }
+      if (typeof e.markdown === 'string') downloadText(e.name || 'conversation.md', e.markdown);
+      else focusedPane()?.note(`Saved ${e.name} in ${short(String(e.path || '').replace(/[\\/][^\\/]*$/, ''))}.`);
+      break;
     case 'billingOptions': billingSheet(e.options, e.paneId); break;
     case 'places': startUI?.places(e); break;
     case 'dir': startUI?.dir(e); break;
@@ -2787,7 +3224,9 @@ await listen('engine', ({ payload: e }) => {
       break;
     case 'warmState': settings.handle(e); break;
     case 'autoCompact': settings.handle(e); break;
-    case 'closed': break;
+    // The PC closed the pane this phone's pane follows (or no longer has it): the pane says so (pane.js followEnded). The answer to this
+    // phone's own unfollow or close finds nothing (the pane left already, or follows no more).
+    case 'closed': { const p = S.panes.get(e.paneId); if (p?.following) p.followEnded(); break; }
     case 'remote': phone?.handle(e); break;
     case 'note': focusedPane()?.note(e.text, e.tone || ''); break;
     // Fresh installs (2026-10-10): Claude Code has no login yet, so the first message would fail.

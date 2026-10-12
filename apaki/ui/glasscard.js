@@ -19,6 +19,7 @@
 
 import { esc } from './markdown.js';
 import { glassPanelProvider, openGlassPanel } from './glasspanel.js';
+import { paintRings, ringPairHtml } from './usage-rings.js';
 
 const PROVIDERS = { claude: 'Claude', codex: 'Codex' };
 // At or under this share left the meter turns peach.
@@ -64,9 +65,12 @@ function rowHtml(provider, a, busy) {
   const tag = a?.isKey ? '<span class="key-tag">API key</span>' : a?.plan ? `<span class="gc-plan">${esc(a.plan)}</span>` : '';
   const name = a ? `<span class="gc-n">${esc(a.name)}</span>${tag}` : '<span class="gc-n gc-none">Not signed in</span>';
   const left = busy ? 'Switching…' : a ? leftText(a) : '';
-  return `<button class="gc-row${busy ? ' busy' : ''}${low ? ' low' : ''}${a && !usable(a) ? ' warn' : ''}" data-p="${provider}" title="${esc(rowTitle(provider, a))}">
+  // A subscription shows its 5-hour and weekly rings with the time to each reset (2026-10-12, usage-rings.js);
+  // an API key, which has no windows, keeps the dollars and the thin meter.
+  const rings = a && !a.isKey && !busy ? ringPairHtml(a.windows || []) : '';
+  return `<button class="gc-row${rings ? ' rings' : ''}${busy ? ' busy' : ''}${low ? ' low' : ''}${a && !usable(a) ? ' warn' : ''}" data-p="${provider}" title="${esc(rowTitle(provider, a))}">
     <span class="gc-prov">${PROVIDERS[provider]}</span><span class="gc-name">${name}</span><span class="gc-left">${esc(left)}</span>
-    <span class="gc-meter" aria-hidden="true"><i style="--v:${share == null ? 0 : (share / 100).toFixed(3)}"></i></span></button>`;
+    ${rings || `<span class="gc-meter" aria-hidden="true"><i data-v="${share == null ? 0 : (share / 100).toFixed(3)}"></i></span>`}</button>`;
 }
 
 /** The menu of one provider's accounts: subscriptions, then API keys; ones Glass cannot use are dimmed. */
@@ -105,6 +109,8 @@ export function initGlassCard({ root, send, menu, note, readOnly = false }) {
   };
   const busy = new Set();
   const seen = { claude: null, codex: null };
+  // The countdowns under the rings stay true: one redraw a minute, only while the window is visible.
+  setInterval(() => { if (last && document.visibilityState === 'visible') render(); }, 60000);
 
   function render(flash = []) {
     if (!last) return;
@@ -115,6 +121,9 @@ export function initGlassCard({ root, send, menu, note, readOnly = false }) {
     }
     root.hidden = false;
     root.innerHTML = `<div class="gc-head"><span class="gl">Myrlin Glass</span><span class="gc-sub">live on this PC</span></div>${rowHtml('claude', last.claude, busy.has('claude'))}${rowHtml('codex', last.codex, busy.has('codex'))}`;
+    // Fills from script, not style attributes in markup (the phone page's CSP refuses those).
+    paintRings(root);
+    for (const i of root.querySelectorAll('.gc-meter i[data-v]')) i.style.setProperty('--v', i.dataset.v);
     for (const b of root.querySelectorAll('.gc-row')) {
       const provider = b.dataset.p;
       if (flash.includes(provider)) b.classList.add('flash');

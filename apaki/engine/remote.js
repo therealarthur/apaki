@@ -134,6 +134,29 @@
  *     Allow is stamped (decidedAt), so two engines sharing the folder merge
  *     phones by id without bringing one back or undoing an Allow after a
  *     Block; otherwise a Block wins, then the newer lastSeen (mergeState).
+ *
+ * The shared view (2026-10-11, ../remote/PROTOCOL.md "Following a desktop pane";
+ * Arthur: the phone must show the desktop's tabs and the panes in each, swiping
+ * between them, WITHOUT taking a pane over): a phone's local pane can follow a
+ * desktop conversation pane (op follow, remote-policy.js). WHY the registry is
+ * here: this is the one place that sees every event the engine emits (route),
+ * knows which phone connections are open and what each phone may do (capFor).
+ *   - `following` maps a phone pane (phone:<deviceId>:<local>) to the desktop
+ *     pane it shows. It lives only as long as the phone's connection: when the
+ *     last connection of a device leaves, its followers are dropped, and a
+ *     reconnecting phone sends follow again (nothing is kept on the PC).
+ *   - route() sends every event of a followed desktop pane (FOLLOW_EVENTS) to
+ *     each follower too, with the pane id swapped for the phone's own, the
+ *     desktop's request id and queued messages left out (followerView).
+ *     Nothing is taken over and no second Claude Code process starts: the
+ *     engine's single runner for that pane stays the only one.
+ *   - a follower's ops are checked in checkPhoneCommand (read-only unless the
+ *     phone is 'full') and then run on the desktop pane; the engine's handlers
+ *     emit the pane's own events, which are mirrored back by the rule above.
+ *   - the desktop window hears { ev: 'followers', paneId, phones: [names] }
+ *     whenever the phones watching a pane change, for its "Also on" line.
+ *   - held account connections never get any of it (toDevice skips them), and
+ *     cannot send follow (onMessage ignores everything but via while held).
  */
 
 import os from 'node:os';
@@ -144,7 +167,7 @@ import {
 } from '../remote/protocol.js';
 import { Inbox, Outbox, WIRE_VERSION } from '../remote/wire.js';
 import { BROADCAST_EVENTS, PHONE_OPS, checkPhoneCommand, hashText, parsePhoneId, phoneView, routeEvent } from './remote-policy.js';
-import { CAPS, CAP_LABEL, AskGate, capDefaultMode, capNote, capOf, phonePaneId } from './remote-policy.js';
+import { CAPS, CAP_LABEL, AskGate, capDefaultMode, capFollowNote, capNote, capOf, followerView, phonePaneId } from './remote-policy.js';
 import * as store from './remote-store.js';
 import { checkPage, pageText } from './remote-page.js';
 import { PHONE_AGENTS, browserHeaders } from './remote-page.js';
@@ -391,7 +414,8 @@ export class RemoteBridge {
    * @param {() => object} o.readyEvent  the engine's 'ready' event, sent to a phone when it connects
    * @param {object} [o.engine]  what the policy needs to know about panes:
    *   paneExists(id), paneCount(deviceId), phonePanes(deviceId) -> ids, paneInfo(id) -> { sessionId, running, busy },
-   *   askPane(askId), knownCwd(cwd), phoneSessions(deviceId), hasOp(op)
+   *   askPane(askId), knownCwd(cwd), phoneSessions(deviceId), hasOp(op); desktopPane(id) -> 'conversation' | another kind
+   *   ('viewer', 'browser', 'task') | null, which is what makes a desktop pane followable (2026-10-11)
    * @param {string} [o.dir]  where state.json and secret.json live
    * @param {Function} [o.WebSocket]  WebSocket class (tests pass a fake)
    * @param {string} [o.relay] @param {string} [o.web] @param {string} [o.pcName]
@@ -437,6 +461,10 @@ export class RemoteBridge {
     this.capNotes = new Map();
     // One Ask Claude at a time per phone (remote-policy.js AskGate, 2026-10-12): a question costs about a cent.
     this.askGate = new AskGate(o.askMaxMs);
+    // The shared view (2026-10-11): phone pane id (phone:<deviceId>:<local>) -> { deviceId, desktopPaneId }, and the follower
+    // lists the desktop window was last told (desktop pane id -> JSON of the names), so it hears a change once.
+    this.following = new Map();
+    this.followerSeen = new Map();
     this.log = o.log || ((line) => process.stderr.write(`apaki remote: ${line}\n`));
     // Timings (tests shorten them).
     this.handshakeMs = o.handshakeMs ?? HANDSHAKE_MS;
@@ -811,6 +839,9 @@ export class RemoteBridge {
     const d = this.state.devices.find((x) => x.id === deviceId);
     if (!d) throw new Error('That phone is not paired with this PC any more.');
     d.cap = next;
+    // A phone changed to a restricted access keeps watching the desktop panes it follows, read only from now on (checkPhoneCommand
+    // reads the live access on every command; this is the label the follower's events carry).
+    this.noteCap(deviceId, next);
     if (this.secret) await this.saveSecretNow();
     this.saveStateNow();
     for (const c of this.conns.values()) if (c.open && c.device?.id === deviceId) c.outbox?.send({ t: 'cap', cap: next }).catch(() => {});
@@ -868,7 +899,9 @@ export class RemoteBridge {
     // The 'account' of before 2026-10-10 (links added at once) is no longer offered, so an older page does not try.
     // 'phone-key' and 'enroll' (2026-10-11, ENROLL.md), in Private and Connected both: this PC checks a phone key on
     // account connections (a version 2 via), and accepts account-link with enroll right after an in-person pairing.
-    return ['mode', 'cap', 'phone-key', 'enroll', ...(this.mode() === 'connected' ? ['account-ask'] : [])];
+    // 'follow' (2026-10-11, in both modes): follow and unfollow work, so the phone can show a desktop pane without taking it
+    // over; a page feature-detects this and falls back to open (which takes the session over) on an older PC.
+    return ['mode', 'cap', 'phone-key', 'enroll', 'follow', ...(this.mode() === 'connected' ? ['account-ask'] : [])];
   }
 
   /**
@@ -1762,6 +1795,9 @@ export class RemoteBridge {
   command(c, cmd) {
     const deviceId = c.device.id;
     const e = this.engine;
+    // What this phone may make Claude do (2026-10-10), read now so a change on the PC applies to the next command.
+    const cap = this.capFor(deviceId);
+    this.noteCap(deviceId, cap);
     const r = checkPhoneCommand(cmd, {
       deviceId,
       hasOp: e.hasOp,
@@ -1769,19 +1805,28 @@ export class RemoteBridge {
       paneCount: e.paneCount,
       askPane: e.askPane,
       knownCwd: e.knownCwd,
-      phoneSessions: e.phoneSessions,
+      // The sessions of this phone's own panes, and of the desktop panes it follows (their history and artifacts are read only).
+      phoneSessions: (dev) => [...(e.phoneSessions?.(dev) || []), ...this.followedSessions(dev)],
       // Whether a pane runs a Codex thread (2026-10-12): its model, effort, mode and files are checked as Codex's.
       paneKind: e.paneKind,
-      // What this phone may make Claude do (2026-10-10), read now so a change on the PC applies to the next command.
-      cap: this.capFor(deviceId),
+      cap,
+      // The shared view (2026-10-11): without engine.desktopPane (an engine from before) nothing can be followed.
+      followOf: (id) => this.following.get(id)?.desktopPaneId ?? null,
+      followLocal: (dev, desktopPaneId) => this.followLocalPane(dev, desktopPaneId),
+      followCount: (dev) => this.followCount(dev),
+      followsDesktop: (dev, desktopPaneId) => Boolean(this.followLocalPane(dev, desktopPaneId)),
+      desktopPane: e.desktopPane ? (id) => e.desktopPane(id) : undefined,
     });
     if (!r.ok) {
       const message = typeof cmd?.op === 'string' && Object.hasOwn(REFUSED, cmd.op) ? REFUSED[cmd.op] : r.error;
-      c.outbox.push({ ev: 'error', reqId: r.reqId, paneId: r.paneId, message, refused: true });
+      c.outbox.push({ ev: 'error', reqId: r.reqId, paneId: r.paneId, message, refused: true, ...(r.readOnly ? { readOnly: true } : {}) });
       // A refused mode change: the phone already shows the mode it asked for, so it hears the one the pane really has.
-      if (cmd?.op === 'mode' && r.paneId) {
-        const info = e.paneInfo?.(phonePaneId(deviceId, r.paneId));
-        if (info?.mode) c.outbox.push({ ev: 'settings', paneId: r.paneId, model: info.model, effort: info.effort, mode: info.mode });
+      // A pane that follows a desktop pane hears the desktop pane's own settings (model, effort and mode are the desktop's).
+      if ((cmd?.op === 'mode' || cmd?.op === 'model' || cmd?.op === 'effort') && r.paneId) {
+        const mine = phonePaneId(deviceId, r.paneId);
+        const f = this.following.get(mine);
+        const info = e.paneInfo?.(f ? f.desktopPaneId : mine);
+        if (info?.mode && (f || cmd.op === 'mode')) c.outbox.push({ ev: 'settings', paneId: r.paneId, model: info.model, effort: info.effort, mode: info.mode });
       }
       return;
     }
@@ -1794,6 +1839,12 @@ export class RemoteBridge {
         return;
       }
     }
+    // The shared view (2026-10-11): follow and unfollow (and close of a follower) are the bridge's own; every other op of a
+    // follower already names the desktop pane (checkPhoneCommand) and runs there, tagged with who sent it.
+    if (out.op === 'follow') { this.startFollow(c, out); return; }
+    if (out.op === 'unfollow' || (out.op === 'close' && this.following.has(out.paneId))) { this.endFollow(c, out); return; }
+    // origin: this phone's own pane, so a message it sends is not echoed back to it (its page drew the message already).
+    if (r.follower) out = { ...out, follower: this.followName(c), ...(r.follower.paneId ? { origin: r.follower.paneId } : {}) };
     // The phone's page restores its panes with open (warm: false) after a
     // reload; a pane still open in the engine re-attaches instead, so a turn
     // that is running keeps running.
@@ -1811,7 +1862,7 @@ export class RemoteBridge {
    * belongs to a phone (it went there and the desktop must not get it).
    */
   route(ev) {
-    const r = routeEvent(ev);
+    const r = routeEvent(ev, (deviceId, desktopPaneId) => parsePhoneId(this.followLocalPane(deviceId, desktopPaneId))?.local ?? null);
     if (r) {
       this.toDevice(r.deviceId, phoneView(r.ev));
       // Its question has an answer (or failed): the phone may ask again.
@@ -1819,7 +1870,11 @@ export class RemoteBridge {
       else if (ev.ev === 'error' && typeof ev.reqId === 'string') this.askGate.end(r.deviceId, ev.reqId);
       if (ev.ev === 'opened') this.afterOpened(r.deviceId, ev, r.ev);
       else if (ev.ev === 'history') this.flushCapNote(r.deviceId, ev.paneId);
-      else if (ev.ev === 'closed') this.capNotes.delete(ev.paneId);
+      else if (ev.ev === 'closed') {
+        this.capNotes.delete(ev.paneId);
+        // The engine closed a follower pane (the desktop pane went away between the check and the follow).
+        this.dropFollower(ev.paneId);
+      }
       // The desktop's Phone sheet counts each phone's open conversations.
       if (ev.ev === 'opened' || ev.ev === 'closed') this.panesChanged();
       return true;
@@ -1828,6 +1883,9 @@ export class RemoteBridge {
       this.cache.set(ev.ev, ev);
       this.broadcast(ev);
     }
+    // The shared view (2026-10-11): an event of a desktop pane some phone follows also goes to that phone. The desktop still
+    // gets it (false), so nothing about the desktop changes.
+    if (this.following.size && ev && typeof ev.paneId === 'string') this.mirror(ev);
     return false;
   }
 
@@ -1867,7 +1925,8 @@ export class RemoteBridge {
   afterOpened(deviceId, ev, phoneEv) {
     if (!phoneEv.paneId) return;
     this.toDevice(deviceId, { ev: 'settings', paneId: phoneEv.paneId, model: ev.model, effort: ev.effort, mode: ev.mode });
-    const text = capNote(this.capFor(deviceId));
+    // A pane that follows a desktop pane runs with the desktop's tools, not this phone's: its note says what the phone may do there.
+    const text = ev.follower ? capFollowNote(this.capFor(deviceId)) : capNote(this.capFor(deviceId));
     if (!text) { this.capNotes.delete(ev.paneId); return; }
     const note = { ev: 'note', paneId: phoneEv.paneId, tone: '', text };
     if (ev.sessionId) this.capNotes.set(ev.paneId, note);
@@ -1880,6 +1939,158 @@ export class RemoteBridge {
     if (!note) return;
     this.capNotes.delete(paneId);
     this.toDevice(deviceId, note);
+  }
+
+  /* ---------- following a desktop pane (2026-10-11) ---------- */
+
+  /** The phone pane (prefixed id) of this device that follows a desktop pane, or null. */
+  followLocalPane(deviceId, desktopPaneId) {
+    for (const [pane, f] of this.following) if (f.deviceId === deviceId && f.desktopPaneId === desktopPaneId) return pane;
+    return null;
+  }
+
+  /** How many desktop panes this phone follows now. */
+  followCount(deviceId) {
+    let n = 0;
+    for (const f of this.following.values()) if (f.deviceId === deviceId) n += 1;
+    return n;
+  }
+
+  /** The sessions of the desktop panes this phone follows (read only: their history and artifacts). */
+  followedSessions(deviceId) {
+    const out = [];
+    for (const f of this.following.values()) {
+      if (f.deviceId !== deviceId) continue;
+      const sid = this.engine.paneInfo?.(f.desktopPaneId)?.sessionId;
+      if (sid) out.push(sid);
+    }
+    return out;
+  }
+
+  /** Keeps each follower's read-only flag in step with its phone's capability (the label on events; checkPhoneCommand reads the live one). */
+  noteCap(deviceId, cap) {
+    for (const f of this.following.values()) if (f.deviceId === deviceId) f.readOnly = cap !== 'full';
+  }
+
+  /** The names a phone shows for itself on the desktop pane it follows: its own name, or for an Apaki account the phones connected through it. */
+  followLabels(deviceId) {
+    const d = this.state.devices.find((x) => x.id === deviceId);
+    const base = cleanName(d?.name) || 'Phone';
+    if (d?.kind !== 'account') return [base];
+    const live = [];
+    for (const c of this.conns.values()) {
+      if (!c.open || c.held || c.device?.id !== deviceId) continue;
+      const n = cleanName(c.phone?.name || c.via || '').trim();
+      if (n && !live.includes(n)) live.push(n);
+    }
+    return live.length ? live : [base];
+  }
+
+  /** The name of the phone behind one connection, for a message it sends into a desktop pane. */
+  followName(c) {
+    const d = this.state.devices.find((x) => x.id === c.device?.id);
+    return cleanName(d?.kind === 'account' ? (c.phone?.name || c.via || d?.name) : d?.name).trim() || 'Phone';
+  }
+
+  /** The names of the phones that follow one desktop pane, each once. */
+  followerNames(desktopPaneId) {
+    const names = [];
+    for (const f of this.following.values()) {
+      if (f.desktopPaneId !== desktopPaneId) continue;
+      for (const n of this.followLabels(f.deviceId)) if (!names.includes(n)) names.push(n);
+    }
+    return names;
+  }
+
+  /** Tells the desktop window who watches a pane, when that changed: { ev: 'followers', paneId, phones: [names] } (empty when nobody does). */
+  followersChanged(desktopPaneId) {
+    const names = this.followerNames(desktopPaneId);
+    const key = JSON.stringify(names);
+    if ((this.followerSeen.get(desktopPaneId) ?? '[]') === key) return;
+    if (names.length) this.followerSeen.set(desktopPaneId, key); else this.followerSeen.delete(desktopPaneId);
+    this.emit({ ev: 'followers', paneId: desktopPaneId, phones: names });
+  }
+
+  /** The window (re)attached to a pane: says again who watches it, when anyone does. */
+  announceFollowers(desktopPaneId) {
+    const names = this.followerNames(desktopPaneId);
+    if (!names.length) return;
+    this.followerSeen.set(desktopPaneId, JSON.stringify(names));
+    this.emit({ ev: 'followers', paneId: desktopPaneId, phones: names });
+  }
+
+  /** The desktop panes some phone follows now, as the events a window that connects later needs. */
+  followersSnapshot() {
+    const panes = new Set([...this.following.values()].map((f) => f.desktopPaneId));
+    return [...panes].map((paneId) => ({ ev: 'followers', paneId, phones: this.followerNames(paneId) }));
+  }
+
+  /** follow: the phone's pane shows a desktop pane from now on. Registered first, so no event between this and the pane's state is lost. */
+  startFollow(c, out) {
+    const deviceId = c.device.id;
+    const prev = this.following.get(out.paneId);
+    this.following.set(out.paneId, { deviceId, desktopPaneId: out.desktopPaneId, readOnly: this.capFor(deviceId) !== 'full' });
+    if (prev && prev.desktopPaneId !== out.desktopPaneId) this.followersChanged(prev.desktopPaneId);
+    this.followersChanged(out.desktopPaneId);
+    // The engine sends the pane's state (opened, history, questions waiting, tasks) to this phone pane only.
+    this.dispatch({ op: 'follow', reqId: out.reqId, paneId: out.paneId, desktopPaneId: out.desktopPaneId, readOnly: this.following.get(out.paneId).readOnly });
+  }
+
+  /** unfollow, or close of a follower pane: it stops, and says closed like a pane that was closed. */
+  endFollow(c, out) {
+    const f = this.following.get(out.paneId);
+    this.following.delete(out.paneId);
+    this.capNotes.delete(out.paneId);
+    if (f) this.followersChanged(f.desktopPaneId);
+    const mine = parsePhoneId(out.paneId);
+    const req = out.reqId ? parsePhoneId(out.reqId) : null;
+    if (mine) this.toDevice(c.device.id, { ev: 'closed', reqId: req?.local ?? null, paneId: mine.local });
+  }
+
+  /** A follower pane the engine closed (its desktop pane went away before the follow ran). */
+  dropFollower(phonePaneId) {
+    const f = this.following.get(phonePaneId);
+    if (!f) return;
+    this.following.delete(phonePaneId);
+    this.followersChanged(f.desktopPaneId);
+  }
+
+  /** A phone's last connection left, or it was removed: its followers end (a phone that connects again sends follow again). */
+  dropDeviceFollowers(deviceId) {
+    const gone = new Set();
+    for (const [pane, f] of [...this.following]) {
+      if (f.deviceId !== deviceId) continue;
+      this.following.delete(pane);
+      this.capNotes.delete(pane);
+      gone.add(f.desktopPaneId);
+    }
+    for (const desktopPaneId of gone) this.followersChanged(desktopPaneId);
+  }
+
+  /** Re-checks the names on every followed pane (a phone behind an account came or went). */
+  refreshFollowers() {
+    for (const desktopPaneId of new Set([...this.following.values()].map((f) => f.desktopPaneId))) this.followersChanged(desktopPaneId);
+  }
+
+  /**
+   * An event of a desktop pane: every phone pane that follows it gets it too, with the phone's own pane id (followerView says
+   * what is left out). The pane closing ends its followers, after they heard closed.
+   */
+  mirror(ev) {
+    let any = false;
+    for (const [pane, f] of [...this.following]) {
+      if (f.desktopPaneId !== ev.paneId) continue;
+      any = true;
+      const view = followerView(ev, { pane, readOnly: f.readOnly });
+      if (view) {
+        this.toDevice(f.deviceId, phoneView(view));
+        // The note a restricted follower reads goes after the history that redraws its pane (flushCapNote).
+        if (ev.ev === 'opened') this.afterOpened(f.deviceId, { ...ev, paneId: pane, follower: true }, view);
+        else if (ev.ev === 'history') this.flushCapNote(f.deviceId, pane);
+      }
+      if (ev.ev === 'closed') { this.following.delete(pane); this.capNotes.delete(pane); }
+    }
+    if (any && ev.ev === 'closed') this.followerSeen.delete(ev.paneId);
   }
 
   /** A phone opened or closed a pane: tell the desktop once things settle. */
@@ -1899,6 +2110,9 @@ export class RemoteBridge {
 
   afterLeave(deviceId) {
     for (const c of this.conns.values()) if (c.open && !c.held && c.device?.id === deviceId) return;
+    // The shared view (2026-10-11): followers end with the phone's connection (nothing is kept for it); the pane header's
+    // "Also on" line goes at once. A phone that connects again sends follow again.
+    this.dropDeviceFollowers(deviceId);
     if (this.graceTimers.has(deviceId)) return;
     this.graceTimers.set(deviceId, unref(setTimeout(() => {
       this.graceTimers.delete(deviceId);
@@ -1915,6 +2129,8 @@ export class RemoteBridge {
   /** Closes a phone's panes (their Claude Code processes stop, locks are freed). Returns how many were left running. */
   closePhonePanes(deviceId, { idleOnly = false } = {}) {
     let left = 0;
+    // Removed, expired, disconnected or phone access off (idleOnly is the grace timer, long after afterLeave dropped them).
+    if (!idleOnly) this.dropDeviceFollowers(deviceId);
     for (const paneId of this.engine.phonePanes?.(deviceId) || []) {
       const busy = Boolean(this.engine.paneInfo?.(paneId)?.busy);
       if (busy && idleOnly) { left += 1; continue; }
@@ -2289,6 +2505,8 @@ export class RemoteBridge {
 
   pushStatus(extra = {}) {
     this.emit({ ...this.statusInfo(), ...extra });
+    // The names on the desktop panes' "Also on" lines follow the phones that are connected (an account's phones come and go).
+    if (this.following.size) this.refreshFollowers();
   }
 
   /** Stops everything (the engine is exiting). */

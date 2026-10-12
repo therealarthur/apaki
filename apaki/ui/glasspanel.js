@@ -36,6 +36,7 @@
 
 import { esc } from './markdown.js';
 import { leftShare, leftText } from './glasscard.js';
+import { paintRings, windowsDetailHtml } from './usage-rings.js';
 
 const NAMES = { claude: 'Claude', codex: 'Codex' };
 const NEEDS = new Set(['needsLogin', 'noSubscription']);
@@ -103,7 +104,9 @@ function row(provider, a, ui) {
   const name = renaming
     ? `<input class="gp-rename" value="${esc(a.label || a.name)}" maxlength="60" spellcheck="false" aria-label="New name">`
     : `<span class="gp-n" title="${esc(a.name)}">${esc(a.name)}</span>${tag}`;
-  const use = needs ? '' : `<div class="gp-use${low ? ' low' : ''}"><span class="gp-left">${esc(leftText(a) || '')}</span><span class="gp-meter" aria-hidden="true"><i style="--v:${share == null ? 0 : (share / 100).toFixed(3)}"></i></span></div>`;
+  const use = needs ? '' : `<div class="gp-use${low ? ' low' : ''}"><span class="gp-left">${esc(leftText(a) || '')}</span><span class="gp-meter" aria-hidden="true"><i data-v="${share == null ? 0 : (share / 100).toFixed(3)}"></i></span></div>`;
+  // The live account's details (2026-10-12): every usage window, its ring, the share used and the exact reset.
+  const detail = a.active && !a.isKey && !needs ? windowsDetailHtml(a.windows || []) : '';
   const acts = [];
   if (!a.active && !needs) acts.push('<button class="gp-btn primary" data-a="use" title="Make this the live login on this PC">Use</button>');
   if (needs) acts.push(`<button class="gp-btn" data-a="login" title="Sign this account in again in a browser window">Sign in</button>`);
@@ -111,7 +114,7 @@ function row(provider, a, ui) {
   acts.push(`<button class="gp-icon gp-more${menuOpen ? ' on' : ''}" data-a="menu" aria-haspopup="menu" aria-expanded="${menuOpen}" title="Rename, sign in again, ${a.isKey ? 'remove' : 'hide'}">${ICON.more}</button>`);
   return `<div class="gp-row${a.active ? ' live' : ''}${needs ? ' needs' : ''}${a.hidden ? ' hidden-acct' : ''}${menuOpen ? ' menu-open' : ''}" data-id="${esc(a.id)}">
     <div class="gp-main"><div class="gp-name">${name}</div><div class="gp-sub" title="${esc(subLine(a))}">${esc(subLine(a))}</div></div>
-    ${use}<div class="gp-act">${acts.join('')}</div>${menuOpen ? menu(a, ui) : ''}</div>`;
+    ${use}<div class="gp-act">${acts.join('')}</div>${menuOpen ? menu(a, ui) : ''}${detail}</div>`;
 }
 
 function render(box, provider, data, ui) {
@@ -158,6 +161,8 @@ function render(box, provider, data, ui) {
       ${provider === 'claude' ? `<button class="gp-btn" data-a="add-key">${ICON.plus}Add an API key</button>` : ''}
     </div>
     ${ui.msg ? `<div class="gp-msg${ui.msg.ok ? '' : ' err'}">${esc(ui.msg.text)}</div>` : ''}`;
+  paintRings(box);
+  for (const i of box.querySelectorAll('.gp-meter i[data-v]')) i.style.setProperty('--v', i.dataset.v);
 }
 
 export function openGlassPanel(anchor, provider, data, actions) {

@@ -111,6 +111,16 @@ export function toolArgs(name, input = {}) {
   return String(pick).replace(/\s+/g, ' ').slice(0, 160);
 }
 
+/**
+ * The name on a message another window sent into this conversation (the shared view). A phone's own name stands as it is; the
+ * PC's window is "Desktop" to the engine and "the PC" to a phone that follows it. Nothing for a message with no sender.
+ */
+export function peerName(from, onPhone = false) {
+  const n = String(from || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (!n) return '';
+  return n === 'Desktop' ? (onPhone ? 'the PC' : '') : n;
+}
+
 export class Pane {
   constructor(id, host, settings = {}) {
     this.id = id;
@@ -405,6 +415,95 @@ Click for changes, commit, push, pull request, merge`;
     this.host.changed(this);
   }
 
+  /**
+   * Phones that show this conversation too (the shared view, 2026-10-11): one plain line in the header, "Also on iPhone", gone
+   * when nobody does. Text only: no dot, no badge, no motion. The engine sends it when the phones watching change (ev followers).
+   */
+  setFollowers(phones) {
+    const names = (Array.isArray(phones) ? phones : []).filter((n) => typeof n === 'string' && n).slice(0, 4);
+    if (!names.length) { this.$.also?.remove(); this.$.also = null; return; }
+    if (!this.$.also) { this.$.also = el('span', 'also-on'); this.$.cwd.after(this.$.also); }
+    this.$.also.textContent = `Also on ${names.join(', ')}`;
+    this.$.also.title = 'A phone is watching this conversation. Nothing was taken over from this window.';
+  }
+
+  /**
+   * This pane follows a conversation open in a pane on the PC (the phone's shared view, 2026-10-12; app.js followDesktop, engine
+   * op follow): `desktopPaneId` names the PC's pane, null ends it. The pane shows that conversation live and its messages go into
+   * the PC's pane, so the model, effort and permission mode are the PC pane's: their chips stay on screen, read only. One bar at the
+   * top of the conversation says where it is being watched and offers Take over (app.js takeOver asks first, because it stops the PC's
+   * pane). readOnly (this phone's access is No shell or Chat only): the message box gives way to a "View only" line.
+   */
+  setFollowing(desktopPaneId, { readOnly = false } = {}) {
+    this.following = desktopPaneId || null;
+    this.el.classList.toggle('following', Boolean(this.following));
+    for (const k of ['model', 'effort', 'mode']) if (this.$[k]) this.$[k].disabled = Boolean(this.following);
+    this.setViewOnly(Boolean(this.following) && readOnly);
+    this.renderFollowBar();
+  }
+
+  /** The "View only" line in place of the message box (a follower whose phone may watch but not send). */
+  setViewOnly(on) {
+    this.el.classList.toggle('view-only', Boolean(on));
+    const note = this.el.querySelector('.view-only-note');
+    if (!on) { note?.remove(); return; }
+    if (!note) this.$.wrap?.append(el('div', 'view-only-note', '<b>View only</b><span>This phone can watch this conversation but not send to it. Take over to continue it here.</span>'));
+  }
+
+  /** The follow bar: "Watching on <PC>" and Take over, sticky at the top of the conversation. Gone when the pane does not follow. */
+  renderFollowBar() {
+    this.$.fbar?.remove();
+    this.$.fbar = null;
+    if (!this.following) return;
+    const pc = String(window.__apakiLink?.pcName?.() || '').trim() || 'your PC';
+    const bar = el('div', 'follow-bar', `<span class="fb-t"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.6 8s2.3-4.4 6.4-4.4S14.4 8 14.4 8s-2.3 4.4-6.4 4.4S1.6 8 1.6 8z"/><circle cx="8" cy="8" r="1.9"/></svg><span class="fb-w">Watching live on <b>${esc(pc)}</b></span></span><button type="button" class="fb-go" aria-label="Take over this conversation here">Take over</button>`);
+    bar.querySelector('.fb-go').onclick = () => this.host.takeOver?.(this);
+    this.$.ground.prepend(bar);
+    this.$.fbar = bar;
+  }
+
+  /** Stops following without closing the PC's pane (the PC drops this pane from its watchers). */
+  stopFollowing() {
+    if (!this.following) return;
+    this.setFollowing(null);
+    this.send('unfollow');
+  }
+
+  /**
+   * Take over: the conversation moves from the PC's pane to this one. The PC stops that pane before its next message (the
+   * same as opening a conversation the PC holds and choosing Take over here), so nothing forks.
+   */
+  takeOver() {
+    if (!this.following) return;
+    const s = { id: this.sessionId, cwd: this.cwd, title: this.title, codex: this.kind === 'codex' };
+    this.stopFollowing();
+    this.open(s, { warm: true, force: true });
+    this.host.changed(this);
+  }
+
+  /**
+   * The PC's pane is gone (closed there, or the PC no longer has it): this pane stops following and says so, keeping the transcript.
+   * Open here starts the conversation in this pane (nothing holds it any more), Close pane drops it.
+   */
+  followEnded() {
+    if (!this.following) return;
+    this.setFollowing(null);
+    this.setBusy(false);
+    this.setStatus('');
+    this.$.T.querySelector('.takeover')?.remove();
+    const card = el('div', 'takeover', `
+      <div class="tk-kicker">Closed on the PC</div>
+      <h3>The PC closed this conversation's pane</h3>
+      <p>${this.sessionId ? 'Nothing is watching it now. You can open it here and carry on, or close this pane.' : 'It had not started yet. Close this pane or start a new conversation here.'}</p>
+      <div class="tk-row">${this.sessionId ? '<button class="tk-go">Open here</button>' : ''}<button class="tk-no">Close pane</button></div>`);
+    const go = card.querySelector('.tk-go');
+    if (go) go.onclick = () => { card.remove(); this.open({ id: this.sessionId, cwd: this.cwd, title: this.title, codex: this.kind === 'codex' }, { warm: true }); this.host.changed(this); };
+    card.querySelector('.tk-no').onclick = () => this.host.close(this);
+    this.$.T.append(card);
+    this.scrollDown(true);
+    this.host.changed(this);
+  }
+
   /** Starts this new conversation in another folder (only before its first message). */
   setStartFolder(dir) {
     if (this.sessionId || this.busy) return;
@@ -501,6 +600,8 @@ Click for changes, commit, push, pull request, merge`;
 
   /** Opens a session here (null for a new conversation). warm=false waits for the first message to start Claude Code. */
   open(s, { warm = true, force = false } = {}) {
+    // Opening a conversation in a pane that follows the PC's pane ends the following first (the PC refuses an open on a follower).
+    if (this.following) this.stopFollowing();
     const sessionId = s?.id || null;
     if (s?.title) this.setTitle(s.title);
     if (!sessionId) this.setTitle('New conversation');
@@ -541,6 +642,8 @@ Click for changes, commit, push, pull request, merge`;
     if (!lost) this.$.T.innerHTML = '';
     this.$.T.querySelector('.takeover')?.remove();
     const terminal = h.app === 'latch-relay' || !h.app;
+    // On a phone, when a pane of the PC's window has it open: watching it live takes nothing from that pane (the shared view).
+    const watchPane = lost ? null : this.host.deskPaneFor?.(e.sessionId || this.sessionId) || null;
     const card = el('div', 'takeover', `
       <div class="tk-kicker">${lost ? 'Taken over' : 'Session in use'}</div>
       <h3>${lost ? `${esc(who)} took this session` : `Open in ${esc(who)}`}</h3>
@@ -550,11 +653,13 @@ Click for changes, commit, push, pull request, merge`;
       <p class="tk-fine">${terminal
         ? 'That terminal window is blocked as soon as you take over: its next message is stopped with a note to continue here, so nothing forks.'
         : 'That window stops before its next message, with a note to continue here, so nothing forks.'} Anything it already did is on disk and loads here.</p>
-      <div class="tk-row"><button class="tk-go">${lost ? 'Take it back' : 'Take over here'}</button><button class="tk-no">${lost ? 'Close pane' : 'Cancel'}</button></div>`);
-    card.querySelector('.tk-go').onclick = () => {
+      <div class="tk-row">${watchPane ? '<button class="tk-go tk-watch">Watch live</button>' : ''}<button class="${watchPane ? 'tk-take' : 'tk-go tk-take'}">${lost ? 'Take it back' : 'Take over here'}</button><button class="tk-no">${lost ? 'Close pane' : 'Cancel'}</button></div>`);
+    card.querySelector('.tk-take').onclick = () => {
       this.$.T.innerHTML = '';
       this.open(this.lastOpen || { id: this.sessionId, cwd: this.cwd, title: this.title }, { warm: true, force: true });
     };
+    const watch = card.querySelector('.tk-watch');
+    if (watch) watch.onclick = () => this.host.watchLive?.(this, watchPane);
     card.querySelector('.tk-no').onclick = () => {
       if (lost) { this.host.close(this); return; }
       this.lockedBy = null;
@@ -819,12 +924,14 @@ Click for changes, commit, push, pull request, merge`;
 
   clearEmpty() { if (this.$.T.querySelector('.empty')) this.$.T.innerHTML = ''; }
 
-  addUser(text, images = [], { steered = false, mid = null } = {}) {
+  addUser(text, images = [], { steered = false, mid = null, from = '' } = {}) {
     this.clearEmpty();
     // You wrote something: the next TodoWrite starts a new checklist (a steered message is part of the turn that runs, so it keeps its card).
     if (!steered) this.todoCard = null;
     const u = el('div', steered ? 'turn-user steered' : 'turn-user');
-    if (steered) u.append(el('span', 'steer-tag', 'Steered in'));
+    // A message another window of this conversation sent (the shared view): who sent it, in the same quiet tag.
+    if (from) u.append(el('span', 'steer-tag', `${steered ? 'Steered in' : 'Sent'} from ${esc(from)}`));
+    else if (steered) u.append(el('span', 'steer-tag', 'Steered in'));
     if (images.length) {
       const box = el('div', 'imgs');
       // From history, an image is a placeholder that loads it on demand (ref); never all of them up front.
@@ -2143,9 +2250,20 @@ Click for changes, commit, push, pull request, merge`;
 
   handle(e) {
     switch (e.ev) {
-      case 'locked': this.showLocked(e); break;
-      case 'taken_over': this.showLocked(e, { lost: true }); break;
+      case 'locked':
+        // The PC's pane could not open its conversation (another window holds it): nothing to follow here any more.
+        if (this.following) this.stopFollowing();
+        this.showLocked(e);
+        break;
+      case 'taken_over':
+        // A pane that follows the PC's pane: the conversation moved to another window, so this pane is an ordinary pane that lost it
+        // (Take it back opens it here). Not following any more, so the PC drops it from its watchers.
+        if (this.following) this.stopFollowing();
+        this.showLocked(e, { lost: true });
+        break;
       case 'opened':
+        // A pane that follows the PC's pane hears whether this phone may only watch (the PC decides, see capFollowNote).
+        if (this.following && e.follower) this.setViewOnly(Boolean(e.readOnly));
         this.lockedBy = null;
         // It holds its conversation again (opened, taken back, re-attached): no more following from the outside.
         this.lockLost = false;
@@ -2246,6 +2364,10 @@ Click for changes, commit, push, pull request, merge`;
         break;
       }
       case 'error': this.setBusy(false); this.setStatus(''); this.note(e.message, 'error'); break;
+      // The shared view (2026-10-11): which phones watch this pane, and a message one of them sent into it (the engine does not
+      // echo user messages, and the phone drew its own copy).
+      case 'followers': this.setFollowers(e.phones); break;
+      case 'peerMessage': this.addUser(e.text || '', (e.images || []).map((im) => ({ url: `data:${im.media_type};base64,${im.data}` })), { steered: Boolean(e.steered), from: peerName(e.from, this.following) }); break;
       case 'transcript': {
         if (!this.busy) this.setStatus(e.text ? `Transcribed in ${(e.ms / 1000).toFixed(1)}s` : 'Heard nothing');
         const { input } = this.$;
