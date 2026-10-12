@@ -551,7 +551,7 @@ PRESETS['handoff-phone'] = () => ({
 
 /**
  * The shared view (2026-10-12): the same desktop, with each pane carrying the window's pane id (engine desktop-tabs.js paneId)
- * so a phone can follow one without taking it over. Two tabs: the working tab, and one with a browser and a second conversation.
+ * so a phone can follow one without taking it over. Two tabs: the working tab, and one with a second conversation.
  * The phone starts with nothing open; the desktop holds all three sessions, so Take over here is the real lock path.
  * Use with phone.html?ws=follow-phone&follow=1 (follow=0 is a PC without the feature; cap=noshell|chat is a restricted phone).
  */
@@ -564,7 +564,6 @@ PRESETS['follow-phone'] = () => ({
     { index: 0, active: true, panes: handoffDesktopTabs()[0].panes.map((p, i) => ({ paneId: `ph${i + 1}`, ...p })) },
     { index: 1, active: false, panes: [
       { paneId: 'ph4', kind: 'session', sessionId: ID.uploads, title: 'Move image uploads to signed URLs', busy: false, focused: true },
-      { paneId: 'ph5', kind: 'browser', title: 'Acme shop', focused: false },
     ] },
   ],
   held: {

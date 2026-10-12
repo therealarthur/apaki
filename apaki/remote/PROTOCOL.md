@@ -288,6 +288,34 @@ enrollment cannot be replayed; the phone key never leaves the phone. A page
 from before this sends a version 1 via (a name only) or none: after 8 seconds
 Connected lets it in as before and Private closes it.
 
+### Following a desktop pane (the shared view, 2026-10-11)
+
+A phone can watch a conversation that is open in a pane of the desktop window without taking it over (taking over
+stops the desktop pane). hello lists the feature `follow`, and `follow` and `unfollow` are in `ops`; the desktop's
+tabs and panes arrive in `desktopTabs` events, each pane with its `paneId` (apaki/engine/desktop-tabs.js).
+
+```
+phone -> PC   { op: 'follow', reqId, paneId: <the phone's own pane>, desktopPaneId }   only a conversation pane can be followed
+PC -> phone   ev opened { attached: true, follower: true, readOnly, busy, turn, running, model, effort, mode ... }
+              ev history, ev ask (questions still waiting), ev sdk (running tasks)       the pane's state, under the phone's pane id
+              then every event of the desktop pane (remote-policy.js FOLLOW_EVENTS), under the phone's pane id,
+              never the window's request ids, its queued messages or its dictation
+              ev peerMessage { from, text, images, steered }     a message another window typed into the pane (the engine
+                                                                  does not echo user messages); the sender draws its own
+phone -> PC   { op: 'unfollow', reqId, paneId }                  ends it; the PC answers closed with the same reqId
+PC -> phone   ev closed { paneId }                               the desktop pane was closed: the follower ends too
+```
+
+Ops on a followed pane name the phone's own pane and the PC resolves them to the desktop pane: send, steer, interrupt
+and answering a question drive the desktop pane, so only Full access may (a restricted phone would otherwise get a
+shell through a pane its access never limited, SECURITY.md); watching, paging the history and the context meter work at
+every level. model, effort and mode of a desktop pane are the desktop's and refused for every access level. open and
+attach on a following pane are refused (they would take the session over); Take over is `unfollow`, then `open` with
+`force`. A phone follows at most 6 desktop panes at once, one phone pane per desktop pane. Followers end with the
+phone's last connection (nothing is kept on the PC); a page that reconnects sends `follow` again. The desktop window
+hears `{ ev: 'followers', paneId, phones: [names] }` and draws "Also on <phone>" in the pane's header; the first answer
+to a question wins and the other side's sheet goes away (`ask_gone`).
+
 ## Known limits
 
 - The relay sees the device id in HELLO1 (it already sees connections, IPs,
