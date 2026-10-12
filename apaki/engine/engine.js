@@ -111,6 +111,13 @@
  *   op worktrees { cwd?, full?, refresh? } -> ev worktrees { repos: [{ name, base, worktrees: [{ path, branch, added, removed, ahead, behind, ... }] }] }
  *   op worktreeDiff { path, scope? } -> ev worktreeDiff;  op worktreePlan / worktreeRun { kind, ... } -> ev worktreePlan / worktreeResult
  *   op worktreeTerminal { path } (the window only)
+ * The session list (2026-10-12, session-info.js and pins.js; Arthur: compact rows like the ChatGPT app, everything else
+ * in a menu and a Details sheet):
+ *   op sessionInfo { sessionId } -> ev sessionInfo { sessionId, ok, info }   read only: transcript facts, size, live state
+ *   op pin { sessionId, pinned } -> ev sessions (rows carry pinned: true)   Pin to top
+ *   op exportSession { sessionId, inline? } -> ev exported { ok, name, path | markdown }   Export as Markdown
+ *   op resumeTerminal { sessionId }   a terminal running claude --resume (or codex resume) in its folder (the window only)
+ *   ev sessions rows also carry model (the last reply's, from the tail last-active.js reads)
  *
  *   op hostStatus -> ev host { pid, window, remoteOn, panes, lifecycle }
  *   op hostQuit { whenIdle: true } | { now: true } -> ev hostQuit { ok, pending, waiting }
@@ -143,6 +150,9 @@ import { COMPACT_CHOICES, COMPACT_DEFAULT, compactSettings, loadPrefs, normalize
 import { estimateEvent, lastUsage } from './context-estimate.js';
 // The session list's times: the last message, not the file's modified time (2026-10-11).
 import { LastActive } from './last-active.js';
+// The session list's Details, Pin to top, Export as Markdown and Open in a terminal (2026-10-12).
+import * as pins from './pins.js';
+import { SESSION_ID_RE, codexMarkdown, diskSize, exportName, findRollout, freePath, historyMarkdown, resumeCommand, scanClaude, scanCodex } from './session-info.js';
 // Every conversation kept past Claude Code's 30-day cleanup, listed, opened and restored from D: (2026-10-12).
 import { archiveRoot, archiveTranscripts, archivedMeta, archivedSessions, openArchived, restoreArchived } from './transcript-archive.js';
 // What a phone shows of the desktop's tabs (2026-10-11).
@@ -411,6 +421,9 @@ function compact(it, term, folderOf) {
     ...(it.archivedCopy ? { archivedCopy: true, restorable: true } : {}),
     // A turn is running in this engine (a pane here, a phone's pane, or one kept running in the background).
     running: [...panes.values()].some((p) => p.sessionId === it.id && (p.runner?.turnRunning || p.runner?.turnActive || (isCodexPane(p) && p.busy))),
+    // Pinned to the top of the list (pins.js), and the model of its last reply when its tail says (last-active.js), 2026-10-12.
+    ...(pins.pinned().has(it.id) ? { pinned: true } : {}),
+    ...(it.model ? { model: it.model } : {}),
   };
 }
 
@@ -535,6 +548,114 @@ async function askSearchOp(reqId, query, paneId) {
 function digPromptOp(reqId, query, candidateIds = []) {
   const candidates = candidateIds.map((id) => state.byId.get(id)).filter(Boolean).map((it) => ({ id: it.id, title: it.title, cwd: it.cwd }));
   emit({ ev: 'digReady', reqId, query, prompt: digPrompt(query, candidates) });
+}
+
+/* ---------- one session's details (the list's Details sheet, Export, Open in a terminal; session-info.js) ---------- */
+
+/** The list record of a session (Claude Code, a Codex thread the Codex view read, or a terminal's new session), or null. */
+function listItemOf(id) {
+  return state.byId?.get(id) || codex.cachedRows().find((r) => r.id === id) || null;
+}
+
+/**
+ * Everything known about one session (op sessionInfo, read only): its list record, what its transcript or rollout says
+ * (session-info.js), its size on disk, and what this engine knows live (panes holding it, their model, effort, mode and
+ * billing, a terminal window, folder, archive and pin). Fields that cannot be known are left out, never guessed.
+ */
+async function sessionInfoOf(id) {
+  if (!state.items) await loadSessions().catch(() => {});
+  const codexId = isCodexId(id);
+  const item = listItemOf(id) || {};
+  const info = {
+    id, provider: codexId ? 'codex' : 'claude', title: item.title || '', firstPrompt: item.firstPrompt || '', cwd: item.cwd || '', branch: item.branch || '',
+    lastActive: item.lastModified || 0, fileModified: item.fileModified || 0, size: item.size || 0, headless: Boolean(item.headless),
+    archived: archive.archived().has(id) || Boolean(item.codexArchived), codexArchived: Boolean(item.codexArchived), archivedCopy: false,
+    pinned: pins.pinned().has(id), folder: null, terminal: [], panes: [], subagents: 0, shells: 0, shellsRunning: 0,
+  };
+  const f = folders.folderOfSessions().get(id);
+  if (f) info.folder = { id: f.id, name: f.name };
+  info.terminal = (terminalSessions().get(id) || []).map((t) => ({ name: t.name || '', status: t.status || '', pid: t.pid || null }));
+  for (const p of panes.values()) {
+    if (p.sessionId !== id) continue;
+    const running = Boolean(p.runner?.turnRunning || p.runner?.turnActive || (isCodexPane(p) && p.busy));
+    info.panes.push({ where: parsePhoneId(p.id) ? 'phone' : 'desktop', model: p.model || '', effort: p.effort || '', mode: p.mode || '', billing: p.credential?.name || '', running });
+  }
+  if (codexId) {
+    const found = findRollout(id);
+    if (found) {
+      info.transcript = found.file;
+      info.codexArchived = info.codexArchived || found.archived;
+      info.archived = info.archived || found.archived;
+      info.size = diskSize(found.file, null).size;
+      Object.assign(info, pickScan(await scanCodex(found.file).catch(() => null)));
+    }
+    return info;
+  }
+  const live = transcriptMap().get(id);
+  const file = live || (archivedOnly(id) ? openArchived(id, { cache: ARCHIVE_OPEN_DIR }) : null);
+  if (!file) return info;
+  info.transcript = live || '';
+  info.archivedCopy = !live;
+  if (live) {
+    const d = diskSize(live, id);
+    Object.assign(info, { size: d.size, sideSize: d.side, totalSize: d.total });
+    try {
+      info.subagents = countSubagents(live);
+      const shells = listShells(live);
+      info.shells = shells.length;
+      info.shellsRunning = shells.filter((s) => s.running).length;
+    } catch { /* its side folder is being written */ }
+  }
+  Object.assign(info, pickScan(await scanClaude(file).catch(() => null)));
+  return info;
+}
+
+/** The fields of a scan that Details shows (the list record keeps its own title, folder and time when the scan has none). */
+function pickScan(s) {
+  if (!s) return {};
+  const out = {
+    created: s.created || 0, prompts: s.prompts, replies: s.replies, toolCalls: s.toolCalls, compactions: s.compactions,
+    model: s.model || '', models: s.models || [], version: s.version || '', tokens: s.tokens,
+  };
+  if (s.lastActive) out.lastActive = s.lastActive;
+  if (s.cwd) out.lastCwd = s.cwd;
+  if (s.gitBranch) out.gitBranch = s.gitBranch;
+  if (s.effort) out.effort = s.effort;
+  if (s.customTitle) out.customTitle = s.customTitle;
+  if (s.summary) out.summary = s.summary;
+  if (s.firstPrompt) out.firstPromptFull = s.firstPrompt;
+  if (s.originator) out.originator = s.originator;
+  if (s.approval) out.approval = s.approval;
+  if (s.sandbox) out.sandbox = s.sandbox;
+  return out;
+}
+
+/** A session as Markdown (op exportSession): Claude Code's from its built history, a Codex thread's from its rollout. */
+async function sessionMarkdown(id) {
+  const item = listItemOf(id) || {};
+  const meta = { id, title: item.title || '', cwd: item.cwd || '', branch: item.branch || '', lastActive: item.lastModified || 0, model: item.model || '' };
+  if (isCodexId(id)) {
+    const found = findRollout(id);
+    if (!found) return null;
+    return codexMarkdown(await fs.promises.readFile(found.file, 'utf8'), meta);
+  }
+  const h = await historyStore.history(id);
+  if (!h || !h.items.length) return null;
+  const first = h.items.find((x) => x.at);
+  return historyMarkdown(h.items, { ...meta, created: first ? Date.parse(first.at) || 0 : 0 });
+}
+
+/** Where a desktop export goes: Downloads, else the home folder. */
+function exportDir() {
+  const dl = path.join(os.homedir(), 'Downloads');
+  try { if (fs.statSync(dl).isDirectory()) return dl; } catch { /* no Downloads folder */ }
+  return os.homedir();
+}
+
+/** Shows a file selected in Explorer (or Finder, or its folder on Linux). */
+function revealFile(file) {
+  const [cmd, args] = process.platform === 'win32' ? ['explorer.exe', [`/select,${file}`]] : process.platform === 'darwin' ? ['open', ['-R', file]] : ['xdg-open', [path.dirname(file)]];
+  try { spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: false }).unref(); } catch { /* nothing to show it with */ }
 }
 
 /* ---------- history ---------- */
@@ -1575,6 +1696,61 @@ const handlers = {
     if (!ok) { emit({ ev: 'note', paneId: null, reqId: c.reqId, text: 'That folder is not there any more.' }); return; }
     const cmd = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
     try { spawn(cmd, [dir], { detached: true, stdio: 'ignore', windowsHide: false }).unref(); } catch { /* nothing to open it with */ }
+  },
+  /* ---------- the session list's Details, Pin to top, Export and Open in a terminal (2026-10-12, session-info.js) ---------- */
+  // Everything known about one session, read only (a phone may ask at every access level: remote-policy.js).
+  sessionInfo: async (c) => {
+    const id = String(c.sessionId || '');
+    if (!SESSION_ID_RE.test(id)) { emit({ ev: 'sessionInfo', reqId: c.reqId, sessionId: id, ok: false, message: 'That is not a session id.' }); return; }
+    try {
+      emit({ ev: 'sessionInfo', reqId: c.reqId, sessionId: id, ok: true, info: await sessionInfoOf(id) });
+    } catch (e) {
+      emit({ ev: 'sessionInfo', reqId: c.reqId, sessionId: id, ok: false, message: `Could not read it: ${e.message || e}` });
+    }
+  },
+  // Pinned sessions show under Pinned at the top of the list (pins.js); pinned: false unpins.
+  pin: async (c) => {
+    pins.setPinned(String(c.sessionId || ''), c.pinned !== false);
+    await sessions(c.reqId || null);
+  },
+  // The conversation as a Markdown file in Downloads, shown in Explorer; inline (a phone) sends the text back instead.
+  exportSession: async (c) => {
+    const id = String(c.sessionId || '');
+    const item = listItemOf(id) || {};
+    const name = exportName(item.title || item.firstPrompt || 'Conversation', id);
+    let markdown = null;
+    try { markdown = SESSION_ID_RE.test(id) ? await sessionMarkdown(id) : null; } catch (e) { process.stderr.write(`export ${id}: ${e.message || e}\n`); }
+    if (!markdown) { emit({ ev: 'exported', reqId: c.reqId, sessionId: id, ok: false, message: 'There is nothing to export: its transcript is not on this PC.' }); return; }
+    if (c.inline) { emit({ ev: 'exported', reqId: c.reqId, sessionId: id, ok: true, name, markdown }); return; }
+    try {
+      const file = freePath(exportDir(), name);
+      await fs.promises.writeFile(file, markdown, 'utf8');
+      emit({ ev: 'exported', reqId: c.reqId, sessionId: id, ok: true, name: path.basename(file), path: file });
+      revealFile(file);
+    } catch (e) {
+      emit({ ev: 'exported', reqId: c.reqId, sessionId: id, ok: false, message: `Could not save it: ${e.message || e}` });
+    }
+  },
+  // A terminal on this PC that resumes the session in its folder (the window only, like worktreeTerminal).
+  resumeTerminal: (c) => {
+    const id = String(c.sessionId || '');
+    if (!SESSION_ID_RE.test(id)) { emit({ ev: 'note', paneId: null, reqId: c.reqId, text: 'That is not a session id.' }); return; }
+    // One Claude Code per session: a pane here holding it would fight the terminal over the transcript.
+    if ([...panes.values()].some((p) => p.sessionId === id)) { emit({ ev: 'note', paneId: null, reqId: c.reqId, text: 'It is open in Apaki. Close its pane first, then open it in a terminal.' }); return; }
+    const item = listItemOf(id) || {};
+    let dir = String(item.cwd || '');
+    try { if (!dir || !fs.statSync(dir).isDirectory()) dir = os.homedir(); } catch { dir = os.homedir(); }
+    const t = resumeCommand(process.platform, { cwd: dir, id });
+    if (!t) return;
+    const start = (x, fallback) => {
+      try {
+        const child = spawn(x.cmd, x.args, { cwd: x.cwd || dir, detached: true, stdio: 'ignore', windowsHide: false });
+        child.on('error', () => { if (fallback) start(fallback, null); });
+        child.unref();
+      } catch { if (fallback) start(fallback, null); }
+    };
+    start(t, t.fallback);
+    emit({ ev: 'note', paneId: null, reqId: c.reqId, text: `Opening a terminal: ${t.words.join(' ')}` });
   },
   folder: async (c) => {
     if (c.action === 'create') { const f = folders.createFolder(c.name); if (!f.error && c.sessionId) folders.moveToFolder(c.sessionId, f.id); }

@@ -39,6 +39,28 @@ export function lastMessageAt(text) {
   return null;
 }
 
+/**
+ * The time of the last user or assistant line and the model of the last reply in some transcript text, or nulls
+ * (2026-10-12: the session list's hover card names the model a conversation last used, read from the same tail).
+ */
+export function lastMessageInfo(text) {
+  const lines = String(text).split('\n');
+  let at = null;
+  let model = null;
+  for (let i = lines.length - 1; i >= 0 && (at === null || model === null); i--) {
+    const line = lines[i];
+    if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')) continue;
+    if (at !== null && !line.includes('"model"')) continue;
+    let j;
+    try { j = JSON.parse(line); } catch { continue; }
+    if ((j.type !== 'user' && j.type !== 'assistant') || j.isSidechain) continue;
+    if (at === null) { const t = Date.parse(j.timestamp); if (Number.isFinite(t)) at = t; }
+    const m = j.type === 'assistant' ? j.message?.model : null;
+    if (model === null && typeof m === 'string' && m && m !== '<synthetic>') model = m;
+  }
+  return { at, model };
+}
+
 async function readTail(file, size, bytes) {
   const len = Math.min(size, bytes);
   const fh = await fs.promises.open(file, 'r');
@@ -61,6 +83,13 @@ export async function lastActiveOf(file, size) {
   }
 }
 
+/** One file's last message time and last reply's model (the first tail only; the time falls back to lastActiveOf). */
+export async function lastActiveInfoOf(file, size) {
+  const info = lastMessageInfo(await readTail(file, size, Math.min(size, TAIL_FIRST)));
+  if (info.at === null && size > TAIL_FIRST) info.at = await lastActiveOf(file, size);
+  return info;
+}
+
 /**
  * A cache of last message times by file. lastActive(file) answers from the
  * cache while the file's size and mtime are unchanged.
@@ -69,13 +98,19 @@ export class LastActive {
   constructor() { this.cache = new Map(); }
 
   async lastActive(file) {
+    return (await this.info(file))?.at ?? null;
+  }
+
+  /** { at, model } for a file (model: the last reply's, when the tail has one), cached like lastActive. */
+  async info(file) {
     let st;
     try { st = await fs.promises.stat(file); } catch { return null; }
     const hit = this.cache.get(file);
-    if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.at;
-    const at = await lastActiveOf(file, st.size).catch(() => null);
-    this.cache.set(file, { size: st.size, mtimeMs: st.mtimeMs, at });
-    return at;
+    if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit;
+    const info = await lastActiveInfoOf(file, st.size).catch(() => ({ at: null, model: null }));
+    const rec = { size: st.size, mtimeMs: st.mtimeMs, at: info.at, model: info.model };
+    this.cache.set(file, rec);
+    return rec;
   }
 
   /**
@@ -91,9 +126,12 @@ export class LastActive {
         const it = list[next++];
         const file = files.get(it.id);
         if (!file) continue;
-        const at = await this.lastActive(file);
+        const info = await this.info(file);
+        const at = info?.at ?? null;
         if (it.fileModified === undefined) it.fileModified = it.lastModified || 0;
         if (at) it.lastModified = at;
+        // The model of its last reply (2026-10-12), for the list's hover card; kept off when the tail has none.
+        if (info?.model) it.model = info.model;
       }
     };
     await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, work));
