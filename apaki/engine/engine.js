@@ -99,7 +99,13 @@
  *   ev ask         gains `permission` (title, displayName, description, decisionReason, blockedPath, mcpServer,
  *                  agentId, toolUseId, defaultToNo, cut, always: { lines } | null) when the ask is a tool call
  *   op answer      result { behavior: 'allow', always? } or { behavior: 'deny', message? } settles it once
- *   ev ask_gone    the call is over (the turn ended, Claude Code cancelled it): drop its sheet
+ *   ev ask_gone    the call is over (the turn ended, Claude Code cancelled it): drop its card
+ *
+ * Questions inline (2026-10-12, apaki/ui/askcard.js; Arthur: "when askuserquestion type things come up, it should be
+ * shown in the pane and not lock the user from using the app"): the window draws each ask as a card in its pane, and
+ * ask_gone says why it went, so that pane can say so in one quiet line:
+ *   ev ask_gone    gains why: 'answered' | 'turn' | 'again' | 'stopped' | 'cancelled' | 'taken' | 'resolved' | 'closed',
+ *                  and by (who answered: a phone's name or 'the PC'; the window that took the conversation, for 'taken')
  *
  * Codex panes (2026-10-12, codex-panes.js; Arthur: a Codex pane matches OpenAI's Codex app as close to 1:1 as possible):
  * a session id `codex:<thread id>`, or open with kind: 'codex' for a new conversation, makes the pane a Codex one. One
@@ -922,8 +928,9 @@ async function takeFrom(other, taker) {
     if (a.paneId !== other.id) continue;
     state.asks.delete(id);
     a.resolve({ behavior: 'deny', message: 'The session was taken over in another window.' });
-    // Its sheet goes with it (a permission prompt must not stay up for a call that no longer waits).
-    emit({ ev: 'ask_gone', askId: id, paneId: other.id });
+    // Its card goes with it (a permission prompt must not stay up for a call that no longer waits); `by` names the
+    // window that took it, so the pane can say where the conversation went (askcard.js goneNote, 2026-10-12).
+    emit({ ev: 'ask_gone', askId: id, paneId: other.id, why: 'taken', by: holderOf(taker).name });
   }
   const r = other.runner;
   other.runner = null;
@@ -991,10 +998,12 @@ async function sendContext(p, reqId = null) {
 /**
  * Questions (AskUserQuestion, plan approval) of a pane that no longer wait
  * for anyone: the turn ended, or Claude Code gave up and asked again. Each is
- * settled with no answer and the window drops its sheet (ask_gone), so a
+ * settled with no answer and the window drops its card (ask_gone), so a
  * person never answers the same question twice (Arthur, 2026-10-10).
+ * `why` goes with ask_gone ('turn' the turn ended, 'again' Claude asked again,
+ * 'stopped' the process ended) so the pane can say so in a short line.
  */
-function dropStaleAsks(paneId, { olderThanMs = 0, questionsOnly = false, keepSubagents = false } = {}) {
+function dropStaleAsks(paneId, { olderThanMs = 0, questionsOnly = false, keepSubagents = false, why = 'turn' } = {}) {
   const now = Date.now();
   for (const [id, a] of state.asks) {
     if (a.paneId !== paneId || now - (a.at || 0) < olderThanMs) continue;
@@ -1004,7 +1013,7 @@ function dropStaleAsks(paneId, { olderThanMs = 0, questionsOnly = false, keepSub
     if (keepSubagents && a.kind === 'permission' && a.permission?.agentId) continue;
     state.asks.delete(id);
     a.resolve(null);
-    emit({ ev: 'ask_gone', askId: id, paneId });
+    emit({ ev: 'ask_gone', askId: id, paneId, why });
   }
 }
 
@@ -1106,12 +1115,12 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     onStderr: (d) => process.stderr.write(String(d).replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***')),
   });
   // The Claude Code process ended (a stop, a restart for another effort or account, a crash): nothing it asked still waits.
-  runner.onProcessEnd = () => dropStaleAsks(p.id);
+  runner.onProcessEnd = () => dropStaleAsks(p.id, { why: 'stopped' });
   // Questions and plan approval go to the window and wait for its answer.
   runner.onInteractiveTool = (toolName, input) => new Promise((resolve) => {
     // Asked again while an earlier one has been open a while: Claude Code gave up on the earlier one (a
     // retry comes a minute or more later; questions asked together arrive within a second), so the window drops it.
-    dropStaleAsks(p.id, { olderThanMs: 5000, questionsOnly: true });
+    dropStaleAsks(p.id, { olderThanMs: 5000, questionsOnly: true, why: 'again' });
     const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     // toolName and input are kept so attach can ask a reconnected window again.
     state.asks.set(id, { resolve, paneId: p.id, toolName, input, at: Date.now() });
@@ -1282,7 +1291,7 @@ async function closePane(reqId, paneId) {
     if (a.paneId !== p.id) continue;
     state.asks.delete(id);
     a.resolve({ behavior: 'deny', message: 'The pane was closed.' });
-    emit({ ev: 'ask_gone', askId: id, paneId: p.id });
+    emit({ ev: 'ask_gone', askId: id, paneId: p.id, why: 'closed' });
   }
   await closeRunner(p);
   openServer?.forget(p.id);
@@ -1519,7 +1528,8 @@ const handlers = {
     // The first answer wins (2026-10-11, the shared view): the question may be on screen in the window and on phones that follow
     // its pane, so whoever did not answer has its sheet taken away the way a stale question's is (ask_gone). Nothing extra is sent
     // for a pane nobody else watches, so the window's own answers behave as before.
-    if (a && (c.follower || remote?.followerNames?.(a.paneId)?.length)) emit({ ev: 'ask_gone', askId: c.askId, paneId: a.paneId });
+    // why/by (2026-10-12, askcard.js): the other side's card leaves "Answered on <phone>." or "Answered on the PC."
+    if (a && (c.follower || remote?.followerNames?.(a.paneId)?.length)) emit({ ev: 'ask_gone', askId: c.askId, paneId: a.paneId, why: 'answered', by: typeof c.follower === 'string' && c.follower ? c.follower : 'the PC' });
   },
   model: async (c) => {
     const p = getPane(c.paneId);

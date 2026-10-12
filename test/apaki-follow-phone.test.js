@@ -294,7 +294,11 @@ test('wiring: the page follows, asks before it takes over, saves and restores a 
   assert.match(app, /It is working on the PC right now, and taking over stops that\./, 'it says so when the PC pane is mid-turn');
   assert.match(app, /p\.setFollowing\(desktopPaneId, \{ readOnly: viewOnly \}\)/);
   assert.match(app, /case 'closed': \{ const p = S\.panes\.get\(e\.paneId\); if \(p\?\.following\) p\.followEnded\(\); break; \}/);
-  assert.match(app, /if \(e\.readOnly\) \{ p\?\.note\('Claude is asking a question on the PC\./, 'a view only phone is told where to answer, no sheet it cannot answer');
+  // Since 2026-10-12 (askcard.js) a view only phone sees the question in the pane, every choice off, and the line that says where to answer.
+  assert.match(app, /const entry = p \? asks\.ask\(e, p\) : null;/, 'every ask goes to its pane\'s card');
+  const card = read('../apaki/ui/askcard.js');
+  assert.match(card, /READ_ONLY_TEXT = 'Claude is asking a question on the PC\. This phone can watch, not answer: answer it there, or take the conversation over here\.'/, 'a view only phone is told where to answer');
+  assert.match(card, /if \(entry\.readOnly\) for \(const c of card\.querySelectorAll\('button, input'\)\) c\.disabled = true;/, 'no choice it cannot make');
   assert.match(app, /window\.addEventListener\('apaki:cap', /);
   assert.match(app, /\.\.\.\(p\?\.following \? \{ follow: p\.following, fs: p\.sessionId \|\| null, ft: p\.title \|\| '' \} : \{\}\)/, 'saved as a follower');
   assert.match(app, /busy: Boolean\(p\?\.busy && !p\?\.following\)/, 'a follower is never "crashed mid-turn" on restore');

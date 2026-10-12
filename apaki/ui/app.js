@@ -40,8 +40,10 @@ import { folderSheet } from './startfolder.js';
 import { initGlassCard } from './glasscard.js';
 import { initSettings } from './settings.js';
 import { findStep, openFind } from './find.js';
-// The permission sheet (Allow once, Always allow, Deny) for a tool Claude Code asks about (permission.js, 2026-10-12).
-import { ARM_MS, denyLabel, permissionHtml, permissionKey, permissionReply, permissionView } from './permission.js';
+// Questions, plan approval and permission prompts (Allow once, Always allow, Deny; permission.js) as a card inside the
+// pane that asked, never a sheet over the window (askcard.js, 2026-10-12: "it should be shown in the pane and not lock
+// the user from using the app").
+import { createAsks } from './askcard.js';
 import { DRAG_TASK, KIND_LABEL, TaskPane, closeTasksPanel, newTaskViewerId, specKey, taskGlyph, tasksPanel, tasksPanelPane } from './tasks.js';
 // Codex panes and rows (codex.js, 2026-10-12).
 import { CARD_ONLY_VIA } from './codex.js';
@@ -277,6 +279,38 @@ const host = {
   shortcut: (key, shift) => shortcut(key, shift),
   paneTitle: (id) => S.panes.get(id)?.title || null,
 };
+
+/* ---------- questions and approvals, inline (askcard.js, 2026-10-12) ---------- */
+
+// Arthur: "when askuserquestion type things come up, it should be shown in the pane and not lock the user from using
+// the app". Each question, plan approval and permission prompt is a card in the pane that asked, above its message box;
+// the rest of the window keeps working. The pane's header says "Waiting for you", its tab is marked and counted in the
+// taskbar badge like a ready one, and one click on the tab brings the card the keyboard.
+const asks = createAsks({
+  send,
+  web: WEB,
+  isFocusedPane: (p) => activeTab() === tabOf(p) && focusedPane() === p,
+  onChange: () => { syncWaiting(); renderTabs(); },
+  // Approving a plan leaves plan mode, as the sheet did.
+  onAnswered: (p, act) => { if (act.then === 'plan-approved' && p?.mode === 'plan') p.setMode('bypassPermissions'); },
+});
+
+/** The pane of tab t that waits for an answer: its focused one when that one does, else the first. */
+function waitingPaneIn(t) {
+  const ids = L.ids(t?.root);
+  if (t?.focused && ids.includes(t.focused) && asks.waiting(t.focused)) return S.panes.get(t.focused) || null;
+  const id = ids.find((x) => asks.waiting(x));
+  return id ? S.panes.get(id) || null : null;
+}
+
+/** The session list's "waiting for your answer" rows (S.waiting, sessionlist.js) follow the cards. */
+function syncWaiting() {
+  const now = asks.pending();
+  if (now.length === S.waiting.size && now.every(([id, paneId]) => S.waiting.get(id) === paneId)) return;
+  S.waiting.clear();
+  for (const [id, paneId] of now) S.waiting.set(id, paneId);
+  if (!S.drag) renderRail();
+}
 
 /* ---------- git worktrees (worktree.js, diff.js; 2026-10-12) ---------- */
 
@@ -726,7 +760,8 @@ function focusPane(p, { scroll = true } = {}) {
   }
   if (p.unread) { p.unread = false; p.el.classList.remove('unread'); }
   // On a phone the keyboard would cover the conversation it just opened: it comes up when the person taps the box (2026-10-10).
-  if (scroll && !WEB && document.activeElement?.closest?.('.pane') !== p.el) p.$.input?.focus({ preventScroll: true });
+  // A pane with a question waiting gives the keyboard to its card instead (askcard.js), so its numbers and Enter answer it.
+  if (scroll && !WEB && document.activeElement?.closest?.('.pane') !== p.el && !asks.focus(p)) p.$.input?.focus({ preventScroll: true });
   if (scroll && p.isBrowser && document.activeElement?.closest?.('.pane') !== p.el) p.focusInto();
   document.title = `Myrlin Apaki · ${p.title}`;
   renderTabs();
@@ -740,6 +775,8 @@ function closePane(p, { confirmBusy = true } = {}) {
   // A phone pane that follows a desktop pane (followDesktop, below) stops following; it never closes the desktop's.
   if (!p.isViewer) send(p.following ? 'unfollow' : 'close', { paneId: p.id });
   S.panes.delete(p.id);
+  asks.drop(p);
+  syncWaiting();
   p.destroy();
   if (p.isViewer) { viewerClosed(p); refreshArtifactButtons(); }
   if (!t) return;
@@ -754,7 +791,8 @@ function closePane(p, { confirmBusy = true } = {}) {
 function closeTab(t, { confirmBusy = true } = {}) {
   const panes = L.ids(t.root).map((id) => S.panes.get(id)).filter(Boolean);
   if (confirmBusy && panes.some((p) => p.busy) && !window.confirm('A pane in this tab is still working. Stop it and close the tab?')) return;
-  for (const p of panes) { if (!p.isViewer) send(p.following ? 'unfollow' : 'close', { paneId: p.id }); S.panes.delete(p.id); p.destroy(); }
+  for (const p of panes) { if (!p.isViewer) send(p.following ? 'unfollow' : 'close', { paneId: p.id }); S.panes.delete(p.id); asks.drop(p); p.destroy(); }
+  syncWaiting();
   for (const p of panes) if (p.isViewer) viewerClosed(p);
   refreshArtifactButtons();
   const i = S.tabs.indexOf(t);
@@ -1152,10 +1190,12 @@ function renderTabs() {
     const busy = panes.some((p) => p.busy);
     const unread = panes.some((p) => p.unread);
     const warm = panes.some((p) => p.sessionId && S.warm.has(p.sessionId));
-    const tab = el('div', `tab${t.id === S.active ? ' on' : ''}${busy ? ' busy' : ''}${unread ? ' unread' : ''}${warm ? ' warm' : ''}`);
+    // A question waits in one of its panes (askcard.js): the tab says so the way unread does, in colour and words, no dot.
+    const waiting = waitingPaneIn(t);
+    const tab = el('div', `tab${t.id === S.active ? ' on' : ''}${busy ? ' busy' : ''}${unread ? ' unread' : ''}${warm ? ' warm' : ''}${waiting ? ' waiting' : ''}`);
     // A tab whose conversations all work in one worktree says which (worktree.js tabNote, 2026-10-12).
     const onBranch = wtc.tabNote(panes.filter((p) => !p.isViewer && p.cwd).map((p) => p.cwd));
-    tab.title = `${onBranch ? `${onBranch}\n` : ''}${panes.map((p) => `${p.busy ? 'working: ' : p.unread ? 'finished: ' : ''}${p.title}`).join('\n') || 'Empty tab'}`;
+    tab.title = `${onBranch ? `${onBranch}\n` : ''}${panes.map((p) => `${asks.waiting(p.id) ? 'waiting for you: ' : p.busy ? 'working: ' : p.unread ? 'finished: ' : ''}${p.title}`).join('\n') || 'Empty tab'}`;
     tab.innerHTML = `<span class="tab-t">${esc(f?.title || 'Empty tab')}</span>${convs > 1 ? `<span class="tab-n">${convs}</span>` : ''}${warm ? '<span class="warm-ring" aria-hidden="true"></span>' : ''}${busy ? '<span class="tab-sweep" aria-hidden="true"><i></i></span>' : ''}`;
     // Double-click the name to rename its session (saved in the session, not only here).
     tab.querySelector('.tab-t').ondblclick = (e) => { e.stopPropagation(); if (f && !f.isViewer) beginRename(f.sessionId, tab.querySelector('.tab-t'), { pane: f }); };
@@ -1163,7 +1203,8 @@ function renderTabs() {
     x.title = 'Close tab';
     x.onclick = (e) => { e.stopPropagation(); closeTab(t); };
     tab.append(x);
-    tab.onclick = () => switchTab(t);
+    // One click reaches the question: the tab comes forward and the pane that asks gets the keyboard (its card).
+    tab.onclick = () => { switchTab(t); const w = waitingPaneIn(t); if (w) focusPane(w); };
     tab.onauxclick = (e) => { if (e.button === 1) closeTab(t); };
     // Drag a tab along the bar to put it somewhere else (Arthur, 2026-10-11: "reorganize tabs").
     if (!WEB) {
@@ -1256,7 +1297,8 @@ function renderTabs() {
   gridBtn.onclick = arrangeGrid;
   tools.append(el('span', 'tab-count', n ? `${n} of ${L.MAX_PANES} panes` : ''), gridBtn);
   bar.append(tools);
-  const unread = [...S.panes.values()].filter((p) => p.unread).length;
+  // A pane waiting for an answer counts like one that finished unseen (askcard.js), once.
+  const unread = [...S.panes.values()].filter((p) => p.unread || asks.waiting(p.id)).length;
   const fp = focusedPane();
   document.title = `${unread ? `(${unread}) ` : ''}Myrlin Apaki${fp ? ` · ${fp.title}` : ''}`;
   updateBadge();
@@ -1291,7 +1333,8 @@ function moveTab(fromId, toId, before) {
  */
 let badgeShown = -1;
 function readyTabs() {
-  return S.tabs.filter((t) => L.ids(t.root).some((id) => S.panes.get(id)?.unread)).length;
+  // A tab with a question waiting for you counts like a ready one (askcard.js, 2026-10-12).
+  return S.tabs.filter((t) => L.ids(t.root).some((id) => S.panes.get(id)?.unread || asks.waiting(id))).length;
 }
 /** A 32 px round badge with the number (9+ above nine), as RGBA bytes for the taskbar overlay. */
 function badgePixels(n) {
@@ -2721,7 +2764,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-/* ---------- sheets (questions, plan approval, billing), one at a time ---------- */
+/* ---------- sheets (billing, folders, Details), one at a time ---------- */
 
 const sheetQueue = [];
 let sheetOpen = false;
@@ -2761,108 +2804,9 @@ function dropSheet(key) {
   if (sheetOpen && sheetKey === key) sheetClose?.();
 }
 
-/**
- * A tool Claude Code asks about (Ask permissions, Auto-accept edits): what it wants to do, and Allow once, Always
- * allow (the engine saves the rule the SDK suggested, as Claude Code does) or Deny with an optional note for Claude.
- * Enter allows once and Esc denies; the engine settles it once, and drops this sheet if the turn ends first (ask_gone).
- * The same sheet runs on the phone page (apaki/ui is shared).
- */
-function permissionSheet(e) {
-  const view = permissionView(e);
-  const pane = S.panes.get(e.paneId);
-  const html = permissionHtml(view, { from: pane?.title || '' });
-  const reply = (result) => send('answer', { askId: e.askId, result });
-  let onKey = null;
-  let before = null;
-  sheet(html, (root, close) => {
-    before = document.activeElement;
-    const noteBox = root.querySelector('[data-note]');
-    const denyBtn = root.querySelector('[data-k=deny]');
-    const armedAt = Date.now() + ARM_MS;
-    const choose = (kind) => {
-      const note = noteBox?.value || '';
-      close();
-      reply(permissionReply(kind, note));
-    };
-    denyBtn.onclick = () => choose('deny');
-    root.querySelector('[data-k=once]').onclick = () => choose('once');
-    const always = root.querySelector('[data-k=always]');
-    if (always) always.onclick = () => choose('always');
-    // The button says when the note goes with it.
-    noteBox?.addEventListener('input', () => { denyBtn.textContent = denyLabel(noteBox.value, view.labels?.deny); });
-    onKey = (ev) => {
-      if (!root.isConnected || sheetKey !== e.askId) return;
-      const t = ev.target;
-      const target = t === noteBox ? 'field' : t?.closest?.('button') ? 'button' : 'other';
-      const act = permissionKey({ key: ev.key, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, altKey: ev.altKey, shiftKey: ev.shiftKey, repeat: ev.repeat, target, noteText: noteBox?.value || '', armed: Date.now() >= armedAt, defaultToNo: view.defaultToNo });
-      if (!act) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      choose(act);
-    };
-    document.addEventListener('keydown', onKey, true);
-    // Keys must land in the sheet, not in the message box behind it. When the SDK asked for a default of no, the
-    // prompt opens on Deny; otherwise on the sheet itself, so a stray Enter in the first moments approves nothing.
-    root.tabIndex = -1;
-    root.setAttribute('role', 'alertdialog');
-    root.setAttribute('aria-labelledby', 'permQ');
-    (view.defaultToNo ? denyBtn : root).focus({ preventScroll: true });
-  }, e.askId, () => {
-    if (onKey) document.removeEventListener('keydown', onKey, true);
-    $('sheet').removeAttribute('role');
-    $('sheet').removeAttribute('aria-labelledby');
-    $('sheet').removeAttribute('tabindex');
-    if (before?.isConnected && before !== document.body) before.focus?.({ preventScroll: true });
-  });
-}
-
-function askSheet(e) {
-  // The engine asks again when a window reconnects (attach); a sheet already showing or waiting for this question is the same one.
-  if (e.askId && (sheetKey === e.askId || sheetQueue.some((q) => q[2] === e.askId))) return;
-  // A tool call waiting for permission (engine permissions.js) has its own sheet; questions and plan approval follow.
-  if (e.permission) { permissionSheet(e); return; }
-  const input = e.input || {};
-  const pane = S.panes.get(e.paneId);
-  const from = pane ? `<div class="from">${esc(pane.title)}</div>` : '';
-  const reply = (result) => send('answer', { askId: e.askId, result });
-  if (e.toolName === 'ExitPlanMode') {
-    sheet(`${from}<h2>Ready to code?</h2><div class="turn-assistant plan">${md(input.plan || '')}</div>
-      <div class="row"><button data-k="keep">Keep planning</button><button class="primary" data-k="go">Approve</button></div>`, (root, close) => {
-      root.querySelector('[data-k=go]').onclick = () => { close(); reply({ behavior: 'allow', updatedInput: input }); if (pane?.mode === 'plan') pane.setMode('bypassPermissions'); };
-      root.querySelector('[data-k=keep]').onclick = () => { close(); reply({ behavior: 'deny', message: 'The user wants to keep planning.' }); };
-    }, e.askId);
-    return;
-  }
-  const qs = input.questions || [];
-  const picks = qs.map(() => new Set());
-  const who = pane?.kind === 'codex' ? 'Codex' : 'Claude';
-  const html = `${from}<h2>${who} has ${qs.length === 1 ? 'a question' : `${qs.length} questions`}</h2>${qs.map((q, qi) => `
-    ${q.header && q.header !== q.question && pane?.kind === 'codex' ? `<div class="from">${esc(q.header)}</div>` : ''}<div class="q">${esc(q.question)}</div>
-    ${(q.options || []).map((o, oi) => `<button class="opt" data-q="${qi}" data-o="${oi}">${esc(o.label)}${o.description ? `<small>${esc(o.description)}</small>` : ''}</button>`).join('')}
-    <input type="${q.secret ? 'password' : 'text'}" data-other="${qi}" placeholder="${q.options?.length ? 'Or type your own answer' : 'Type your answer'}"${q.secret ? ' autocomplete="off"' : ''}>`).join('')}
-    <div class="row"><button data-k="skip">Skip</button><button class="primary" data-k="ok">Answer</button></div>`;
-  sheet(html, (root, close) => {
-    root.querySelectorAll('.opt').forEach((b) => {
-      b.onclick = () => {
-        const qi = Number(b.dataset.q);
-        const oi = Number(b.dataset.o);
-        if (!qs[qi].multiSelect) { picks[qi].clear(); root.querySelectorAll(`.opt[data-q="${qi}"]`).forEach((x) => x.classList.remove('on')); }
-        if (picks[qi].has(oi)) picks[qi].delete(oi); else picks[qi].add(oi);
-        b.classList.toggle('on', picks[qi].has(oi));
-      };
-    });
-    root.querySelector('[data-k=ok]').onclick = () => {
-      const answers = {};
-      qs.forEach((q, qi) => {
-        const other = root.querySelector(`[data-other="${qi}"]`).value.trim();
-        answers[q.question] = other || [...picks[qi]].map((oi) => q.options[oi].label).join(', ');
-      });
-      close();
-      reply({ behavior: 'allow', updatedInput: { ...input, answers } });
-    };
-    root.querySelector('[data-k=skip]').onclick = () => { close(); reply({ behavior: 'deny', message: 'The user skipped the question.' }); };
-  }, e.askId);
-}
+// Questions, plan approval and permission prompts used to open here as sheets (permissionSheet, askSheet), one at a time
+// over the whole window. Since 2026-10-12 they are cards inside the pane that asked (askcard.js, `asks` above); the
+// sheet stays for what still belongs over the window (billing, folders, Details, renames on the phone).
 
 function billingSheet(options, paneId) {
   const pane = S.panes.get(paneId);
@@ -3027,6 +2971,8 @@ await listen('engine', ({ payload: e }) => {
     p.handle(e);
     if (e.ev === 'result') cameBack(p, 'done');
     if (e.ev === 'taken_over') cameBack(p, 'ask');
+    // Opened afresh (not re-attached to a running pane): nothing it asked before still waits, so its cards go.
+    if (e.ev === 'opened' && !e.attached) asks.reset(p);
     if (e.ev === 'opened' || e.ev === 'session_id') { p.renderFolderSelect(S.folders, S.sessions); renderTabs(); renderRailMarks(); save(); }
     return;
   }
@@ -3198,16 +3144,18 @@ await listen('engine', ({ payload: e }) => {
     }
     case 'ask': {
       const p = S.panes.get(e.paneId);
-      if (p) cameBack(p, 'ask');
-      // A phone that may only watch (follows a PC pane at No shell or Chat only) cannot answer it: the PC refuses. One line says where.
-      if (e.readOnly) { p?.note('Claude is asking a question on the PC. This phone can watch, not answer: answer it there, or take the conversation over here.'); break; }
-      // Its row in the list says "waiting for your answer" until it is answered or gone (2026-10-12).
-      if (e.askId && e.paneId && !S.waiting.has(e.askId)) { S.waiting.set(e.askId, e.paneId); if (!S.drag) renderRail(); }
-      askSheet(e);
+      // A card in the pane that asked (askcard.js), never a sheet over the window; a repeat (a reconnect asks again)
+      // changes nothing. Its row in the list says "waiting for your answer" until it is answered or gone (syncWaiting).
+      // A phone that may only watch (follows a PC pane at No shell or Chat only) cannot answer it, the PC refuses: its
+      // card shows the question with every choice off and one line saying where to answer (askcard.js READ_ONLY_TEXT).
+      const entry = p ? asks.ask(e, p) : null;
+      if (entry?.readOnly) cameBack(p, 'ask');
+      else if (entry) ding('ask');
       break;
     }
-    // A question nobody waits for any more (the turn ended, or Claude asked again): take its sheet away.
-    case 'ask_gone': dropSheet(e.askId); if (S.waiting.delete(e.askId) && !S.drag) renderRail(); break;
+    // A question nobody waits for any more (answered on another screen, the turn ended, Claude asked again): its card
+    // goes, with one line saying who settled it (askcard.js goneNote).
+    case 'ask_gone': asks.gone(e, S.panes.get(e.paneId)); dropSheet(e.askId); if (S.waiting.delete(e.askId) && !S.drag) renderRail(); break;
     // Details (2026-10-12): what the engine read about a session; the open Details sheet fills in.
     case 'sessionInfo':
       S.info.set(e.sessionId, e.ok ? e.info : { error: e.message || 'Could not read it.' });

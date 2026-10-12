@@ -524,9 +524,11 @@ test('end to end: a conversation in a hidden tab lets go of its Claude Code proc
   assert.equal(r.sessionId, sids.pB, 'the same conversation');
   // Showing pB's tab clears its hidden time: it is not released again while it shows.
   w.send({ op: 'saveState', state: { ...ws([{ pane: 'pA', s: sids.pA, busy: false }, { pane: 'pB', s: sids.pB, busy: false }], 2000), active: 1 } });
-  await sleep(1500);
-  assert.equal((await running()).pB, true, 'showing');
-  assert.equal((await running()).pA, false, 'pA is hidden now and freed in turn');
+  // pA is hidden now and is freed in turn (polled: a loaded machine can be slow); pB, showing, is not.
+  let now = await running();
+  for (let i = 0; i < 60 && now.pA; i++) { await sleep(250); now = await running(); }
+  assert.equal(now.pA, false, 'pA is hidden now and freed in turn');
+  assert.equal(now.pB, true, 'showing');
   ctl.close();
   w.close();
 });
