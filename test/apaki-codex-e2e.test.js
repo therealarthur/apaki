@@ -129,7 +129,7 @@ test('the model list carries each model\'s own efforts, the presets and the acco
   assert.deepEqual(m.models[1].efforts.map((e) => e.value), ['low', 'medium', 'high']);
   assert.deepEqual(m.defaults, { model: 'gpt-6.1-sol', effort: 'low', mode: 'auto' });
   assert.deepEqual(m.presets, ['read-only', 'auto', 'full-access']);
-  assert.deepEqual(m.account, { name: 'ChatGPT Pro', source: 'codex', follow: false, isKey: false });
+  assert.deepEqual({ ...m.account, limits: m.account.limits.map((l) => [l.label, l.usedPercent]) }, { name: 'ChatGPT Pro', source: 'codex', follow: false, isKey: false, limits: [['5-hour', 29], ['Weekly', 33]] });
   w.close();
 });
 
