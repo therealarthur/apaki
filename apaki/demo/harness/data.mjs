@@ -500,6 +500,46 @@ PRESETS.browser = () => {
 };
 
 /**
+ * Tabs, layouts and viewers (2026-10-12, apaki/docs/layout.md): five tabs named by their projects, laid out by count
+ * (one large and two stacked, side by side, a 2x2 grid, three over three, one alone), the first with the flaky test's
+ * browser beside it holding two pages as tabs. Saved the way the window saves now (name, arrange, max, tabs).
+ */
+const split = (dir, sizes, ...children) => ({ type: 'split', dir, sizes, children });
+const conv = (pane, key, cwd, extra = {}) => leaf(pane, key ? ID[key] : null, { title: key ? (buildSessions(0).find((s) => s.id === ID[key])?.title || '') : 'New conversation', cwd, ...extra });
+PRESETS.layout = () => ({
+  active: 0,
+  tabs: [
+    { focused: 'la1', name: '', arrange: 'auto', max: null, root: split('row', [0.5, 0.5],
+      split('col', [0.6, 0.4], conv('la1', 'flaky', CWD.web), { type: 'leaf', pane: 'lb1', web: { url: 'http://localhost:3000/cart', title: 'Cart · Acme Store', owner: 'la1', active: 'lb1', tabs: [{ id: 'lb1', url: 'http://localhost:3000/cart', title: 'Cart · Acme Store' }, { id: 'lb2', url: 'http://localhost:3000/checkout', title: 'Checkout · Acme Store' }] } }),
+      split('col', [0.5, 0.5], conv('la2', 'dashboard', CWD.web), conv('la3', 'uploads', CWD.web))) },
+    { focused: 'lc1', name: '', arrange: 'auto', max: null, root: split('row', [0.5, 0.5], conv('lc1', 'invoices', CWD.billing), conv('lc2', 'backfill', CWD.billing)) },
+    { focused: 'ld1', name: 'Mobile release', arrange: 'auto', max: null, root: split('col', [0.5, 0.5], split('row', [0.5, 0.5], conv('ld1', 'push', CWD.mobile), conv('ld2', 'darkmode', CWD.mobile)), split('row', [0.5, 0.5], conv('ld3', 'onboarding', CWD.mobile), conv('ld4', 'review', CWD.billing))) },
+    { focused: 'le1', name: '', arrange: 'auto', max: null, root: split('col', [0.5, 0.5],
+      split('row', [1 / 3, 1 / 3, 1 / 3], conv('le1', 'vpc', CWD.infra), conv('le2', 'creds', CWD.infra), conv('le3', 'ci', CWD.infra)),
+      split('row', [1 / 3, 1 / 3, 1 / 3], conv('le4', 'changelog', CWD.docs), conv('le5', 'docsearch', CWD.docs), conv('le6', null, ''))) },
+    { focused: 'lf1', name: '', arrange: 'auto', max: null, root: conv('lf1', null, '') },
+  ],
+  scripts: { [ID.flaky]: ['browse-checkout'] },
+  rail: { view: 'all', expanded: [], scroll: 0, width: 312, collapsed: false },
+});
+
+/**
+ * The same window as saved before 2026-10-12: no names, no arrangement, and the flaky test's second page in a browser
+ * pane of its own in a tab of its own (the old hint 'tab'). It must come back with that page folded into the
+ * conversation's browser pane as a tab, the extra tab gone, and every tree exactly as saved.
+ */
+PRESETS['layout-old'] = () => {
+  const p = PRESETS.layout();
+  const strip = (t) => { const { name, arrange, max, ...rest } = t; void name; void arrange; void max; return rest; };
+  const tabs = p.tabs.map(strip);
+  tabs[0] = { focused: 'la1', root: split('row', [0.4, 0.2, 0.4],
+    conv('la1', 'flaky', CWD.web), { type: 'leaf', pane: 'lb1', web: { url: 'http://localhost:3000/cart', title: 'Cart · Acme Store', owner: 'la1' } },
+    split('col', [0.5, 0.5], conv('la2', 'dashboard', CWD.web), conv('la3', 'uploads', CWD.web))) };
+  tabs.splice(1, 0, { focused: 'lb2', root: { type: 'leaf', pane: 'lb2', web: { url: 'http://localhost:3000/checkout', title: 'Checkout · Acme Store', owner: 'la1' } } });
+  return { ...p, tabs, active: 2 };
+};
+
+/**
  * The handoff (2026-10-12): the desktop has one tab of three sessions, the sidebar folded away. "Fix flaky
  * checkout test" (the left column, focused) is the one you were in; it is idle, the two on the right work.
  */
@@ -547,6 +587,59 @@ PRESETS['handoff-phone'] = () => ({
   rail: { view: 'all', expanded: [], scroll: 0, width: 352, collapsed: false },
   desktopTabs: handoffDesktopTabs(),
   held: { [ID.flaky]: { name: 'Apaki on this PC', app: 'apaki' } },
+});
+
+/**
+ * The shared view (2026-10-12): the same desktop, with each pane carrying the window's pane id (engine desktop-tabs.js paneId)
+ * so a phone can follow one without taking it over. Two tabs: the working tab, and one with a second conversation.
+ * The phone starts with nothing open; the desktop holds all three sessions, so Take over here is the real lock path.
+ * Use with phone.html?ws=follow-phone&follow=1 (follow=0 is a PC without the feature; cap=noshell|chat is a restricted phone).
+ */
+PRESETS['follow-phone'] = () => ({
+  active: 0,
+  tabs: [],
+  scripts: { [ID.invoices]: ['background-invoices', 'generic'], [ID.review]: ['background-review', 'generic'], [ID.flaky]: ['generic'] },
+  rail: { view: 'all', expanded: [], scroll: 0, width: 352, collapsed: false },
+  desktopTabs: [
+    { index: 0, active: true, panes: handoffDesktopTabs()[0].panes.map((p, i) => ({ paneId: `ph${i + 1}`, ...p })) },
+    { index: 1, active: false, panes: [
+      { paneId: 'ph4', kind: 'session', sessionId: ID.uploads, title: 'Move image uploads to signed URLs', busy: false, focused: true },
+    ] },
+  ],
+  held: {
+    [ID.flaky]: { name: 'Apaki on this PC', app: 'apaki' },
+    [ID.invoices]: { name: 'Apaki on this PC', app: 'apaki' },
+    [ID.review]: { name: 'Apaki on this PC', app: 'apaki' },
+    [ID.uploads]: { name: 'Apaki on this PC', app: 'apaki' },
+  },
+});
+
+/**
+ * The phone beside the layout preset's PC (2026-10-12): "On your desktop" shows the PC's tab names (the projects, or
+ * the name given), and the PC's browser pane says whose it is and how many pages it holds. Use with
+ * phone.html?ws=layout-phone; the first conversation plays the browser visit, so its Browser view has two tabs.
+ */
+PRESETS['layout-phone'] = () => ({
+  active: 0,
+  tabs: [],
+  scripts: { [ID.flaky]: ['browse-phone'] },
+  rail: { view: 'all', expanded: [], scroll: 0, width: 352, collapsed: false },
+  desktopTabs: [
+    { index: 0, active: true, label: 'acme-web', panes: [
+      { paneId: 'la1', kind: 'session', sessionId: ID.flaky, title: 'Fix flaky checkout test', busy: false, focused: true },
+      { paneId: 'lb1', kind: 'browser', title: 'Your cart · Acme Store', tabs: 2, for: 'Fix flaky checkout test', focused: false },
+      { paneId: 'la2', kind: 'session', sessionId: ID.dashboard, title: 'Why the dashboard flashes on first load', busy: false, focused: false },
+      { paneId: 'la3', kind: 'session', sessionId: ID.uploads, title: 'Move image uploads to signed URLs', busy: false, focused: false },
+    ] },
+    { index: 1, active: false, label: 'billing-service', panes: [
+      { paneId: 'lc1', kind: 'session', sessionId: ID.invoices, title: 'Migrate invoices to the new tax API', busy: true, focused: true },
+      { paneId: 'lc2', kind: 'session', sessionId: ID.backfill, title: 'Backfill missing invoice PDFs', busy: false, focused: false },
+    ] },
+    { index: 2, active: false, label: 'Mobile release', panes: [
+      { paneId: 'ld1', kind: 'session', sessionId: ID.push, title: 'Add retries to the push notification worker', busy: false, focused: true },
+      { paneId: 'ld2', kind: 'session', sessionId: ID.darkmode, title: 'Dark mode for the settings screen', busy: false, focused: false },
+    ] },
+  ],
 });
 
 /**

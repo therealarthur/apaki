@@ -9,6 +9,8 @@ pearl that Apaki's ground uses. Strokes are ink, folds periwinkle.
 - `apaki-icon-small.svg`: the same at 0.96 scale for the 16 to 24 px icon frames.
 - `apaki-icon-1024.png`: the rendered master.
 - `apaki-mark-inline.svg`: the bare M for inline use (ui/mark.js); CSS colours it per theme.
+- `apaki-icon-mac-1024.png`: the macOS icon master (2026-10-12): the 1024 tile scaled to 824 and centred on a transparent
+  1024 canvas (Apple's icon grid leaves that margin). `apaki/scripts/package-apaki-mac.sh` turns it into `icon.icns` with `sips` and `iconutil`.
 
 Rebuild `../icon.ico` (16 to 256 px) and `../icon.png` (512 px): render the SVGs at 1024 px with
 headless Edge (`msedge --headless=new --default-background-color=00000000 --window-size=1024,1024

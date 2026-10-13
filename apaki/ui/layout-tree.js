@@ -45,27 +45,29 @@ export function flatten(node) {
 
 /**
  * A new tree with pane `newId` placed on `edge` ('left' | 'right' | 'top' |
- * 'bottom') of the pane `targetId`. The target gives up half its space. With
+ * 'bottom') of the pane `targetId`. The target gives up half its space, or
+ * `share` of it (2026-10-12: a viewer takes less than a conversation). With
  * no tree yet, the new pane becomes the whole layout.
  */
-export function insert(root, targetId, newId, edge) {
+export function insert(root, targetId, newId, edge, share = 0.5) {
   if (!root) return leaf(newId);
   const dir = edge === 'left' || edge === 'right' ? 'row' : 'col';
   const before = edge === 'left' || edge === 'top';
+  const s = Number.isFinite(share) && share > 0 && share < 1 ? share : 0.5;
   const walk = (node) => {
     if (node.type === 'leaf') {
       if (node.pane !== targetId) return node;
-      return { type: 'split', dir, children: before ? [leaf(newId), node] : [node, leaf(newId)], sizes: [0.5, 0.5] };
+      return { type: 'split', dir, children: before ? [leaf(newId), node] : [node, leaf(newId)], sizes: before ? [s, 1 - s] : [1 - s, s] };
     }
     const idx = node.children.findIndex((c) => c.type === 'leaf' && c.pane === targetId);
     if (idx >= 0 && node.dir === dir) {
       const children = [...node.children];
       const sizes = [...node.sizes];
-      const half = sizes[idx] / 2;
-      sizes[idx] = half;
+      const whole = sizes[idx];
+      sizes[idx] = whole * (1 - s);
       const at = before ? idx : idx + 1;
       children.splice(at, 0, leaf(newId));
-      sizes.splice(at, 0, half);
+      sizes.splice(at, 0, whole * s);
       return { ...node, children, sizes };
     }
     return { ...node, children: node.children.map(walk) };

@@ -22,7 +22,7 @@
  *   ev codexThreads { reqId, items }            thread/list as session rows (the Codex view of the list)
  *   ev opened      gains kind: 'codex'
  *   ev artifact    via: 'codex-diff' for a turn's changes (a card, no viewer pops up)
- * Questions and approvals use the existing ask / answer / ask_gone events and sheets.
+ * Questions and approvals use the existing ask / answer / ask_gone events and the pane's inline cards (apaki/ui/askcard.js).
  *
  * Browser and viewer (item 5 of the plan): Apaki's show and browser tools reach every Codex thread, resumed ones
  * included, as the stdio MCP server "apaki" given to this app-server process alone with -c mcp_servers.apaki.* (no
@@ -64,7 +64,7 @@ export const DEV_INSTRUCTIONS = [
   'Apaki has a viewer and a built-in browser next to the conversation, and a tool server named "apaki" gives you tools for them.',
   'When you want the user to see something (an HTML page or small app, a chart, an SVG, an image, a Markdown report, a PDF, any local file, or a web page such as a dev server), call the apaki "show" tool instead of opening it with start, Start-Process, explorer, open, xdg-open or python -m webbrowser; Apaki redirects those anyway.',
   'Shown pages run sandboxed without network access, so inline their CSS, scripts and images (data: URLs); call show again with the returned id to revise something.',
-  'You can also use the browser yourself with the apaki tools browser_open, browser_read, browser_click, browser_type, browser_back and browser_screenshot, for example to check a site you are building; the user watches the same browser.',
+  'You can also use the browser yourself with the apaki tools browser_open, browser_read, browser_click, browser_type, browser_back, browser_screenshot and browser_tabs, for example to check a site you are building; the pages of one conversation are tabs in one browser pane, and the user watches the same browser.',
 ].join(' ');
 
 /** Slash commands a Codex pane offers besides the window's own (/new, /resume, /model, /effort, /mode). */
@@ -200,7 +200,7 @@ export function createCodex(env) {
       const cx = p.codex;
       cx.loaded = false;
       cx.turnId = null;
-      for (const [id, a] of asks) if (a.paneId === p.id && a.codexRequestId !== undefined) { asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id }); }
+      for (const [id, a] of asks) if (a.paneId === p.id && a.codexRequestId !== undefined) { asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id, why: 'stopped' }); }
       if (p.busy && !info?.expected) {
         p.busy = false;
         p.inTurn = false;
@@ -423,14 +423,15 @@ export function createCodex(env) {
   }
 
   /** ev history: the newest page of the thread, in the shape a Claude transcript gives. */
-  async function sendHistory(p, { refresh = false, reqId = null } = {}) {
+  async function sendHistory(p, { refresh = false, reqId = null, paneId = null } = {}) {
     const threadId = p.codex?.threadId;
     if (!threadId) return;
     try {
       const rev = await revOf(threadId);
       const page = await history.firstPage(threadId, { limit: HISTORY_PAGE });
       trackFromMessages(p, page.messages);
-      emit({ ev: 'history', reqId, paneId: p.id, sessionId: p.sessionId, ...page, rev, ...(refresh ? { refresh: true } : {}) });
+      // paneId: a phone that follows this pane (the shared view) is sent it under its own pane id.
+      emit({ ev: 'history', reqId, paneId: paneId || p.id, sessionId: p.sessionId, ...page, rev, ...(refresh ? { refresh: true } : {}) });
       // More turns than the page holds: how many prompts come before it, from the turn summaries (pin "N of M").
       if (page.hasMore && !page.prompts) countPrompts(p, threadId);
     } catch (e) {
@@ -546,12 +547,16 @@ export function createCodex(env) {
   }
 
   /** A window reconnected to a running pane: its state again, the history, any question still waiting. */
-  async function attach(reqId, p) {
+  async function attach(reqId, p, as = null) {
     const cx = p.codex;
-    emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: Boolean(p.busy), running: Boolean(client?.ready), reqId, paneId: p.id, sessionId: p.sessionId, cwd: cx.cwd, title: p.codexTitle || 'Codex', model: p.model, effort: p.effort, mode: p.mode, billing: billingOf(), terminal: [], kind: 'codex' });
-    if (cx.threadId) await sendHistory(p);
-    for (const [askId, a] of asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: p.id, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}) });
-    if (cx.usage) sendContext(p);
+    // as: { paneId, readOnly } (the shared view, engine.js followState): a phone that follows this pane gets the same state under
+    // its own pane id, marked as a follower. Nothing about the pane changes.
+    const to = as?.paneId || p.id;
+    const follower = as ? { follower: true, readOnly: Boolean(as.readOnly) } : {};
+    emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: Boolean(p.busy), running: Boolean(client?.ready), reqId, paneId: to, sessionId: p.sessionId, cwd: cx.cwd, title: p.codexTitle || 'Codex', model: p.model, effort: p.effort, mode: p.mode, billing: billingOf(), terminal: [], kind: 'codex', ...follower });
+    if (cx.threadId) await sendHistory(p, as ? { paneId: to } : {});
+    for (const [askId, a] of asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: to, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}), ...(as ? { readOnly: follower.readOnly } : {}) });
+    if (cx.usage) sendContext(p, null, to);
   }
 
   /* ---------- sending ---------- */
@@ -854,10 +859,10 @@ export function createCodex(env) {
 
   /* ---------- the context meter ---------- */
 
-  function sendContext(p, reqId = null) {
+  function sendContext(p, reqId = null, to = null) {
     const cx = p.codex;
-    if (!cx?.usage) { if (reqId) emit({ ev: 'context', reqId, paneId: p.id, none: true }); return; }
-    emit({ ev: 'context', reqId, paneId: p.id, ...contextFromUsage(cx.usage, { model: p.model, threadId: cx.threadId, autoCompactLimit: shared.config?.model_auto_compact_token_limit }) });
+    if (!cx?.usage) { if (reqId) emit({ ev: 'context', reqId, paneId: to || p.id, none: true }); return; }
+    emit({ ev: 'context', reqId, paneId: to || p.id, ...contextFromUsage(cx.usage, { model: p.model, threadId: cx.threadId, autoCompactLimit: shared.config?.model_auto_compact_token_limit }) });
   }
 
   function contextSoon(p) {
@@ -1035,7 +1040,7 @@ export function createCodex(env) {
         break;
       case 'serverRequest/resolved':
         for (const [id, a] of asks) {
-          if (a.paneId === p.id && a.codexRequestId === params.requestId) { a.settled = true; asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id }); }
+          if (a.paneId === p.id && a.codexRequestId === params.requestId) { a.settled = true; asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id, why: 'resolved', by: 'Codex' }); }
         }
         break;
       case 'thread/closed':
@@ -1062,7 +1067,7 @@ export function createCodex(env) {
     p.inTurn = false;
     cx.turnId = null;
     // Anything still waiting on this turn is gone with it.
-    for (const [id, a] of [...asks]) if (a.paneId === p.id && a.codexRequestId !== undefined) { a.settled = true; asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id }); }
+    for (const [id, a] of [...asks]) if (a.paneId === p.id && a.codexRequestId !== undefined) { a.settled = true; asks.delete(id); emit({ ev: 'ask_gone', askId: id, paneId: p.id, why: 'turn' }); }
     emit({
       ev: 'result', reqId, paneId: p.id, sessionId: p.sessionId, subtype: failed ? 'error_during_execution' : turn.status === 'interrupted' ? 'error_during_execution' : 'success',
       isError: failed, durationMs: Number(turn.durationMs) || (cx.startedAt ? Date.now() - cx.startedAt : 0), usage: {}, cost: null, errors: why ? [why] : null, result: why, codex: true,

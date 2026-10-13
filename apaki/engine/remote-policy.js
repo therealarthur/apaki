@@ -19,6 +19,9 @@
  *   rename, forkSession, archive, folder     the session list's own actions (2026-10-12, below)
  *   askSearch                                Ask Claude over past conversations (2026-10-12, below)
  *   browserView                              one picture of the PC browser page its own conversation opened
+ *   sessionInfo, exportSession               read only, every access level: a session's Details, and its Markdown
+ *                                            sent back as text (2026-10-12; a phone never writes a file on the PC)
+ *   pin                                      Pin to top, a session-list write like folder (Full and No shell)
  *   consoleView                              read only (2026-10-12): the text of the PC console that has the
  *                                            conversation its pane asked for; the console itself is PC_ONLY_OPS
  * Never billing, never the remote* ops (pairing, devices), never voice,
@@ -68,6 +71,8 @@
  *               a time per phone (AskGate), billed to the phone's focused pane.
  *   browserView Full only, like the browser tools: only a Full pane's Claude
  *               can open a page there, and a phone sees only its own pane's.
+ *               tab (optional, a browser id) looks at another tab of that same
+ *               pane's browser; the engine only switches among the pane's own tabs.
  *
  * Permission prompts (2026-10-12, permissions.js): in Ask permissions and
  * Auto-accept edits a tool Claude Code would ask about is asked on the
@@ -77,6 +82,19 @@
  * access. The answer carries the yes or no (and `always: true`), never
  * rules: the engine applies the SDK's own suggestions, and only for a
  * 'full' phone; a restricted phone's "always" is an allow once.
+ * The shared view (2026-10-11, apaki/remote/PROTOCOL.md "Following a desktop
+ * pane"; Arthur: the phone must show the desktop's tabs and the panes in
+ * them, swiping between panes, without taking them over): follow and
+ * unfollow make one of the phone's local pane ids a follower of a desktop
+ * conversation pane. The phone names the desktop pane only in follow; every
+ * other op names its own local pane, and the PC resolves it to the desktop
+ * pane it follows. A follower may watch, page the history and ask for the
+ * context meter whatever its capability; send, steer, interrupt and answering
+ * a question are driving the desktop pane, which runs with the desktop's own
+ * permission mode and tools, so only 'full' may (a restricted phone would
+ * otherwise get Bash through a pane its capability never limited). model,
+ * effort and mode of a desktop pane are the desktop's, refused for every
+ * capability for now.
  */
 
 export const PHONE_PREFIX = 'phone:';
@@ -110,6 +128,17 @@ export const PHONE_OPS = Object.freeze([
   'rename', 'forkSession', 'archive', 'folder', 'askSearch', 'browserView',
   // A file the pane's Codex changed, in the viewer (the patch line's file name; the engine checks the path against the pane's own changes).
   'codexOpenFile',
+  // The phone's mic (Arthur, 2026-10-12: "no mic button on the mobile app"): the phone records, the PC's local Whisper turns it
+  // into text, and the text goes back into that phone pane's message box. Every access level: it only writes words into the
+  // phone's own box, and nothing leaves the PC. Capped in size below (about 85 seconds of 16 kHz speech).
+  'transcribe',
+  // 2026-10-11 (the shared view): follow { reqId, paneId: <this phone's local id>, desktopPaneId } makes the phone's pane show a
+  // desktop conversation pane without taking its session over; unfollow { paneId } ends it.
+  'follow', 'unfollow',
+  // 2026-10-12 (the session list's menu and Details sheet, session-info.js): Details and Export read only, at every access
+  // level (an export comes back as text: a phone never writes a file on the PC); Pin to top changes the list like a folder
+  // move, so it is a SESSION_WRITE_OPS op. Not here on purpose: openTerminal (Open in a terminal), which opens a window on the PC.
+  'sessionInfo', 'exportSession', 'pin',
   // The console (2026-10-12, console.js): read only, a plain-text look at the PC console that has the conversation this
   // phone's pane asked for ("Open in the console on the PC"). Everything else about the console is PC_ONLY_OPS below.
   'consoleView',
@@ -126,10 +155,13 @@ export const PC_ONLY_OPS = Object.freeze(['consoleOpen', 'consoleInput', 'consol
 export const WORKTREE_KINDS = Object.freeze(['create', 'remove', 'commit', 'push', 'pr', 'merge']);
 
 /** Ops that act on one pane (paneId required). */
-const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile', 'historyPrompts', 'consoleView']);
+const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile', 'historyPrompts', 'follow', 'unfollow', 'transcribe', 'consoleView']);
 
 /** Session-list actions that change what the PC keeps (2026-10-12): not for a Chat only phone. */
-export const SESSION_WRITE_OPS = Object.freeze(['rename', 'forkSession', 'archive', 'folder']);
+export const SESSION_WRITE_OPS = Object.freeze(['rename', 'forkSession', 'archive', 'folder', 'pin']);
+
+/** Ops that DRIVE the desktop pane a follower shows (only capability 'full' may; the rest of a follower's ops only read). */
+const DRIVE_OPS = new Set(['send', 'steer', 'interrupt']);
 
 /** Most panes one phone may have open at once (the desktop's limit per tab). */
 export const MAX_PHONE_PANES = 6;
@@ -205,7 +237,7 @@ export function clampMode(cap, mode) {
  * the "apaki" MCP server). Listed here so this file stays free of imports;
  * test/apaki-remote-caps.test.js checks the two lists agree.
  */
-export const APAKI_BROWSER_TOOLS = Object.freeze(['browser_open', 'browser_read', 'browser_click', 'browser_type', 'browser_back', 'browser_screenshot'].map((t) => `mcp__apaki__${t}`));
+export const APAKI_BROWSER_TOOLS = Object.freeze(['browser_open', 'browser_read', 'browser_click', 'browser_type', 'browser_back', 'browser_screenshot', 'browser_tabs'].map((t) => `mcp__apaki__${t}`));
 
 /** Tools a 'noshell' or 'chat' phone pane never gets: commands, file edits, Apaki's browser. */
 export const CAP_BLOCKED_TOOLS = Object.freeze(['Bash', 'PowerShell', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', ...APAKI_BROWSER_TOOLS]);
@@ -253,7 +285,7 @@ export function capAllowsOp(cap, op) {
 /** Why an op was refused for this capability, for the person on the phone. */
 export function capOpText(cap, op) {
   if (op === 'browserView') return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC: Claude cannot use the browser from it, so there is no page to show.`;
-  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, which only reads: it cannot ${{ rename: 'rename', forkSession: 'fork', archive: 'archive', folder: 'move' }[op] || 'change'} sessions. Change the phone's access in Apaki's Phone sheet on the PC.`;
+  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, which only reads: it cannot ${{ rename: 'rename', forkSession: 'fork', archive: 'archive', folder: 'move', pin: 'pin' }[op] || 'change'} sessions. Change the phone's access in Apaki's Phone sheet on the PC.`;
 }
 
 /**
@@ -300,6 +332,65 @@ export function capNote(cap) {
   if (cap === 'noshell') return 'This phone is set to No shell on the PC: Claude can read, search and answer here, but cannot run commands, edit files, use the browser or use tools other programs added.';
   if (cap === 'chat') return 'This phone is set to Chat only on the PC: plan mode, read-only. Claude cannot run commands or change anything from here.';
   return null;
+}
+
+/* ---------- following a desktop pane (2026-10-11) ---------- */
+
+/** Why a restricted phone cannot drive a desktop pane it follows (send, steer, interrupt, answer). */
+export function capFollowText(cap) {
+  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, so it can watch a conversation that is open on the desktop but cannot send to it, stop it or answer its questions: that conversation runs with the desktop's own permissions and tools. The person at the PC can change this phone's access in Apaki's Phone sheet.`;
+}
+
+/** The line a restricted phone's follower pane shows after its history (null for 'full'). */
+export function capFollowNote(cap) {
+  if (cap === 'full') return null;
+  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC: it can watch this desktop conversation, but not send to it, stop it or answer its questions, because the conversation runs with the desktop's own permissions and tools.`;
+}
+
+/** Why model, effort and mode cannot be changed from a pane that follows a desktop pane (every capability, for now). */
+export const FOLLOW_SETTINGS_TEXT = 'The model, effort and permission mode of a conversation open on the desktop are set on the PC. Changing them from a phone is not available yet.';
+
+/** Why open and attach are refused on a pane that is following (they would take the session over). */
+export const FOLLOWING_TEXT = 'This pane is showing a conversation that is open on the desktop. Unfollow it first, or open the conversation in another pane.';
+
+/**
+ * The events of a desktop pane that a follower gets too (an allowlist: a new
+ * kind of event stays on the desktop until it is added here). Left out on
+ * purpose: transcript (dictation into the message box), browserActivity,
+ * browserToolResult and billingOptions (desktop only), and every answer to a
+ * request (steered, steer_missed, commands, historyPage, historyBlock,
+ * artifactContent, context asked for by a window), which goes to whoever asked.
+ * peerMessage is a message another window sent into the pane (engine.js).
+ */
+export const FOLLOW_EVENTS = Object.freeze(new Set([
+  'opened', 'history', 'sdk', 'result', 'ask', 'ask_gone', 'billing', 'note', 'error', 'closed', 'settings',
+  'taken_over', 'locked', 'session_id', 'context', 'artifact', 'openUrl', 'renamed', 'peerMessage',
+]));
+
+/**
+ * One event of a desktop pane as a follower sees it, or null when a follower
+ * does not get it. `o.pane` is the follower's own pane id (phone:<deviceId>:<local>);
+ * `o.readOnly` is true for a restricted capability. The window's request id never
+ * goes along (the answer to it is the desktop's), nor the desktop's queued messages
+ * (what a window typed and has not sent yet is private, like its drafts). A message
+ * the follower sent itself (`origin`) is not echoed back: its page drew it already.
+ */
+export function followerView(ev, o = {}) {
+  if (!isObj(ev) || !FOLLOW_EVENTS.has(ev.ev)) return null;
+  const mine = parsePhoneId(o.pane);
+  if (!mine) return null;
+  if (ev.origin && ev.origin === o.pane) return null;
+  const out = { ...ev, paneId: mine.local };
+  delete out.reqId;
+  delete out.origin;
+  if (ev.ev === 'opened') {
+    delete out.queue;
+    delete out.queueSent;
+    out.follower = true;
+    out.readOnly = Boolean(o.readOnly);
+  }
+  if (ev.ev === 'ask') out.readOnly = Boolean(o.readOnly);
+  return out;
 }
 
 /**
@@ -368,6 +459,8 @@ const MAX_PR_BODY = 20000;
 const MAX_COMMIT_PATHS = 200;
 // rename (engine.js rename keeps 200) and folder create (src/folders.js keeps 60).
 const MAX_TITLE = 200;
+// transcribe: the longest recording a phone may send, as base64 of a 16 kHz mono 16-bit WAV (about 85 seconds).
+export const MAX_VOICE_B64 = 3_700_000;
 const MAX_FOLDER_NAME = 60;
 
 /**
@@ -407,7 +500,7 @@ export function windowOf(paneId) {
 }
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const fail = (error, cmd) => ({ ok: false, error, reqId: typeof cmd?.reqId === 'string' ? cmd.reqId.slice(0, 64) : null, paneId: typeof cmd?.paneId === 'string' ? cmd.paneId.slice(0, 40) : null });
+const fail = (error, cmd, extra = {}) => ({ ok: false, error, reqId: typeof cmd?.reqId === 'string' ? cmd.reqId.slice(0, 64) : null, paneId: typeof cmd?.paneId === 'string' ? cmd.paneId.slice(0, 40) : null, ...extra });
 
 /**
  * Checks one command from a phone and rewrites it for the engine: only the
@@ -424,7 +517,15 @@ const fail = (error, cmd) => ({ ok: false, error, reqId: typeof cmd?.reqId === '
  * @param {(deviceId: string) => string[]} [ctx.phoneSessions]  sessions open in this phone's panes
  * @param {(paneId: string) => ('codex'|'claude')} [ctx.paneKind]  what a pane runs (2026-10-12): a Codex pane takes Codex's models, efforts and presets, and files
  * @param {string} [ctx.cap]  the phone's capability (CAPS); absent means 'full' (callers from before capabilities)
- * @returns {{ok: true, cmd: object} | {ok: false, error: string, reqId: string|null, paneId: string|null}}
+ * The shared view (2026-10-11), all optional; without them nothing can be followed:
+ * @param {(paneId: string) => (string|null)} [ctx.followOf]  the desktop pane this phone pane (phone:<deviceId>:<local>) follows
+ * @param {(deviceId: string, desktopPaneId: string) => (string|null)} [ctx.followLocal]  the phone pane (prefixed) that follows a desktop pane, if any
+ * @param {(deviceId: string) => number} [ctx.followCount]  desktop panes this phone follows now
+ * @param {(deviceId: string, desktopPaneId: string) => boolean} [ctx.followsDesktop]  this phone follows that desktop pane
+ * @param {(desktopPaneId: string) => (string|null)} [ctx.desktopPane]  'conversation', another kind ('viewer', 'browser', 'task'), or null (not there)
+ * @returns {{ok: true, cmd: object, follower?: object} | {ok: false, error: string, reqId: string|null, paneId: string|null, readOnly?: boolean}}
+ *   follower is set when the command acts on a desktop pane the phone follows ({ paneId, desktopPaneId }: the command's paneId is then the
+ *   desktop pane's id, so the engine applies it there). A refusal for a restricted capability carries readOnly: true.
  */
 export function checkPhoneCommand(cmd, ctx) {
   const { deviceId } = ctx;
@@ -440,15 +541,33 @@ export function checkPhoneCommand(cmd, ctx) {
   if (cmd.reqId) out.reqId = phonePaneId(deviceId, cmd.reqId);
 
   let paneId = null;
+  // The desktop pane this phone pane follows (2026-10-11), when it does.
+  let followed = null;
+  let follower = null;
   if (PANE_OPS.has(op) || (op === 'artifactGet' && cmd.paneId != null)) {
     if (typeof cmd.paneId !== 'string' || !LOCAL_ID_RE.test(cmd.paneId)) return fail('Bad pane id.', cmd);
     paneId = phonePaneId(deviceId, cmd.paneId);
     out.paneId = paneId;
-    const exists = ctx.paneExists ? ctx.paneExists(paneId) : true;
-    if (op === 'open' || op === 'attach') {
+    followed = ctx.followOf?.(paneId) ?? null;
+    const exists = followed ? true : (ctx.paneExists ? ctx.paneExists(paneId) : true);
+    if (op === 'follow' || op === 'unfollow') {
+      // Checked in their own cases below.
+    } else if (op === 'open' || op === 'attach') {
+      // A pane that follows a desktop pane never turns into a conversation of its own by an open: that is the takeover this avoids.
+      if (followed) return fail(FOLLOWING_TEXT, cmd);
       if (!exists && (ctx.paneCount?.(deviceId) ?? 0) >= MAX_PHONE_PANES) return fail(`A phone can have ${MAX_PHONE_PANES} conversations open at once. Close one first.`, cmd);
-    } else if (!exists && op !== 'close') {
+    } else if (!exists && op !== 'close' && op !== 'artifactGet') {
+      // artifactGet: the pane is the phone's artifact viewer, a screen of the phone only, so the PC never has it; its id only
+      // routes the answer back. What it may read is still checked below (a conversation this phone has open). 2026-10-12:
+      // this refusal left every artifact on the phone loading forever (Arthur: "The artifacts are not loading").
       return fail('That pane is not open on the PC.', cmd);
+    }
+    // Ops on a follower act on the desktop pane it follows (artifactGet and close stay on the phone's own pane id).
+    if (followed && op !== 'follow' && op !== 'unfollow' && op !== 'close' && op !== 'artifactGet') {
+      if (op === 'model' || op === 'effort' || op === 'mode') return fail(FOLLOW_SETTINGS_TEXT, cmd);
+      if (DRIVE_OPS.has(op) && cap !== 'full') return fail(capFollowText(cap), cmd, { readOnly: true });
+      out.paneId = followed;
+      follower = { paneId, desktopPaneId: followed };
     }
   }
 
@@ -520,6 +639,9 @@ export function checkPhoneCommand(cmd, ctx) {
       if (!text.trim() && !clean.length) return fail('Nothing to send.', cmd);
       out.text = text;
       out.images = clean;
+      // A message a follower sends into a desktop pane carries no request id: its result and any error belong to the pane's own
+      // stream (the desktop window needs them to end its turn), not to one phone. A steer keeps it: steered and steer_missed answer the phone.
+      if (follower && op === 'send') delete out.reqId;
       break;
     }
     case 'interrupt':
@@ -527,10 +649,35 @@ export function checkPhoneCommand(cmd, ctx) {
     case 'close':
     case 'contextUsage':
       break;
+    case 'follow': {
+      // 2026-10-11, the shared view. paneId is this phone's own (new) pane id; desktopPaneId names the desktop pane to show.
+      if (!ctx.desktopPane) return fail('Following a desktop pane is not available on this PC.', cmd);
+      if (typeof cmd.desktopPaneId !== 'string' || !LOCAL_ID_RE.test(cmd.desktopPaneId)) return fail('Bad desktop pane id.', cmd);
+      // A pane that holds a conversation of its own is never turned into a follower (close it first).
+      if (!followed && ctx.paneExists?.(paneId)) return fail('That pane already holds a conversation of this phone. Close it first, or follow in a new pane.', cmd);
+      const kind = ctx.desktopPane(cmd.desktopPaneId);
+      if (!kind) return fail('That pane is not open on the desktop.', cmd);
+      if (kind !== 'conversation') return fail('Only a conversation can be followed, not a viewer, browser or task pane.', cmd);
+      // One pane of this phone per desktop pane, so the answer to a request can name its pane without guessing.
+      const there = ctx.followLocal?.(deviceId, cmd.desktopPaneId) ?? null;
+      if (there && there !== paneId) return fail('This phone already follows that desktop pane in another pane.', cmd);
+      if (!followed && (ctx.followCount?.(deviceId) ?? 0) >= MAX_PHONE_PANES) return fail(`A phone can follow ${MAX_PHONE_PANES} desktop panes at once. Unfollow one first.`, cmd);
+      out.desktopPaneId = cmd.desktopPaneId;
+      break;
+    }
+    case 'unfollow':
+      // Idempotent for a pane that follows nothing; it never closes a pane that holds a conversation (that is close).
+      if (!followed && ctx.paneExists?.(paneId)) return fail('That pane holds a conversation of this phone, not a desktop pane. Use close for it.', cmd);
+      break;
     case 'answer': {
       if (typeof cmd.askId !== 'string' || cmd.askId.length > 80) return fail('Bad question id.', cmd);
       const owner = ctx.askPane?.(cmd.askId) ?? null;
-      if (!owner || windowOf(owner) !== `${PHONE_PREFIX}${deviceId}`) return fail('That question belongs to another window.', cmd);
+      const own = Boolean(owner) && windowOf(owner) === `${PHONE_PREFIX}${deviceId}`;
+      // A question of a desktop pane this phone follows (2026-10-11): the first answer, from either side, wins (engine.js answer).
+      const followedAsk = !own && Boolean(owner) && !isPhonePane(owner) && Boolean(ctx.followsDesktop?.(deviceId, owner));
+      if (!own && !followedAsk) return fail('That question belongs to another window.', cmd);
+      if (followedAsk && cap !== 'full') return fail(capFollowText(cap), cmd, { readOnly: true });
+      if (followedAsk) follower = { paneId: null, desktopPaneId: owner };
       const r = cmd.result;
       if (r !== null && r !== undefined) {
         if (!isObj(r) || (r.behavior !== 'allow' && r.behavior !== 'deny')) return fail('Bad answer.', cmd);
@@ -717,7 +864,33 @@ export function checkPhoneCommand(cmd, ctx) {
       out.path = cmd.path;
       break;
     case 'browserView':
-      // Nothing but the pane: the engine shows the page that pane's own Claude opened (paneId checked above).
+      // The pane, and optionally which of its tabs to look at (2026-10-12): a plain id. The engine switches only among the
+      // tabs that pane's own conversation owns (browser-tools.js view), so this cannot reach another conversation's browser.
+      if (cmd.tab !== undefined && cmd.tab !== null) {
+        if (typeof cmd.tab !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(cmd.tab)) return fail('Bad tab.', cmd);
+        out.tab = cmd.tab;
+      }
+      break;
+    case 'transcribe':
+      // A WAV as base64, for the PC's Whisper; the text comes back to this phone pane only (paneId checked above).
+      if (typeof cmd.wav !== 'string' || !cmd.wav || cmd.wav.length > MAX_VOICE_B64 || !/^[A-Za-z0-9+/]+=*$/.test(cmd.wav)) return fail('That recording is too long or not audio.', cmd);
+      out.wav = cmd.wav;
+      break;
+    // 2026-10-12: the session list's Details sheet and menu (session-info.js, pins.js).
+    case 'sessionInfo':
+      if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
+      out.sessionId = cmd.sessionId;
+      break;
+    case 'exportSession':
+      if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
+      out.sessionId = cmd.sessionId;
+      // Always inline: the Markdown comes back to the phone; nothing is written on the PC for it.
+      out.inline = true;
+      break;
+    case 'pin':
+      if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
+      out.sessionId = cmd.sessionId;
+      out.pinned = cmd.pinned !== false;
       break;
     case 'consoleView':
       // Nothing but the pane: the engine shows the console holding the conversation that pane asked for (read only).
@@ -725,7 +898,7 @@ export function checkPhoneCommand(cmd, ctx) {
     default:
       return fail('Not available from a phone.', cmd);
   }
-  return { ok: true, cmd: out };
+  return follower ? { ok: true, cmd: out, follower } : { ok: true, cmd: out };
 }
 
 /**
@@ -733,8 +906,15 @@ export function checkPhoneCommand(cmd, ctx) {
  * ids put back when the event is about a phone's pane or answers a phone's
  * request (only that phone gets it, the desktop does not), else null (the
  * desktop gets it; BROADCAST_EVENTS also go to every connected phone).
+ *
+ * An answer to a follower's request (2026-10-11: contextUsage, historyBefore and so on
+ * run on the desktop pane, so the event names the desktop pane and carries the phone's
+ * request id) goes to that phone, with the desktop pane's id swapped for the phone's own
+ * pane that follows it. `followLocal(deviceId, desktopPaneId)` finds that pane (local id,
+ * unprefixed); a desktop pane id never reaches a phone through here, so without a
+ * pane that follows it the id is null.
  */
-export function routeEvent(ev) {
+export function routeEvent(ev, followLocal = null) {
   if (!isObj(ev)) return null;
   const byPane = parsePhoneId(ev.paneId);
   const byReq = parsePhoneId(ev.reqId);
@@ -742,6 +922,7 @@ export function routeEvent(ev) {
   if (!deviceId) return null;
   const out = { ...ev };
   if (byPane) out.paneId = byPane.deviceId === deviceId ? byPane.local : null;
+  else if (byReq && typeof ev.paneId === 'string') out.paneId = followLocal?.(deviceId, ev.paneId) ?? null;
   if (byReq) out.reqId = byReq.deviceId === deviceId ? byReq.local : null;
   if (typeof ev.otherPane === 'string') {
     const other = parsePhoneId(ev.otherPane);
@@ -754,14 +935,17 @@ const FIRST_PROMPT_CHARS = 200;
 const trimItem = (it) => (it && typeof it.firstPrompt === 'string' && it.firstPrompt.length > FIRST_PROMPT_CHARS ? { ...it, firstPrompt: it.firstPrompt.slice(0, FIRST_PROMPT_CHARS) } : it);
 
 /**
- * An event as a phone should see it: voice off (dictation is the phone
- * keyboard's job; the PC's Whisper is not reachable from a phone), and the
- * session list trimmed to what the phone shows.
+ * An event as a phone should see it: the session list trimmed to what the
+ * phone shows. Voice stays as the PC says (2026-10-12): a phone's mic goes to
+ * the PC's own Whisper through the transcribe op, so whether the PC has
+ * Whisper is what decides whether the phone shows its mic. (Until then voice
+ * was forced off here: "dictation is the phone keyboard's job".)
  */
 export function phoneView(ev) {
   if (!isObj(ev)) return ev;
   let out = ev;
-  if ('voice' in ev) out = { ...out, voice: false };
+  // Never a window's queued messages (queue-hold.js): what a window typed and has not sent is private to it (2026-10-11).
+  if (ev.ev === 'opened' && ('queue' in ev || 'queueSent' in ev)) { out = { ...out }; delete out.queue; delete out.queueSent; }
   if (ev.ev === 'sessions' && Array.isArray(ev.items)) out = { ...out, items: ev.items.map(trimItem) };
   if ((ev.ev === 'search' || ev.ev === 'askSearch') && Array.isArray(ev.results)) out = { ...out, results: ev.results.map((r) => (r && r.item ? { ...r, item: trimItem(r.item) } : r)) };
   if (ev.ev === 'codexThreads' && Array.isArray(ev.items)) out = { ...out, items: ev.items.map(trimItem) };

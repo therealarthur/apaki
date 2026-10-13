@@ -167,8 +167,9 @@ export class DiffPane {
   }
 
   /** What the saved workspace keeps (app.js snapshot). */
+  // ownerPane (2026-10-12): the conversation it belongs to, so it comes back beside it and linked to it.
   saved() {
-    return { diff: { path: this.spec.path, scope: this.spec.scope, branch: this.spec.branch, repo: this.spec.repo, base: this.spec.base } };
+    return { diff: { path: this.spec.path, scope: this.spec.scope, branch: this.spec.branch, repo: this.spec.repo, base: this.spec.base, ownerPane: this.sourcePane || null } };
   }
 
   // The pane interface app.js uses.

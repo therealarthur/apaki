@@ -322,8 +322,12 @@ const LONG_PRESS_SLOP_PX = 9;
  * more than a few pixels is scrolling the list. The tap a lifted finger would make after a press is swallowed.
  */
 function longPress() {
-  const list = $('sessions');
-  if (!list) return;
+  // The rows under an open folder (2026-10-12, folders open in place) and the folder rows themselves too: a long press on
+  // a folder opens its menu (Open or Close, Show only this folder).
+  for (const list of [$('sessions'), $('folders')]) if (list) longPressOn(list);
+}
+
+function longPressOn(list) {
   let p = null;
   let swallowUntil = 0;
   const cancel = () => { if (p) { clearTimeout(p.timer); p = null; } };
@@ -336,7 +340,7 @@ function longPress() {
     li.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
   };
   list.addEventListener('touchstart', (e) => {
-    const li = e.target.closest?.('li[data-id]');
+    const li = e.target.closest?.('li[data-id], .folder-row[data-folder]');
     cancel();
     if (!li || e.touches.length !== 1 || e.target.closest('.subs-n')) return;
     const t = e.touches[0];
@@ -445,6 +449,13 @@ export function initNative({ onPcTap, startInChat = false } = {}) {
   $('sessions')?.addEventListener('click', (e) => {
     const li = e.target.closest('li[data-id]');
     if (!li || e.target.closest('.subs-n')) return;
+    haptic();
+    showChat();
+  });
+  // A session under an open folder opens the same way (2026-10-12); a tap on the folder row only opens or closes it.
+  $('folders')?.addEventListener('click', (e) => {
+    const li = e.target.closest('li[data-id]');
+    if (!li || e.target.closest('.subs-n, .sr-more')) return;
     haptic();
     showChat();
   });

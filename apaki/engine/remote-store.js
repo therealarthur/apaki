@@ -18,9 +18,15 @@
  * can open the file, so a copied folder, a backup or another account gets
  * nothing. PowerShell runs only when phone access starts, when a phone is
  * paired and when one is removed; the secret goes in through stdin, never on
- * a command line. If DPAPI is unavailable (or on macOS/Linux) the file is
+ * a command line. If DPAPI is unavailable (or on Linux) the file is
  * written readable by this user only (mode 600; on Windows the profile
  * folder's own permissions) and the status says protection: 'file'.
+ *
+ * macOS (2026-10-12, keychain.js): a random key in the login Keychain seals the
+ * file (AES-256-GCM, scheme "keychain-aes", status protection: 'keychain'); the
+ * `security` command line is the only helper, and the key goes through its
+ * stdin, never a command line. Same durability as DPAPI: the sealed file, its
+ * .bak copies and the retry when the Keychain is locked all work the same way.
  *
  * Durability (2026-10-10, Arthur: "the paired phone should be good to go
  * foreeever"): a paired phone must never be dropped by accident.
@@ -77,6 +83,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { SECURITY_BIN, createKeychain } from './keychain.js';
 
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
@@ -124,8 +131,9 @@ on (the Phone button at the bottom of Apaki's sidebar).
   allowed or blocked each one). If the hourly page check turned phone access
   off, why.
 - secret.json: secret. This PC's private key, the room token and each phone's
-  pairing secret, sealed with Windows DPAPI for your Windows account (only you,
-  on this PC, can open it). Never share or sync it.
+  pairing secret, ${process.platform === 'darwin'
+    ? 'sealed with a key in your macOS login Keychain (only you, on this Mac,\n  can open it)'
+    : 'sealed with Windows DPAPI for your Windows account (only you,\n  on this PC, can open it)'}. Never share or sync it.
 - pages.json: not secret. The phone page versions this PC checked on the
   site (file hashes), so it can check them again every hour. Safe to delete;
   it fills again at the next pairing.
@@ -182,8 +190,36 @@ export function dpapiAvailable() {
   return process.platform === 'win32' && process.env.APAKI_REMOTE_PROTECT !== 'file' && fs.existsSync(powershell());
 }
 
+/** True where the macOS Keychain can be used (a Mac with /usr/bin/security). APAKI_REMOTE_PROTECT=file turns it off. */
+export function keychainAvailable() {
+  return secretStoreFor() === 'keychain';
+}
+
+/**
+ * Which store seals secret.json: 'dpapi' on Windows, 'keychain' on a Mac, else (or when APAKI_REMOTE_PROTECT=file) a
+ * user-only 'file'. Pure given its inputs, so the choice is tested on any OS (macOS port, 2026-10-12).
+ */
+export function secretStoreFor({ platform = process.platform, env = process.env, exists = fs.existsSync } = {}) {
+  if (env.APAKI_REMOTE_PROTECT === 'file') return 'file';
+  if (platform === 'win32') return exists(powershell()) ? 'dpapi' : 'file';
+  if (platform === 'darwin') return exists(SECURITY_BIN) ? 'keychain' : 'file';
+  return 'file';
+}
+
 export const protectBytes = (bytes) => dpapi('Protect', bytes);
 export const unprotectBytes = (bytes) => dpapi('Unprotect', bytes);
+
+// The Mac's sealer (keychain.js): made on first use, so a PC never loads a Keychain it does not use.
+let macKeychain = null;
+const keychain = () => (macKeychain ||= createKeychain());
+/** Swaps the Keychain sealer (tests give it a fake `security`); returns the one it replaces. */
+export function setKeychain(kc) {
+  const old = macKeychain;
+  macKeychain = kc;
+  return old;
+}
+export const keychainProtect = (bytes) => keychain().protect(bytes);
+export const keychainUnprotect = (bytes) => keychain().unprotect(bytes);
 
 /** Writes through a flushed temp file and a rename: the old file or the new one survives a crash, never a torn or empty one. */
 function writeAtomic(file, text, mode) {
@@ -385,6 +421,9 @@ async function openSecretFile(file) {
   let bytes;
   if (f.scheme === 'dpapi-user') {
     try { bytes = await unprotectBytes(Buffer.from(String(f.data || ''), 'base64')); } catch (e) { throw new SecretError('locked', e.message); }
+  } else if (f.scheme === 'keychain-aes') {
+    // Sealed with the key in the macOS login Keychain (keychain.js): a missing item or a locked keychain is 'locked' too.
+    try { bytes = await keychainUnprotect(Buffer.from(String(f.data || ''), 'base64')); } catch (e) { throw new SecretError('locked', e.message); }
   } else if (f.scheme === 'file') {
     bytes = Buffer.from(String(f.data || ''), 'base64');
   } else {
@@ -417,7 +456,7 @@ export async function loadSecret(dir = remoteDir()) {
  * sealed with DPAPI where possible. Returns the scheme used. backup: false
  * skips the rolling .bak (when the file being replaced is the damaged one).
  */
-export async function saveSecret(secret, dir = remoteDir(), { backup = true } = {}) {
+export async function saveSecret(secret, dir = remoteDir(), { backup = true, store: sealWith = secretStoreFor() } = {}) {
   ensureDir(dir);
   const body = { identity: secret.identity, token: secret.token, psks: secret.psks || {} };
   if (Array.isArray(secret.devices)) body.devices = secret.devices.map(cleanDevice).map(({ lastSeen: _seen, ...d }) => d);
@@ -427,10 +466,18 @@ export async function saveSecret(secret, dir = remoteDir(), { backup = true } = 
   const plain = Buffer.from(JSON.stringify(body), 'utf8');
   let scheme = 'file';
   let data = plain.toString('base64');
-  if (dpapiAvailable()) {
+  const store = sealWith;
+  if (store === 'dpapi') {
     try {
       data = (await protectBytes(plain)).toString('base64');
       scheme = 'dpapi-user';
+    } catch (e) {
+      process.stderr.write(`apaki remote: ${e.message}; keeping the secrets in a user-only file instead\n`);
+    }
+  } else if (store === 'keychain') {
+    try {
+      data = (await keychainProtect(plain)).toString('base64');
+      scheme = 'keychain-aes';
     } catch (e) {
       process.stderr.write(`apaki remote: ${e.message}; keeping the secrets in a user-only file instead\n`);
     }

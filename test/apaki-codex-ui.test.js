@@ -108,10 +108,11 @@ test('the permission sheet speaks Codex: its buttons, the diff of a patch, the a
   assert.deepEqual(view.labels, { once: 'Approve once', always: 'Approve for this session', deny: 'Deny' });
   assert.equal(view.codex, true);
   const html = permissionHtml(view, { from: 'Pricing' });
-  assert.ok(html.includes('>Approve once</button>'));
-  assert.ok(html.includes('>Approve for this session</button>'));
+  // Numbered rows in the pane's card since 2026-10-12 (askcard.js): 1 Approve once, 2 Approve for this session, 3 Deny.
+  assert.ok(html.includes('<span class="ask-w">Approve once</span>'));
+  assert.ok(html.includes('<span class="ask-w">Approve for this session</span>'));
   assert.ok(html.includes('Approve for this session means'));
-  assert.ok(html.includes('Enter: approve once. Esc: deny.'));
+  assert.ok(html.includes('Enter: approve once. Esc goes back to your message.'));
   assert.ok(html.includes('Or tell Codex what to do instead'));
   assert.ok(html.includes('npm install'));
   assert.ok(!html.includes('Allow once') && !html.includes('Claude'));
@@ -139,7 +140,7 @@ test('the permission sheet speaks Codex: its buttons, the diff of a patch, the a
   assert.deepEqual(claude.labels, { once: 'Allow once', always: 'Always allow', deny: 'Deny' });
   assert.equal(claude.codex, false);
   const ch = permissionHtml(claude);
-  assert.ok(ch.includes('>Allow once</button>') && ch.includes('>Always allow</button>') && ch.includes('Always allow saves') && ch.includes('Enter allows once. Esc denies.'));
+  assert.ok(ch.includes('<span class="ask-w">Allow once</span>') && ch.includes('<span class="ask-w">Always allow</span>') && ch.includes('Always allow saves') && ch.includes('Enter allows once. Esc goes back to your message.'));
   assert.ok(ch.includes('Or tell Claude what to do instead'));
   assert.equal(denyLabel('x'), 'Deny with note');
   assert.equal(denyLabel('x', 'Not now'), 'Not now with note');
@@ -161,8 +162,12 @@ test('the pane and the window are wired for Codex: picks only, no inherited mode
   assert.ok(app.includes("...inheritable(base)"), 'a new Claude pane never takes a Codex pane\'s model');
   assert.ok(!/model: base\?\.model/.test(app), 'every place that copied a pane\'s picks goes through inheritable');
   assert.ok(app.includes("(!CARD_ONLY_VIA.has(e.via) || e.open)"), 'a turn\'s changes are a card, not a viewer that pops up');
-  assert.ok(app.includes("q.secret ? 'password' : 'text'"), 'a secret question hides what is typed');
-  assert.ok(app.includes("who} has"), 'the question sheet says whose question it is');
+  // Questions are cards in the pane since 2026-10-12 (askcard.js): the card hides a secret and says whose question it is.
+  const card = read('apaki', 'ui', 'askcard.js');
+  assert.ok(card.includes("q.secret ? 'password' : 'text'"), 'a secret question hides what is typed');
+  assert.ok(card.includes("who} has"), 'the question card says whose question it is');
+  assert.ok(card.includes("pane.kind === 'codex' ? 'Codex' : 'Claude'"), 'a Codex pane\'s card says Codex');
+  assert.ok(app.includes('const entry = p ? asks.ask(e, p) : null;'), 'the window hands every ask to its pane\'s card');
   const html = read('apaki', 'ui', 'index.html');
   assert.ok(html.includes('class="kind-mark" hidden>Codex</span>'));
   const css = read('apaki', 'ui', 'app.css');

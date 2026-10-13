@@ -7,3 +7,4 @@ apaki/web/dist/
 
 # Claude Code agent worktrees (isolated checkouts made by subagents; removed when they finish)
 .claude/worktrees/
+apaki/build-mac/

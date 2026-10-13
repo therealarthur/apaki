@@ -115,9 +115,9 @@ test('policy: events about a phone pane or request go to that phone with its own
   assert.equal(parsePhoneId('phone:short:p1'), null);
   assert.equal(windowOf('p1'), 'desktop');
   assert.equal(windowOf(`phone:${DEV}:p1`), `phone:${DEV}`);
-  // What a phone sees: no PC voice, trimmed list.
+  // What a phone sees: the PC's voice as it is (the phone's mic uses the PC's Whisper, 2026-10-12), trimmed list.
   const v = phoneView({ ev: 'sessions', voice: true, items: [{ id: 'a', firstPrompt: 'x'.repeat(5000) }] });
-  assert.equal(v.voice, false);
+  assert.equal(v.voice, true);
   assert.equal(v.items[0].firstPrompt.length, 200);
   assert.notEqual(hashText('abc'), hashText('abd'));
 });
@@ -391,7 +391,9 @@ test('bridge: pair with approval, commands land in the phone namespace, events r
     const hello = phone.events.find((e) => e.wire?.t === 'hello');
     assert.equal(hello.wire.pcName, 'Test PC');
     assert.ok(!hello.wire.ops.includes('billing'));
-    assert.equal(phone.events.find((e) => e.ev === 'ready').voice, false);
+    // The phone sees the PC's voice as it is and may send it audio (its mic goes to the PC's Whisper, 2026-10-12).
+    assert.equal(phone.events.find((e) => e.ev === 'ready').voice, true);
+    assert.ok(hello.wire.ops.includes('transcribe'));
     const st = last();
     assert.equal(st.devices.length, 1);
     assert.equal(st.devices[0].connected, true);

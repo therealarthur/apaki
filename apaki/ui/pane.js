@@ -14,7 +14,7 @@
  *   engineQueue (true in the desktop window: the pane tells the engine its queue, see syncQueue).
  */
 
-import { esc, md } from './markdown.js';
+import { esc, md, streamCut, streamState } from './markdown.js';
 import { EFFORTS, effortGrid, menu } from './menu.js';
 import { pickVerb } from './verbs.js';
 // What Claude Code shows that is not Claude's reply: blocked prompts, hook errors, retries, limits (2026-10-11).
@@ -29,6 +29,19 @@ import { GLYPH_WORKTREE, branchLabel, branchName, changeText, relPath, tooltip, 
 import { setTip } from './tooltip.js';
 // The console: this conversation in the real Claude Code or Codex terminal UI, toggled in place (console.js, 2026-10-12).
 import { CLAUDE_TUI_BARE, CODEX_TUI_BARE, PaneConsole, tuiCommand } from './console.js';
+// Every streaming reply in the window is painted by one painter (streampaint.js, 2026-10-12, input lag).
+import { createStreamPainter } from './streampaint.js';
+// Older messages of a long conversation are folded into chunks the browser can skip (chunks.js, pane.js sealOld).
+import { planChunks } from './chunks.js';
+
+// How many nodes at the end of a transcript stay open, and the size of a chunk (sealOld). SEAL_STAYS: nodes that stay loose.
+const SEAL_KEEP = 48;
+const SEAL_SIZE = 24;
+const SEAL_STAYS = '.hist-more, .arch-line, .hist-err, .takeover, .empty, .chunk';
+
+const painter = createStreamPainter();
+// A key press slows the stream updates for a moment, so typing never waits behind a paint.
+if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('keydown', () => painter.typed(), true);
 
 // Images go in at most this many pixels on the long edge (the API's sweet
 // spot, and under the 2000 px limit that breaks a session).
@@ -111,6 +124,16 @@ export function toolArgs(name, input = {}) {
   if (name === 'TodoWrite' && Array.isArray(input.todos)) return `${input.todos.length} todos`;
   if (name === 'ApplyPatch') return patchArgs(input.changes).slice(0, 160);
   return String(pick).replace(/\s+/g, ' ').slice(0, 160);
+}
+
+/**
+ * The name on a message another window sent into this conversation (the shared view). A phone's own name stands as it is; the
+ * PC's window is "Desktop" to the engine and "the PC" to a phone that follows it. Nothing for a message with no sender.
+ */
+export function peerName(from, onPhone = false) {
+  const n = String(from || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (!n) return '';
+  return n === 'Desktop' ? (onPhone ? 'the PC' : '') : n;
 }
 
 export class Pane {
@@ -297,7 +320,11 @@ export class Pane {
     const codex = this.kind === 'codex';
     this.el.classList.toggle('codex', codex);
     if (this.$.kindMark) this.$.kindMark.hidden = !codex;
-    this.$.input.placeholder = codex ? 'Message Codex, / for commands, paste or drop files' : 'Message Claude, / for commands, paste or drop images';
+    // The phone's field is one line beside the clip, mic and send (2026-10-12: Arthur saw the long hint wrap and cut off
+    // there), so it gets just the name; / still opens the commands. The desktop keeps the full hint.
+    this.$.input.placeholder = window.apakiShell === 'web'
+      ? (codex ? 'Message Codex' : 'Message Claude')
+      : (codex ? 'Message Codex, / for commands, paste or drop files' : 'Message Claude, / for commands, paste or drop images');
     this.$.file.accept = codex ? '' : 'image/*';
     this.$.file.closest('label')?.setAttribute('title', codex ? 'Attach images or files' : 'Attach images');
     this.renderChips();
@@ -423,6 +450,95 @@ Click for changes, commit, push, pull request, merge`;
     this.host.changed(this);
   }
 
+  /**
+   * Phones that show this conversation too (the shared view, 2026-10-11): one plain line in the header, "Also on iPhone", gone
+   * when nobody does. Text only: no dot, no badge, no motion. The engine sends it when the phones watching change (ev followers).
+   */
+  setFollowers(phones) {
+    const names = (Array.isArray(phones) ? phones : []).filter((n) => typeof n === 'string' && n).slice(0, 4);
+    if (!names.length) { this.$.also?.remove(); this.$.also = null; return; }
+    if (!this.$.also) { this.$.also = el('span', 'also-on'); this.$.cwd.after(this.$.also); }
+    this.$.also.textContent = `Also on ${names.join(', ')}`;
+    this.$.also.title = 'A phone is watching this conversation. Nothing was taken over from this window.';
+  }
+
+  /**
+   * This pane follows a conversation open in a pane on the PC (the phone's shared view, 2026-10-12; app.js followDesktop, engine
+   * op follow): `desktopPaneId` names the PC's pane, null ends it. The pane shows that conversation live and its messages go into
+   * the PC's pane, so the model, effort and permission mode are the PC pane's: their chips stay on screen, read only. One bar at the
+   * top of the conversation says where it is being watched and offers Take over (app.js takeOver asks first, because it stops the PC's
+   * pane). readOnly (this phone's access is No shell or Chat only): the message box gives way to a "View only" line.
+   */
+  setFollowing(desktopPaneId, { readOnly = false } = {}) {
+    this.following = desktopPaneId || null;
+    this.el.classList.toggle('following', Boolean(this.following));
+    for (const k of ['model', 'effort', 'mode']) if (this.$[k]) this.$[k].disabled = Boolean(this.following);
+    this.setViewOnly(Boolean(this.following) && readOnly);
+    this.renderFollowBar();
+  }
+
+  /** The "View only" line in place of the message box (a follower whose phone may watch but not send). */
+  setViewOnly(on) {
+    this.el.classList.toggle('view-only', Boolean(on));
+    const note = this.el.querySelector('.view-only-note');
+    if (!on) { note?.remove(); return; }
+    if (!note) this.$.wrap?.append(el('div', 'view-only-note', '<b>View only</b><span>This phone can watch this conversation but not send to it. Take over to continue it here.</span>'));
+  }
+
+  /** The follow bar: "Watching on <PC>" and Take over, sticky at the top of the conversation. Gone when the pane does not follow. */
+  renderFollowBar() {
+    this.$.fbar?.remove();
+    this.$.fbar = null;
+    if (!this.following) return;
+    const pc = String(window.__apakiLink?.pcName?.() || '').trim() || 'your PC';
+    const bar = el('div', 'follow-bar', `<span class="fb-t"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.6 8s2.3-4.4 6.4-4.4S14.4 8 14.4 8s-2.3 4.4-6.4 4.4S1.6 8 1.6 8z"/><circle cx="8" cy="8" r="1.9"/></svg><span class="fb-w">Watching live on <b>${esc(pc)}</b></span></span><button type="button" class="fb-go" aria-label="Take over this conversation here">Take over</button>`);
+    bar.querySelector('.fb-go').onclick = () => this.host.takeOver?.(this);
+    this.$.ground.prepend(bar);
+    this.$.fbar = bar;
+  }
+
+  /** Stops following without closing the PC's pane (the PC drops this pane from its watchers). */
+  stopFollowing() {
+    if (!this.following) return;
+    this.setFollowing(null);
+    this.send('unfollow');
+  }
+
+  /**
+   * Take over: the conversation moves from the PC's pane to this one. The PC stops that pane before its next message (the
+   * same as opening a conversation the PC holds and choosing Take over here), so nothing forks.
+   */
+  takeOver() {
+    if (!this.following) return;
+    const s = { id: this.sessionId, cwd: this.cwd, title: this.title, codex: this.kind === 'codex' };
+    this.stopFollowing();
+    this.open(s, { warm: true, force: true });
+    this.host.changed(this);
+  }
+
+  /**
+   * The PC's pane is gone (closed there, or the PC no longer has it): this pane stops following and says so, keeping the transcript.
+   * Open here starts the conversation in this pane (nothing holds it any more), Close pane drops it.
+   */
+  followEnded() {
+    if (!this.following) return;
+    this.setFollowing(null);
+    this.setBusy(false);
+    this.setStatus('');
+    this.$.T.querySelector('.takeover')?.remove();
+    const card = el('div', 'takeover', `
+      <div class="tk-kicker">Closed on the PC</div>
+      <h3>The PC closed this conversation's pane</h3>
+      <p>${this.sessionId ? 'Nothing is watching it now. You can open it here and carry on, or close this pane.' : 'It had not started yet. Close this pane or start a new conversation here.'}</p>
+      <div class="tk-row">${this.sessionId ? '<button class="tk-go">Open here</button>' : ''}<button class="tk-no">Close pane</button></div>`);
+    const go = card.querySelector('.tk-go');
+    if (go) go.onclick = () => { card.remove(); this.open({ id: this.sessionId, cwd: this.cwd, title: this.title, codex: this.kind === 'codex' }, { warm: true }); this.host.changed(this); };
+    card.querySelector('.tk-no').onclick = () => this.host.close(this);
+    this.$.T.append(card);
+    this.scrollDown(true);
+    this.host.changed(this);
+  }
+
   /** Starts this new conversation in another folder (only before its first message). */
   setStartFolder(dir) {
     if (this.sessionId || this.busy) return;
@@ -519,6 +635,8 @@ Click for changes, commit, push, pull request, merge`;
 
   /** Opens a session here (null for a new conversation). warm=false waits for the first message to start Claude Code. */
   open(s, { warm = true, force = false } = {}) {
+    // Opening a conversation in a pane that follows the PC's pane ends the following first (the PC refuses an open on a follower).
+    if (this.following) this.stopFollowing();
     const sessionId = s?.id || null;
     if (s?.title) this.setTitle(s.title);
     if (!sessionId) this.setTitle('New conversation');
@@ -559,6 +677,8 @@ Click for changes, commit, push, pull request, merge`;
     if (!lost) this.$.T.innerHTML = '';
     this.$.T.querySelector('.takeover')?.remove();
     const terminal = h.app === 'latch-relay' || !h.app;
+    // On a phone, when a pane of the PC's window has it open: watching it live takes nothing from that pane (the shared view).
+    const watchPane = lost ? null : this.host.deskPaneFor?.(e.sessionId || this.sessionId) || null;
     const card = el('div', 'takeover', `
       <div class="tk-kicker">${lost ? 'Taken over' : 'Session in use'}</div>
       <h3>${lost ? `${esc(who)} took this session` : `Open in ${esc(who)}`}</h3>
@@ -568,11 +688,13 @@ Click for changes, commit, push, pull request, merge`;
       <p class="tk-fine">${terminal
         ? 'That terminal window is blocked as soon as you take over: its next message is stopped with a note to continue here, so nothing forks.'
         : 'That window stops before its next message, with a note to continue here, so nothing forks.'} Anything it already did is on disk and loads here.</p>
-      <div class="tk-row"><button class="tk-go">${lost ? 'Take it back' : 'Take over here'}</button><button class="tk-no">${lost ? 'Close pane' : 'Cancel'}</button></div>`);
-    card.querySelector('.tk-go').onclick = () => {
+      <div class="tk-row">${watchPane ? '<button class="tk-go tk-watch">Watch live</button>' : ''}<button class="${watchPane ? 'tk-take' : 'tk-go tk-take'}">${lost ? 'Take it back' : 'Take over here'}</button><button class="tk-no">${lost ? 'Close pane' : 'Cancel'}</button></div>`);
+    card.querySelector('.tk-take').onclick = () => {
       this.$.T.innerHTML = '';
       this.open(this.lastOpen || { id: this.sessionId, cwd: this.cwd, title: this.title }, { warm: true, force: true });
     };
+    const watch = card.querySelector('.tk-watch');
+    if (watch) watch.onclick = () => this.host.watchLive?.(this, watchPane);
     card.querySelector('.tk-no').onclick = () => {
       if (lost) { this.host.close(this); return; }
       this.lockedBy = null;
@@ -609,7 +731,9 @@ Click for changes, commit, push, pull request, merge`;
 
   scrollDown(force = false) {
     // Earlier messages drawn off-screen to go on top (prependHistory) keep the reader where they are.
-    if (this._prepending) return;
+    // A conversation being drawn from history is scrolled once, at its end (renderHistory): asking for the end after
+    // every message made the browser lay the whole page out again each time (2400 messages took half a minute).
+    if (this._prepending || this._replaying) return;
     const g = this.$.ground;
     // No box (a background tab): there is nothing to scroll yet; the reader is put at the end when it shows (settleScroll).
     if (!this.hasBox()) { if (force) this.scrollMemo = { atEnd: true, top: 0 }; return; }
@@ -651,6 +775,9 @@ Click for changes, commit, push, pull request, merge`;
   settleScroll() {
     const had = this._hadBox;
     this._hadBox = this.hasBox();
+    // Shown again after being hidden: replies that kept collecting text are drawn now, in one go (flushUnpainted).
+    if (this._hadBox && had === false) this.flushUnpainted();
+    if (this._hadBox && had === false && this._sealPending && !this._sealAt) this._sealAt = requestAnimationFrame(() => this.sealOld());
     if (!this._hadBox || had !== false) return;
     const want = this.scrollMemo || { atEnd: true, top: 0 };
     const g = this.$.ground;
@@ -672,9 +799,69 @@ Click for changes, commit, push, pull request, merge`;
     this._pinRaf = requestAnimationFrame(() => { this._pinRaf = 0; this.updatePin(); });
   }
 
+  /** Your messages in the conversation, top to bottom. Older ones sit inside chunks (sealOld), so not only direct children. */
+  userTurns() {
+    return this.$.T.querySelectorAll('.turn-user');
+  }
+
+  /* ---------- long conversations: chunks (2026-10-12, input lag) ---------- */
+
+  // Thousands of top-level blocks made every update (a streamed word, a tool result, a composer resize) cost the browser
+  // a walk over all of them: about 7 ms per update in a 2400-message pane, per streaming pane per frame. Older
+  // messages are wrapped in groups of about SEAL_SIZE in a `.chunk` box that app.css gives content-visibility: auto and
+  // the height measured here, so what is off screen is skipped and the transcript has a hundred blocks, not thousands.
+  // The last SEAL_KEEP nodes stay open. Nothing is removed or rewritten: nodes are moved into a box, so every reference
+  // (tools, the todo card, links) stays valid, find-in-pane still walks all the text, and the pin counts through chunks.
+
+  /** Folds the older messages into chunks, when the pane has a box to measure in. Safe to call often. */
+  sealOld() {
+    this._sealAt = 0;
+    const T = this.$.T;
+    if (this._prepending || this._replaying || T.childElementCount < SEAL_KEEP + SEAL_SIZE) return;
+    // A pane in a background tab has no box to measure: it folds when it is shown (settleScroll).
+    if (!this.hasBox()) { this._sealPending = true; return; }
+    this._sealPending = false;
+    const kids = [...T.children];
+    const kinds = kids.map((n) => (n.classList.contains('turn-user') ? 'turn' : n.matches(SEAL_STAYS) ? 'skip' : 'item'));
+    const ranges = planChunks(kinds, { keep: SEAL_KEEP, size: SEAL_SIZE });
+    if (!ranges.length) return;
+    const g = this.$.ground;
+    const atEnd = g.scrollHeight - g.scrollTop - g.clientHeight < 40;
+    // The reader's place: the first node below the top edge of the conversation, and how far down it is.
+    const edge = g.getBoundingClientRect().top;
+    let anchor = null;
+    for (const n of kids) { if (n.getBoundingClientRect().bottom > edge) { anchor = n; break; } }
+    const y0 = anchor ? anchor.getBoundingClientRect().top : 0;
+    // Wrap first, measure, then switch the skipping on (a chunk that is skipped has no height to measure).
+    const made = ranges.map(([a, b]) => {
+      const c = document.createElement('div');
+      c.className = 'chunk';
+      kids[a].before(c);
+      c.append(...kids.slice(a, b));
+      return c;
+    });
+    const heights = made.map((c) => c.getBoundingClientRect().height);
+    // The remembered size is the content box's (a skipped chunk keeps its padding on top of it), so the padding comes off.
+    const pad = parseFloat(getComputedStyle(made[0]).paddingBottom) || 0;
+    made.forEach((c, i) => { c.style.containIntrinsicSize = `auto ${Math.max(1, Math.round(heights[i] - pad))}px`; c.classList.add('cv'); });
+    // Margins no longer collapse across a chunk's edge (app.css .chunk offsets that); keep the reader where they were.
+    if (atEnd) g.scrollTop = g.scrollHeight;
+    else if (anchor?.isConnected) g.scrollTop += anchor.getBoundingClientRect().top - y0;
+    this.chunkCount = (this.chunkCount || 0) + made.length;
+    this._sealedKids = T.childElementCount - SEAL_KEEP;
+  }
+
+  /** Folds soon (a frame later), once the transcript has grown enough beyond what is folded. Cheap to call after every update. */
+  sealSoon() {
+    // The transcript was cleared and drawn again (a refresh, another conversation): count from the start.
+    if (this.$.T.childElementCount < (this._sealedKids || 0) + SEAL_KEEP) this._sealedKids = 0;
+    if (this._sealAt || this.$.T.childElementCount < SEAL_KEEP + SEAL_SIZE * 2 + (this._sealedKids || 0)) return;
+    this._sealAt = requestAnimationFrame(() => this.sealOld());
+  }
+
   /** Your last message scrolled out above the top edge ({ el, n, of }), or null. */
   pinnedTurn() {
-    const turns = this.$.T.querySelectorAll(':scope > .turn-user');
+    const turns = this.userTurns();
     if (!turns.length) return null;
     // Not laid out (display: none, a hidden tab): every box measures 0, which read as "scrolled past" (2026-10-12).
     // No pin until it shows; the ground's ResizeObserver asks again then.
@@ -682,12 +869,24 @@ Click for changes, commit, push, pull request, merge`;
     if (!box.height) return null;
     const edge = box.top + 6;
     // Turns run top to bottom, so the last one above the edge is a binary search away.
+    // A turn inside a chunk (sealOld) is placed by its chunk's box first: a chunk wholly above or below the edge says
+    // so for all its turns, and only the chunk the edge runs through is asked turn by turn (asking a skipped chunk's
+    // turn makes the browser lay that chunk out). The answer is the same as asking every turn.
+    const above = (t) => {
+      const c = t.parentElement;
+      if (c && c.classList.contains('chunk')) {
+        const r = c.getBoundingClientRect();
+        if (r.bottom < edge) return true;
+        if (r.top >= edge) return false;
+      }
+      return t.getBoundingClientRect().bottom < edge;
+    };
     let lo = 0;
     let hi = turns.length - 1;
     let hit = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (turns[mid].getBoundingClientRect().bottom < edge) { hit = mid; lo = mid + 1; } else hi = mid - 1;
+      if (above(turns[mid])) { hit = mid; lo = mid + 1; } else hi = mid - 1;
     }
     // Counted over the whole conversation: the prompts before the first one loaded here come from the engine
     // (history prompts.before, 2026-10-11), so "N of M" is your real place, not "13 of 13" of a loaded page.
@@ -736,7 +935,7 @@ Click for changes, commit, push, pull request, merge`;
 
   /** The prompts drawn here, as the list shows them (a conversation the engine has no transcript of yet). */
   domPrompts() {
-    return [...this.$.T.querySelectorAll(':scope > .turn-user')].map((u, i) => ({ id: u.dataset.mid || `dom-${i}`, text: [...u.childNodes].filter((x) => x.nodeType === Node.TEXT_NODE).map((x) => x.textContent).join('').trim(), images: u.querySelectorAll('.imgs > *').length }));
+    return [...this.userTurns()].map((u, i) => ({ id: u.dataset.mid || `dom-${i}`, text: [...u.childNodes].filter((x) => x.nodeType === Node.TEXT_NODE).map((x) => x.textContent).join('').trim(), images: u.querySelectorAll('.imgs > *').length }));
   }
 
   /** ev historyPrompts: the menu. Prompts typed here since the engine read the transcript are added from the screen. */
@@ -746,7 +945,7 @@ Click for changes, commit, push, pull request, merge`;
     this._promptListReq = null;
     if (e.error) { this.note(e.error, 'warn'); return; }
     const list = Array.isArray(e.prompts) ? e.prompts.slice() : [];
-    const drawn = this.$.T.querySelectorAll(':scope > .turn-user').length + Math.max(0, this.promptsBefore || 0);
+    const drawn = this.userTurns().length + Math.max(0, this.promptsBefore || 0);
     if (drawn > list.length) list.push(...this.domPrompts().slice(list.length - drawn));
     this.showPromptList(want.anchor, list, want.current);
   }
@@ -767,10 +966,10 @@ Click for changes, commit, push, pull request, merge`;
    */
   async jumpToPrompt(p, i) {
     const find = () => {
-      if (p?.id) { const hit = this.$.T.querySelector(`:scope > .turn-user[data-mid="${CSS.escape(p.id)}"]`); if (hit) return hit; }
+      if (p?.id) { const hit = this.$.T.querySelector(`.turn-user[data-mid="${CSS.escape(p.id)}"]`); if (hit) return hit; }
       // By its place: the prompts before the loaded ones are counted (promptsBefore), the rest are drawn in order.
       const k = i - Math.max(0, this.promptsBefore || 0);
-      const turns = this.$.T.querySelectorAll(':scope > .turn-user');
+      const turns = this.userTurns();
       return k >= 0 && k < turns.length && this.promptsKnown !== false ? turns[k] : null;
     };
     let el = find();
@@ -835,12 +1034,14 @@ Click for changes, commit, push, pull request, merge`;
 
   clearEmpty() { if (this.$.T.querySelector('.empty')) this.$.T.innerHTML = ''; }
 
-  addUser(text, images = [], { steered = false, mid = null } = {}) {
+  addUser(text, images = [], { steered = false, mid = null, from = '' } = {}) {
     this.clearEmpty();
     // You wrote something: the next TodoWrite starts a new checklist (a steered message is part of the turn that runs, so it keeps its card).
     if (!steered) this.todoCard = null;
     const u = el('div', steered ? 'turn-user steered' : 'turn-user');
-    if (steered) u.append(el('span', 'steer-tag', 'Steered in'));
+    // A message another window of this conversation sent (the shared view): who sent it, in the same quiet tag.
+    if (from) u.append(el('span', 'steer-tag', `${steered ? 'Steered in' : 'Sent'} from ${esc(from)}`));
+    else if (steered) u.append(el('span', 'steer-tag', 'Steered in'));
     if (images.length) {
       const box = el('div', 'imgs');
       // From history, an image is a placeholder that loads it on demand (ref); never all of them up front.
@@ -856,14 +1057,67 @@ Click for changes, commit, push, pull request, merge`;
     return u;
   }
 
-  /** Redraws a streaming reply as markdown, once per animation frame. */
+  /**
+   * Redraws a streaming reply as markdown, once per animation frame (2026-10-12, input lag): only the growing
+   * tail is parsed and replaced (drawStream), and a pane with no box on screen (a background tab) draws nothing
+   * until it is shown: the text just collects in a._raw (flushUnpainted draws it in one go).
+   */
   paintStream(a) {
-    if (a._raf) return;
-    a._raf = requestAnimationFrame(() => {
+    if (!this.isShown()) { (this._unpainted ||= new Set()).add(a); return; }
+    // One painter for every pane (streampaint.js): at most ~20 updates a second per reply, a time budget per frame,
+    // and one layout for all of them, instead of each pane forcing its own.
+    a._raf = 1;
+    painter.queue(a, () => {
       a._raf = 0;
-      a.innerHTML = md(a._raw || '');
-      this.scrollDown();
-    });
+      if (!this.isShown()) { (this._unpainted ||= new Set()).add(a); return; }
+      this.drawStream(a);
+    }, (this._settleStream ||= () => { this.scrollDown(); this.sealSoon(); }));
+  }
+
+  /** The reply as it is now: the finished blocks stay where they are, the tail after the last safe cut is parsed again. */
+  drawStream(a) {
+    const raw = a._raw || '';
+    const st = a._md || (a._md = { scan: streamState(), done: 0, nodes: 0 });
+    const cut = streamCut(raw, st.scan);
+    const dropTail = () => { while (a.childNodes.length > st.nodes) a.lastChild.remove(); };
+    if (cut > st.done) {
+      dropTail();
+      a.insertAdjacentHTML('beforeend', md(raw.slice(st.done, cut)));
+      st.nodes = a.childNodes.length;
+      st.done = cut;
+    }
+    dropTail();
+    const tail = md(raw.slice(st.done));
+    if (tail) a.insertAdjacentHTML('beforeend', tail);
+  }
+
+  /** True while the conversation has a box (its tab is showing). Cached from the ground's ResizeObserver, so asking costs no layout. */
+  isShown() {
+    return this._hadBox !== false;
+  }
+
+  /** The pane came into view: every reply that collected text while it was hidden is drawn now, once. */
+  flushUnpainted() {
+    const pending = this._unpainted;
+    if (!pending?.size) return;
+    this._unpainted = null;
+    for (const a of pending) {
+      if (!a.isConnected) continue;
+      if (a._final != null) { this.finishStream(a, a._final); continue; }
+      this.drawStream(a);
+    }
+    this.scrollDown();
+  }
+
+  /** The finished text of a reply that streamed: drawn whole, once (the stream's parts are replaced by the final render). */
+  finishStream(live, text) {
+    painter.cancel(live);
+    live._raf = 0;
+    live.classList.remove('streaming');
+    live._final = null;
+    live._md = null;
+    live.innerHTML = md(text);
+    this.host.linkSessions?.(live);
   }
 
   addAssistant(text) {
@@ -1332,6 +1586,9 @@ Click for changes, commit, push, pull request, merge`;
     if (paged) requestAnimationFrame(() => this.maybeLoadEarlier());
     if (card) { this.$.T.append(card); this.scrollDown(atEnd); }
     if (e.refresh && !atEnd) g.scrollTop = keepTop;
+    // A long conversation: the older messages are folded into chunks a frame later (sealOld).
+    this._sealedKids = 0;
+    this.sealSoon();
   }
 
   /* ---------- no drift (2026-10-11) ---------- */
@@ -1513,6 +1770,9 @@ Click for changes, commit, push, pull request, merge`;
     this.renderArtifactsButton();
     for (const r of waits) r(true);
     requestAnimationFrame(() => this.maybeLoadEarlier());
+    // The earlier page is on top of whatever is already folded: it folds too.
+    this._sealedKids = 0;
+    this.sealSoon();
   }
 
   /** One block in full from the transcript (historyBlock), shared by everything waiting for the same one. */
@@ -1674,7 +1934,12 @@ Click for changes, commit, push, pull request, merge`;
         if (!this.streams.has(key)) key = [...this.streams.keys()].find((k) => k.startsWith(`${id}:`)) || key;
         const live = this.streams.get(key);
         if (b.type === 'text') {
-          if (live) { cancelAnimationFrame(live._raf); live.classList.remove('streaming'); live.innerHTML = md(b.text); this.host.linkSessions?.(live); this.streams.delete(key); } else this.addAssistant(b.text);
+          if (live) {
+            // A hidden pane keeps the final text for when it is shown (flushUnpainted); a shown one draws it now.
+            if (this.isShown()) this.finishStream(live, b.text);
+            else { painter.cancel(live); live._raf = 0; live.classList.remove('streaming'); live._final = b.text; (this._unpainted ||= new Set()).add(live); }
+            this.streams.delete(key);
+          } else this.addAssistant(b.text);
         } else if (b.type === 'tool_use') {
           this.addTool(b);
         } else if (b.type === 'thinking' && b.thinking && msg.codex) {
@@ -1749,7 +2014,8 @@ Click for changes, commit, push, pull request, merge`;
       // Until Claude writes or runs something, the line shows a random thinking word, as Claude Code does.
       this.verb = pickVerb(this.verb);
       this.phase = this.verb;
-      this.tick = setInterval(() => this.showWorking(), 500);
+      // (A pane in a hidden tab has no one watching its seconds: it redraws them when it is shown, on the next beat.)
+      this.tick = setInterval(() => { if (this.isShown()) this.showWorking(); }, 500);
       this.showWorking();
     }
     this.host.changed(this);
@@ -2099,7 +2365,10 @@ Click for changes, commit, push, pull request, merge`;
   }
 
   setVoice(available) {
+    // On the phone the mic goes to the PC's Whisper (transcribe): only when the PC takes that op (2026-10-12).
+    if (window.apakiShell === 'web' && !window.__apakiLink?.supports?.('op:transcribe')) available = false;
     this.$.mic.disabled = !available;
+    this.$.mic.hidden = window.apakiShell === 'web' && !available;
     this.$.mic.title = available ? 'Dictate (local Whisper): click to start, click again to stop' : 'Voice needs whisper.cpp in Programs\\Myrlin Apaki\\voice';
   }
 
@@ -2107,9 +2376,20 @@ Click for changes, commit, push, pull request, merge`;
 
   handle(e) {
     switch (e.ev) {
-      case 'locked': this.showLocked(e); break;
-      case 'taken_over': this.showLocked(e, { lost: true }); break;
+      case 'locked':
+        // The PC's pane could not open its conversation (another window holds it): nothing to follow here any more.
+        if (this.following) this.stopFollowing();
+        this.showLocked(e);
+        break;
+      case 'taken_over':
+        // A pane that follows the PC's pane: the conversation moved to another window, so this pane is an ordinary pane that lost it
+        // (Take it back opens it here). Not following any more, so the PC drops it from its watchers.
+        if (this.following) this.stopFollowing();
+        this.showLocked(e, { lost: true });
+        break;
       case 'opened':
+        // A pane that follows the PC's pane hears whether this phone may only watch (the PC decides, see capFollowNote).
+        if (this.following && e.follower) this.setViewOnly(Boolean(e.readOnly));
         this.lockedBy = null;
         // It holds its conversation again (opened, taken back, re-attached): no more following from the outside.
         this.lockLost = false;
@@ -2123,6 +2403,7 @@ Click for changes, commit, push, pull request, merge`;
           this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode;
           this.renderChips();
         }
+        for (const live of this.streams.values()) painter.cancel(live);
         this.streams.clear(); this.tools.clear(); this.cardKeys.clear();
         this.setTitle(e.title || 'New conversation');
         this.setCwdLine();
@@ -2219,6 +2500,10 @@ Click for changes, commit, push, pull request, merge`;
         break;
       }
       case 'error': this.setBusy(false); this.setStatus(''); this.note(e.message, 'error'); break;
+      // The shared view (2026-10-11): which phones watch this pane, and a message one of them sent into it (the engine does not
+      // echo user messages, and the phone drew its own copy).
+      case 'followers': this.setFollowers(e.phones); break;
+      case 'peerMessage': this.addUser(e.text || '', (e.images || []).map((im) => ({ url: `data:${im.media_type};base64,${im.data}` })), { steered: Boolean(e.steered), from: peerName(e.from, this.following) }); break;
       case 'transcript': {
         if (!this.busy) this.setStatus(e.text ? `Transcribed in ${(e.ms / 1000).toFixed(1)}s` : 'Heard nothing');
         const { input } = this.$;
@@ -2283,6 +2568,7 @@ Click for changes, commit, push, pull request, merge`;
   }
 
   destroy() {
+    for (const live of this.streams.values()) painter.cancel(live);
     clearInterval(this.tick);
     clearInterval(this.consoleViewTimer);
     this.console?.destroy();

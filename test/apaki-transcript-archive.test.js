@@ -78,3 +78,33 @@ test('archive: a conversation Claude Code deleted is listed, read from the archi
     assert.equal(openArchived('nope', { root, cache }), null);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('archive: the manifest is parsed once per version of the file, however many conversations the list asks about (found on a Mac with 1,742 archived-only conversations)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-arch3-'));
+  try {
+    const root = path.join(dir, 'archive');
+    fs.mkdirSync(root, { recursive: true });
+    // A manifest of 3,000 conversations, each with its meta already kept, as an archive that has been listed before.
+    const files = {};
+    for (let i = 0; i < 3000; i++) files[`proj/id-${i}.jsonl`] = { size: 1, mtimeMs: 1, gz: 1, meta: { title: `t${i}`, cwd: '/x', firstPrompt: '', lastActive: i } };
+    fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({ v: 1, files }));
+    const realParse = JSON.parse;
+    let parses = 0;
+    JSON.parse = (...a) => { if (typeof a[0] === 'string' && a[0].length > 100000) parses += 1; return realParse(...a); };
+    try {
+      for (let i = 0; i < 3000; i++) assert.equal(archivedMeta(`id-${i}`, { root }).title, `t${i}`);
+      assert.equal(parses, 1, 'one parse of the big manifest for 3,000 asks');
+      assert.equal(archivedSessions(root).size, 3000);
+      assert.equal(parses, 1);
+      // The file changes (another run archived something): the next ask parses again and sees it.
+      files['proj/id-new.jsonl'] = { size: 2, mtimeMs: 2, gz: 1, meta: { title: 'new', cwd: '', firstPrompt: '', lastActive: 1 } };
+      fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({ v: 1, files }));
+      assert.equal(archivedMeta('id-new', { root }).title, 'new');
+      assert.equal(parses, 2);
+    } finally { JSON.parse = realParse; }
+    // What archivedSessions hands out is the caller's own copy.
+    const a = archivedSessions(root);
+    a.clear();
+    assert.equal(archivedSessions(root).size, 3001);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

@@ -57,7 +57,7 @@ export function codexTriple(platform = process.platform, arch = process.arch) {
  * on PATH, a native codex.exe / codex, or the npm shim (codex.cmd / codex.ps1 / codex) whose package holds the native
  * build or, failing that, bin/codex.js, which this Node runs. The shim itself is never spawned.
  */
-export function findCodex({ env = process.env, platform = process.platform, arch = process.arch, execPath = process.execPath } = {}) {
+export function findCodex({ env = process.env, platform = process.platform, arch = process.arch, execPath = process.execPath, realpath = fs.realpathSync } = {}) {
   const forced = env.APAKI_CODEX_BIN;
   if (forced) {
     if (!exists(forced)) return null;
@@ -90,6 +90,23 @@ export function findCodex({ env = process.env, platform = process.platform, arch
       }
       const js = path.join(pkg, 'bin', 'codex.js');
       if (exists(js)) return { command: execPath, args: [js], label: js };
+    }
+    // The npm layout on macOS and Linux (2026-10-12, macOS port): <prefix>/bin/codex is a symlink to
+    // <prefix>/lib/node_modules/@openai/codex/bin/codex.js, and the native build sits inside that package (or beside it).
+    if (platform !== 'win32' && exists(direct)) {
+      let real = null;
+      try { real = realpath(direct); } catch { real = null; }
+      const pkg = real ? path.resolve(path.dirname(real), '..') : null;
+      if (pkg && exists(path.join(pkg, 'package.json'))) {
+        if (triple && pkgName) {
+          for (const root of [path.join(pkg, 'node_modules', ...pkgName.split('/')), path.join(pkg, '..', pkgName.split('/')[1])]) {
+            const native = path.join(root, 'vendor', triple, 'bin', exe);
+            if (exists(native)) return { command: native, args: [], label: native };
+          }
+        }
+        const js = path.join(pkg, 'bin', 'codex.js');
+        if (exists(js)) return { command: execPath, args: [js], label: js };
+      }
     }
   }
   return null;

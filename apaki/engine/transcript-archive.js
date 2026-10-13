@@ -77,6 +77,34 @@ function readManifest(root) {
   try { return JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8')); } catch { return { v: 1, files: {} }; }
 }
 
+/**
+ * The manifest for the read-only callers (the session list), parsed again only when the file changed (size and
+ * modified time). Why (2026-10-12, found on the Mac Mini: 9,679 entries, a 2 MB manifest, 1,742 conversations whose
+ * live copy Claude Code had already removed): the list asks archivedMeta once per such conversation, and each ask
+ * parsed the manifest twice and rebuilt the id map, so one list took tens of seconds of a busy engine loop and the
+ * host stopped answering. `sessions` is the id -> key map, built once per version of the file.
+ * Callers must not change what they get back, except archivedMeta, which writes its meta into the manifest and
+ * saves it (that save changes the file, so the next read parses it again).
+ */
+const manifestCache = new Map();
+function manifestFor(root) {
+  const file = path.join(root, 'manifest.json');
+  let sig;
+  try { const s = fs.statSync(file); sig = `${s.size}:${s.mtimeMs}`; } catch { return { m: { v: 1, files: {} }, sessions: new Map() }; }
+  const hit = manifestCache.get(root);
+  if (hit && hit.sig === sig) return hit;
+  const m = readManifest(root);
+  const sessions = new Map();
+  for (const key of Object.keys(m.files || {})) {
+    const parts = key.split('/');
+    if (parts.length !== 2 || !parts[1].endsWith('.jsonl')) continue;
+    sessions.set(parts[1].slice(0, -6), key);
+  }
+  const entry = { sig, m, sessions };
+  manifestCache.set(root, entry);
+  return entry;
+}
+
 function writeManifest(root, m) {
   const file = path.join(root, 'manifest.json');
   const tmp = `${file}.${process.pid}.tmp`;
@@ -132,15 +160,12 @@ export async function archiveTranscripts({ from = projectsDir(), root = archiveR
 
 /** Top-level transcripts in the archive: session id -> manifest key ("<project dir>/<id>.jsonl"); subagents left out. */
 export function archivedSessions(root = archiveRoot()) {
-  const m = readManifest(root);
-  const out = new Map();
-  for (const key of Object.keys(m.files || {})) {
-    const parts = key.split('/');
-    if (parts.length !== 2 || !parts[1].endsWith('.jsonl')) continue;
-    out.set(parts[1].slice(0, -6), key);
-  }
-  return out;
+  // A copy: callers may keep or change it; the cached map stays as the file says.
+  return new Map(manifestFor(root).sessions);
 }
+
+/** The manifest key of one archived conversation, or undefined (no copy of the map: the list asks this per conversation). */
+const archivedKey = (id, root) => manifestFor(root).sessions.get(id);
 
 /** The archive copy of a manifest key, decompressed to text. */
 function readArchived(root, key) {
@@ -152,7 +177,7 @@ function readArchived(root, key) {
  * <cache>/<id>.jsonl and again only when the archive copy is newer. Null when the archive has no copy.
  */
 export function openArchived(id, { root = archiveRoot(), cache } = {}) {
-  const key = archivedSessions(root).get(id);
+  const key = archivedKey(id, root);
   if (!key) return null;
   const gz = path.join(root, 'claude', `${key.split('/').join(path.sep)}.gz`);
   const file = path.join(cache, `${id}.jsonl`);
@@ -173,7 +198,7 @@ export function openArchived(id, { root = archiveRoot(), cache } = {}) {
  * Never overwrites a live transcript. Returns the restored path, or null.
  */
 export function restoreArchived(id, { root = archiveRoot(), to = projectsDir() } = {}) {
-  const key = archivedSessions(root).get(id);
+  const key = archivedKey(id, root);
   if (!key) return null;
   const dest = path.join(to, key.split('/').join(path.sep));
   if (fs.existsSync(dest)) return dest;
@@ -189,8 +214,8 @@ export function restoreArchived(id, { root = archiveRoot(), to = projectsDir() }
  * prompt and the time of its last message, read from the copy once and kept in the manifest (meta).
  */
 export function archivedMeta(id, { root = archiveRoot() } = {}) {
-  const m = readManifest(root);
-  const key = archivedSessions(root).get(id);
+  const { m } = manifestFor(root);
+  const key = archivedKey(id, root);
   if (!key) return null;
   const had = m.files[key]?.meta;
   if (had) return had;
@@ -210,6 +235,14 @@ export function archivedMeta(id, { root = archiveRoot() } = {}) {
       if (!meta.firstPrompt && j.type === 'user' && !j.isMeta && typeof j.message?.content === 'string') meta.firstPrompt = j.message.content.slice(0, 200);
     }
   }
-  if (m.files[key]) { m.files[key].meta = meta; try { writeManifest(root, m); } catch { /* read-only archive: fine */ } }
+  if (m.files[key]) {
+    m.files[key].meta = meta;
+    try {
+      writeManifest(root, m);
+      // Our own save: the cached copy is the file, so the next ask does not parse it again.
+      const e = manifestCache.get(root);
+      if (e && e.m === m) { const s = fs.statSync(path.join(root, 'manifest.json')); e.sig = `${s.size}:${s.mtimeMs}`; }
+    } catch { /* read-only archive: fine */ }
+  }
   return meta;
 }

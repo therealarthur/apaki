@@ -18,8 +18,8 @@
  *                window draws a permission sheet (apaki/ui/permission.js) when it
  *                is there, and the question sheets as before when it is not.
  *   op answer    { askId, result: { behavior: 'allow', always? } | { behavior: 'deny', message? } }
- *   ev ask_gone  { askId, paneId }: the call is over (the turn ended, Claude Code
- *                cancelled it); the window drops the sheet.
+ *   ev ask_gone  { askId, paneId, why }: the call is over (the turn ended, Claude Code
+ *                cancelled it: why 'cancelled'); the window drops the card (apaki/ui/askcard.js).
  *
  * "Always allow" applies the permission updates the SDK suggested for this call
  * (CanUseTool options.suggestions) as the result's updatedPermissions, which is how
@@ -247,7 +247,7 @@ export function createPermissionGate({ paneId, asks, emit, alwaysOk = () => true
         // Claude Code cancelled the call (a Stop, or it was settled elsewhere): nobody waits, so the sheet goes.
         const had = asks.get(id) === entry;
         finish(engineResult(null, toolUseId));
-        if (had) emit({ ev: 'ask_gone', askId: id, paneId });
+        if (had) emit({ ev: 'ask_gone', askId: id, paneId, why: 'cancelled' });
       };
       const entry = {
         kind: 'permission',

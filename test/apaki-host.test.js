@@ -27,7 +27,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   DEFAULT_APP_ID, HostServer, MAX_LINE_BYTES, clientMac, codeStamp, connectHost, createLifecycle, engineStamp, hostFile, macEqual, noteSdkMessage,
-  paneTurnBusy, paneWorking, patchWorkspaceLeaves, pidAlive, planIdle, readHostInfo, removeHostInfo, restoreAsAttach, serverMac, taskReplay, writeHostInfo,
+  paneTurnBusy, paneWorking, patchWorkspaceLeaves, pidAlive, planIdle, readHostInfo, removeHostInfo, restoreAsAttach, serverMac, taskReplay, trackHiddenPanes, writeHostInfo,
 } from '../apaki/engine/host.js';
 import { createShell } from '../apaki/engine/shell-channel.js';
 
@@ -305,6 +305,74 @@ test('idle rules: processes close only with no window, nothing running and no qu
   assert.equal(r.exitReady, true);
   assert.equal(planIdle({ ...base, quit: true, panes: [pane({ working: true })] }).exitReady, false);
   assert.equal(planIdle({ ...base, quit: true, window: true, panes: [] }).exitReady, false, 'never from under an open window');
+});
+
+test('hidden tabs: a pane hidden and idle long enough closes under a connected window, and only that kind of pane', () => {
+  const base = { now: 1_000_000, window: true, hideCloseMs: 600_000 };
+  const pane = (o) => ({ id: 'p1', open: true, running: true, working: false, asks: 0, tasks: 0, lastActiveAt: 0, hiddenSince: 100_000, ...o });
+  let r = planIdle({ ...base, panes: [pane()] });
+  assert.deepEqual(r.close, ['p1']);
+  assert.deepEqual(r.hidden, ['p1']);
+  assert.equal(r.exitReady, false, 'a connected window always keeps the host');
+  // Off by default, and off when the setting is 0.
+  assert.deepEqual(planIdle({ ...base, hideCloseMs: 0, panes: [pane()] }).close, []);
+  assert.deepEqual(planIdle({ window: true, now: base.now, panes: [pane()] }).close, []);
+  // Not hidden long enough, or used since it was hidden: the time counts from the later of the two.
+  assert.deepEqual(planIdle({ ...base, panes: [pane({ hiddenSince: 500_000 })] }).close, []);
+  assert.deepEqual(planIdle({ ...base, panes: [pane({ lastActiveAt: 700_000 })] }).close, []);
+  // Showing (no hiddenSince): never.
+  assert.deepEqual(planIdle({ ...base, panes: [pane({ hiddenSince: 0 })] }).close, []);
+  // Never one with a turn, a background task, a question, no process, a phone's, or a Codex thread.
+  for (const o of [{ working: true }, { tasks: 2 }, { asks: 1 }, { running: false }, { phone: true }, { codex: true }]) {
+    assert.deepEqual(planIdle({ ...base, panes: [pane(o)] }).close, [], JSON.stringify(o));
+  }
+  // With no window the old rule is unchanged: the pane closes by the window-gone time, not by hiding.
+  r = planIdle({ now: base.now, idleCloseMs: 1000, hideCloseMs: 600_000, windowGoneAt: 0, panes: [pane({ hiddenSince: 0 })] });
+  assert.deepEqual(r.close, ['p1']);
+  assert.deepEqual(r.hidden, []);
+});
+
+test('hidden tabs: trackHiddenPanes follows the window\'s tabs', () => {
+  const since = new Map();
+  const tabs = (active) => [0, 1, 2].map((i) => ({ index: i, active: i === active, panes: [{ paneId: `p${i}a` }, { paneId: `p${i}b` }, { paneId: null }] }));
+  trackHiddenPanes(since, tabs(0), 1000);
+  assert.deepEqual([...since.keys()].sort(), ['p1a', 'p1b', 'p2a', 'p2b']);
+  assert.equal(since.get('p1a'), 1000);
+  // The same state later keeps the time (it is "hidden since", not "last seen").
+  trackHiddenPanes(since, tabs(0), 9000);
+  assert.equal(since.get('p2b'), 1000);
+  // Tab 1 is shown: its panes are showing and lose their entry; tab 0 starts its time now.
+  trackHiddenPanes(since, tabs(1), 12000);
+  assert.deepEqual([...since.keys()].sort(), ['p0a', 'p0b', 'p2a', 'p2b']);
+  assert.equal(since.get('p0a'), 12000);
+  assert.equal(since.get('p2a'), 1000);
+  // A pane the window no longer lists is dropped; a workspace with no active tab releases nothing.
+  trackHiddenPanes(since, [{ active: true, panes: [{ paneId: 'p0a' }] }], 13000);
+  assert.deepEqual([...since.keys()], []);
+  trackHiddenPanes(since, tabs(0), 14000);
+  trackHiddenPanes(since, tabs(-1), 15000);
+  assert.equal(since.size, 0);
+  trackHiddenPanes(since, null, 16000);
+  assert.equal(since.size, 0);
+});
+
+test('lifecycle: a hidden pane is closed with the reason, and the setting is read live', () => {
+  let t = 1_000_000;
+  let minutes = 10;
+  const closed = [];
+  const panes = [{ id: 'p1', open: true, running: true, working: false, asks: 0, tasks: 0, lastActiveAt: 0, hiddenSince: 100_000 }];
+  const lc = createLifecycle({ now: () => t, tickMs: 0, hideCloseMs: () => minutes * 60_000, view: () => ({ remoteOn: false, panes }),
+    closeIdle: (id, why) => { closed.push([id, why]); panes[0].open = false; panes[0].running = false; }, exit: () => {} });
+  lc.windowConnected();
+  minutes = 0;
+  lc.tick();
+  assert.deepEqual(closed, [], 'off');
+  minutes = 20;
+  lc.tick();
+  assert.deepEqual(closed, [], '900 s hidden is under 20 minutes');
+  minutes = 10;
+  lc.tick();
+  assert.deepEqual(closed, [['p1', 'hidden']]);
 });
 
 test('lifecycle: grace before exit, a window resets it, quit and quit now', () => {

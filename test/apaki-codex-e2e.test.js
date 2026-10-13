@@ -603,3 +603,32 @@ test('the pane closes cleanly: the thread is unsubscribed and a running turn is 
   assert.equal(h.requests('turn/interrupt').length, 1);
   w.close();
 });
+
+test('the shared view: a pane that follows a running Codex pane gets its state under its own id, marked as a follower, and the thread is not resumed again', { timeout: 90000 }, async (t) => {
+  const h = await startHost(t);
+  const w = await windowOf(h);
+  const p = await codexPane(w, h, 'c14', { sessionId: SMALL });
+  const mark = p.mark();
+  p.send('ask: Still there?');
+  const ask = await p.ask(mark);
+  // What remote.js sends after checking a phone's follow (here with a plain pane id: events of a phone's pane would go to its phone).
+  w.send({ op: 'follow', reqId: 'fol1', paneId: 'watcher', desktopPaneId: 'c14', readOnly: true });
+  const opened = await waitFor(w, 'the follower opened', (m) => m.ev === 'opened' && m.reqId === 'fol1');
+  assert.equal(opened.paneId, 'watcher');
+  assert.equal(opened.attached, true);
+  assert.equal(opened.follower, true);
+  assert.equal(opened.readOnly, true);
+  assert.equal(opened.kind, 'codex');
+  assert.equal(opened.busy, true, 'the turn is running');
+  const hist = await waitFor(w, 'its history', (m) => m.ev === 'history' && m.paneId === 'watcher');
+  assert.equal(hist.sessionId, SMALL);
+  const again = await waitFor(w, 'the question again, for the follower', (m) => m.ev === 'ask' && m.askId === ask.askId && m.paneId === 'watcher');
+  assert.equal(again.readOnly, true);
+  assert.equal(again.input.questions[0].question, ask.input.questions[0].question);
+  // The desktop pane keeps its thread: one resume in all, and it still answers.
+  w.send({ op: 'answer', askId: ask.askId, result: { behavior: 'allow', updatedInput: { ...ask.input, answers: { [ask.input.questions[0].question]: 'Alpha' } } } });
+  const done = await waitFor(w, 'the result', (m) => m.ev === 'result' && m.paneId === 'c14');
+  assert.equal(done.isError, false);
+  assert.equal(h.requests('thread/resume').length, 1, 'following did not resume the thread');
+  w.close();
+});

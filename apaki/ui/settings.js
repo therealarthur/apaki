@@ -9,11 +9,13 @@
  * dot. The search index line moved here too, with the footer keeping its
  * short form.
  *
- * initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm, compact })
- * returns { handle(e), refresh() }; handle takes the engine's warmState and autoCompact events.
+ * initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm, compact, release })
+ * returns { handle(e), refresh() }; handle takes the engine's warmState, autoCompact and releaseHidden events.
  * warm: false (the phone client) leaves keep-warm out: it is billing.
  * compact: false (the phone client) leaves "Auto-compact at" out: it is the PC's, kept by
  * the engine (apaki/engine/prefs.js) and passed to every Claude Code it starts.
+ * release: false (the phone client) leaves "Free hidden conversations" out: also the PC's (the host closes the
+ * Claude Code process of a conversation in a tab that has been hidden and idle; 2026-10-12).
  */
 
 import { esc } from './markdown.js';
@@ -27,10 +29,15 @@ function seg(name, options, value) {
 /** The choices of "Auto-compact", in the order shown (the engine's COMPACT_CHOICES; 'off' is the default, 'default' leaves it to Claude Code). */
 const COMPACT_LABELS = [{ value: 'off', label: 'Off' }, { value: 200000, label: '200k' }, { value: 300000, label: '300k' }, { value: 500000, label: '500k' }, { value: 'default', label: 'Claude Code default' }];
 
-export function initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm: showWarm = true, compact: showCompact = true }) {
+/** The choices of "Free hidden conversations", in the order shown (the engine's RELEASE_CHOICES, minutes; 0 is off). */
+const RELEASE_LABELS = [{ value: 0, label: 'Off' }, { value: 5, label: '5 min' }, { value: 15, label: '15 min' }, { value: 30, label: '30 min' }, { value: 60, label: '1 h' }];
+
+export function initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm: showWarm = true, compact: showCompact = true, release: showRelease = true }) {
   let warm = null;
   // The engine's answer to autoCompact: { value, choices, standard }; null until it arrives.
   let compact = null;
+  // The engine's answer to releaseHidden: { value (minutes), choices, standard }; null until it arrives.
+  let release = null;
   let root = null;
 
   function warmLine() {
@@ -63,6 +70,10 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
         <div class="set-t"><b>Auto-compact</b><small>Off: a conversation keeps its whole context until the window is full, and you summarize it when you choose (Compact now on the context meter, or /compact). A size: Claude Code summarizes it on its own once its context reaches that size; a lower size costs less per call, since every call re-reads the history. Left to Claude Code, a 1M-token window such as Opus's compacts near 967k. Applies to conversations as they next start.</small></div>
         ${seg('compact', COMPACT_LABELS, compact?.value ?? null)}
       </section>` : ''}
+      ${showRelease ? `<section class="set-row set-stack">
+        <div class="set-t"><b>Free hidden conversations</b><small>Each open conversation keeps a Claude Code process of its own (about 150 MB). One in a tab that is not showing, with nothing running and no question waiting, lets go of it after this long. It starts again, in about a second, with your next message there; nothing is lost and the cache is untouched.</small></div>
+        ${seg('release', RELEASE_LABELS, release?.value ?? null)}
+      </section>` : ''}
       <section class="set-row set-info">
         <div class="set-t"><b>Search index</b><small class="set-index">${esc(indexText())}</small></div>
       </section>
@@ -84,6 +95,7 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
         if (which === 'theme') theme?.set?.(v);
         if (which === 'ding') sound.set(v === 'on');
         if (which === 'warm') { warm = { ...(warm || {}), on: v === 'on' }; send('warmState', { on: v === 'on' }); }
+        if (which === 'release') { const value = Number(v); release = { ...(release || {}), value }; send('releaseHidden', { value }); }
         if (which === 'compact') { const value = v === 'default' || v === 'off' ? v : Number(v); compact = { ...(compact || {}), value }; send('autoCompact', { value }); }
         paint();
       };
@@ -95,6 +107,7 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
   function open() {
     if (showWarm) send('warmState');
     if (showCompact) send('autoCompact');
+    if (showRelease) send('releaseHidden');
     sheet('<div class="settings-host"></div>', (r, done) => {
       root = r.querySelector('.settings-host');
       close = () => { root = null; close = null; window.removeEventListener('keydown', onKey, true); done(); };
@@ -111,6 +124,7 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
     handle(e) {
       if (e.ev === 'warmState') { warm = e; paint(); }
       if (e.ev === 'autoCompact') { compact = e; paint(); }
+      if (e.ev === 'releaseHidden') { release = e; paint(); }
     },
     refresh: paint,
   };

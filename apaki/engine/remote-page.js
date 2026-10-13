@@ -105,7 +105,9 @@ export async function checkPage({ web, relay, fetch = globalThis.fetch, build = 
       try {
         // A host serves a folder's index.html at the folder address (Cloudflare redirects the long form);
         // that address is what the phone opens, so it is the one checked. Redirects are refused.
-        const at2 = rel === 'index.html' ? '' : rel.endsWith('/index.html') ? rel.slice(0, -'index.html'.length) : rel;
+        // Any other .html file is served at its name without the extension (sandbox.html at sandbox, 2026-10-12: the site
+        // redirects the long form, and a redirect is refused here).
+        const at2 = rel === 'index.html' ? '' : rel.endsWith('/index.html') ? rel.slice(0, -'index.html'.length) : rel.endsWith('.html') ? rel.slice(0, -'.html'.length) : rel;
         const hdrs = typeof headers === 'function' ? headers(rel) : headers;
         const res = await fetch(url + at2, { signal: AbortSignal.timeout(timeoutMs), cache: 'no-store', redirect: 'error', ...(hdrs ? { headers: hdrs } : {}) });
         if (res.status === 404) { missing.push(rel); continue; }

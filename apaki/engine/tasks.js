@@ -19,11 +19,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { claudeTempRoot } from '../../src/platform.js';
 
 export const RUNNING_MS = 45 * 1000;
 const RESULT_CHARS = 4000;
 const PROMPT_CHARS = 20000;
-const TEMP_ROOT = () => path.join(os.tmpdir(), 'claude');
+// <temp>\claude on Windows; /tmp/claude-<uid> on a Mac or Linux (src/platform.js claudeTempRoot, macOS port 2026-10-12).
+const TEMP_ROOT = () => claudeTempRoot({ tmpdir: os.tmpdir() });
 
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const statOf = (f) => { try { return fs.statSync(f); } catch { return null; } };

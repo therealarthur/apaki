@@ -84,6 +84,13 @@ const LANG = {
   c: 'js', cpp: 'js', 'c++': 'js', java: 'js', cs: 'js', csharp: 'js', kotlin: 'js', swift: 'js', php: 'js', rb: 'py', ruby: 'py',
 };
 
+/** Same as /(^|\n)\s*$/.test(code.slice(0, i)), without rescanning all earlier lines. */
+function atLineStart(code, i) {
+  let j = i - 1;
+  while (j >= 0 && code[j] !== '\n' && /\s/.test(code[j])) j--;
+  return j < 0 || code[j] === '\n';
+}
+
 /**
  * Colours code with a single left-to-right scan: comments, strings, numbers,
  * keywords, function calls. Every piece of text is escaped on its own.
@@ -129,9 +136,9 @@ export function highlight(code, lang) {
       const w = word[0];
       const isKey = kind === 'sql' ? words.has(w.toLowerCase()) : words.has(w);
       if (isKey) out += span('key', w);
-      else if (kind === 'yaml' && /^\s*:/.test(code.slice(i + w.length)) && /(^|\n)\s*$/.test(code.slice(0, i))) out += span('fn', w);
+      else if (kind === 'yaml' && /^\s*:/.test(code.slice(i + w.length)) && atLineStart(code, i)) out += span('fn', w);
       else if (/^\s*\(/.test(code.slice(i + w.length))) out += span('fn', w);
-      else if (kind === 'sh' && /(^|\n)\s*$/.test(code.slice(0, i))) out += span('fn', w);
+      else if (kind === 'sh' && atLineStart(code, i)) out += span('fn', w);
       else out += esc(w);
       i += w.length; continue;
     }
@@ -247,7 +254,8 @@ function list(lines, start) {
       blank = false;
       i++;
     }
-    while (body.length && !body[body.length - 1].trim()) body.pop();
+    // (An empty item, a lone "- " while a reply streams, keeps its one empty line: body[0] below must exist.)
+    while (body.length > 1 && !body[body.length - 1].trim()) body.pop();
     let task = '';
     const t = body[0].match(/^\[([ xX])\]\s+(.*)$/);
     if (t) { task = t[1].trim() ? ' class="task done"' : ' class="task"'; body[0] = t[2]; }
@@ -264,6 +272,50 @@ function list(lines, start) {
 
 export function md(src) {
   return blocks(String(src || '').replace(/\r/g, '').split('\n'));
+}
+
+/* ---------- a reply that is still arriving (2026-10-12, input lag) ---------- */
+
+// A streaming reply used to be re-parsed from its first character on every frame, and the whole element rebuilt:
+// the work grew with the reply (a 6 KB answer cost about as much per frame at the end as all of it did at the start,
+// for every pane streaming at once). Everything up to the last finished block never changes again, so it is
+// parsed once and left in place; only the growing tail is parsed and drawn each frame.
+//
+// A block is finished when a blank line outside a code fence is followed by a complete line that starts at column 0
+// and is not a list item: lists and quotes cannot continue past that, a paragraph, heading, table or fence has
+// ended. (A loose list never cuts until text follows it; that tail is just a bit longer.) Rendering the part before
+// the cut and the part after it separately gives the same blocks as rendering the whole, which the tests check on
+// every prefix of the sample replies.
+
+/** A fresh scan state for streamCut: nothing seen yet. */
+export function streamState() {
+  return { scanned: 0, cut: 0, fence: null, blank: false };
+}
+
+/**
+ * Moves st forward over the complete lines of `raw` that it has not seen and returns the offset of the last safe
+ * cut (a line start; 0 when there is none yet). `raw` only ever grows by appending.
+ */
+export function streamCut(raw, st) {
+  let pos = st.scanned;
+  for (;;) {
+    const nl = raw.indexOf('\n', pos);
+    if (nl < 0) break;
+    const line = raw.slice(pos, nl).replace(/\r$/, '');
+    if (st.fence) {
+      if (new RegExp(`^\\s*${st.fence.ch}{${st.fence.len},}\\s*$`).test(line)) st.fence = null;
+    } else if (!line.trim()) {
+      st.blank = true;
+    } else {
+      if (st.blank && pos > 0 && !/^\s/.test(line) && !LIST_ITEM.test(line)) st.cut = pos;
+      st.blank = false;
+      const f = line.match(FENCE);
+      if (f) st.fence = { ch: f[2][0] === '`' ? '`' : '~', len: f[2].length };
+    }
+    pos = nl + 1;
+    st.scanned = pos;
+  }
+  return st.cut;
 }
 
 export { esc, inline };

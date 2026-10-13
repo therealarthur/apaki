@@ -181,6 +181,7 @@ test('a server that dies ends the turns it was running, drops what waited, and t
   assert.equal(p.busy, false);
   assert.equal(s.asks.size, 0);
   assert.deepEqual(s.of('ask_gone').length, 1);
+  assert.equal(s.of('ask_gone')[0].why, 'stopped');
   const result = s.of('result').at(-1);
   assert.equal(result.isError, true);
   assert.match(result.result, /app-server stopped/);
@@ -211,6 +212,8 @@ test('a question the server withdraws drops its sheet and is never answered; one
   s.client.emit('notification', 'serverRequest/resolved', { threadId: THREAD, requestId: 7 });
   assert.equal(s.asks.size, 0);
   assert.deepEqual(s.of('ask_gone').map((e) => e.askId), [askId]);
+  // The pane's card says who settled it (askcard.js goneNote, 2026-10-12).
+  assert.deepEqual([s.of('ask_gone')[0].why, s.of('ask_gone')[0].by], ['resolved', 'Codex']);
   entry.answer({ behavior: 'allow', updatedInput: { answers: { 'Which?': 'X' } } });
   assert.deepEqual(s.client.responded, [], 'a late answer is not sent');
 
@@ -220,6 +223,7 @@ test('a question the server withdraws drops its sheet and is never answered; one
   s.client.emit('notification', 'turn/completed', { threadId: THREAD, turn: { id: 'T9', status: 'completed' } });
   assert.equal(s.asks.size, 0, 'the turn is over, so nobody waits for the answer');
   assert.equal(s.of('ask_gone').length, 2);
+  assert.equal(s.of('ask_gone')[1].why, 'turn');
   // Answered once: the second answer does nothing.
   s.client.emit('request', 9, 'item/commandExecution/requestApproval', { threadId: THREAD, itemId: 'i', command: 'x' });
   await new Promise((r) => setImmediate(r));

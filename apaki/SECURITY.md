@@ -198,6 +198,27 @@ read the "Modes" bullet above and 4.1 and 4.3 with this.
   stolen, already allowed phone stays allowed until the person blocks it in
   the Phone sheet (Block, Allow and Forget on each phone under its account).
 
+## Status after the shared view (2026-10-11 and 2026-10-12)
+
+Done (Claude Code, Opus 5.5 and Sonnet 5.5; code in apaki/engine/remote.js, remote-policy.js, engine.js; the contract is
+"Following a desktop pane" in apaki/remote/PROTOCOL.md; tests in test/apaki-follow.test.js and apaki-follow-phone.test.js).
+
+- **A follower is a window of a desktop pane, not a pane of the phone.** A desktop pane runs with the desktop's own
+  permission mode and tools, which a restricted phone's access never limited. So the access level decides what a
+  phone may do through it: Full may send, steer, stop and answer questions (the same power as a Full phone's own pane);
+  No shell and Chat only may only watch, page the history and read the context meter, and are told so. The PC checks
+  this on every command against the phone's live access (a change on the PC applies to the next command), not against
+  what the phone's page says. model, effort and mode of a desktop pane are the desktop's, refused at every level.
+- **No new reach.** The phone names a desktop pane only in follow, and only a conversation pane the engine holds can be
+  followed (not a browser, task or viewer, not another phone's pane). Every other op names the phone's own pane. A
+  follower never receives the window's request ids, its queued messages (what a person typed and has not sent), its
+  dictation or its browser traffic: the events it gets are an allowlist (FOLLOW_EVENTS).
+- **What a follower can read.** The conversation of a pane the person has open on the desktop: the same history a phone
+  can already open by taking the session over, now without the hand-over. A phone at No shell or Chat only could already
+  open any session on the PC in a pane of its own and read it; following adds no session it could not read before.
+- **Taking over is still the person's act.** Take over asks first and stops the desktop pane before its next message;
+  nothing forks. The desktop window shows "Also on <phone>" in the header of a pane that a phone is watching.
+
 ## 1. What our servers can and cannot do today
 
 ### 1.1 The pieces
@@ -386,6 +407,14 @@ window opened, and cannot click or type); askSearch is open to every level (a
 Haiku call with no tools over the PC's own search indexes, about a cent) but
 one question at a time per phone (AskGate). Dig deeper, stopSession,
 revealFolder, openExternal and browserTool stay out of reach of a phone.
+
+Update 2026-10-12 (browser tabs): browserView takes an optional `tab` (a plain
+id, /^[A-Za-z0-9_-]{1,40}$/, anything else is refused with "Bad tab.").
+browser-tools.js switches only among the tabs that pane's own conversation owns
+(it checks the id against the shell's list filtered by owner), so a phone can
+look at another tab of its own conversation's browser and nothing else. The
+desktop-only browserTab op (the person picking a tab) is not in the phone
+allowlist.
 
 | Question | Answer | Where |
 |---|---|---|

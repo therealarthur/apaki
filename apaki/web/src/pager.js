@@ -70,12 +70,26 @@ export function browserOffer({ marked, cap, canView }) {
   return Boolean(marked) && cap === 'full' && Boolean(canView);
 }
 
-/** The tabs as app.js's hidden tab bar shows them. Pure over a list of { title, n, on, busy, unread } (exported for tests). */
+/**
+ * The tabs as app.js's hidden tab bar shows them. Pure over a list of { title, n, on, busy, unread, waiting } (exported for
+ * tests). waiting (2026-10-12, askcard.js): a question in one of its panes waits for you.
+ */
 export function stripModel(tabs) {
   return tabs.map((t, i) => {
     const title = String(t.title || '').trim();
-    return { i, title: !title || title === 'Empty tab' ? `Tab ${i + 1}` : title, n: Math.max(1, Number(t.n) || 1), on: Boolean(t.on), busy: Boolean(t.busy), unread: Boolean(t.unread) };
+    return { i, title: !title || title === 'Empty tab' ? `Tab ${i + 1}` : title, n: Math.max(1, Number(t.n) || 1), on: Boolean(t.on), busy: Boolean(t.busy), unread: Boolean(t.unread), waiting: Boolean(t.waiting) };
   });
+}
+
+/**
+ * The link line of the page on screen (2026-10-12, apaki/docs/layout.md): a viewer says whose it is ("for Fix flaky
+ * checkout test", or "was for ..." once that conversation is closed), a conversation with viewers says how many.
+ * Pure (exported for tests): chip is the viewer's conversation name or null, viewers a count.
+ */
+export function linkLine({ chip = null, gone = false, viewers = 0 } = {}) {
+  if (chip) return `${gone ? 'was for' : 'for'} ${String(chip).trim()}`;
+  if (viewers > 0) return `${viewers} viewer${viewers === 1 ? '' : 's'}`;
+  return '';
 }
 
 /** Which page a pager shows: its scroll position over its width, rounded, kept inside the pages. Pure (exported for tests). */
@@ -100,7 +114,7 @@ export function initPager({ haptic = () => {} } = {}) {
   const chrome = document.createElement('div');
   chrome.className = 'chat-chrome';
   chrome.innerHTML = `<div class="cn-row">
-      <div class="cn-t"><div class="cn-title"></div><div class="cn-sub"><span class="cn-pos"></span><span class="cn-wt"></span><span class="cn-cwd"></span></div></div>
+      <div class="cn-t"><div class="cn-title"></div><div class="cn-sub"><span class="cn-pos"></span><span class="cn-wait"></span><button type="button" class="cn-link" hidden></button><span class="cn-wt"></span><span class="cn-cwd"></span></div></div>
       <div class="cn-acts">
         <button class="cn-btn cn-art" hidden aria-label="Artifacts from this conversation">${ICON_ART}<span class="cn-n"></span></button>
         <button class="cn-btn cn-tasks" hidden aria-label="Subagents and background tasks">${ICON_TASKS}<span class="cn-n"></span></button>
@@ -121,8 +135,12 @@ export function initPager({ haptic = () => {} } = {}) {
   const title = chrome.querySelector('.cn-title');
   const pos = chrome.querySelector('.cn-pos');
   const cwd = chrome.querySelector('.cn-cwd');
+  // "Waiting for you" when the pane on screen has a question for you (askcard.js marks the pane .waiting, 2026-10-12).
+  const wait = chrome.querySelector('.cn-wait');
   // The branch label (git worktrees, 2026-10-12): the visible pane's .wt-btn, copied here, and a tap presses it.
   const wtSlot = chrome.querySelector('.cn-wt');
+  // The link line (2026-10-12): a viewer's conversation, or a conversation's viewers; a tap presses the pane's own chip or mark.
+  const linkEl = chrome.querySelector('.cn-link');
 
   // The space the bars take: the stage starts below them (web.css --chat-top).
   new ResizeObserver(() => main.style.setProperty('--chat-top', `${chrome.offsetHeight}px`)).observe(chrome);
@@ -142,7 +160,7 @@ export function initPager({ haptic = () => {} } = {}) {
   function renderStrip() {
     const tabs = stripModel([...tabsBar.querySelectorAll('.tab')].map((el) => ({
       title: el.querySelector('.tab-t')?.textContent, n: el.querySelector('.tab-n')?.textContent,
-      on: el.classList.contains('on'), busy: el.classList.contains('busy'), unread: el.classList.contains('unread'),
+      on: el.classList.contains('on'), busy: el.classList.contains('busy'), unread: el.classList.contains('unread'), waiting: el.classList.contains('waiting'),
     })));
     const key = JSON.stringify(tabs);
     if (key === P.stripKey) return;
@@ -150,7 +168,7 @@ export function initPager({ haptic = () => {} } = {}) {
     strip.hidden = tabs.length < 2;
     chrome.classList.toggle('strip-on', !strip.hidden);
     if (strip.hidden) { strip.innerHTML = ''; return; }
-    strip.innerHTML = tabs.map((t) => `<button type="button" role="tab" aria-selected="${t.on}" class="ts-chip${t.on ? ' on' : ''}${t.busy ? ' busy' : ''}${t.unread && !t.busy ? ' unread' : ''}" data-i="${t.i}" title="${esc(t.title)}${t.busy ? ' (working)' : ''}">${t.busy ? effortGrid('max', { live: true }) : ''}<span class="ts-t">${esc(t.title)}</span>${t.n > 1 ? `<span class="ts-n" aria-label="${t.n} panes">${t.n}</span>` : ''}</button>`).join('');
+    strip.innerHTML = tabs.map((t) => `<button type="button" role="tab" aria-selected="${t.on}" class="ts-chip${t.on ? ' on' : ''}${t.busy && !t.waiting ? ' busy' : ''}${t.unread && !t.busy && !t.waiting ? ' unread' : ''}${t.waiting ? ' waiting' : ''}" data-i="${t.i}" title="${esc(t.title)}${t.waiting ? ' (waiting for you)' : t.busy ? ' (working)' : ''}">${t.busy ? effortGrid('max', { live: true }) : ''}<span class="ts-t">${esc(t.title)}</span>${t.n > 1 ? `<span class="ts-n" aria-label="${t.n} panes">${t.n}</span>` : ''}</button>`).join('');
     const on = strip.querySelector('.ts-chip.on');
     // Keep the current tab in view (centred when it can be), without moving the page around it.
     if (on) {
@@ -191,6 +209,8 @@ export function initPager({ haptic = () => {} } = {}) {
     const w = step(s);
     const p = w ? s.scrollLeft / w : 0;
     segmentLevels(p, n).forEach((v, i) => bar.children[i]?.style.setProperty('--on', v.toFixed(3)));
+    // The page of a pane that waits for an answer is drawn in the attention colour, so the question is easy to swipe to.
+    panesOf(s).forEach((el, i) => bar.children[i]?.classList.toggle('waiting', el.classList.contains('waiting')));
   }
 
   /** The nav row says what the visible pane is, and mirrors its pane bar's buttons. */
@@ -204,6 +224,17 @@ export function initPager({ haptic = () => {} } = {}) {
     }
     title.title = t;
     pos.textContent = panes.length > 1 ? `${i + 1} of ${panes.length}` : '';
+    wait.textContent = el?.classList.contains('waiting') ? 'Waiting for you' : '';
+    // Whose a viewer is, or how many viewers a conversation has, in that conversation's accent (app.js renderLinks);
+    // a tap goes to the other end, as the chip and the mark do on the PC.
+    const chip = el?.querySelector(':scope > .pane-bar > .link-chip:not([hidden])');
+    const mark = el?.querySelector(':scope > .pane-bar > .link-mark:not([hidden])');
+    const linkText = linkLine({ chip: chip ? chip.querySelector('.lc-t')?.textContent || '' : null, gone: Boolean(chip?.classList.contains('gone')), viewers: mark ? Number(mark.querySelector('.lm-n')?.textContent) || 1 : 0 });
+    const acc = [...(el?.classList || [])].find((c) => /^acc-\d$/.test(c)) || '';
+    linkEl.hidden = !linkText;
+    linkEl.textContent = linkText;
+    linkEl.className = `cn-link${acc ? ` ${acc}` : ''}${chip?.classList.contains('gone') ? ' gone' : ''}`;
+    linkEl.setAttribute('aria-label', chip ? `${linkText}: go to that conversation` : linkText ? `${linkText}: go to them` : '');
     // A Codex pane says so in this line (the pane bar's own mark is hidden at this width, 2026-10-12).
     cwd.textContent = `${el?.classList.contains('codex') ? 'Codex · ' : ''}${el?.querySelector('.pane-bar .cwd')?.textContent || ''}`;
     const wtSrc = el?.querySelector('.pane-bar .wt-btn');
@@ -246,6 +277,7 @@ export function initPager({ haptic = () => {} } = {}) {
   chrome.querySelector('.cn-tasks').onclick = press('.tasks-btn');
   chrome.querySelector('.cn-close').onclick = () => { haptic(); press('.pane-bar .close')(); };
   wtSlot.addEventListener('click', (e) => { if (e.target.closest('.cn-wtb')) { haptic(); press('.pane-bar .wt-btn')(); } });
+  linkEl.onclick = () => { haptic(); const el = panesOf(stage())[current(stage())]; (el?.querySelector(':scope > .pane-bar > .link-chip:not([hidden])') || el?.querySelector(':scope > .pane-bar > .link-mark:not([hidden])'))?.click(); };
   // 2026-10-12: both ask for a screen of their own, which app.js (the menu) and browserview.js (the page) draw.
   const visibleId = () => panesOf(stage())[current(stage())]?.dataset.pane || null;
   chrome.querySelector('.cn-more').onclick = () => { haptic(); window.dispatchEvent(new CustomEvent('apaki:pane-menu', { detail: { pane: visibleId() } })); };

@@ -106,7 +106,7 @@
     },
     {
       "id": "tool-permission-prompts",
-      "title": "Allow or deny sheet when Claude Code asks to use a tool",
+      "title": "Allow or deny card in the pane when Claude Code asks to use a tool",
       "product": "claude-sdk",
       "upstream": [
         "claude-sdk:option:canUseTool",
@@ -116,15 +116,15 @@
       ],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["apaki/engine/permissions.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/ui/permission.js", "apaki/ui/app.js", "src/runner.js", "test/apaki-permissions.test.js"],
-      "commits": ["655bd06", "1734636"],
+      "where": ["apaki/engine/permissions.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/ui/permission.js", "apaki/ui/app.js", "src/runner.js", "test/apaki-permissions.test.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["655bd06", "1734636", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "2026-10-12: built. engine.js passes every pane the callback from permissions.js, which holds the call, sends an ask event with a permission block (the SDK's title, displayName, description, decisionReason, blockedPath, defaultToNo and the suggestions as words) and settles it from the window's or phone's answer op: Allow once, Always allow (the SDK's suggestions returned as updatedPermissions, never rules from the client; suppressAlwaysAllowRule is respected) or Deny with a note (the note is Claude's message). Enter allows once (not in the first 600 ms, not when defaultToNo) and Esc denies. Answered once; the sheet drops (ask_gone) when the signal aborts, the main turn ends or the process ends; a subagent's prompt survives a main result. A phone's blocked tools are refused first (capCanUseTool); only a Full phone may save a rule. Apaki's own show tool (mcp__apaki__show, from the in-process server) is allowed without a prompt; its browser tools are asked about like any MCP tool. Before this, anything that would prompt was auto-allowed (observed 2026-10-11). Not covered: the permission_denied message still shows as a Permission line, not a sheet; AskUserQuestion and ExitPlanMode keep their own sheets."
+      "notes": "2026-10-12: built. engine.js passes every pane the callback from permissions.js, which holds the call, sends an ask event with a permission block (the SDK's title, displayName, description, decisionReason, blockedPath, defaultToNo and the suggestions as words) and settles it from the window's or phone's answer op: Allow once, Always allow (the SDK's suggestions returned as updatedPermissions, never rules from the client; suppressAlwaysAllowRule is respected) or Deny with a note (the note is Claude's message). Enter allows once (not in the first 600 ms, not when defaultToNo) and Esc denies. Answered once; the sheet drops (ask_gone) when the signal aborts, the main turn ends or the process ends; a subagent's prompt survives a main result. A phone's blocked tools are refused first (capCanUseTool); only a Full phone may save a rule. Apaki's own show tool (mcp__apaki__show, from the in-process server) is allowed without a prompt; its browser tools are asked about like any MCP tool. Before this, anything that would prompt was auto-allowed (observed 2026-10-11). Not covered: the permission_denied message still shows as a Permission line, not a sheet; AskUserQuestion and ExitPlanMode keep their own sheets. 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "ask-user-question",
-      "title": "AskUserQuestion sheet, answered once, waits up to 7 days",
+      "title": "AskUserQuestion card in the pane, answered once, waits up to 7 days",
       "product": "claude-sdk",
       "upstream": [
         "claude-sdk:tool-input:AskUserQuestion",
@@ -135,24 +135,24 @@
       ],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["src/runner.js", "apaki/engine/engine.js", "apaki/ui/app.js", "test/runner-options.test.js"],
-      "commits": ["85f01fd", "73e81ff", "c8ecdd7"],
+      "where": ["src/runner.js", "apaki/engine/engine.js", "apaki/ui/app.js", "test/runner-options.test.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["85f01fd", "73e81ff", "c8ecdd7", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "In bypassPermissions the SDK never calls canUseTool, so AskUserQuestion and ExitPlanMode are answered from a programmatic PreToolUse hook (matcher AskUserQuestion|ExitPlanMode). The hook timeout is ASK_TIMEOUT_S = 7 days (src/runner.js) so a slow answer is never dropped and asked again. The engine settles questions nobody waits for and the window drops the stale sheet (ask_gone). Sheet supports multiple questions, multi-select and a typed answer."
+      "notes": "In bypassPermissions the SDK never calls canUseTool, so AskUserQuestion and ExitPlanMode are answered from a programmatic PreToolUse hook (matcher AskUserQuestion|ExitPlanMode). The hook timeout is ASK_TIMEOUT_S = 7 days (src/runner.js) so a slow answer is never dropped and asked again. The engine settles questions nobody waits for and the window drops the stale sheet (ask_gone). Sheet supports multiple questions, multi-select and a typed answer. 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "exit-plan-mode-approval",
-      "title": "Plan approval sheet (Ready to code?)",
+      "title": "Plan approval card in the pane (Ready to code?)",
       "product": "claude-sdk",
       "upstream": ["claude-sdk:tool-input:ExitPlanMode", "claude-sdk:hook-event:PreToolUse", "claude-sdk:permission-mode:plan"],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["apaki/ui/app.js", "apaki/engine/engine.js", "src/runner.js"],
-      "commits": ["85f01fd", "73e81ff"],
+      "where": ["apaki/ui/app.js", "apaki/engine/engine.js", "src/runner.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["85f01fd", "73e81ff", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "Approve switches the pane out of plan mode; Keep planning denies. A chat-only phone cannot carry out a plan: the engine answers ExitPlanMode before asking that phone (engine.js)."
+      "notes": "Approve switches the pane out of plan mode; Keep planning denies. A chat-only phone cannot carry out a plan: the engine answers ExitPlanMode before asking that phone (engine.js). 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "steer-running-turn",
@@ -620,6 +620,40 @@
       "notes": "Per tab: panes in layout order, kind, title, session id, working, focus. Drafts, queues, folders and browser addresses stay on the PC."
     },
     {
+      "id": "phone-shared-view",
+      "title": "Follow a conversation open on the desktop from the phone, without taking it over",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": {
+        "desktop": "supported",
+        "phone": "supported"
+      },
+      "where": [
+        "apaki/engine/remote.js",
+        "apaki/engine/remote-policy.js",
+        "apaki/engine/engine.js",
+        "apaki/engine/codex-panes.js",
+        "apaki/ui/pane.js",
+        "apaki/ui/app.js",
+        "apaki/web/src/desktop.js",
+        "apaki/web/src/shim.js",
+        "apaki/web/src/web.css",
+        "test/apaki-follow.test.js",
+        "test/apaki-follow-phone.test.js"
+      ],
+      "commits": [
+        "9512b38",
+        "2affcea",
+        "7f39b58"
+      ],
+      "sessions": [
+        "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
+      ],
+      "verifiedAgainst": {},
+      "notes": "Tapping a desktop pane on the phone sends op follow: the phone pane shows that conversation live (messages, tool lines, thinking, questions) while the desktop keeps the pane and its one Claude Code. Take over is an action in the pane (a confirm sheet, then unfollow and a forced open), and the PC pane then says it moved. Desktop: a quiet Also on <phone> line in the pane header, and a Sent from <phone> tag on a message typed there; no pill, no dot. Access: Full may send, steer, stop and answer from the followed pane; No shell and Chat only watch (View only line, questions answered on the PC); the model, effort and mode of a followed pane are the desktop's for every level. A followed Claude or Codex pane both work. A phone that reconnects or reloads follows again instead of reopening. Looked at in the demo harness (phone.html?ws=follow-phone&follow=1, cap=chat for a restricted phone), light and dark at 390 by 844."
+    },
+    {
       "id": "notification-ding",
       "title": "Ding when a session comes back or needs an answer",
       "product": "apaki",
@@ -859,7 +893,7 @@
       "commits": ["f1db3b7", "198526b", "12eb702", "119e8b8", "cf3a10d"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "claude-desktop": "2.31226.1.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "A WebView2 child webview per browser pane; pages read as an outline with numbered links, buttons and fields; pages have no access to the app or sessions. Phone: the six browser tools are blocked for No shell and Chat only phones (APAKI_BROWSER_TOOLS). 2026-10-12: a live WebView2 cannot run on a phone, so the phone gets a read-only view of the page a Full phone's own conversation opened: a Browser button in the conversation bar once Claude has used the browser there (pane.js markBrowser), opening a sheet with the page's title and address, one JPEG of the part in view (engine op browserView, browser-tools.js view, quiet so the desktop strip says nothing), what Claude just did, and Refresh; it refreshes itself a moment after each browserActivity line, so it follows Claude through the page. A web page card's Open opens a public address in the phone's own browser and a PC-only one (localhost) as this view. Left out, so the phone stays partial: clicking or typing in the PC's browser from the phone, and seeing a browser pane that a desktop conversation opened (it belongs to another window; the desktop's own pane list shows it as a quiet Browser row)."
+      "notes": "A WebView2 child webview per browser pane; pages read as an outline with numbered links, buttons and fields; pages have no access to the app or sessions. Phone: the six browser tools are blocked for No shell and Chat only phones (APAKI_BROWSER_TOOLS). 2026-10-12: a live WebView2 cannot run on a phone, so the phone gets a read-only view of the page a Full phone's own conversation opened: a Browser button in the conversation bar once Claude has used the browser there (pane.js markBrowser), opening a sheet with the page's title and address, one JPEG of the part in view (engine op browserView, browser-tools.js view, quiet so the desktop strip says nothing), what Claude just did, and Refresh; it refreshes itself a moment after each browserActivity line, so it follows Claude through the page. A web page card's Open opens a public address in the phone's own browser and a PC-only one (localhost) as this view. Left out, so the phone stays partial: clicking or typing in the PC's browser from the phone, and seeing a browser pane that a desktop conversation opened (it belongs to another window; the desktop's own pane list shows it as a quiet Browser row). 2026-10-12 (tabs): seven tools now, with browser_tabs; one browser pane per conversation with its pages as tabs (see one-browser-pane-per-conversation-tabs)."
     },
     {
       "id": "find-in-pane",
@@ -880,12 +914,12 @@
       "product": "apaki",
       "upstream": ["chatgpt-desktop:feature:voice-dictation"],
       "status": "supported",
-      "surfaces": { "desktop": "supported", "phone": "n/a" },
-      "where": ["apaki/engine/engine.js", "apaki/ui/pane.js"],
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/mobile/ios/App/App/Info.plist", "apaki/ui/app.js", "apaki/ui/pane.js", "apaki/web/src/web.css"],
       "commits": ["68f8919"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "The mic button records 16 kHz mono in the window, the engine runs whisper.cpp (b5454 CPU build) with ggml-base.en. Phones never use it (remote-policy.js: never voice); the phone keyboard has its own dictation. Marked n/a on the phone as a decision to confirm with Arthur: equal functionality would be sending phone audio to the PC."
+      "notes": "The mic button records 16 kHz mono in the window, the engine runs whisper.cpp (b5454 CPU build) with ggml-base.en. Phones too since 2026-10-12 (Arthur: \"no mic button on the mobile app\"): the phone records in its own page, op transcribe sends the WAV (capped at about 85 s, remote-policy MAX_VOICE_B64) to the PC, and the PC's Whisper writes the text into that phone pane's box. Every access level; nothing leaves the PC. The mic shows only when the PC has Whisper and takes the op (an older PC does not)."
     },
     {
       "id": "glass-corner-card-and-billing-follow",
@@ -1020,12 +1054,12 @@
       "product": "apaki",
       "upstream": [],
       "status": "supported",
-      "surfaces": { "desktop": "supported", "phone": "n/a" },
+      "surfaces": { "desktop": "supported", "phone": "supported" },
       "where": ["src/sessions.js", "apaki/engine/engine.js", "apaki/ui/pane.js"],
       "commits": ["6beebdd", "c8ecdd7"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": {  },
-      "notes": "Arthur: the \"another latch or Apaki window has this session open\" error needs a force takeover. A pane whose session was taken over refuses to send (TAKEN_OVER) so a stale window cannot fork the conversation. Locks are Apaki's own files, not a Claude Code surface."
+      "notes": "Arthur: the \"another latch or Apaki window has this session open\" error needs a force takeover. A pane whose session was taken over refuses to send (TAKEN_OVER) so a stale window cannot fork the conversation. Locks are Apaki's own files, not a Claude Code surface. Phone (2026-10-12): the same Session in use card and Take over here on the phone page, or Take over from a followed desktop pane (phone-shared-view)."
     },
     {
       "id": "apaki-install-and-package",
@@ -1910,7 +1944,7 @@
     },
     {
       "id": "codex-request-user-input",
-      "title": "Codex question sheet (request_user_input), same as Claude's AskUserQuestion",
+      "title": "Codex question card in the pane (request_user_input), same as Claude's AskUserQuestion",
       "product": "codex",
       "upstream": [
         "codex:server-request:item/tool/requestUserInput",
@@ -1919,11 +1953,11 @@
       ],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-e2e.test.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-e2e.test.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "The same sheet as Claude's AskUserQuestion (options, a typed answer), headed by whose question it is; isSecret questions hide what is typed; answered once; a skip answers nothing; serverRequest/resolved drops a stale sheet. Multi-select does not exist in Codex's questions."
+      "notes": "The same sheet as Claude's AskUserQuestion (options, a typed answer), headed by whose question it is; isSecret questions hide what is typed; answered once; a skip answers nothing; serverRequest/resolved drops a stale sheet. Multi-select does not exist in Codex's questions. 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "codex-approval-requests",
@@ -1939,11 +1973,11 @@
       ],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "apaki/ui/permission.js", "test/apaki-codex-e2e.test.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "apaki/ui/permission.js", "test/apaki-codex-e2e.test.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0", "chatgpt-desktop": "26.1002.7124.0" },
-      "notes": "Command, file change, permissions and the older exec and patch approvals use the permission sheet with Codex's words (Approve once, Approve for this session, Deny) and the command or the diff shown; an unreadable answer declines; Deny with a note sends the note to the model as a steer. A request nobody can answer (a thread with no pane) is declined at once. Not done: acceptWithExecpolicyAmendment (offered as the session approval where the server lists no session decision)."
+      "notes": "Command, file change, permissions and the older exec and patch approvals use the permission sheet with Codex's words (Approve once, Approve for this session, Deny) and the command or the diff shown; an unreadable answer declines; Deny with a note sends the note to the model as a steer. A request nobody can answer (a thread with no pane) is declined at once. Not done: acceptWithExecpolicyAmendment (offered as the session approval where the server lists no session decision). 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "codex-mcp-elicitation",
@@ -1952,11 +1986,11 @@
       "upstream": ["codex:server-request:mcpServer/elicitation/request"],
       "status": "supported",
       "surfaces": { "desktop": "supported", "phone": "supported" },
-      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-map.test.js", "test/apaki-codex-e2e.test.js"],
-      "commits": ["abdb517", "72f21e4", "17282ea"],
+      "where": ["apaki/remote/CODEX.md", "apaki/ui/app.js", "apaki/engine/codex-map.js", "test/apaki-codex-map.test.js", "test/apaki-codex-e2e.test.js", "apaki/ui/askcard.js", "test/apaki-askcard.test.js"],
+      "commits": ["abdb517", "72f21e4", "17282ea", "8cc3cdc", "50bdc2e", "06db42a"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
-      "notes": "A tool-call approval (Codex marks it in _meta) is a permission sheet, a form is the question sheet (one question per field; enums, yes or no and text), a link asks first and then opens in Apaki's browser. The shapes were written from the schema and run end to end against the fake app-server; none was seen live (no turn was started on a real account). The openai/form variants and user verification are declined, never left waiting."
+      "notes": "A tool-call approval (Codex marks it in _meta) is a permission sheet, a form is the question sheet (one question per field; enums, yes or no and text), a link asks first and then opens in Apaki's browser. The shapes were written from the schema and run end to end against the fake app-server; none was seen live (no turn was started on a real account). The openai/form variants and user verification are declined, never left waiting. 2026-10-12, later (Arthur: \"it should be shown in the pane and not lock the user from using the app\"): no longer a sheet over the window. It is a card in the pane that asked, docked above its message box (apaki/ui/askcard.js), numbered rows like Claude Code's terminal; the rest of the window stays usable, several panes can wait at once, numbers and Enter answer only the focused pane's card, Esc goes back to the message box without answering, the tab and the header say Waiting for you and the taskbar badge counts it; ask_gone carries why and by, so a card settled elsewhere leaves one line (Answered on a phone, the turn ended)."
     },
     {
       "id": "claude-mcp-elicitation",
@@ -2150,6 +2184,264 @@
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
       "notes": "The empty pane offers Claude Code or Codex; Codex starts a thread with the first message (thread/start with the folder, any picked model and preset, and the developer instructions), so no thread exists until something is sent. Phone and desktop alike."
+    },
+    {
+      "id": "session-list-compact-recency",
+      "title": "Session list like the ChatGPT app: one line per session, recency groups, exact times, a hover card",
+      "product": "chatgpt-desktop",
+      "upstream": ["chatgpt-desktop:feature:projects-threads-sidebar"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/sessionlist.js", "apaki/ui/app.js", "apaki/ui/app.css", "apaki/ui/tooltip.js", "apaki/web/src/web.css", "apaki/engine/last-active.js", "test/apaki-session-list.test.js"],
+      "commits": ["16c6527", "77e62d7"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": {  },
+      "notes": "Arthur 2026-10-12: \"think about chatgpt app and how the sessions are displayed\". A row is the name, cut, and the last message's time in a short form (now, 12m, the clock today, a weekday and the time this week, then the date), under Pinned, Today, Yesterday, Previous 7 days, Previous 30 days, then each month. Then Myrlin Glass's list design (Arthur: \"myrlin glass ui/ux is much clearer, we want to borrow from it\"): one leading glyph per row carries the provider and the state (Claude's spark in Claude orange, Codex's hexagon in Codex green, a turning arc when working, an amber bubble when it waits for your answer, a terminal, an archived copy), the name in a strong weight, the time right-aligned in a muted mono, hover and selection a soft fill with no borders, hairlines only between groups; never a pill. The row in the focused pane or under the keyboard eases open a second line (folder, branch, model, size, subagents). Hover (setTip): the full name, the exact date and time, folder, branch or worktree, agent, model, size, state. Keys: arrows, Home, End, Enter, F2, Alt+Enter, the context menu key. Phone: the same rows 48 px tall, no hover (the long press menu instead). Evaluated in the demo harness at 1440x900, the narrowest sidebar and 390x844, light and dark, reduced motion."
+    },
+    {
+      "id": "session-folders-accordion",
+      "title": "Folders open and close in place in the sidebar, several at once, remembered",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/ui/app.js", "apaki/ui/sessionlist.js", "apaki/ui/app.css", "apaki/web/src/native.js", "apaki/web/src/web.css", "test/apaki-session-list.test.js"],
+      "commits": ["16c6527", "77e62d7"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": {  },
+      "notes": "Arthur 2026-10-12: \"the folders should expand when clicked on and contract when clicked on again instead of just transitioning the entire sidepanel\". A click opens a folder's sessions under it (grid rows 0fr to 1fr, no layout property animated, off under reduced motion), a second click closes it; several can be open; the open ones are kept in localStorage and the saved workspace. Dropping a session on a folder still moves it in; Show only this folder (the old view) is in the folder's menu with Rename and Delete. Keys: Enter or Space, Right and Left, arrows, F2. Phone: a tap opens or closes, a long press opens the folder's menu (Open or Close, Show only this folder; renaming and deleting folders stay on the PC), the rows under a folder open like the list's."
+    },
+    {
+      "id": "session-details-sheet",
+      "title": "Session Details: every fact about a conversation, with copy buttons",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/session-info.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/ui/sessionlist.js", "apaki/ui/app.js", "test/apaki-session-info.test.js", "test/apaki-session-list.test.js"],
+      "commits": ["f1dbec9", "16c6527", "77e62d7", "c782307"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": {  },
+      "notes": "Right click > Details (or Alt+Enter). The list's facts show at once; op sessionInfo (read only, every phone access level) adds what the transcript or rollout says: created and last message (exact, local time), prompts counted by the pane's rule (history.js promptOf), replies once per API message, tool calls, compactions, tokens, models used and the last, effort, Claude Code or Codex version, branch, the folder it last ran in, size on disk with the side folder, subagents and background shells, archive, pin, terminal and the panes holding it (model, effort, permissions, billing). Copy buttons for the id, folder, transcript and resume command; Show (Explorer) and Export on the PC only."
+    },
+    {
+      "id": "session-menu-pin-export-terminal-ask",
+      "title": "Session menu: Pin to top, Open beside, Open in a terminal, Export as Markdown, Ask Claude about it, Details",
+      "product": "apaki",
+      "upstream": [],
+      "status": "partial",
+      "surfaces": { "desktop": "supported", "phone": "partial" },
+      "where": ["apaki/ui/sessionlist.js", "apaki/ui/app.js", "apaki/engine/pins.js", "apaki/engine/session-info.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "test/apaki-session-info.test.js", "test/apaki-session-list.test.js"],
+      "commits": ["f1dbec9", "16c6527"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": {  },
+      "notes": "Arthur 2026-10-12: \"think about everything a user might want to do with a session\". The menu (right click, the row's ... button, the context menu key): Open, Open beside, Open in a new tab, Open here, Open in a terminal (sends the engine op openTerminal { sessionId, kind, paneId? }, which the console toggle's work builds: the exact session in a terminal window with the pane's settings), Stop and Close its pane when they apply, Rename, Pin to top (latch/pinned.json, shared with the phone), Move to folder, Fork, Archive or Unarchive, Ask Claude about it (a new conversation in its folder with where the transcript is), Export as Markdown (Downloads, shown in Explorer), its subagents, Copy session id, Copy resume command, Show folder in Explorer, Details. Phone: Details, Pin (Full and No shell), Ask Claude, Export (the Markdown comes back as text and is saved on the phone); left out on purpose, so the phone stays partial: Open in a terminal and Show folder in Explorer, which open windows on the PC."
+    },
+    {
+      "id": "codex-threads-in-main-list",
+      "title": "Codex threads in the main session list from startup, beside Claude's, without starting the app-server",
+      "product": "codex",
+      "upstream": ["codex:client-request:thread/list", "chatgpt-desktop:feature:projects-threads-sidebar"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/codex-list.js", "apaki/engine/codex-rollouts.js", "apaki/engine/last-active.js", "apaki/engine/engine.js", "apaki/engine/archive.js", "apaki/ui/app.js", "apaki/ui/sessionlist.js", "test/apaki-codex-list.test.js"],
+      "commits": ["c782307"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": {  },
+      "notes": "Arthur 2026-10-12: Codex sessions integrated exactly like Claude's. The engine reads the rollout files (read only) without the app-server, times each by its last message and keeps what it read in latch/codex-list.json, so a restart lists them at once and reads only new or changed rollouts; a background pass runs at most every 30 s and sends the list again only when it changed. Measured on this PC: 1,804 rollouts, a warm pass about 130 ms. The Codex view's rows (names set in Codex) win for the same thread. In the window they sit in All with Claude's under the same recency headings, with a small Codex mark, the same hover card, menu and Details; Archive works on them (archive.js takes codex: ids)."
+    },
+    {
+      "id": "workspace-tab-names",
+      "title": "Tabs named after the project their conversations share, or by you; never after the focused session",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": {
+        "desktop": "supported",
+        "phone": "supported"
+      },
+      "where": [
+        "apaki/ui/workspace.js",
+        "apaki/ui/app.js",
+        "apaki/engine/desktop-tabs.js",
+        "apaki/web/src/pager.js",
+        "apaki/web/src/desktop.js",
+        "apaki/docs/layout.md",
+        "test/apaki-workspace.test.js",
+        "test/apaki-layout-phone.test.js"
+      ],
+      "commits": [
+        "0d8b43b",
+        "964c154",
+        "6e8d425",
+        "4bec8b3",
+        "5836014"
+      ],
+      "sessions": [
+        "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
+      ],
+      "verifiedAgainst": {},
+      "notes": "Arthur 2026-10-12: \"the way the tabs are named after a session in the tab is confusing\". A tab is a workspace: its name is the one you gave it (double-click the tab on the PC), else the repository or folder its conversations share (\"Home\" for the home folder; two projects joined, three or more \"+N\"), with the count of its conversations. Two same-named one-conversation tabs add the conversation title as quiet secondary text. Phone: the pager strip mirrors the PC window's names, and \"On your desktop\" shows the PC's tab names (desktop-tabs.js label) instead of \"Tab N\". Naming a tab is done on the PC; the phone shows the name."
+    },
+    {
+      "id": "automatic-pane-layouts",
+      "title": "Automatic layouts by pane count and shape, presets (Columns, Rows, Grid, Main and stack), resizable, custom trees kept",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": {
+        "desktop": "supported",
+        "phone": "n/a"
+      },
+      "where": [
+        "apaki/ui/workspace.js",
+        "apaki/ui/layout-tree.js",
+        "apaki/ui/app.js",
+        "apaki/ui/app.css",
+        "test/apaki-workspace.test.js"
+      ],
+      "commits": [
+        "0d8b43b",
+        "964c154",
+        "6e8d425",
+        "4bec8b3",
+        "5836014"
+      ],
+      "sessions": [
+        "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
+      ],
+      "verifiedAgainst": {},
+      "notes": "Arthur 2026-10-12: \"think about the tri pane view, the side by side, top/bottom, 2 top, 1 bottom, etc - all should happen automatically\". 1 full; 2 side by side or stacked when tall; 3 one large and two stacked (two over one when tall); 4 a 2x2 grid; 5 and 6 three over two or three (two columns of three rows when tall). A viewer sits in its conversation's cell at 40 percent. Dragging to an edge or swapping makes the tab Custom; old workspaces restore as Custom. Phone n/a: a phone shows one pane at a time and pages through them in layout order (pager.js)."
+    },
+    {
+      "id": "viewers-linked-to-their-conversation",
+      "title": "Viewers (browser, artifact, changes, task) beside and visibly linked to the conversation that drives them",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": {
+        "desktop": "supported",
+        "phone": "supported"
+      },
+      "where": [
+        "apaki/ui/app.js",
+        "apaki/ui/app.css",
+        "apaki/ui/workspace.js",
+        "apaki/ui/diff.js",
+        "apaki/ui/artifacts.js",
+        "apaki/engine/desktop-tabs.js",
+        "apaki/web/src/pager.js",
+        "apaki/web/src/desktop.js",
+        "apaki/web/src/web.css",
+        "test/apaki-workspace.test.js",
+        "test/apaki-layout-phone.test.js"
+      ],
+      "commits": [
+        "0d8b43b",
+        "964c154",
+        "6e8d425",
+        "4bec8b3",
+        "5836014"
+      ],
+      "sessions": [
+        "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
+      ],
+      "verifiedAgainst": {},
+      "notes": "Arthur 2026-10-12: \"its not super obvious when you have multiple panes which pane a browser window is connected to\". Each conversation with viewers gets an accent (six, never the focus, waiting or finished colours); its viewers carry a chip with its name in that accent, it carries a mark with the count; hovering either rings the other, clicking goes there. One viewer of a kind per conversation (the slot is reused). Closing a conversation with viewers asks whether to close them too. Phone: the nav row says \"for <conversation>\" on a viewer page and \"N viewers\" on a conversation page, a tap goes to the other end; \"On your desktop\" says whose each PC viewer is."
+    },
+    {
+      "id": "one-browser-pane-per-conversation-tabs",
+      "title": "One browser pane per conversation, its pages as tabs inside it (Claude and Codex open, list and switch tabs)",
+      "product": "claude-sdk",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": {
+        "desktop": "supported",
+        "phone": "supported"
+      },
+      "where": [
+        "apaki/ui/browser.js",
+        "apaki/ui/app.js",
+        "apaki/engine/browser-tools.js",
+        "apaki/engine/engine.js",
+        "apaki/engine/remote-policy.js",
+        "apaki/engine/codex-panes.js",
+        "apaki/web/src/browserview.js",
+        "apaki/web/src/web.css",
+        "test/apaki-browser-tabs.test.js",
+        "test/apaki-layout-phone.test.js",
+        "test/apaki-phone-ops.test.js"
+      ],
+      "commits": [
+        "0d8b43b",
+        "964c154",
+        "6e8d425",
+        "4bec8b3",
+        "5836014"
+      ],
+      "sessions": [
+        "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
+      ],
+      "verifiedAgainst": {},
+      "notes": "Arthur 2026-10-12: \"additional tabs wanted to be opened by the session should open those tabs IN the browser pane (like codex/gpt)\". browser_open reuse loads the active tab, new and tab open a tab in the same pane (never an Apaki tab); browser_tabs lists, switches and closes; read, click, type, back and screenshot act on the active tab. Pages from show, caught commands and the BROWSER shim reload a tab already showing the address, else open a new tab. The pane has a tab strip (initial, title, close) and + for a new tab; picking a tab tells the engine (browserTab, desktop only). Old workspaces fold several browser panes of one conversation into one. Phone: the browser view lists the tabs and switches the PC's active tab (browserView tab, Full only, own conversation only)."
+    },
+    {
+      "id": "go-to-open-session-pane",
+      "title": "Clicking a session that is open anywhere goes to its pane (tab, focus, row in view, a brief flash)",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": {
+        "desktop": "supported",
+        "phone": "supported"
+      },
+      "where": [
+        "apaki/ui/app.js",
+        "apaki/ui/workspace.js",
+        "test/apaki-workspace.test.js",
+        "test/apaki-layout-phone.test.js"
+      ],
+      "commits": [
+        "0d8b43b",
+        "964c154",
+        "6e8d425",
+        "4bec8b3",
+        "5836014"
+      ],
+      "sessions": [
+        "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
+      ],
+      "verifiedAgainst": {},
+      "notes": "Arthur 2026-10-12: \"if a session is already open in a tab somewhere, clicking on the session in the left navbar should take you directly to that pane\". The sidebar, the session menu's Open and Open in a new tab, a drop on a stage or on +, and a task viewer's source button all go to the open pane; a maximized other pane in its tab is put back first. Phone: the same code (openFromRail); the pager scrolls to the pane."
+    },
+    {
+      "id": "maximize-pane",
+      "title": "Maximize a pane to the whole window and restore it to its exact place",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": {
+        "desktop": "supported",
+        "phone": "n/a"
+      },
+      "where": [
+        "apaki/ui/app.js",
+        "apaki/ui/app.css",
+        "apaki/ui/workspace.js",
+        "test/apaki-workspace.test.js"
+      ],
+      "commits": [
+        "0d8b43b",
+        "964c154",
+        "6e8d425",
+        "4bec8b3",
+        "5836014"
+      ],
+      "sessions": [
+        "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
+      ],
+      "verifiedAgainst": {},
+      "notes": "Arthur 2026-10-12: \"a full screen toggle that lets you maximize a pane to take the whole desktop app window size, and then a minimize that has it go back\". The button beside close, a double click on the header's empty space, or Ctrl+Shift+Enter; the pane is drawn over the window under the top strip and its tab's tree is never touched, so restoring is exact; each tab remembers its own; the other panes keep running. Phone n/a: a pane there already fills the screen."
     },
     {
       "id": "pane-console",

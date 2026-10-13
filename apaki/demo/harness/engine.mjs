@@ -158,6 +158,35 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     }
   }
 
+  /*
+   * The shared view (2026-10-12): follow { paneId, desktopPaneId } shows a desktop pane on the phone without taking it over.
+   * The PC answers with opened (attached, follower, readOnly), the history, and then everything the desktop pane does; here a
+   * desktop pane listed as working plays its session's script into the follower, which is what mirror() does on a real PC.
+   * Take over is a forced open of the same session on the phone's pane after unfollow, as the page does it.
+   */
+  // The phone's access in this demo page (phone-boot.mjs reads the same cap= query): a restricted phone follows read only, as the PC says.
+  const demoCap = () => new URLSearchParams(globalThis.location?.search || '').get('cap') || 'full';
+  const deskPaneOf = (id) => {
+    for (const t of start.desktopTabs || []) for (const p of t.panes) if (p.paneId === id) return p;
+    return null;
+  };
+
+  function followPane(c) {
+    const d = deskPaneOf(c.desktopPaneId);
+    const s = d?.kind === 'session' && d.sessionId ? sessions.find((x) => x.id === d.sessionId) : null;
+    if (!s) { later(40, { ev: 'closed', reqId: c.reqId, paneId: c.paneId }); return; }
+    const pane = { id: c.paneId, sessionId: s.id, cwd: s.cwd, ctxAdd: 0, turn: null, follows: c.desktopPaneId };
+    panes.set(pane.id, pane);
+    later(50, {
+      ev: 'opened', reqId: c.reqId, paneId: pane.id, attached: true, follower: true, readOnly: Boolean(c.readOnly) || demoCap() !== 'full', busy: Boolean(d.busy), turn: Boolean(d.busy), running: true,
+      sessionId: s.id, cwd: s.cwd, title: s.title, model: MODEL, effort: 'high', mode: 'acceptEdits', billing: billing(), terminal: [],
+    });
+    const h = historyOf(s.id);
+    later(120, { ev: 'history', paneId: pane.id, sessionId: s.id, messages: h.messages, total: h.messages.length, rev: revOf(s.id) });
+    // The desktop pane is working: its turn reaches the phone as it happens.
+    if (d.busy) setTimeout(() => { if (panes.get(pane.id) === pane && !pane.turn) runTurn(pane, scriptFor(s.id), '', true); }, 700);
+  }
+
   /** historyCheck { paneId, sessionId, rev }: the transcript moved on, so the conversation comes again (refresh). */
   function historyCheck(c) {
     const rev = revOf(c.sessionId);
@@ -348,11 +377,19 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     return { image: cv.toDataURL('image/jpeg', 0.8).split(',')[1], width: w, height: h };
   }
 
+  // The conversation's browser pane holds two pages as tabs (2026-10-12); the phone's row of tabs picks one (c.tab).
+  let viewTab = 'b-demo';
   function browserView(c) {
-    const state = { url: 'http://localhost:3000/checkout', title: 'Checkout · Acme Store', loading: false, error: null, status: 200, canGoBack: true };
+    if (c.tab === 'b-demo' || c.tab === 'b-demo-cart') viewTab = c.tab;
+    const tabs = [
+      { id: 'b-demo', title: 'Checkout · Acme Store', url: 'http://localhost:3000/checkout', loading: false, active: viewTab === 'b-demo' },
+      { id: 'b-demo-cart', title: 'Your cart · Acme Store', url: 'http://localhost:3000/cart', loading: false, active: viewTab === 'b-demo-cart' },
+    ];
+    const cur = tabs.find((t) => t.active);
+    const state = { url: cur.url, title: cur.title, loading: false, error: null, status: 200, canGoBack: true };
     const shot = pageShot(browserDid);
     later(520, shot
-      ? { ev: 'browserView', reqId: c.reqId, paneId: c.paneId, ok: true, text: '', state, mime: 'image/jpeg', ...shot, at: now() }
+      ? { ev: 'browserView', reqId: c.reqId, paneId: c.paneId, ok: true, text: '', state, mime: 'image/jpeg', ...shot, at: now(), tabs }
       : { ev: 'browserView', reqId: c.reqId, paneId: c.paneId, ok: false, text: 'This page has no canvas to draw the demo page on.', state: null, image: null, at: now() });
   }
 
@@ -417,6 +454,8 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
       case 'open': openPane(c); break;
       case 'attach': openPane(c, true); break;
       case 'close': pane?.turn?.abort(); panes.delete(c.paneId); later(20, { ev: 'closed', paneId: c.paneId }); break;
+      case 'follow': followPane(c); break;
+      case 'unfollow': pane?.turn?.abort(); panes.delete(c.paneId); later(20, { ev: 'closed', reqId: c.reqId || null, paneId: c.paneId }); break;
       case 'commands': later(40, { ev: 'commands', reqId: c.reqId, paneId: c.paneId, commands: COMMANDS }); break;
       case 'contextUsage': if (pane) later(120, contextEvent(pane, c.reqId)); break;
       case 'send': send_(c); break;
@@ -547,6 +586,21 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
       emit({ ev: 'taken_over', paneId: pane.id, sessionId, holder: { name: `${name} (phone)`, app: 'apaki-phone', at: new Date(now()).toISOString(), alive: true } });
       return true;
     },
+    /** The shared view (2026-10-12): the PC closed the desktop pane that phone panes follow; they hear closed, as mirror() sends it. */
+    followClosed(desktopPaneId) {
+      for (const p of [...panes.values()]) {
+        if (p.follows !== desktopPaneId) continue;
+        p.turn?.abort();
+        panes.delete(p.id);
+        emit({ ev: 'closed', paneId: p.id });
+      }
+    },
+    /** The shared view: someone typed into the desktop pane that phone panes follow (peerMessage, from the window or another phone). */
+    peerMessage(desktopPaneId, text, from = 'Desktop') {
+      for (const p of panes.values()) if (p.follows === desktopPaneId) emit({ ev: 'peerMessage', paneId: p.id, from, text, images: [], steered: false });
+    },
+    /** The shared view, on the desktop window: which phones watch this desktop pane (the "Also on" line); [] clears it. */
+    followers(paneId, phones) { emit({ ev: 'followers', paneId, phones }); },
     /** Claude Code on the phone wrote this many of the handoff's messages to the transcript so far (data.mjs). */
     transcriptGrew(sessionId, count) { grown.set(sessionId, count); },
     /** Which panes are open and what they run (for the scene runner to wait on). */

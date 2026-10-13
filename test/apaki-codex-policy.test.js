@@ -104,7 +104,7 @@ test('events: a phone gets its Codex pane\'s events only, and the thread list is
   assert.equal(view.items[0].firstPrompt.length, 200);
   assert.equal(view.items[0].title, 't');
   assert.equal(routeEvent({ ev: 'codexModels', reqId: `phone:${DEVICE}:r1`, models: [] }).ev.reqId, 'r1', 'the model list goes back to the phone that asked');
-  assert.equal(phoneView({ ev: 'ready', voice: true, codex: true }).voice, false);
+  assert.equal(phoneView({ ev: 'ready', voice: true, codex: true }).voice, true);
   assert.equal(phoneView({ ev: 'ready', voice: true, codex: true }).codex, true);
 });
 

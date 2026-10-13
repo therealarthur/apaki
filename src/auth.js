@@ -22,12 +22,13 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { glassCli } from './platform.js';
 
 export const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const CRED_FILE = process.env.CLAUDE_CREDENTIALS_FILE || path.join(CLAUDE_DIR, 'credentials.md');
 const LIVE_LOGIN_FILE = process.env.LATCH_LIVE_LOGIN_FILE || path.join(CLAUDE_DIR, '.credentials.json');
-const GLASS_CLI = process.env.LATCH_GLASS_CLI
-  || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Myrlin Glass', 'glass.exe');
+// LATCH_GLASS_CLI, else Glass's install place on this platform (src/platform.js; the Windows path is unchanged).
+const GLASS_CLI = glassCli();
 
 export const DEFAULT_KEY_WORDS = process.env.LATCH_DEFAULT_KEY || "Arthur's Org";
 // Same prefixes Myrlin Glass uses to tell a usage key from a login token.

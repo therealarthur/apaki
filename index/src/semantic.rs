@@ -104,12 +104,17 @@ pub fn load_model(cpu: bool) -> Result<(TextEmbedding, &'static str)> {
     let dir = model_dir();
     fs::create_dir_all(&dir).ok();
     let base = || TextInitOptions::new(EmbeddingModel::BGESmallENV15).with_cache_dir(dir.clone()).with_show_download_progress(false).with_max_length(256);
+    // DirectML exists on Windows only (macOS port, 2026-10-12: Cargo.toml adds its features for Windows alone);
+    // every other platform embeds on the CPU.
+    #[cfg(windows)]
     if !cpu && std::env::var_os("LATCH_EMBED_CPU").is_none() {
         let gpu = base().with_execution_providers(vec![ort::ep::DirectML::default().build().error_on_failure()]);
         if let Ok(m) = TextEmbedding::try_new(gpu) {
             return Ok((m, "gpu"));
         }
     }
+    #[cfg(not(windows))]
+    let _ = cpu;
     let threads = std::thread::available_parallelism().map(|n| (n.get() / 3).max(2)).unwrap_or(4);
     Ok((TextEmbedding::try_new(base().with_intra_threads(threads)).context("loading the embedding model")?, "cpu"))
 }

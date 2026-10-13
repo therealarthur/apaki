@@ -1,17 +1,25 @@
 /**
- * permission.js: what the permission sheet shows and how its keys behave.
+ * permission.js: what a permission prompt shows and how its keys behave.
  *
  * 2026-10-12 (Arthur: in "Ask permissions" and "Auto-accept edits" a tool Claude Code
  * would normally ask about simply ran). The engine (apaki/engine/permissions.js) holds
- * the tool call and sends an `ask` event with a `permission` block; app.js draws the
- * sheet from this file, on the desktop window and on the phone page alike.
+ * the tool call and sends an `ask` event with a `permission` block; the pane that asked
+ * draws it from this file, on the desktop window and on the phone page alike.
+ *
+ * 2026-10-12, later (Arthur: "when askuserquestion type things come up, it should be
+ * shown in the pane and not lock the user from using the app"): the prompt is no longer
+ * a sheet over the window but a card docked above the pane's message box (askcard.js).
+ * Its choices are numbered rows, the way Claude Code's terminal shows them (1 Allow once,
+ * 2 Always allow, 3 Deny); Esc goes back to the message box instead of denying.
  *
  *   permissionView(ask)     what to show: the question, the tool, a readable summary of
  *                           its input (the command, a path and diff, a URL...), notes
  *                           (why it was asked, a path outside the folder), and what
  *                           "Always allow" would save
- *   permissionHtml(view)    the sheet's HTML, in the existing sheet style (app.css .perm-*)
- *   permissionKey(...)      Enter allows once, Esc denies; a stray Enter does not approve
+ *   permissionChoices(view) the numbered choices, in order: once, always (when offered), deny
+ *   permissionHtml(view)    the card's inner HTML (app.css .ask-card and .perm-*)
+ *   permissionKey(...)      a number picks its row, Enter allows once, Esc leaves the card;
+ *                           a stray Enter does not approve
  *   permissionReply(...)    the `answer` op's result for a choice
  *
  * Pure (strings and plain objects, no DOM): test/apaki-permissions.test.js.
@@ -21,7 +29,7 @@ import { esc } from './markdown.js';
 // Codex's file changes are drawn with the same lines as the conversation's patch block (codex.js, 2026-10-12).
 import { patchHtml } from './codex.js';
 
-/** A moment after the sheet opens during which Enter does not approve (a keystroke meant for the message box). */
+/** A moment after a card takes the keyboard during which Enter and the numbers do nothing (a keystroke meant for the message box). */
 export const ARM_MS = 600;
 
 const CODE_MAX = 6000;
@@ -172,37 +180,63 @@ function blockHtml(b) {
 /** The label on the Deny button: it says when a note goes with it. */
 export const denyLabel = (note, base = 'Deny') => (String(note || '').trim() ? `${base} with note` : base);
 
-/** The sheet's HTML. `from` is the pane's title (escaped here). */
-export function permissionHtml(view, { from = '' } = {}) {
+/** The card's numbered choices, in order: a number key picks the row with that number (Claude Code's 1, 2, 3). */
+export function permissionChoices(view) {
+  return view?.always ? ['once', 'always', 'deny'] : ['once', 'deny'];
+}
+
+/** A row's number, drawn as a quiet key cap in front of its words. */
+const num = (n) => `<span class="ask-n" aria-hidden="true">${n}</span>`;
+
+/**
+ * The card's HTML (askcard.js puts it in the pane that asked, above its message box). `from` is a title to show
+ * above the question (escaped here; the inline card has no need of it). `id` names the question for the screen
+ * reader. Choices are numbered rows; Deny takes the note typed below it.
+ */
+export function permissionHtml(view, { from = '', id = 'permQ' } = {}) {
   const L = view.labels || { once: 'Allow once', always: 'Always allow', deny: 'Deny' };
+  const who = view.codex ? 'Codex' : 'Claude';
+  const choices = permissionChoices(view);
+  const n = (k) => choices.indexOf(k) + 1;
+  const back = 'Esc goes back to your message.';
   const keys = view.defaultToNo
-    ? `${view.codex ? `Esc: ${L.deny.toLowerCase()}.` : 'Esc denies.'} Enter does not approve this one.`
-    : view.codex ? `Enter: ${L.once.toLowerCase()}. Esc: ${L.deny.toLowerCase()}.` : 'Enter allows once. Esc denies.';
-  return `${from ? `<div class="from">${esc(from)}</div>` : ''}<h2 id="permQ">${esc(view.question)}</h2>`
+    ? `1 to ${choices.length} choose. Enter does not approve this one. ${back}`
+    : view.codex ? `Enter: ${L.once.toLowerCase()}. ${back}` : `Enter allows once. ${back}`;
+  const always = view.always
+    ? `<small class="perm-always"><span class="perm-always-h">${esc(view.codex ? `${L.always} means` : 'Always allow saves')}</span>${view.always.map((l) => `<span class="perm-always-l">${esc(l)}</span>`).join('')}</small>`
+    : '';
+  return `${from ? `<div class="from">${esc(from)}</div>` : ''}<div class="ask-scroll"><h3 class="ask-h" id="${esc(id)}">${esc(view.question)}</h3>`
     + `${view.sub ? `<div class="perm-sub">${esc(view.sub)}</div>` : ''}`
     + `<div class="perm-tool"><span class="perm-name">${esc(view.tool)}</span>${view.server ? `<span class="perm-srv">${esc(view.server)}</span>` : ''}</div>`
     + `<div class="perm-body">${view.blocks.map(blockHtml).join('')}</div>`
-    + view.notes.map((n) => `<div class="perm-note ${n.tone === 'warn' ? 'warn' : ''}">${esc(n.text)}</div>`).join('')
-    // The placeholder fits a 390 px phone whole (2026-10-12; "(sent with Deny)" was cut there): the Deny button
+    + view.notes.map((x) => `<div class="perm-note ${x.tone === 'warn' ? 'warn' : ''}">${esc(x.text)}</div>`).join('')
+    + '</div>'
+    + `<div class="ask-choices" role="group" aria-labelledby="${esc(id)}">`
+    + `<button type="button" class="ask-choice" data-k="once"${view.defaultToNo ? '' : ' title="Enter"'}>${num(n('once'))}<span class="ask-l"><span class="ask-w">${esc(L.once)}</span></span></button>`
+    + (view.always ? `<button type="button" class="ask-choice" data-k="always" title="${view.codex ? 'Approve it now and for the rest of this session' : 'Allow it now and save the rule, the way Claude Code does'}">${num(n('always'))}<span class="ask-l"><span class="ask-w">${esc(L.always)}</span>${always}</span></button>` : '')
+    + `<button type="button" class="ask-choice" data-k="deny">${num(n('deny'))}<span class="ask-l"><span class="ask-w">${esc(L.deny)}</span></span></button>`
+    + '</div>'
+    // The placeholder fits a 390 px phone whole (2026-10-12; "(sent with Deny)" was cut there): the Deny row
     // turns into "Deny with note" as soon as there is one, and the field's label still says it goes with Deny.
-    + `<input type="text" class="perm-say" data-note maxlength="2000" autocomplete="off" aria-label="A note for ${view.codex ? 'Codex' : 'Claude'}, sent with Deny" placeholder="Or tell ${view.codex ? 'Codex' : 'Claude'} what to do instead">`
-    + `${view.always ? `<div class="perm-always"><span class="perm-always-h">${esc(view.codex ? `${L.always} means` : 'Always allow saves')}</span>${view.always.map((l) => `<span class="perm-always-l">${esc(l)}</span>`).join('')}</div>` : ''}`
-    + `<div class="row perm-row"><button data-k="deny">${esc(L.deny)}</button>${view.always ? `<button data-k="always" title="${view.codex ? 'Approve it now and for the rest of this session' : 'Allow it now and save the rule above, the way Claude Code does'}">${esc(L.always)}</button>` : ''}<button class="primary" data-k="once"${view.defaultToNo ? '' : ' title="Enter"'}>${esc(L.once)}</button></div>`
-    + `<div class="perm-keys">${keys}</div>`;
+    + `<input type="text" class="perm-say ask-say" data-note maxlength="2000" autocomplete="off" aria-label="A note for ${who}, sent with Deny" placeholder="Or tell ${who} what to do instead">`
+    + `<div class="ask-foot"><span class="ask-keys perm-keys">${keys}</span></div>`;
 }
 
 /**
- * What a key does while the sheet is up: 'once' (Enter), 'deny' (Esc), or null (leave it to the page).
- * Enter on a button is that button's own click; in the note box it sends the note with Deny (and does
- * nothing when the box is empty); anywhere else it allows once, but not in the first ARM_MS after the
- * sheet opened, and never when the SDK asked for a default of no (defaultToNo).
+ * What a key does inside a permission card: 'once', 'always' or 'deny' (a choice), 'leave' (Esc: back to the
+ * message box, nothing answered), or null (leave it to the page).
+ * A number picks the row with that number (`choices`, permissionChoices), but not in the first ARM_MS after the
+ * card took the keyboard. Enter on a button is that button's own click; in the note box it sends the note with
+ * Deny (and does nothing when the box is empty); anywhere else it allows once, but not in the first ARM_MS, and
+ * never when the SDK asked for a default of no (defaultToNo).
  */
-export function permissionKey({ key, ctrlKey = false, metaKey = false, altKey = false, shiftKey = false, repeat = false, target = 'other', noteText = '', armed = true, defaultToNo = false } = {}) {
+export function permissionKey({ key, ctrlKey = false, metaKey = false, altKey = false, shiftKey = false, repeat = false, target = 'other', noteText = '', armed = true, defaultToNo = false, choices = ['once', 'always', 'deny'] } = {}) {
   if (ctrlKey || metaKey || altKey) return null;
-  if (key === 'Escape') return 'deny';
+  if (key === 'Escape') return 'leave';
+  if (target === 'field') return key === 'Enter' && !shiftKey && !repeat && String(noteText || '').trim() ? 'deny' : null;
+  if (/^[1-9]$/.test(String(key))) return repeat || !armed ? null : choices[Number(key) - 1] || null;
   if (key !== 'Enter' || shiftKey || repeat) return null;
   if (target === 'button') return null;
-  if (target === 'field') return String(noteText || '').trim() ? 'deny' : null;
   if (!armed || defaultToNo) return null;
   return 'once';
 }

@@ -14,6 +14,13 @@ serde_json = "1"
 tantivy = "0.26"
 # The meaning index (src/semantic.rs): bge-small-en-v1.5 through ONNX Runtime,
 # on the GPU with DirectML when there is one. Static build, no DLL to ship.
+# macOS port (2026-10-12): DirectML is Windows only, so its features are added for Windows below and
+# every other platform builds the CPU model (a Mac's CoreML provider is a later step). Cargo unions
+# the features of a crate listed in both tables, so Windows gets exactly what it had.
+fastembed = { version = "7.1.1", default-features = false, features = ["ort-download-binaries-native-tls", "hf-hub-native-tls"] }
+ort = { version = "=2.0.0-rc.13", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
 fastembed = { version = "7.1.1", default-features = false, features = ["ort-download-binaries-native-tls", "hf-hub-native-tls", "directml"] }
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["directml"] }
 

@@ -48,10 +48,13 @@ body.drawer-open .drawer-scrim { opacity: 1; pointer-events: auto; }
 :root[data-theme="dark"] .drawer-scrim { background: rgba(0, 0, 0, .55); }
 body.web .brand { height: 52px; }
 
-body.web .winctl, body.web .tabs-tools, body.web .grip, body.web .gutter, body.web .mic,
+body.web .winctl, body.web .tabs-tools, body.web .grip, body.web .gutter,
 body.web .dig-row, body.web .folder-add, body.web .folder-x, body.web .folder-chip, body.web #phone { display: none !important; }
 /* Ask Claude is a phone button since 2026-10-12, for a PC that takes the command (native.js sets body.can-ask); Dig deeper still runs from the PC. */
 body.web:not(.can-ask) .ask { display: none !important; }
+/* The mic, since 2026-10-12 ("no mic button on the mobile app"): the phone records, the PC's Whisper writes the words into
+   the box (op transcribe). pane.js hides it when the PC has no Whisper or is too old to take the op. */
+body.web .mic[hidden] { display: none !important; }
 
 /* One pane: with a split, only the focused pane shows. */
 body.web .stage { inset: 0; border-radius: 0; border-width: 1px 0 0; box-shadow: none; }
@@ -93,10 +96,18 @@ body.web .theme-btn, body.web .sound { padding: 8px 12px; font-size: 13px; }
 body.web .sheet { width: calc(100vw - 20px); max-height: calc(var(--vvh, 100dvh) - 40px); padding: 18px 16px; }
 body.web .sheet .opt { padding: 13px 14px; }
 body.web .sheet .row button { padding: 12px 18px; }
-body.web .sheet input[type=text] { font-size: 16px; padding: 11px 12px; }
+body.web .sheet input[type=text], body.web .ask-card input[type=text], body.web .ask-card input[type=password] { font-size: 16px; padding: 11px 12px; }
+/* A question or approval in the pane (askcard.js, 2026-10-12): the same card as on the PC, with touch targets of 44 px. */
+body.web .ask-choice, body.web .ask-btn { min-height: 44px; }
+body.web .ask-choice { align-items: center; padding: 8px 10px; }
+body.web .ask-btn { height: auto; padding: 0 18px; }
+body.web .ask-other input { padding: 8px 2px; }
+body.web .ask-dock { margin-bottom: 6px; }
 body.web .menu-item { padding: 12px 12px; font-size: 15px; }
 body.web .takeover { margin-top: 6vh; padding: 20px 18px; }
 body.web .tk-row button { padding: 12px 16px; }
+/* Session in use can offer three choices on a phone (Watch live, Take over here, Cancel): they wrap rather than squeeze. */
+body.web .tk-row { flex-wrap: wrap; }
 body.web .stage-empty .new { padding: 12px 16px; }
 
 /* The PC this phone talks to, at the top of the drawer's footer. */
@@ -332,8 +343,8 @@ body.web.native .composer textarea { font-size: 16px; line-height: 1.4; }
    height as before (the field's line and the settings' line). .composer-row is only a wrapper here (display:
    contents), so its buttons take their places in the card's grid. */
 body.web.native .composer {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; column-gap: 4px;
-  grid-template-areas: "att att att" "attach text send" "chips chips chips";
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: end; column-gap: 4px;
+  grid-template-areas: "att att att att" "attach text mic send" "chips chips chips chips";
   padding: 6px 6px 4px;
 }
 body.web.native .composer > .attachments { grid-area: att; }
@@ -341,6 +352,9 @@ body.web.native .composer > textarea { grid-area: text; align-self: center; padd
 body.web.native .composer-row { display: contents; }
 body.web.native .composer-row > .icon-btn:not(.mic) { grid-area: attach; }
 body.web.native .composer-row > .send { grid-area: send; margin-bottom: 3px; }
+/* The mic beside send, the way Messages places it: round, a 44 px target. */
+body.web.native .composer-row > .mic { grid-area: mic; width: 44px; min-width: 44px; height: 44px; margin-bottom: -1px; border-radius: 50%; }
+body.web.native .composer-row > .mic.rec { color: var(--action-strong); background: var(--action-tint); }
 body.web.native .composer-row > .chips { grid-area: chips; flex-wrap: wrap; overflow: visible; row-gap: 2px; margin-top: 2px; -webkit-mask-image: none; mask-image: none; }
 body.web.native .send:not(.queue):not(.stop) { display: grid; place-items: center; width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; border-radius: 50%; font-size: 0; }
 body.web.native .send:not(.queue):not(.stop)::before {
@@ -526,8 +540,12 @@ body.web.native.paged .chat-chrome.bar-on:not(.strip-on) { padding-bottom: 8px; 
 .cn-title.cn-swap { animation: cn-swap 160ms var(--ease-out); }
 @keyframes cn-swap { from { opacity: .2; } }
 .cn-sub { display: flex; justify-content: center; gap: 6px; min-width: 0; margin-top: 1px; font-size: 11px; line-height: 1.25; color: var(--faint); }
-.cn-sub:not(:has(span:not(:empty))) { display: none; }
+.cn-sub:not(:has(span:not(:empty), .cn-link:not([hidden]))) { display: none; }
 .cn-sub span:empty { display: none; }
+/* Whose a viewer is, or a conversation's viewers (2026-10-12): in that conversation's accent (app.css .acc-N); a tap goes there. */
+.cn-link { flex: 0 0 auto; min-width: 0; max-width: 72%; padding: 0; border: 0; background: none; font: inherit; font-weight: 750; color: hsl(var(--acc-hsl, 232, 30%, 50%)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
+.cn-link[hidden] { display: none; }
+.cn-link.gone { color: var(--faint); font-weight: 600; }
 .cn-pos { flex: none; font-weight: 750; font-variant-numeric: tabular-nums; color: var(--brand-strong); }
 .cn-cwd { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cn-acts { flex: none; display: flex; align-items: center; }
@@ -557,6 +575,9 @@ body.web.native.paged .chat-chrome.bar-on:not(.strip-on) { padding-bottom: 8px; 
 .ts-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ts-chip.busy .ts-t { color: var(--brand-strong); }
 .ts-chip.unread .ts-t { color: var(--good); }
+/* A tab with a question waiting for you, and the pane that asks among a tab's pages: the attention colour, as on the PC (askcard.js). */
+.ts-chip.waiting .ts-t { color: var(--action-strong); }
+.cn-wait { flex: none; font-weight: 700; color: var(--action-strong); }
 .ts-n { flex: none; font: 650 11px/1 var(--font-mono); color: var(--faint); }
 
 /* Where you are among the tab's panes: short segments, the lit one follows the finger (pager.js --on). */
@@ -564,6 +585,7 @@ body.web.native.paged .chat-chrome.bar-on:not(.strip-on) { padding-bottom: 8px; 
 .pager-bar[hidden] { display: none; }
 .pager-bar i { position: relative; width: 20px; height: 3px; border-radius: 2px; background: var(--hairline-strong); overflow: hidden; }
 .pager-bar i::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--brand-strong); opacity: var(--on, 0); }
+.pager-bar i.waiting { background: var(--action); }
 
 /* The pager. */
 body.web.native.paged .stage.on {
@@ -619,6 +641,8 @@ body.web.native.paged .edge-catch { display: block; position: absolute; z-index:
 .desk-kind { flex: none; margin-left: 8px; font: 800 9.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
 .desk-row.quiet .desk-name { font-size: 14.5px; font-weight: 560; }
 .desk-m { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; line-height: 1.2; color: var(--faint); }
+/* A viewer's conversation on the PC (2026-10-12): quiet, under the viewer's name, the same size as the row's meta line. */
+.desk-for { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; line-height: 1.2; color: var(--soft); }
 .desk-row.busy .desk-m { color: var(--brand-strong); }
 .desk-row.front .desk-m { color: var(--soft); }
 .desk-more { width: 100%; min-height: 42px; border: 0; border-radius: 12px; background: hsla(238, 26%, 52%, .08); color: var(--brand-deep); font-weight: 720; font-size: 14px; cursor: pointer; }
@@ -721,6 +745,23 @@ body.web .pane.view-only .view-only-note {
 }
 .view-only-note b { font: 900 10px/1.2 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--brand-strong); }
 
+/* The follow bar (2026-10-12, the shared view; pane.js renderFollowBar): a pane that shows a conversation open in a pane on the PC
+   says so at the top of the conversation and offers Take over. One quiet row with a hairline under it: no dot, no stripe, no pill.
+   The model, effort and mode chips of such a pane are the PC pane's, so they stay on screen but cannot be changed here. */
+.follow-bar { display: none; }
+body.web .pane.following .follow-bar {
+  position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 44px; margin: 0 0 6px; padding: 0 4px 0 16px;
+  background: hsla(var(--w), .74); -webkit-backdrop-filter: blur(14px) saturate(1.6); backdrop-filter: blur(14px) saturate(1.6);
+  border-bottom: 1px solid var(--hairline);
+}
+.follow-bar .fb-t { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--fs-small); color: var(--soft); }
+.follow-bar .fb-t svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.follow-bar .fb-w { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.follow-bar .fb-w b { font-weight: 680; color: var(--ink); }
+.follow-bar .fb-go { flex: none; min-width: 44px; min-height: 44px; padding: 0 14px; border: 0; background: none; font: inherit; font-size: var(--fs-small); font-weight: 760; color: var(--brand-strong); cursor: pointer; }
+.follow-bar .fb-go:active { opacity: .6; }
+body.web .pane.following .chip-btn.model, body.web .pane.following .chip-btn.effort, body.web .pane.following .chip-btn.mode { opacity: .6; pointer-events: none; }
 /* ---------- git worktrees on the phone (2026-10-12; apaki/ui/worktree.js, diff.js) ----------
    Arthur: "make sure we're updating the app alongside the desktop app so all functionality is equal across the board".
    The window's own code draws the Worktrees view, the branch label, the sheets and the diff viewer; this file gives
@@ -808,6 +849,18 @@ body.web.native .pane.finding.find-cut > .prompt-pin { padding-top: 120px; }
 .bv-k { font: 900 var(--fs-micro)/1 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--brand-strong); }
 .bv-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 var(--fs-title)/1.25 var(--font-display); font-stretch: 112%; letter-spacing: -.012em; color: var(--ink-deep); }
 .bv-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
+/* The pages of the conversation's browser on the PC (2026-10-12), from two: one sideways row, the one shown filled. */
+.bv-tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; margin: 0 -2px; padding: 0 2px; }
+.bv-tabs[hidden] { display: none; }
+.bv-tabs::-webkit-scrollbar { display: none; }
+.bv-tab {
+  flex: none; max-width: min(56vw, 220px); height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px;
+  background: hsla(238, 26%, 52%, .09); color: var(--soft); font: 650 var(--fs-small)/1 var(--font-body);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation;
+  transition: background-color 160ms var(--ease-hover), color 160ms var(--ease-hover);
+}
+.bv-tab.on { background: var(--card); border-color: var(--hairline-strong); color: var(--ink-deep); }
+@media (prefers-reduced-motion: reduce) { .bv-tab { transition: none; } }
 .bv-body { position: relative; min-height: 0; flex: 0 1 auto; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; border: 1px solid var(--hairline-strong); border-radius: 14px; background: var(--tint); }
 .bv-shot { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; touch-action: manipulation; }
 .bv-shot[hidden] { display: none; }
@@ -842,3 +895,45 @@ body.bv-open .toast { z-index: 90; }
   .bv-state.skeleton { animation: none; }
   .bv-row button, .bv-row button:active { transition: none; transform: none; }
 }
+
+/* ---------- the compact session list and folders that open in place, on the phone (2026-10-12, sessionlist.js) ----------
+   One line per row (the name and the time), 48 px tall for the finger; the row open on the PC side shows its second
+   line; a long press opens the menu (native.js), so there is no ... button. Folders open in place in the same scroll as
+   the list, their rows the list's rows, indented. */
+body.web.native :is(.sessions, .folder-sess) li.srow { padding: 0 34px 0 18px; }
+body.web.native .srow .sr-line { min-height: 48px; gap: 8px; }
+body.web.native .srow .sr-more { display: none; }
+body.web.native .srow .sr-time { padding-right: 0; font-size: var(--fs-small); }
+body.web.native .srow .sr-s { width: 16px; height: 16px; }
+body.web.native .srow .sr-s svg { width: 14px; height: 14px; }
+body.web.native .srow .sr-lead { width: 26px; height: 26px; }
+body.web.native .srow .sr-lead svg { width: 17px; height: 17px; }
+body.web.native .srow .sr-detail-in { padding-left: 34px; }
+body.web.native :is(.sessions, .folder-sess) .srow .snip, body.web.native :is(.sessions, .folder-sess) .srow .why { margin-left: 34px; }
+body.web.native .srow:focus-visible .sr-detail, body.web.native .srow.menu-open .sr-detail { grid-template-rows: 0fr; }
+body.web.native .srow.on .sr-detail, body.web.native .srow.subs-open .sr-detail { grid-template-rows: 1fr; }
+body.web.native :is(.sessions, .folder-sess) .srow .m { padding-bottom: 10px; }
+/* "Open" moves from after the name (which is cut now) to before the time. */
+body.web.native .sessions li.srow.on .t::after, body.web.native .sessions li.srow.shown .t::after { content: none; }
+body.web.native .srow .sr-end { display: flex; align-items: center; gap: 8px; }
+body.web.native .srow.on .sr-end::before, body.web.native .srow.shown .sr-end::before {
+  content: 'Open'; font: 800 var(--fs-micro)/1 var(--font-display); font-stretch: 125%; letter-spacing: .1em; text-transform: uppercase; color: var(--brand-strong);
+}
+body.web.native .sessions li.sr-group { padding: 16px 18px 6px; font-size: var(--fs-small); }
+body.web.native .sessions li.sr-group::before, body.web.native .sessions li.sr-group::after { content: none; }
+/* Folders: no inner scroll on the phone (the page scrolls), rows a finger tall. */
+body.web.native .rail-folders .folder-list { max-height: none; overflow: visible; padding: 4px 0 0; }
+body.web.native .folder-row { height: 48px; padding: 0 16px 0 18px; border-radius: 0; gap: 10px; }
+body.web.native .folder-row .fn { font-size: var(--fs-body); }
+body.web.native .folder-sess { padding-left: 16px; }
+body.web.native .folder-sess li.srow { position: relative; margin: 0; border: 0; border-radius: 0; box-shadow: none; background: none; }
+body.web.native .folder-sess li.srow::before { content: ''; position: absolute; left: 18px; right: 0; bottom: 0; height: 1px; background: var(--hairline); }
+body.web.native .folder-sess li.srow:active, body.web.native .folder-row:active { background: hsla(232, 60%, 62%, .1); }
+body.web.native .folder-note { padding: 8px 18px 12px; }
+/* Details on the phone: a narrower label column, and copy buttons a finger can hit. */
+body.web .sheet .sd-rows { grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; }
+body.web .sheet .sd-btn { min-height: 44px; min-width: 56px; padding: 0 12px; border-radius: 10px; }
+body.web .sheet .sd-rows dd { align-items: center; }
+/* Keep-warm's moving ring sits inside the full-width row, rounded, so it never reads as a mark down one edge. */
+body.web.native :is(.sessions, .folder-sess) li.srow .warm-ring { inset: 4px 10px 4px 10px; border-radius: 10px; }
+body.web.native .folder-note .link-btn { min-height: 44px; }
