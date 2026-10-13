@@ -33,6 +33,8 @@
 //!      node_modules and latch-index, and `<exe dir>\node\node.exe` runs it,
 //!      so the installed app needs neither the repo nor a Node install.
 //!      apaki\scripts\package-apaki.ps1 builds that folder.
+//!      On macOS (2026-10-12) the same folders sit in `Myrlin Apaki.app/Contents/Resources` (Tauri's
+//!      bundle.resources; `mac::bundle_dirs`), made by apaki/scripts/package-apaki-mac.sh.
 //!   2. APAKI_ROOT, if set (a checkout to run instead).
 //!   3. The checkout this crate was built in (development).
 //!
