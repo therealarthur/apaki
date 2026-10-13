@@ -268,6 +268,8 @@ export function createCodex(env) {
     return {
       model: model?.id || cfg.model || '', effort: effortFor(model, cfg.model_reasoning_effort),
       mode: presetOf({ approvalPolicy: cfg.approval_policy, sandbox: cfg.sandbox_mode }),
+      // The speed the user's own Codex config starts threads with (service_tier), so the popup shows what really applies.
+      speed: typeof cfg.service_tier === 'string' && /^[a-z][a-z0-9_-]{0,23}$/.test(cfg.service_tier) ? cfg.service_tier : null,
     };
   }
 

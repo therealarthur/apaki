@@ -36,11 +36,11 @@ export const SUMMARIES = [
   { value: 'none', label: 'Off', hint: 'No summary of its thinking' },
 ];
 
-export const ULTRACODE_LINE = 'Claude plans and runs workflows of sub-agents by itself, at any effort. Spends a lot more.';
+export const ULTRACODE_LINE = 'Claude runs sub-agent workflows by itself. Uses much more.';
 export const DEFAULT_SIZE_LINE = 'Size is Claude Code\'s own default: Medium, Small on a Pro plan.';
 export const UNAVAILABLE_LINE = 'This model cannot run Ultracode here, so it waits. A model that can picks it up again.';
-export const CODEX_ULTRA_LINE = 'Codex has no separate Ultracode switch. Ultra above is its version: top reasoning, and it hands tasks to other agents by itself.';
-export const CODEX_NO_ULTRA_LINE = 'Codex has no Ultracode switch. Its version is the Ultra effort, which this model does not offer.';
+export const CODEX_ULTRA_LINE = 'Codex has no Ultracode switch. Ultra above is its version.';
+export const CODEX_NO_ULTRA_LINE = 'Codex has no Ultracode switch. Its version is Ultra, which this model lacks.';
 
 /** Pick values the popup hands back (a plain effort comes back as the effort's own word). */
 export const PICK_ULTRACODE = 'ultracode';

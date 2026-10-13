@@ -200,3 +200,35 @@ test('the lists the pieces keep agree: sizes and summaries in the policy, the en
   assert.deepEqual(grab(policy, 'CODEX_SUMMARIES'), [...SUMMARIES]);
   assert.ok(policy.includes(`const CODEX_SPEED_RE = /${SPEED_RE.source}/;`), 'the speed pattern is the same');
 });
+
+/* ---------- the engine's wiring (engine.js is a script, so it is read, like the other wiring checks) ---------- */
+
+test('the engine applies effort and tune live with both keys, keeps them per pane and as the desktop default, and falls back to a restart', () => {
+  const src = read('apaki', 'engine', 'engine.js').replace(/\r\n/g, '\n');
+  assert.match(src, /import \{ claudeChange, claudeTune, liveSettings, startSettings \} from '\.\/tune\.js'/);
+  assert.match(src, /const SERIAL_OPS = new Set\(\[[^\]]*'effort', 'tune'/, 'tune runs in order with effort');
+  // effort: the SDK's flag settings, both keys through liveSettings, a restart only when the call is refused
+  const effort = /effort: async \(c\) => \{[\s\S]*?\n  \},\n/.exec(src)[0];
+  assert.match(effort, /liveSettings\(prev, \{ effort: p\.effort, \.\.\.claudeTune\(p\.tune\) \}\)/);
+  assert.match(effort, /p\.runner\.applyFlags\(flags\)\)\) await p\.runner\.restart\(\{ effort: c\.effort \}\)/);
+  // tune: refuses Ultracode on for a restricted phone, keeps it for the pane, the desktop's last pick becomes the default
+  const tune = /tune: async \(c\) => \{[\s\S]*?\n  \},\n/.exec(src)[0];
+  assert.match(tune, /tuneRestricted\(p\) && change\.ultracode === true/);
+  assert.match(tune, /capTuneText\(phoneCap\(p\.id\)\)/);
+  assert.match(tune, /if \(!parsePhoneId\(p\.id\)\) defaults\.tune = claudeTune\(p\.tune\)/, 'a phone never sets the desktop default');
+  assert.match(tune, /p\.runner\.applyFlags\(flags\)\)\) await p\.runner\.restart\(\{\}\)/);
+  assert.match(src, /flagSettings: \(\) => \(\{ \.\.\.\(compactSettings\(prefs\.autoCompact\) \|\| \{\}\), \.\.\.startSettings\(p\.tune, \{ restricted: tuneRestricted\(p\) \}\) \}\)/, 'a new process starts with the pane\'s tune');
+  assert.match(src, /if \(parsePhoneId\(id\)\) \{ p\.mode = capDefaultMode\(phoneCap\(id\)\); p\.tune = claudeTune\(null\); \}/, 'a phone pane starts with Ultracode off');
+  assert.match(src, /if \(restricted\) p\.tune = claudeTune\(\{ size: p\.tune\?\.size \}\)/, 'lowering a phone\'s access switches Ultracode off');
+  // every settings event carries the tune, and the model op checks whether Ultracode can still run
+  assert.equal((src.match(/emit\(\{ ev: 'settings'/g) || []).length, 0, 'one helper builds the settings event now');
+  assert.match(src, /function paneSettings\(p\) \{\n  return \{ ev: 'settings', paneId: p\.id, model: p\.model, effort: p\.effort, mode: p\.mode, tune: tuneView\(p\) \}/);
+  assert.match(src, /await p\.runner\?\.setModel\(c\.model\);\n    emit\(paneSettings\(p\)\);\n[^\n]*\n    await tuneCheck\(p\)/);
+});
+
+test('the Claude Code runner starts with Ultracode in its settings and never touches a file', () => {
+  const src = read('src', 'runner.js');
+  assert.match(src, /async applyFlags\(flags\)/);
+  assert.match(src, /applyFlagSettings\(flags\)/);
+  assert.equal(/writeFileSync|updateSettings/.test(src.slice(src.indexOf('async applyFlags'), src.indexOf('async stop()'))), false, 'no settings file is written');
+});

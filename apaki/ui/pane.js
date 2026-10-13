@@ -17,6 +17,8 @@
 import { esc, md, streamCut, streamState } from './markdown.js';
 import { EFFORTS, effortGrid, menu } from './menu.js';
 import { pickVerb } from './verbs.js';
+// The effort popup beyond the effort levels: Ultracode and its workflow size (Claude), reasoning summary and speed (Codex), tune.js.
+import { EFFORT_HINTS, chipExtra, chipExtraHtml, chipTitle, claudeEffortMenu, claudePick, codexEffortMenu, codexPick, tuneChange, tuneFor, ultracodeLock } from './tune.js';
 // What Claude Code shows that is not Claude's reply: blocked prompts, hook errors, retries, limits (2026-10-11).
 import { noticeFor } from './notices.js';
 import { SHOW_TOOL, artifactCard, kindGlyph, kindLabel, linkCard, parseOpened, parseRef, updateCard } from './artifacts.js';
@@ -76,7 +78,7 @@ export const MODES = [
   { value: 'plan', label: 'Plan mode', short: 'Plan', mark: '⏸', hint: 'Claude plans and asks before changing anything' },
   { value: 'default', label: 'Ask permissions', short: 'Ask', mark: '?', hint: 'Your Claude Code permission rules decide' },
 ];
-const EFFORT_HINTS = { low: 'Fastest, least thinking', medium: 'Balanced', high: 'Thinks harder', xhigh: 'Thinks much harder', max: 'Everything it has' };
+// (EFFORT_HINTS moved to tune.js, 2026-10-13, where the effort popup's rows are built.)
 
 export const short = (p) => String(p || '').replace(/^C:\\Users\\[^\\]+/i, '~');
 
@@ -152,6 +154,10 @@ export class Pane {
     if (this.kind === 'codex') { this.model = settings.model || ''; this.effort = settings.effort || ''; this.mode = settings.mode || ''; }
     // What the person chose in this Codex pane (the rest is the thread's own or the user's Codex config): only picks travel with open.
     this.picked = { model: false, effort: false, mode: false };
+    // Beside the effort (2026-10-13, tune.js): Ultracode and its workflow size on a Claude pane, the reasoning summary and speed on a Codex one.
+    this.tune = tuneFor(this.kind, settings.tune || (this.kind === 'codex' ? null : host.defaults.tune));
+    // A phone below Full access never has Ultracode on (the PC keeps it off; a pane restored with it on says what is true).
+    if (this.kind !== 'codex' && ultracodeLock(host.phoneCap?.() || 'full')) this.tune.ultracode = false;
     this.billing = host.defaults.billing;
     this.busy = false;
     this.unread = false;
@@ -234,7 +240,8 @@ export class Pane {
     this.$.mic.onclick = () => this.host.voice(this);
     // A Codex pane's pickers list Codex's models, their efforts and the Codex app's permission presets (codexMenu below).
     this.$.model.onclick = () => (this.kind === 'codex' ? this.codexMenu('model') : menu(this.$.model, Object.entries(MODEL_NAMES).map(([value, label]) => ({ value, label, checked: value === this.model })), { onPick: (v) => this.setModel(v) }));
-    this.$.effort.onclick = () => (this.kind === 'codex' ? this.codexMenu('effort') : menu(this.$.effort, EFFORTS.map((value) => ({ value, html: `${effortGrid(value)}<span class="ml">${value}</span>`, hint: EFFORT_HINTS[value], checked: value === this.effort })), { onPick: (v) => this.setEffort(v), width: 250 }));
+    // The effort popup (2026-10-13): the levels, and under them Ultracode with its size (Claude) or the reasoning summary and speed (Codex).
+    this.$.effort.onclick = () => (this.kind === 'codex' ? this.codexMenu('effort') : this.effortMenu());
     this.$.mode.onclick = () => (this.kind === 'codex' ? this.codexMenu('mode') : menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 }));
     this.$.folder.onclick = () => this.host.folderMenu(this, this.$.folder);
     // The branch label: changes, commit, push, pull request, merge, remove (worktree.js paneMenu).
@@ -304,6 +311,8 @@ export class Pane {
     this.kind = kind;
     if (was !== kind) {
       // The picks of one are not the other's: a Claude model means nothing to Codex.
+      this.tune = tuneFor(kind, kind === 'codex' ? null : this.host.defaults.tune);
+      if (kind !== 'codex' && ultracodeLock(this.host.phoneCap?.() || 'full')) this.tune.ultracode = false;
       if (kind === 'codex') {
         this.model = ''; this.effort = ''; this.mode = ''; this.picked = { model: false, effort: false, mode: false };
         // Codex bills the ChatGPT account it is signed in with, not Claude's: blank until the engine says which.
@@ -348,8 +357,8 @@ export class Pane {
     if (which === 'model') {
       menu(this.$.model, info.models.map((m) => ({ value: m.id, label: m.name, hint: m.description, checked: m.id === this.model })), { onPick: (v) => this.setModel(v), width: 340 });
     } else if (which === 'effort') {
-      const levels = effortNames(info.models, this.model);
-      menu(this.$.effort, (findModel(info.models, this.model)?.efforts || []).map((e) => ({ value: e.value, html: `${effortGrid(e.value, { levels })}<span class="ml">${esc(e.value)}</span>`, hint: e.description, checked: e.value === this.effort })), { onPick: (v) => this.setEffort(v), width: 270 });
+      // That model's own efforts (Ultra where it offers it), the reasoning summary, the speed it lists, and the line on Ultracode (tune.js).
+      this.openEffortPopup(300);
     } else {
       menu(this.$.mode, CODEX_MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 360 });
     }
@@ -361,22 +370,54 @@ export class Pane {
     const info = this.codexInfo();
     model.textContent = this.model ? modelLabel(info?.models, this.model) : 'Model';
     const levels = effortNames(info?.models, this.model);
-    effort.innerHTML = `${effortGrid(this.effort, { levels })}<span>${esc(this.effort || 'effort')}</span>`;
+    // A faster speed than standard shows as "+ fast" after the effort word, nothing else (tune.js chipExtra).
+    const row = findModel(info?.models, this.model);
+    effort.innerHTML = `${effortGrid(this.effort, { levels })}<span>${esc(this.effort || 'effort')}${chipExtraHtml(chipExtra('codex', this.tune, { model: row }))}</span>`;
     const m = codexMode(this.mode);
     mode.innerHTML = `<span class="mm">${m.mark}</span><span class="ml-full">${esc(m.label)}</span><span class="ml-short">${esc(m.short || m.label)}</span>`;
     mode.setAttribute('aria-label', `Permissions: ${m.label}`);
     mode.dataset.mode = m.value;
     mode.title = `${m.hint} · Shift+Tab to cycle`;
     model.title = 'Model';
-    effort.title = 'Reasoning effort';
+    effort.title = chipTitle('codex', this.effort, this.tune, { model: row });
   }
+
+  /**
+   * The effort popup (2026-10-13), for either kind: the levels and what sits beside them (tune.js builds the rows). A pick of
+   * an effort closes it; Ultracode, a size, a summary or a speed leave it open and repaint it, so the size row can appear
+   * under the switch the moment it is on.
+   */
+  openEffortPopup(width) {
+    const rows = () => {
+      if (this.kind === 'codex') {
+        const info = this.codexInfo();
+        return codexEffortMenu({ model: findModel(info?.models, this.model), effort: this.effort, tune: this.tune, defaults: info?.defaults || null });
+      }
+      return claudeEffortMenu({ effort: this.effort, tune: this.tune, lock: ultracodeLock(this.host.phoneCap?.() || 'full') });
+    };
+    const popup = menu(this.$.effort, rows(), {
+      width,
+      onPick: (v) => {
+        const pick = this.kind === 'codex' ? codexPick(v) : claudePick(v, this.tune);
+        if (!pick) return;
+        if (pick.effort) this.setEffort(pick.effort);
+        if (pick.tune) { this.setTune(pick.tune); popup.update?.(rows()); }
+      },
+    });
+    return popup;
+  }
+
+  /** The Claude effort popup (Max, Ultracode and its workflow size). */
+  effortMenu() { return this.openEffortPopup(300); }
 
   /** The settings line under the message box: model, effort grid, mode, billing. */
   renderChips() {
     if (this.kind === 'codex') { this.renderCodexChips(); return; }
     const { model, effort, mode } = this.$;
     model.textContent = MODEL_NAMES[this.model] || this.model;
-    effort.innerHTML = `${effortGrid(this.effort)}<span>${esc(this.effort)}</span>`;
+    // Ultracode on shows as "+ ultracode" after the effort word ("+ ultra" in a narrow box): a word, not a pill (tune.js chipExtra).
+    effort.innerHTML = `${effortGrid(this.effort)}<span>${esc(this.effort)}${chipExtraHtml(chipExtra('claude', this.tune))}</span>`;
+    effort.title = chipTitle('claude', this.effort, this.tune);
     const m = MODES.find((x) => x.value === this.mode) || MODES[0];
     // The full label, and the short one a narrow message box shows instead (app.css .ml-short).
     mode.innerHTML = `<span class="mm">${m.mark}</span><span class="ml-full">${esc(m.label)}</span><span class="ml-short">${esc(m.short || m.label)}</span>`;
@@ -629,6 +670,16 @@ Click for changes, commit, push, pull request, merge`;
     });
   }
   setEffort(x) { this.effort = x; this.picked.effort = true; this.renderChips(); this.send('effort', { effort: x }); this.host.changed(this); }
+  /**
+   * Ultracode and its workflow size (Claude), the reasoning summary and the speed (Codex): `change` names only the keys that
+   * moved. The engine applies it to the running session at once and keeps it for the pane; the window saves it with the workspace.
+   */
+  setTune(change) {
+    this.tune = tuneChange(this.kind, this.tune, change);
+    this.renderChips();
+    this.send('tune', change);
+    this.host.changed(this);
+  }
   setMode(x) { this.mode = x; this.picked.mode = true; this.renderChips(); this.send('mode', { mode: x }); this.host.changed(this); }
 
   /* ---------- open ---------- */
@@ -648,9 +699,10 @@ Click for changes, commit, push, pull request, merge`;
     if (s?.codex || isCodexId(s?.id)) this.setKind('codex');
     else if (s && this.kind === 'codex' && s.id !== this.sessionId) this.setKind('claude');
     // A Codex pane sends only what the person picked here; the thread's own model, effort and permissions are the engine's to read.
+    // The tune (Ultracode and size; summary and speed) travels with open like the picks do.
     const picks = this.kind === 'codex'
-      ? { kind: 'codex', ...(this.picked.model ? { model: this.model } : {}), ...(this.picked.effort ? { effort: this.effort } : {}), ...(this.picked.mode ? { mode: this.mode } : {}) }
-      : { model: this.model, effort: this.effort, mode: this.mode };
+      ? { kind: 'codex', ...(this.picked.model ? { model: this.model } : {}), ...(this.picked.effort ? { effort: this.effort } : {}), ...(this.picked.mode ? { mode: this.mode } : {}), tune: this.tune }
+      : { model: this.model, effort: this.effort, mode: this.mode, tune: { ultracode: this.tune?.ultracode === true, size: this.tune?.size || null } };
     this.send('open', { sessionId, cwd: s?.cwd || this.cwd || null, warm, force, ...picks });
   }
 
@@ -2401,6 +2453,11 @@ Click for changes, commit, push, pull request, merge`;
         if (e.kind === 'codex') {
           this.setKind('codex', { fromEngine: true });
           this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode;
+          if (e.tune) this.tune = tuneFor('codex', e.tune);
+          this.renderChips();
+        } else if (e.tune && (this.following || e.attached)) {
+          // A pane that shows the PC's conversation hears the PC pane's Ultracode; one that opened its own already holds what it sent.
+          this.tune = tuneFor('claude', e.tune);
           this.renderChips();
         }
         for (const live of this.streams.values()) painter.cancel(live);
@@ -2481,7 +2538,12 @@ Click for changes, commit, push, pull request, merge`;
       case 'commands': this.commands = e.commands || []; break;
       case 'artifact': this.onArtifact(e); break;
       case 'openUrl': this.onOpenUrl(e); break;
-      case 'settings': this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode; this.renderChips(); break;
+      case 'settings':
+        this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode;
+        // The engine's word on Ultracode and its size (or a Codex pane's summary and speed), including "cannot run it here".
+        if (e.tune) this.tune = tuneFor(this.kind, e.tune);
+        this.renderChips();
+        break;
       case 'note': this.note(e.text, e.tone || ''); break;
       case 'steered': { const it = this.steering.get(e.qid); this.steering.delete(e.qid); if (it) this.addUser(it.text, it.attachments, { steered: true }); if (this.busy) this.showWorking?.(); break; }
       case 'steer_missed': {

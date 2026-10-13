@@ -464,6 +464,15 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
       case 'interrupt': pane?.turn?.abort(); break;
       case 'model': later(30, { ev: 'settings', paneId: c.paneId, model: c.model }); break;
       case 'effort': later(30, { ev: 'settings', paneId: c.paneId, effort: c.effort }); break;
+      // Ultracode and its workflow size (2026-10-13): kept per pane and echoed, as the real engine's settings event does.
+      case 'tune': {
+        const t = { ultracode: false, size: null, ...(pane?.tune || {}) };
+        if (typeof c.ultracode === 'boolean') t.ultracode = c.ultracode;
+        if ('size' in c) t.size = c.size;
+        if (pane) pane.tune = t;
+        later(30, { ev: 'settings', paneId: c.paneId, tune: t });
+        break;
+      }
       case 'mode': later(30, { ev: 'settings', paneId: c.paneId, mode: c.mode }); break;
       case 'historyBefore': {
         const h = buildHistory(c.sessionId, NOW);
