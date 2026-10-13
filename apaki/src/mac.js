@@ -10,7 +10,8 @@
 //   1. <html data-platform="mac"> and the layout the native traffic lights need. The window has a native title bar
 //      drawn over the page (titleBarStyle Overlay): the three buttons sit at the top left, so the brand row (and the
 //      tab row when the sidebar is hidden) leaves room for them, and the page's own minimize/maximize/close buttons,
-//      which draw the Windows chrome, are hidden.
+//      which draw the Windows chrome, are hidden. The Myrlin mark beside the wordmark gives way too: with the lights
+//      in front, the sidebar's width holds the wordmark and the hide button, not all three.
 //   2. Shortcut hints say Cmd where the Mac uses it. The key handlers already accept Cmd as well as Ctrl; only the
 //      words in hover tips are changed ("Ctrl+T" shows as "Cmd+T"). Ctrl+Tab stays: Cmd+Tab is the system's app switcher.
 (() => {
@@ -19,8 +20,9 @@
 
   const CSS = `
     html[data-platform="mac"] .winctl { display: none; }
-    html[data-platform="mac"] .brand { padding-left: 86px; }
-    html[data-platform="mac"] body.rail-collapsed .topbar { padding-left: 86px; }
+    html[data-platform="mac"] .brand { padding-left: 84px; gap: 0; }
+    html[data-platform="mac"] .brand .brand-mark { display: none; }
+    html[data-platform="mac"] body.rail-collapsed .topbar { padding-left: 84px; }
     html[data-platform="mac"] body.rail-collapsed .rail-show { margin-left: 4px; }
   `;
 
