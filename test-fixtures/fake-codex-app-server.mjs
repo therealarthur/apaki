@@ -43,7 +43,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const NOW = Math.floor(Date.now() / 1000);
 const MODELS = [
-  { id: 'gpt-6.1-sol', model: 'gpt-6.1-sol', upgrade: null, upgradeInfo: null, availabilityNux: null, displayName: 'GPT-6.1-Sol', description: 'Latest workhorse model for coding and everyday work.', modelSpecialty: null, hidden: false, supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map((e) => ({ reasoningEffort: e, description: `${e} reasoning` })), defaultReasoningEffort: 'low', inputModalities: ['text', 'image'], isDefault: true },
+  { id: 'gpt-6.1-sol', model: 'gpt-6.1-sol', upgrade: null, upgradeInfo: null, availabilityNux: null, displayName: 'GPT-6.1-Sol', description: 'Latest workhorse model for coding and everyday work.', modelSpecialty: null, hidden: false, supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map((e) => ({ reasoningEffort: e, description: `${e} reasoning` })), defaultReasoningEffort: 'low', inputModalities: ['text', 'image'], isDefault: true, serviceTiers: [{ id: 'priority', name: 'Fast', description: '2x speed, increased usage' }] },
   { id: 'gpt-6-astra', model: 'gpt-6-astra', upgrade: null, upgradeInfo: null, availabilityNux: null, displayName: 'GPT-6-Astra', description: 'Frontier intelligence for the most demanding work.', modelSpecialty: null, hidden: false, supportedReasoningEfforts: ['low', 'medium', 'high'].map((e) => ({ reasoningEffort: e, description: `${e} reasoning` })), defaultReasoningEffort: 'medium', inputModalities: ['text'], isDefault: false },
   { id: 'gpt-hidden', model: 'gpt-hidden', hidden: true, displayName: 'Hidden', description: '', supportedReasoningEfforts: [], defaultReasoningEffort: 'low', isDefault: false },
 ];

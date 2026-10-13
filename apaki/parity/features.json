@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "about": "Feature ledger of the upstream parity tracker (apaki/parity/PARITY.md). One entry per feature Apaki supports or plans. Edit by hand; npm test checks the shape.",
-  "updated": "2026-10-12",
+  "updated": "2026-10-13",
   "features": [
     {
       "id": "claude-code-runner",
@@ -2468,6 +2468,64 @@
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0" },
       "notes": "openTerminal { paneId?, sessionId, kind } (the pane header, its menu, and the sidebar row menu) opens Windows Terminal, else PowerShell, running apaki/bin/apaki-terminal.mjs with the same command the console builds. The pane lets go first; the window's runner records that it holds the conversation (held-<id>.json, and the Claude session lock), so a send from the pane shows 'Taken over' instead of writing over it, Take it back stops that window by PID, and the pane re-reads the transcript when the window closes. Phone: n/a, it would open a window on the PC's screen (PC_ONLY_OPS)."
+    },
+    {
+      "id": "ultracode-effort-popup",
+      "title": "Ultracode and its workflow size in the effort popup",
+      "product": "claude-sdk",
+      "upstream": [
+        "claude-sdk:setting:ultracode",
+        "claude-sdk:setting:workflowSizeGuideline",
+        "claude-sdk:setting:workflowKeywordTriggerEnabled",
+        "claude-sdk:setting:disableWorkflows",
+        "claude-sdk:query-method:applyFlagSettings",
+        "claude-sdk:option:settings",
+        "claude-sdk:enum:EffortLevel",
+        "claude-sdk:setting:effortLevel"
+      ],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/tune.js", "apaki/engine/engine.js", "apaki/engine/remote-policy.js", "apaki/engine/remote.js", "src/runner.js", "apaki/ui/tune.js", "apaki/ui/menu.js", "apaki/ui/pane.js", "apaki/ui/app.js", "apaki/ui/app.css", "test/apaki-tune.test.js", "test/apaki-tune-ui.test.js"],
+      "commits": ["b43a0fa", "e02207d", "0c75dd0"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": { "claude-sdk": "0.3.295" },
+      "notes": "The effort chip opens a popup: the five efforts (Max included), then Ultracode as an on/off row with one line of explanation and, while on, the workflow size (Small, Medium, Large, No limit; none picked is Claude Code's own default). The chip says \"+ ultracode\" after the effort (\"+ ultra\" in a narrow box), a word and not a pill. Applied to a running session at once with applyFlagSettings (no restart, no settings file written); a new process gets it through the settings option. Measured against the bundled Claude Code with getSettings().applied: an effortLevel that changes the level turns ultracode off unless the same call carries the ultracode key, so every effort change sends both. Kept per pane in the saved workspace and inherited by new desktop panes like effort; a phone pane starts with it off. Phone: the same popup (the shared window modules); turning it on needs Full access (No shell and Chat only are refused with the reason, their panes start with workflows disabled and the keyword trigger off); turning it off, a size and every Codex setting stay open. A model that cannot run Ultracode (measured: claude-opus-4-6) gets a note and the pane keeps its wish. Not exposed: advisorModel (see advisor-model-setting). Looked at in the demo harness (desktop 1280 by 800 and phone 390 by 844, light and dark)."
+    },
+    {
+      "id": "codex-effort-popup-summary-speed",
+      "title": "Codex effort popup: Ultra, reasoning summary and speed",
+      "product": "codex",
+      "upstream": [
+        "codex:client-request:turn/start",
+        "codex:client-request:model/list",
+        "codex:enum:ReasoningSummary",
+        "codex:type:ModelServiceTier",
+        "codex:type:ReasoningEffortOption",
+        "codex:enum:MultiAgentMode"
+      ],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": ["apaki/engine/tune.js", "apaki/engine/codex-panes.js", "apaki/engine/codex-map.js", "apaki/ui/tune.js", "apaki/ui/pane.js", "apaki/ui/app.css", "test/apaki-tune.test.js", "test/apaki-tune-ui.test.js", "test/apaki-codex-e2e.test.js"],
+      "commits": ["b43a0fa", "0c75dd0"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": { "codex": "0.161.0" },
+      "notes": "The same popup on a Codex pane: that model's own efforts, the reasoning summary (Auto, Short, Detailed, Off: turn/start summary) and, for a model that lists faster tiers, the speed (Standard is serviceTier default, Fast is the model's priority tier). Codex has no Ultracode switch: the app-server marks multiAgentMode ignored and says to use effort ultra, which a model advertises as one of its efforts (\"Maximum reasoning with automatic task delegation\"), so the popup says so instead of inventing a toggle. Picks ride with the turn, only once picked; ~/.codex/config.toml is never written. A model that lacks the picked speed drops it. The speed row shows the user's own service_tier (config/read) until a pick. Not used: verbosity (a config key only, not a thread or turn field), collaborationMode plan (experimental), the personality field (deprecated). Open to every phone access level: the sandbox that limits a restricted phone is the OS's, whoever the agent is."
+    },
+    {
+      "id": "advisor-model-setting",
+      "title": "Advisor model for the server-side advisor tool",
+      "product": "claude-sdk",
+      "upstream": [
+        "claude-sdk:setting:advisorModel",
+        "claude-sdk:query-method:applyFlagSettings"
+      ],
+      "status": "planned",
+      "surfaces": { "desktop": "planned", "phone": "planned" },
+      "where": [],
+      "commits": [],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": { "claude-sdk": "0.3.295" },
+      "notes": "Looked at 2026-10-13 for the effort popup and left out. applyFlagSettings({ advisorModel: \"opus\" }) is accepted on an idle session and getSettings().applied.advisor then says claude-opus-5-5 (null clears it), so a row in the popup would apply live. Not done: which models may advise, whether it bills extra, and what it does on a subscription are unverified without a billable turn. Arthur decides."
     }
   ]
 }

@@ -408,6 +408,24 @@ Haiku call with no tools over the PC's own search indexes, about a cent) but
 one question at a time per phone (AskGate). Dig deeper, stopSession,
 revealFolder, openExternal and browserTool stay out of reach of a phone.
 
+Update 2026-10-13 (Ultracode): the allowlist also holds `tune`, the settings
+beside a pane's effort: Ultracode and its workflow size on a Claude pane, the
+reasoning summary and speed on a Codex pane. Ultracode makes Claude plan and
+run workflows of sub-agents. A restricted phone's tool limits (the blocked
+tool list, the capability hook, plan mode) live inside the one Claude Code
+process and nothing shows they reach a workflow's agents, and the "ultracode"
+keyword in a prompt is a second way to start one. So turning Ultracode ON is
+refused for No shell and Chat only (remote-policy.js capTuneText, with the
+reason), an open from such a phone is clamped to Ultracode off, and the panes
+of such a phone start their Claude Code with workflows disabled
+(`disableWorkflows`, `workflowKeywordTriggerEnabled: false`, engine/tune.js
+startSettings; measured: getSettings().applied.ultracodeAvailable is false).
+Lowering a phone's access switches its panes' Ultracode off at once. Turning it
+off, choosing a size, and the Codex summary and speed are open to every level:
+they start nothing. Codex's closest thing, the Ultra effort, stays one of a
+model's own efforts at every level because its sandbox (read-only for a
+restricted phone) is the OS's, whoever the agent is.
+
 Update 2026-10-12 (browser tabs): browserView takes an optional `tab` (a plain
 id, /^[A-Za-z0-9_-]{1,40}$/, anything else is refused with "Bad tab.").
 browser-tools.js switches only among the tabs that pane's own conversation owns

@@ -1822,11 +1822,12 @@ export class RemoteBridge {
       c.outbox.push({ ev: 'error', reqId: r.reqId, paneId: r.paneId, message, refused: true, ...(r.readOnly ? { readOnly: true } : {}) });
       // A refused mode change: the phone already shows the mode it asked for, so it hears the one the pane really has.
       // A pane that follows a desktop pane hears the desktop pane's own settings (model, effort and mode are the desktop's).
-      if ((cmd?.op === 'mode' || cmd?.op === 'model' || cmd?.op === 'effort') && r.paneId) {
+      // A refused tune (Ultracode on a phone below Full access) is answered the same way: the toggle goes back to what the pane has.
+      if ((cmd?.op === 'mode' || cmd?.op === 'model' || cmd?.op === 'effort' || cmd?.op === 'tune') && r.paneId) {
         const mine = phonePaneId(deviceId, r.paneId);
         const f = this.following.get(mine);
         const info = e.paneInfo?.(f ? f.desktopPaneId : mine);
-        if (info?.mode && (f || cmd.op === 'mode')) c.outbox.push({ ev: 'settings', paneId: r.paneId, model: info.model, effort: info.effort, mode: info.mode });
+        if (info?.mode && (f || cmd.op === 'mode' || cmd.op === 'tune')) c.outbox.push({ ev: 'settings', paneId: r.paneId, model: info.model, effort: info.effort, mode: info.mode, ...(info.tune ? { tune: info.tune } : {}) });
       }
       return;
     }
@@ -1924,7 +1925,7 @@ export class RemoteBridge {
    */
   afterOpened(deviceId, ev, phoneEv) {
     if (!phoneEv.paneId) return;
-    this.toDevice(deviceId, { ev: 'settings', paneId: phoneEv.paneId, model: ev.model, effort: ev.effort, mode: ev.mode });
+    this.toDevice(deviceId, { ev: 'settings', paneId: phoneEv.paneId, model: ev.model, effort: ev.effort, mode: ev.mode, ...(ev.tune ? { tune: ev.tune } : {}) });
     // A pane that follows a desktop pane runs with the desktop's tools, not this phone's: its note says what the phone may do there.
     const text = ev.follower ? capFollowNote(this.capFor(deviceId)) : capNote(this.capFor(deviceId));
     if (!text) { this.capNotes.delete(ev.paneId); return; }

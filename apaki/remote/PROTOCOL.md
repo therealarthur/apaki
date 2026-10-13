@@ -257,7 +257,9 @@ either way    { t: 'big', stream, bytes }     a message larger than one record, 
 
 What a phone may send is an allowlist in `apaki/engine/remote-policy.js`
 (sessions, search, open, attach, send, interrupt, answer, model, effort,
-mode, commands, close, and artifactGet where the engine has it). Pane and
+mode, tune (Ultracode and its workflow size, or a Codex pane's reasoning
+summary and speed; turning Ultracode on needs Full access), commands, close,
+and artifactGet where the engine has it). Pane and
 request ids get the phone's prefix (`phone:<deviceId>:...`), so a phone only
 ever acts on its own panes, and only events about them (plus the folder,
 Glass and index broadcasts) go back to it. A phone that reconnects sends
