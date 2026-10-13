@@ -2150,6 +2150,32 @@
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "codex": "0.161.0" },
       "notes": "The empty pane offers Claude Code or Codex; Codex starts a thread with the first message (thread/start with the folder, any picked model and preset, and the developer instructions), so no thread exists until something is sent. Phone and desktop alike."
+    },
+    {
+      "id": "pane-console",
+      "title": "Console: flip a pane to the real Claude Code or Codex terminal UI of its conversation and back",
+      "product": "apaki",
+      "upstream": [],
+      "status": "partial",
+      "surfaces": { "desktop": "supported", "phone": "partial" },
+      "where": ["apaki/engine/console.js", "apaki/engine/engine.js", "apaki/ui/console.js", "apaki/ui/pane.js", "apaki/ui/vendor/xterm", "test/apaki-console.test.js"],
+      "commits": ["671bfa8"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0" },
+      "notes": "Desktop: the header toggle, Ctrl+` and the title's right-click menu run `claude --resume <id>` (the pane's model, effort, mode and --settings; an API-key pane relays through the prompt-relay hook like latch --relay) or `codex resume <id>` (-m, effort, -a/-s) in node-pty, drawn by vendored xterm.js in Apaki's palette and fonts. One writer: the pane's own process is idle and let go first, the TUI quits with its own Ctrl+C, and the pane re-reads the transcript. TUI-only slash commands (/config, the /model picker, /permissions, /mcp, Codex's /approvals...) open the console for themselves. Phone: n/a for the terminal itself (a phone cannot host a PTY; the console ops are PC_ONLY_OPS in remote-policy.js); a conversation held by the PC console shows 'Open in the console on the PC' with a read-only live text view (consoleView), so the phone surface is partial by design."
+    },
+    {
+      "id": "open-in-terminal",
+      "title": "Open in terminal: the exact session with the pane's settings in a terminal window on the PC",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "n/a" },
+      "where": ["apaki/engine/console.js", "apaki/engine/engine.js", "apaki/bin/apaki-terminal.mjs", "apaki/ui/pane.js", "test/apaki-console.test.js"],
+      "commits": ["671bfa8"],
+      "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
+      "verifiedAgainst": { "claude-sdk": "0.3.295", "codex": "0.161.0" },
+      "notes": "openTerminal { paneId?, sessionId, kind } (the pane header, its menu, and the sidebar row menu) opens Windows Terminal, else PowerShell, running apaki/bin/apaki-terminal.mjs with the same command the console builds. The pane lets go first; the window's runner records that it holds the conversation (held-<id>.json, and the Claude session lock), so a send from the pane shows 'Taken over' instead of writing over it, Take it back stops that window by PID, and the pane re-reads the transcript when the window closes. Phone: n/a, it would open a window on the PC's screen (PC_ONLY_OPS)."
     }
   ]
 }

@@ -394,5 +394,19 @@ test('wiring: the engine handles every console op, keeps one writer, and the win
   assert.match(pane, /case 'consoleData':/);
   const ui = read('../apaki/ui/console.js');
   assert.ok(!/^import .*vendor/m.test(ui), 'xterm loads on demand (the phone build has no vendor folder)');
-  assert.match(ui, /import\('\.\/vendor\/xterm\/xterm\.mjs'\)/);
+  assert.match(ui, /import\('\.\/vendor\/xterm\/xterm\.js'\)/);
+  for (const f of ['xterm.js', 'xterm.css', 'addon-fit.js', 'addon-web-links.js', 'addon-unicode11.js', 'addon-webgl.js', 'LICENSE.txt']) {
+    assert.ok(fs.existsSync(new URL(`../apaki/ui/vendor/xterm/${f}`, import.meta.url)), `vendored ${f}`);
+  }
+});
+
+test('wiring: the window and the engine agree on which slash commands open the console', async () => {
+  const ui = await import('../apaki/ui/console.js');
+  const engine = await import('../apaki/engine/console.js');
+  for (const k of ['CLAUDE_TUI_COMMANDS', 'CLAUDE_TUI_BARE', 'CODEX_TUI_COMMANDS', 'CODEX_TUI_BARE']) assert.deepEqual([...ui[k]], [...engine[k]], k);
+  for (const [kind, text] of [['claude', '/config'], ['claude', '/model'], ['claude', '/model opus'], ['codex', '/approvals'], ['codex', '/review']]) {
+    assert.equal(ui.tuiCommand(kind, text), engine.tuiCommand(kind, text), `${kind} ${text}`);
+  }
+  // Apaki's palette in both themes, all 16 colours, and a see-through ground that still names the real ground for contrast.
+  for (const mode of ['light', 'dark']) assert.equal(Object.keys(ui.ANSI[mode]).length, 16, mode);
 });

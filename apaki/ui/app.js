@@ -208,6 +208,8 @@ const host = {
   newConversation: (p) => newConversation(p),
   // Reconnecting to the engine (engine_exit until the next ready): a pane keeps a message in its box instead of sending it.
   engineLost: () => Boolean(S.engineLost),
+  // The console and Open in terminal run on the PC (console.js): the desktop window has them, the phone does not.
+  consoleAvailable: () => !WEB,
   // /resume and /continue (pane.js): Claude Code's own /resume is a terminal picker the SDK turns off ("isn't
   // available in this environment"), so Apaki opens its session search instead, with what followed the command.
   findSession: (query = '') => findSession(query),
@@ -2288,6 +2290,8 @@ document.addEventListener('keydown', (e) => {
   // F3 / Shift+F3: the next or previous match in the focused pane (find.js).
   if (e.key === 'F3' && !e.ctrlKey && !e.altKey) { e.preventDefault(); findStep(focusedPane(), e.shiftKey ? -1 : 1); return; }
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  // Ctrl+`: the focused pane flips to its console and back, as in VS Code (2026-10-12, console.js).
+  if (e.code === 'Backquote' && !WEB) { e.preventDefault(); focusedPane()?.console?.toggle(); return; }
   const k = e.key.toLowerCase();
   // Ctrl+F: find in the focused pane (its conversation, task or artifact), not the browser's own find.
   if (k === 'f' && !e.shiftKey) { e.preventDefault(); openFind(focusedPane()); return; }
@@ -2490,6 +2494,8 @@ function snapshot() {
         // A pane in a background tab has no box to measure: its remembered place is saved, not "at the end, 0" (pane.js scrollState, 2026-10-12).
         scroll: p?.scrollState ? p.scrollState() : null,
         busy: Boolean(p?.busy), pendingName: p?.pendingName || null,
+        // Its console was showing (console.js): a reload shows it again.
+        ...(p?.console?.shown ? { console: true } : {}),
       };
     }),
   }));
@@ -2555,6 +2561,8 @@ function restore(saved = readLocal()) {
       if (lf.scroll) p.restoreScroll = lf.scroll;
       if (lf.pendingName) p.pendingName = lf.pendingName;
       if (lf.busy) p.crashNote = true;
+      // Its console was showing: the engine still has it (its screen comes back), or the pane opens it again (pane.js 'opened').
+      if (lf.console) p.consoleRestore = true;
       p.open(sid ? { id: sid, cwd: lf.cwd, title: lf.title } : null, { warm: false });
       return L.leaf(p.id);
     });
@@ -2570,7 +2578,8 @@ function restore(saved = readLocal()) {
 
 /* ---------- engine events ---------- */
 
-const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context', 'historyPage', 'historyBlock', 'historyPrompts', 'historyCount']);
+// console, consoleData, consoleView, terminal (2026-10-12): the pane's console and Open in terminal (console.js).
+const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context', 'historyPage', 'historyBlock', 'historyPrompts', 'historyCount', 'console', 'consoleData', 'consoleView', 'terminal']);
 
 /** Phone access (phone.js), set up at start; null in the phone web client. */
 let phone = null;
@@ -2790,6 +2799,8 @@ await listen('engine', ({ payload: e }) => {
     case 'closed': break;
     case 'remote': phone?.handle(e); break;
     case 'note': focusedPane()?.note(e.text, e.tone || ''); break;
+    // Open in terminal asked from outside a pane (the sidebar's row menu, 2026-10-12): the focused pane says how it went.
+    case 'terminal': { const fp = focusedPane(); if (fp?.onTerminal) fp.onTerminal(e); break; }
     // Fresh installs (2026-10-10): Claude Code has no login yet, so the first message would fail.
     case 'auth': renderSignIn(e); break;
     case 'auth_signin': renderSignIn({ ...(S.auth || {}), note: e.message, noteOk: e.ok }); break;

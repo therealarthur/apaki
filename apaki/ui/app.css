@@ -2851,3 +2851,57 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
 .tt-meter.estimate i { opacity: .55; }
 @media (prefers-reduced-motion: reduce) { .tt.in { animation: none; } }
 .tt-keys { white-space: nowrap; }
+
+/* ---------- the console (2026-10-12, console.js) ----------
+   Arthur: "a toggle console that transitions a pane to console for either claude or codex SEAMLESSLY like super
+   cleanly, as if our ui was right on top of it". The terminal sits in the pane's own frame, under the same header,
+   on a frosted layer of the same ground; the conversation lifts off it (up and out, about 200 ms) and settles back
+   over it. The terminal itself stays still: it was underneath all along. No motion under reduced motion. */
+.pane-bar .console-btn[hidden], .pane-bar .term-btn[hidden] { display: none; }
+.pane-bar .console-btn, .pane-bar .term-btn { width: 30px; height: 30px; flex: none; transition: background var(--dur-fast) var(--ease-hover); }
+.pane-bar .console-btn[aria-pressed="true"] { background: var(--brand-wash); }
+.pane-bar .console-btn[aria-pressed="true"] svg { stroke: var(--brand-strong); }
+.pane > .console {
+  grid-row: 2; grid-column: 1; z-index: 6; position: relative; min-width: 0; min-height: 0;
+  display: grid; grid-template-rows: auto minmax(0, 1fr);
+  background: hsla(var(--w), .9); -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2);
+  opacity: 0; transform: scale(.992); visibility: hidden; pointer-events: none;
+  transition: opacity 200ms var(--ease-out), transform 220ms var(--ease-out), visibility 0s linear 220ms;
+}
+.pane.console-on > .console {
+  opacity: 1; transform: none; visibility: visible; pointer-events: auto;
+  transition: opacity 200ms var(--ease-out), transform 220ms var(--ease-out), visibility 0s;
+}
+.pane > .ground, .pane > .composer-wrap, .pane > .prompt-pin { transition: opacity 180ms var(--ease-out), transform 220ms var(--ease-out); }
+.pane.console-on > .ground, .pane.console-on > .composer-wrap, .pane.console-on > .prompt-pin { opacity: 0; transform: translate3d(0, -10px, 0); pointer-events: none; }
+/* A reload or a restore: the console is simply there. */
+.pane.console-instant > .console, .pane.console-instant > .ground, .pane.console-instant > .composer-wrap, .pane.console-instant > .prompt-pin { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .pane > .console, .pane.console-on > .console { transform: none; transition: opacity 120ms linear, visibility 0s linear 120ms; }
+  .pane.console-on > .console { transition: opacity 120ms linear, visibility 0s; }
+  .pane > .ground, .pane > .composer-wrap, .pane > .prompt-pin, .pane.console-on > .ground, .pane.console-on > .composer-wrap, .pane.console-on > .prompt-pin { transform: none; transition: opacity 120ms linear; }
+}
+.console-term { min-width: 0; min-height: 0; padding: 10px 6px 8px 14px; overflow: hidden; }
+.console-term .xterm { height: 100%; }
+.console-term .xterm-viewport { background: transparent !important; }
+.console-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 14px;
+  border-bottom: 1px solid var(--hairline); font-size: var(--fs-small); color: var(--soft); background: hsla(var(--w), .7);
+}
+.console-bar[hidden] { display: none; }
+.console-bar.warn { color: var(--action-strong); background: var(--action-tint); }
+.console-bar .cb-text { flex: 1 1 220px; min-width: 0; }
+.console-bar .cb-act {
+  flex: none; border: 1px solid var(--hairline-strong); background: var(--card); color: var(--ink); border-radius: var(--radius-sm);
+  padding: 4px 10px; font-size: var(--fs-small); cursor: pointer; transition: background var(--dur-fast) var(--ease-hover);
+}
+.console-bar .cb-act:hover { background: var(--tint); }
+.console-bar .cb-act.primary { background: var(--fill); border-color: var(--fill); color: #fff; }
+.console-bar .cb-act.primary:hover { background: var(--fill-hover); }
+/* The phone's read-only look at the PC's console, inside the "in use" card. */
+.takeover .tk-console {
+  margin: 12px 0 0; max-height: 260px; overflow: auto; padding: 10px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline); background: var(--tint); color: var(--ink);
+  font-family: var(--font-mono); font-size: var(--fs-micro); line-height: 1.45; white-space: pre; overflow-wrap: normal;
+}
+.takeover .tk-console:empty { display: none; }
