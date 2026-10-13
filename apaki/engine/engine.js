@@ -197,6 +197,8 @@ import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } 
 // Signing in on a fresh install (2026-10-10, see "signing in to Claude" below).
 import { liveLogin } from '../../src/auth.js';
 import { claudeBinary } from '../../src/launch.js';
+// Where Windows, macOS and Linux differ (macOS port, 2026-10-12): voice folder, Glass, reveal, open, sign-in.
+import { glassCli, openCommand, openFolderCommand, revealCommand, signInCommand, voiceDir, whisperName } from '../../src/platform.js';
 import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
 // Codex threads as panes, through one `codex app-server` process (2026-10-12).
 import { findCodex } from './codex-client.js';
@@ -462,8 +464,7 @@ const codexRowsNow = () => (codexList ? codexList.rows(codex.cachedRows()) : cod
 
 /** Opens a web page, or a stored artifact's file, outside Apaki (the system browser or default app). */
 function openOutside(target) {
-  const [cmd, args] = process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', target]]
-    : process.platform === 'darwin' ? ['open', [target]] : ['xdg-open', [target]];
+  const { cmd, args } = openCommand(process.platform, target);
   spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 }
 
@@ -765,7 +766,7 @@ function exportDir() {
 
 /** Shows a file selected in Explorer (or Finder, or its folder on Linux). */
 function revealFile(file) {
-  const [cmd, args] = process.platform === 'win32' ? ['explorer.exe', [`/select,${file}`]] : process.platform === 'darwin' ? ['open', ['-R', file]] : ['xdg-open', [path.dirname(file)]];
+  const { cmd, args } = revealCommand(process.platform, file);
   try { spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: false }).unref(); } catch { /* nothing to show it with */ }
 }
 
@@ -1328,8 +1329,10 @@ async function closePane(reqId, paneId) {
 // whisper.cpp (CPU build) and a free English model, installed next to the app
 // (Arthur, 2026-10-09: "local whisper model - something free"). Nothing leaves
 // the PC: the window records 16 kHz WAV, this transcribes it.
-const VOICE_DIR = process.env.APAKI_VOICE_DIR || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Myrlin Apaki', 'voice');
-const WHISPER = path.join(VOICE_DIR, 'bin', 'Release', process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli');
+// Per platform (src/platform.js voiceDir): %LOCALAPPDATA%\Programs\Myrlin Apaki\voice on Windows, ~/Library/Application
+// Support/Myrlin Apaki/voice on a Mac (macOS port, 2026-10-12; whisper.cpp for macOS is not bundled yet, so the mic stays off).
+const VOICE_DIR = voiceDir();
+const WHISPER = path.join(VOICE_DIR, 'bin', 'Release', whisperName());
 const WHISPER_MODEL = process.env.APAKI_WHISPER_MODEL || path.join(VOICE_DIR, 'models', 'ggml-base.en.bin');
 const voiceReady = () => fs.existsSync(WHISPER) && fs.existsSync(WHISPER_MODEL);
 const VOICE_VOCAB = process.env.APAKI_VOICE_VOCAB || 'Myrlin, Myrlin Glass, Myrlin Apaki, Myrlin Forge, Myrlin Jobs, Claude, Claude Code, Codex, Opus, Sonnet, Haiku, Fable, SignalSentry, Pantex, Hytale, Tauri, latch.';
@@ -1906,8 +1909,8 @@ const handlers = {
     let ok = false;
     try { ok = Boolean(dir) && fs.statSync(dir).isDirectory(); } catch { ok = false; }
     if (!ok) { emit({ ev: 'note', paneId: null, reqId: c.reqId, text: 'That folder is not there any more.' }); return; }
-    const cmd = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
-    try { spawn(cmd, [dir], { detached: true, stdio: 'ignore', windowsHide: false }).unref(); } catch { /* nothing to open it with */ }
+    const { cmd, args } = openFolderCommand(process.platform, dir);
+    try { spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: false }).unref(); } catch { /* nothing to open it with */ }
   },
   /* ---------- the session list's Details, Pin to top, Export and Open in a terminal (2026-10-12, session-info.js) ---------- */
   // Everything known about one session, read only (a phone may ask at every access level: remote-policy.js).
@@ -2366,10 +2369,14 @@ setTimeout(refreshWarm, 2000).unref();
 // message, see SessionRunner.send). The account's label and plan come from
 // `glass status`, asynchronously, so the engine never waits on Glass.
 const LIVE_LOGIN = process.env.LATCH_LIVE_LOGIN_FILE || path.join(CLAUDE_DIR, '.credentials.json');
-const GLASS_CLI = process.env.LATCH_GLASS_CLI || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Myrlin Glass', 'glass.exe');
+// Per platform (src/platform.js): the same Windows path as before; on a Mac the usual app and command-line places.
+const GLASS_CLI = glassCli();
 let glassSeen = null;
 // Fresh installs (2026-10-10): what the window says when Glass is missing, or runs without Workbook.
-const GLASS_MISSING = 'Myrlin Glass is not installed. Run the Myrlin Apaki installer again to add it.';
+// macOS port (2026-10-12): Myrlin Glass is a Windows widget today; Apaki runs without it.
+const GLASS_MISSING = process.platform === 'darwin'
+  ? 'Myrlin Glass is not installed on this Mac (Glass is a Windows app for now). Apaki works without it; sign in with Claude Code instead.'
+  : 'Myrlin Glass is not installed. Run the Myrlin Apaki installer again to add it.';
 const GLASS_LITE_NOTE = 'Myrlin Workbook is not installed, so Glass works with the live Claude and Codex logins and your API keys. Keeping several subscription logins and switching between them is Workbook\'s job.';
 
 const glassProvider = (c) => (c.provider === 'codex' ? 'codex' : 'claude');
@@ -2517,15 +2524,16 @@ function authStatus(reqId = null) {
 function signIn(reqId = null, consoleBilling = false) {
   const bin = claudeBinary();
   if (!bin) { emit({ ev: 'auth_signin', reqId, ok: false, message: 'Claude Code was not found, so Apaki cannot open the sign-in.' }); return; }
-  if (process.platform !== 'win32') { emit({ ev: 'auth_signin', reqId, ok: false, message: `Run this in a terminal to sign in: "${bin}" auth login` }); return; }
+  // Windows: a console window of its own; macOS: a new Terminal window (src/platform.js signInCommand); elsewhere the person is told what to run.
+  const plan = signInCommand(process.platform, bin, { consoleBilling, comspec: process.env.ComSpec || 'cmd.exe' });
+  if (!plan) { emit({ ev: 'auth_signin', reqId, ok: false, message: `Run this in a terminal to sign in: "${bin}" auth login` }); return; }
   const env = childEnv(null);
   delete env.PROMPT_RELAY_CHILD;
   delete env.CLAUDE_AGENT_SDK_CLIENT_APP;
   // `start` gives the sign-in a console window of its own (the engine has none);
   // with /s, cmd keeps the quoted path intact. The path is ours (no quotes in it).
-  const line = `"start "Sign in to Claude" "${bin}" auth login${consoleBilling ? ' --console' : ''}"`;
   try {
-    const child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', line], { env, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true });
+    const child = spawn(plan.cmd, plan.args, { env, stdio: 'ignore', windowsHide: true, ...(plan.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
     child.on('error', (e) => emit({ ev: 'auth_signin', reqId, ok: false, message: `Could not open the sign-in: ${e.message}` }));
     child.unref();
     emit({ ev: 'auth_signin', reqId, ok: true, message: 'Finish signing in in the window that opened. Apaki picks the login up as soon as Claude Code saves it.' });

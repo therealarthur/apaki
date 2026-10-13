@@ -33,6 +33,8 @@
 //!      node_modules and latch-index, and `<exe dir>\node\node.exe` runs it,
 //!      so the installed app needs neither the repo nor a Node install.
 //!      apaki\scripts\package-apaki.ps1 builds that folder.
+//!      On macOS (2026-10-12) the same folders sit in `Myrlin Apaki.app/Contents/Resources` (Tauri's
+//!      bundle.resources; `mac::bundle_dirs`), made by apaki/scripts/package-apaki-mac.sh.
 //!   2. APAKI_ROOT, if set (a checkout to run instead).
 //!   3. The checkout this crate was built in (development).
 //!
@@ -65,6 +67,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 mod browser;
 mod host;
+// macOS only in what it does: the menu bar, the page tweaks, the PATH; its pure helpers (bundle folders) run everywhere.
+mod mac;
 
 /// How long a host this window started may take to answer.
 const HOST_START_TIMEOUT: Duration = Duration::from_secs(45);
@@ -137,12 +141,15 @@ fn exe_dir() -> Option<PathBuf> {
     std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from))
 }
 
-/// The engine's root folder: the packaged copy next to the exe, else APAKI_ROOT, else the build checkout.
+/// The engine's root folder: the packaged copy next to the exe (Windows) or in the .app's Contents/Resources (macOS,
+/// where Tauri's bundle.resources puts it), else APAKI_ROOT, else the build checkout.
 fn repo_root() -> PathBuf {
     if let Some(dir) = exe_dir() {
-        let packaged = dir.join("engine");
-        if packaged.join("apaki").join("engine").join("engine.js").is_file() {
-            return packaged;
+        for d in mac::bundle_dirs(&dir) {
+            let packaged = d.join("engine");
+            if packaged.join("apaki").join("engine").join("engine.js").is_file() {
+                return packaged;
+            }
         }
     }
     std::env::var_os("APAKI_ROOT")
@@ -152,9 +159,12 @@ fn repo_root() -> PathBuf {
 
 /// The bundled Node runtime when packaged, else `node` on PATH.
 fn node_path() -> PathBuf {
+    let name = if cfg!(windows) { "node.exe" } else { "node" };
     exe_dir()
-        .map(|d| d.join("node").join(if cfg!(windows) { "node.exe" } else { "node" }))
-        .filter(|p| p.is_file())
+        .into_iter()
+        .flat_map(|d| mac::bundle_dirs(&d))
+        .map(|d| d.join("node").join(name))
+        .find(|p| p.is_file())
         .unwrap_or_else(|| PathBuf::from("node"))
 }
 
@@ -198,6 +208,11 @@ fn connect_or_start(app: &AppHandle, root: &Path, script: &Path) -> Result<host:
         // What this shell can do (the browser), known before the window connects.
         ("APAKI_SHELL_FEATURES", browser::features().join(",").into()),
     ];
+    // A Dock-started Mac app has launchd's short PATH; the host gets Homebrew's, ~/.local/bin and the like too (git, gh, codex).
+    #[cfg(target_os = "macos")]
+    if let Some(p) = mac::host_path() {
+        envs.push(("PATH", p));
+    }
     // The packaged index binary sits in the engine folder; tell latch where.
     let index = root.join("index").join("target").join("release").join(if cfg!(windows) { "latch-index.exe" } else { "latch-index" });
     if index.is_file() && std::env::var_os("LATCH_INDEX_BIN").is_none() {
@@ -359,7 +374,11 @@ fn engine_send(app: AppHandle, state: State<Engine>, msg: Value) -> Result<(), S
 }
 
 fn main() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // macOS: the page tweaks for the native traffic lights (mac.js) and the menu bar's Quit / Close Window.
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(mac::plugin()).on_menu_event(mac::on_menu_event);
+    builder
         // A second launch focuses the window that is already open.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
@@ -373,6 +392,8 @@ fn main() {
         .setup(|app| {
             // The browser borrows the main webview's WebView2 environment; nothing starts until one opens.
             browser::init(app.handle());
+            #[cfg(target_os = "macos")]
+            mac::install_menu(app.handle())?;
             // What the window sends before the engine answers (its start-up
             // requests) waits in this queue; connecting, or starting a host,
             // runs off the main thread so the window opens at once.
