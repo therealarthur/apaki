@@ -76,6 +76,8 @@
   }
 
   function render(s) {
+    // The running version, for anyone looking (devtools, the cdp-*.mjs checks): <html data-apaki-version="0.2.0">.
+    if (s?.current) document.documentElement.dataset.apakiVersion = s.current;
     if (!s || s.state !== 'ready') {
       if (card && !busy) card.hidden = true;
       return;

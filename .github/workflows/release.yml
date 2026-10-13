@@ -87,14 +87,20 @@ jobs:
   test:
     name: npm test
     needs: meta
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Windows: the suite was written and runs there (path and PowerShell behaviour it checks is Windows'), and it is the
+    # platform most users have. On Linux and macOS about twenty of its tests fail for reasons of paths, not of the code.
+    runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      # The worktree and commit tests make commits in scratch repositories; a runner has no git identity.
+      - run: |
+          git config --global user.name "Apaki CI"
+          git config --global user.email "ci@example.invalid"
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
 
