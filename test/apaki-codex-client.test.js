@@ -74,6 +74,28 @@ test('findCodex: APAKI_CODEX_BIN first (a script runs under this Node), then the
   assert.equal(findCodex({ env: { PATH: '' } }), null);
 });
 
+test('findCodex on a Mac: <prefix>/bin/codex is a symlink into lib/node_modules/@openai/codex; the native build is found there, else its launcher script (macOS port, 2026-10-12)', (t) => {
+  const dir = tmp();
+  t.after(() => rm(dir));
+  const exe = process.execPath;
+  const bin = path.join(dir, 'prefix', 'bin');
+  const pkg = path.join(dir, 'prefix', 'lib', 'node_modules', '@openai', 'codex');
+  const shim = path.join(bin, 'codex');
+  const js = path.join(pkg, 'bin', 'codex.js');
+  touch(shim, '#!/usr/bin/env node\n');
+  touch(path.join(pkg, 'package.json'), '{}');
+  touch(js, '#!/usr/bin/env node\n');
+  // What the symlink resolves to (a test host without symlink rights passes its own realpath).
+  const realpath = (f) => (f === shim ? js : f);
+  const mac = { platform: 'darwin', arch: 'arm64', env: { PATH: bin }, execPath: exe, realpath };
+  assert.deepEqual(findCodex(mac), { command: exe, args: [js], label: js }, 'no native build: the launcher script under this Node');
+  const native = path.join(pkg, 'node_modules', '@openai', 'codex-darwin-arm64', 'vendor', 'aarch64-apple-darwin', 'bin', 'codex');
+  touch(native, 'native');
+  assert.deepEqual(findCodex(mac), { command: native, args: [], label: native }, 'the native build inside the package wins');
+  // A shim whose link does not lead to the codex package is not taken for it.
+  assert.equal(findCodex({ ...mac, realpath: (f) => f }), null);
+});
+
 test('TOML values for -c: backslashes and quotes survive the parse', () => {
   assert.equal(tomlString('C:\\Program Files\\node.exe'), '"C:\\\\Program Files\\\\node.exe"');
   assert.equal(tomlString('say "hi"\n'), '"say \\"hi\\"\\n"');

@@ -18,7 +18,8 @@
  * is created by /usr/bin/security, so security itself may read it without a prompt; nothing else is trusted.
  *
  * Everything that talks to the system goes through `run(args, stdin)`, so the tests (test/apaki-keychain.test.js) use
- * a fake Keychain on any OS.
+ * a fake Keychain on any OS. APAKI_KEYCHAIN_SERVICE names another item (a test or a second build that must not share
+ * the installed app's key); the engine's own tests and APAKI_REMOTE_DIR use it the way they use a temp folder.
  */
 
 import { execFile } from 'node:child_process';
@@ -59,7 +60,7 @@ const HEX_KEY = /^[0-9a-f]{64}$/;
  * A Keychain-backed sealer. `run` is injectable; the key is cached in memory after the first successful read, so the
  * Keychain is asked once per process.
  */
-export function createKeychain({ run = runSecurity, service = KEYCHAIN_SERVICE, account = KEYCHAIN_ACCOUNT } = {}) {
+export function createKeychain({ run = runSecurity, service = process.env.APAKI_KEYCHAIN_SERVICE || KEYCHAIN_SERVICE, account = KEYCHAIN_ACCOUNT } = {}) {
   let cached = null;
 
   const read = async () => {

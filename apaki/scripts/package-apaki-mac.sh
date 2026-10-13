@@ -112,7 +112,10 @@ prepare_node() {
 }
 
 prepare_index() {
-  if [ "$skip_index" = 1 ] && [ -x "$repo/index/target/release/latch-index" ]; then
+  if [ "$skip_index" = 1 ] && [ -x "$stage/engine/index/target/release/latch-index" ]; then
+    say "latch-index: keeping the one already in the staging folder"
+    return 0
+  elif [ "$skip_index" = 1 ] && [ -x "$repo/index/target/release/latch-index" ]; then
     say "latch-index: reusing index/target/release/latch-index"
   else
     need_free "building latch-index"
