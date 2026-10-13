@@ -416,6 +416,21 @@ look at another tab of its own conversation's browser and nothing else. The
 desktop-only browserTab op (the person picking a tab) is not in the phone
 allowlist.
 
+Update 2026-10-12 (the console, apaki/engine/console.js): consoleOpen,
+consoleInput, consoleResize, consoleClose and openTerminal run a terminal
+program on the PC (the real Claude Code or Codex TUI, in a pane or in a
+terminal window) and take its keyboard, so they are PC only
+(remote-policy.js PC_ONLY_OPS, never in the phone allowlist, a test keeps it
+so). A phone gets one read-only op, consoleView { paneId }: plain text of the
+PC console that holds the conversation its own pane asked for (the same
+conversation it could already read through history), with no way to type into
+it. The TUI never receives an API key in its environment (childEnv strips auth
+sources); a pane billed to a key runs the TUI on the live login and relays
+each message through the prompt-relay hook, like latch --relay. The files the
+console writes (~/.claude/latch/console: settings for --settings, terminal
+specs, held records) hold no secrets: a terminal spec carries the environment's
+changes, never the environment.
+
 | Question | Answer | Where |
 |---|---|---|
 | Can a phone switch a conversation to bypassPermissions? | Yes, on open or with the mode op | remote-policy.js:45, 147, 201-204 |
