@@ -3332,3 +3332,7 @@ body.pane-max .tabs-tools { opacity: .45; pointer-events: none; }
 @media (max-width: 1280px) { .tab-tools-slot .tab-count { display: none; } }
 /* A narrow pane keeps its header on one line: the title gives way first (the mark and close stay in reach). */
 @container pane (max-width: 340px) { .pane-bar .title-block { min-width: 64px; } }
+/* The other end of a hovered link also tints its header: a browser's page is a native window over its body, so a ring
+   alone would hide under it. */
+.pane.link-hi > .pane-bar { background: hsla(var(--acc-hsl, 232, 12%, 50%), .13); transition: background var(--dur-fast) var(--ease-hover); }
+@media (prefers-reduced-motion: reduce) { .pane.link-hi > .pane-bar { transition: none; } }

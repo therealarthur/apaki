@@ -206,6 +206,8 @@ export class BrowserPane {
     if (!next) return;
     const prev = this.cur();
     this.active = id;
+    // The address field shows the tab on screen: an address being typed for the other tab is let go.
+    if (prev !== next && this.editing) { this.editing = false; if (document.activeElement === this.$.addr) this.$.addr.blur(); }
     if (prev && prev !== next) {
       // The page that was on screen goes away; the one picked comes where it was.
       prev.placed = null;
