@@ -13,6 +13,9 @@ apaki/parity/snapshots/** text eol=lf
 # The macOS packaging script runs on a Mac and on a GitHub macOS runner: LF only, even when checked out on Windows.
 apaki/scripts/*.sh text eol=lf
 
+# The one version file is read by shell scripts and the engine: LF only.
+apaki/VERSION text eol=lf
+
 # Vendored xterm.js (apaki/ui/vendor/xterm/LICENSE.txt lists each file's sha256 as published): kept byte for byte.
 apaki/ui/vendor/xterm/*.js -text
 apaki/ui/vendor/xterm/*.css -text

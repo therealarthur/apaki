@@ -37,6 +37,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { APP_VERSION } from './app-version.js';
 import { SHOW_KINDS } from './artifacts.js';
 import { analyzeCommand } from './open-catch.js';
 import { BROWSER_PROMPT } from './browser-tools.js';
@@ -174,7 +175,7 @@ export function createApakiTools({ store, sessionId = () => null, cwd = () => pr
 
   const mcpServer = () => createSdkMcpServer({
     name: 'apaki',
-    version: '0.1.0',
+    version: APP_VERSION,
     // Small tools, always in the prompt: deferred behind tool search, the
     // system prompt's pointer to them would be a dead end.
     alwaysLoad: true,

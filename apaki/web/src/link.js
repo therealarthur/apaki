@@ -500,6 +500,16 @@ export class Link {
     this.restart();
   }
 
+  /**
+   * Tells the PC which app this is, { kind: 'ios' | 'android', version } (apaki/remote/compat.js): its Phone sheet shows an
+   * app older than the PC wants. Only the native apps call it; a PC that does not know the message ignores it. Nothing is
+   * sent while the channel is not in (an account connection waiting for the PC's decision sends it once let in).
+   */
+  sendClient(info) {
+    if (this.state !== 'open' || !this.outbox) return;
+    this.outbox.send({ t: 'client', ...info }).catch(() => {});
+  }
+
   /** Sends one engine command. Rejects while the PC is not connected. */
   send(cmd) {
     if (this.state !== 'open' || !this.outbox) return Promise.reject(new Error(`Not connected to ${this.pcName} right now. This page reconnects by itself.`));

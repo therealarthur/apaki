@@ -33,5 +33,17 @@
     "icon": [
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA0RkMzQThDNzM3MUE5OTgKUldTWXFYRnpqRHI4Qk1WQUUvM3NJMXdSbUtvZ3k5eWJaQUdlREdoUG8zY3NlMVRpZHdaOXI4MlcK",
+      "endpoints": [
+        "https://github.com/therealarthur/apaki/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

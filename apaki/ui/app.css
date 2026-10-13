@@ -2422,6 +2422,8 @@ body.web .rail-resize, body.web .rail-toggle { display: none !important; }
 .ph-notice-t { flex: 1; min-width: 200px; }
 .ph-notice-t span { color: var(--faint); }
 .ph-notice .ph-actions { margin-top: 0; }
+/* A phone whose Apaki app is older than this PC wants (phone.js appNote, apaki/remote/compat.js). */
+.ph-app-old { color: var(--action-strong); font-weight: 600; margin-top: 4px; }
 
 /* ---------- the sign-in card (app.js renderSignIn, 2026-10-10) ----------
    On a PC where Claude Code has no login yet: a card floating over the top of

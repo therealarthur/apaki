@@ -28,6 +28,8 @@
 # Missing something: it names it and exits 2 before building anything. A failed step exits 1.
 # The build number is CURRENT_PROJECT_VERSION in Signing.xcconfig; App Store Connect refuses one it has already
 # seen for the version, so a successful upload raises it and commits that one file (and pushes it).
+# APAKI_BUILD_NUMBER_BRANCH=master (the release workflow sets it): the checkout is a tag's commit, on no branch, so the
+# new number is written onto that branch's newest commit instead and pushed there (a push that races another is retried).
 
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -164,10 +166,16 @@ fi
 say "uploaded: Apaki $got_ver ($BUILD) is at App Store Connect. It appears under TestFlight once Apple has processed it (5 to 30 minutes)."
 
 # ---- remember the build number ------------------------------------------------------------------------------
+REPO="$(repo_root)"
+TARGET_BRANCH="${APAKI_BUILD_NUMBER_BRANCH:-}"
+if [ -n "$TARGET_BRANCH" ] && [ -n "$REPO" ] && [ "$COMMIT" = 1 ]; then
+  # Only the number is taken from this checkout. The archive is built and uploaded; what is on disk now no longer matters.
+  git -C "$REPO" fetch -q origin "$TARGET_BRANCH" && git -C "$REPO" checkout -q -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH" \
+    || warn "could not check out origin/$TARGET_BRANCH to record build $BUILD: set CURRENT_PROJECT_VERSION to $BUILD in Signing.xcconfig yourself before the next upload."
+fi
 sed -E "s/^([[:space:]]*CURRENT_PROJECT_VERSION[[:space:]]*=[[:space:]]*).*$/\1$BUILD/" "$SIGNING_XCCONFIG" > "$tmp/Signing.xcconfig"
 cat "$tmp/Signing.xcconfig" > "$SIGNING_XCCONFIG"
 info "Signing.xcconfig: CURRENT_PROJECT_VERSION = $BUILD"
-REPO="$(repo_root)"
 if [ "$COMMIT" = 1 ] && [ -n "$REPO" ]; then
   gitid=()
   [ -n "$(git -C "$REPO" config user.name || true)" ] || gitid+=(-c "user.name=Apaki build")
@@ -178,9 +186,14 @@ if [ "$COMMIT" = 1 ] && [ -n "$REPO" ]; then
     info "committed the new build number"
     branch="$(git -C "$REPO" rev-parse --abbrev-ref HEAD)"
     if [ "$PUSH" = 1 ] && [ "$branch" != HEAD ]; then
-      git -C "$REPO" push -q origin "HEAD:refs/heads/$branch" \
-        && info "pushed to origin/$branch" \
-        || warn "could not push the build-number commit: run 'git pull --rebase' and 'git push' yourself before the next upload, or the next upload reuses $BUILD."
+      pushed=0
+      for try in 1 2 3; do
+        if git -C "$REPO" push -q origin "HEAD:refs/heads/$branch"; then pushed=1; break; fi
+        # Another commit landed first (the release workflow publishes the phone page to master at the same time).
+        git -C "$REPO" ${gitid[@]+"${gitid[@]}"} pull -q --rebase origin "$branch" || break
+      done
+      if [ "$pushed" = 1 ]; then info "pushed to origin/$branch"
+      else warn "could not push the build-number commit: run 'git pull --rebase' and 'git push' yourself before the next upload, or the next upload reuses $BUILD."; fi
     else
       warn "build-number commit not pushed: push it before the next upload from another machine."
     fi

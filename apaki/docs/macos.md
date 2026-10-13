@@ -141,7 +141,7 @@ Status: done = changed and tested; ok = already portable; degrades = says so in 
 2. Voice: a whisper.cpp build for macOS (Metal), bundled and signed; the model download.
 3. Myrlin Glass for macOS (separate app), or Apaki's own account switching; the live-login watcher for the Keychain.
 4. The BROWSER shim as a shell script (`apaki-open`), once the browser pane exists.
-5. Signing, notarization, updater (below), and the GitHub Actions workflow for both platforms.
+5. Signing and notarization (below). The updater and the GitHub Actions workflow for both platforms are done (2026-10-13, `releasing.md`).
 6. CoreML provider for the meaning index; model and index location review for a small disk.
 7. `hooks/prompt-relay.js` and `latch --relay` on a Mac; the `openTerminal` op once the console toggle lands.
 8. UI wording (Explorer, Windows, PC) together with the next phone page publish; Cmd hints inside `setTip` content (only the hover text is rewritten now).
@@ -166,13 +166,16 @@ What a signed and notarized build needs:
   signs only the main binary and the bundle. `node`, `claude` (from the Agent SDK package, signed by Anthropic, so it must be re-signed), and `latch-index`
   need `codesign --force --options runtime --timestamp --entitlements <file> -s "<identity>"` in `package-apaki-mac.sh` after the resources are staged (signatures survive the copy
   into the bundle), or they can move to `bundle.externalBin`, which Tauri signs itself.
-- The Tauri updater needs its own minisign key pair (`TAURI_SIGNING_PRIVATE_KEY`), unrelated to the Apple certificate; the updater plugin and `createUpdaterArtifacts`
-  (`.app.tar.gz` and `.sig`) are added with the CI workflow, not here.
+- The Tauri updater needs its own minisign key pair (`TAURI_SIGNING_PRIVATE_KEY`), unrelated to the Apple certificate. Done 2026-10-13: the updater plugin is in the app,
+  `package-apaki-mac.sh --updater` leaves the `.app.tar.gz` and its `.sig`, and the release workflow builds, signs and publishes them (`apaki/docs/releasing.md`).
+  Until a Developer ID certificate exists, an update the app downloads itself replaces the ad-hoc signed `.app` in place (no quarantine flag, so Gatekeeper does not stop
+  it); only the first download, from a browser, needs the right-click, Open step.
 - Notarization needs network access to Apple; the first submissions can take several minutes.
 
-## What the Windows packaging would need to change to the same shape
+## What the Windows packaging needed to change to the same shape (done 2026-10-13, see `windows.md`)
 
-Today `package-apaki.ps1` and `install-apaki.ps1` assemble a folder by hand (`myrlin-apaki.exe`, `engine\`, `node\node.exe`, `bin\*.cmd`, `setup\glass`, `setup\voice`,
+This is the list as it was written before the work; `windows.md` describes what was built (an NSIS installer from `tauri build`, the
+hooks, the install folder, and why Glass and voice stay with the local installer). Before it, `package-apaki.ps1` and `install-apaki.ps1` assemble a folder by hand (`myrlin-apaki.exe`, `engine\`, `node\node.exe`, `bin\*.cmd`, `setup\glass`, `setup\voice`,
 VC++ DLLs) and an installer script copies it. The updater needs Tauri's bundler there too:
 
 - `tauri.windows.bundle.conf.json`, passed with `tauri build --config` exactly like the Mac one: `bundle.active`, target `nsis` (the updater supports NSIS and MSI),

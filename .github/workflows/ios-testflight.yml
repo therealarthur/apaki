@@ -1,6 +1,7 @@
 # Apaki iOS: archive on a GitHub macOS runner and upload to TestFlight (apaki/mobile, 2026-10-10).
 #
-# Manual only (workflow_dispatch): nothing pushes or schedules this. It does what
+# Manual (workflow_dispatch), or called by the release workflow (.github/workflows/release.yml, workflow_call) for the
+# same commit as the desktop builds, on a version tag (2026-10-13). Nothing else pushes or schedules this. It does what
 # apaki/mobile/scripts/ios-testflight.sh does on the Mac, because it runs that same script.
 #
 # Repository secrets it reads (Settings > Secrets and variables > Actions):
@@ -26,6 +27,16 @@ on:
           - testflight
           - ipa
         default: testflight
+  workflow_call:
+    inputs:
+      target:
+        description: "testflight or ipa (see the manual run)"
+        type: string
+        default: testflight
+      build_number_branch:
+        description: "The branch that gets the raised build number as a commit. A tag's commit is not on a branch, so the release workflow names master."
+        type: string
+        default: ''
 
 # One run at a time: two runs would both raise the build number.
 concurrency:
@@ -87,6 +98,7 @@ jobs:
           APAKI_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APAKI_BUILD_NUMBER_BRANCH: ${{ inputs.build_number_branch }}
         run: bash apaki/mobile/scripts/ios-testflight.sh
 
       - name: Archive and export an ad hoc .ipa

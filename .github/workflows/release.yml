@@ -1,0 +1,314 @@
+# Myrlin Apaki release: builds every app from one commit when a version tag is pushed (2026-10-13).
+#
+# Arthur's decisions (2026-10-12): releases are built by GitHub Actions on a version tag, Windows and macOS runners from the
+# same commit (free for this public repository); the keys they need are repository secrets; no Windows code signing for
+# now (SmartScreen warns); the desktop apps update themselves through Tauri's updater from GitHub Releases; iOS stays on
+# TestFlight; every app keeps in step (apaki/VERSION is the one version, apaki/scripts/version.mjs).
+#
+# To release:   node apaki/scripts/version.mjs set 0.2.0 ; commit ; git tag v0.2.0 ; git push origin master v0.2.0
+# What runs:
+#   meta        the tag must be v<apaki/VERSION> and every place that carries the version must agree
+#   test        npm test
+#   windows     package-apaki-win.ps1 -Updater: the NSIS installer and its update signature; installed, looked at and
+#               uninstalled on the runner (apaki/scripts/smoke-win-installer.ps1)
+#   macos       package-apaki-mac.sh --updater: the .app (ad-hoc signed until a Developer ID certificate exists,
+#               apaki/docs/macos.md), the .dmg and the update archive with its signature
+#   release     latest.json (the feed the updater reads) and a DRAFT GitHub Release holding the installers. It stays a
+#               draft until Arthur publishes it (the Agent SDK terms question about distributing builds that offer Claude
+#               subscription login is his call); the updater reads releases/latest/download/latest.json, which GitHub
+#               serves only for a published release, so nothing reaches users before that.
+#   phone-page  builds the phone page from the tagged sources (build-web.mjs --release), commits relay/site/v/<version>/ to
+#               master with the workflow's own token, and deploys the relay (the PC checks the live page byte for byte)
+#   ios         the TestFlight workflow (ios-testflight.yml) for the same commit; its build number commit goes to master
+#
+# A tag with -ci in it (v0.0.0-ci.1) is a test of this pipeline: it builds and drafts a prerelease named as a test, and
+# skips everything that changes something outside GitHub: no master commit, no relay deploy, no TestFlight upload. Delete
+# the test tag and draft afterwards (gh release delete <tag> --cleanup-tag --yes).
+#
+# Secrets used (Settings > Secrets and variables > Actions): TAURI_SIGNING_PRIVATE_KEY and _PASSWORD (the updater key),
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (the relay deploy), APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8
+# (TestFlight). Where each came from: apaki/docs/releasing.md.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: apaki-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Fewer surprises from a runner image update: the tools these jobs use are installed by the jobs themselves.
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  meta:
+    name: Check the tag and the version
+    if: github.repository == 'therealarthur/apaki'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      test: ${{ steps.v.outputs.test }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Every place that carries the version agrees, and the tag names it
+        id: v
+        run: |
+          set -euo pipefail
+          node apaki/scripts/version.mjs check
+          version="$(node apaki/scripts/version.mjs get)"
+          tag="${GITHUB_REF_NAME}"
+          test=false
+          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-ci\.[0-9]+$ ]]; then
+            test=true
+            echo "::notice title=Pipeline test::$tag is a -ci tag: the build and the draft run, nothing outside GitHub changes (no master commit, no relay deploy, no TestFlight). The app version stays $version."
+          elif [ "$tag" != "v$version" ]; then
+            echo "::error title=Tag and version differ::the tag is $tag but apaki/VERSION says $version. Set the version first (node apaki/scripts/version.mjs set <version>), commit, then tag that commit."
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "test=$test"
+          } >> "$GITHUB_OUTPUT"
+
+  test:
+    name: npm test
+    needs: meta
+    # Windows: the suite was written and runs there (path and PowerShell behaviour it checks is Windows'), and it is the
+    # platform most users have. On Linux and macOS about twenty of its tests fail for reasons of paths, not of the code.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # The worktree and commit tests make commits in scratch repositories; a runner has no git identity.
+      - run: |
+          git config --global user.name "Apaki CI"
+          git config --global user.email "ci@example.invalid"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+        env:
+          # The default temp folder of a runner is a short 8.3 name (C:\Users\RUNNER~1\...) while git reports the long one,
+          # so the worktree tests, which compare folders, see two different places. The runner's own temp folder is long.
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+
+  windows:
+    name: Windows installer
+    needs: meta
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apaki -> target
+            index -> target
+          cache-on-failure: true
+      - name: Build the installer (NSIS) with the updater signature
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ./apaki/scripts/package-apaki-win.ps1 -Updater
+      - name: Name the files the way GitHub will serve them (no spaces)
+        shell: pwsh
+        run: |
+          Get-ChildItem apaki/dist -File | Where-Object { $_.Name -match ' ' -and $_.Name -notlike '_WHY*' } | ForEach-Object { Rename-Item -LiteralPath $_.FullName -NewName ($_.Name -replace ' ', '-') }
+          Get-ChildItem apaki/dist -File | Select-Object Name, Length
+      - name: Install it on this runner, look inside, uninstall
+        shell: pwsh
+        run: ./apaki/scripts/smoke-win-installer.ps1 -Installer (Get-ChildItem apaki/dist/*-setup.exe | Select-Object -First 1).FullName
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            apaki/dist/*-setup.exe
+            apaki/dist/*-setup.exe.sig
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    name: macOS app (Apple Silicon)
+    needs: meta
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apaki -> target
+            index -> target
+          cache-on-failure: true
+      - name: Build the app (ad-hoc signed), the .dmg and the update archive with its signature
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash apaki/scripts/package-apaki-mac.sh --updater
+      - name: Name the files the way GitHub will serve them (no spaces)
+        run: |
+          cd apaki/dist
+          for f in *\ *; do [ -f "$f" ] && mv "$f" "${f// /-}"; done
+          ls -la
+      - name: Look inside the finished app
+        run: |
+          set -euo pipefail
+          app="apaki/dist/Myrlin Apaki.app"
+          codesign --verify --deep --strict "$app"
+          res="$app/Contents/Resources"
+          want="$(node apaki/scripts/version.mjs get)"
+          got="$("$res/node/node" -e "import(process.argv[1]).then((m) => process.stdout.write(m.APP_VERSION))" "file://$PWD/$res/engine/apaki/engine/app-version.js")"
+          echo "the app's engine reports version $got"
+          [ "$got" = "$want" ] || { echo "::error::the engine in the app says $got, apaki/VERSION says $want"; exit 1; }
+          ls -la apaki/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            apaki/dist/*.dmg
+            apaki/dist/*.app.tar.gz
+            apaki/dist/*.app.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Draft GitHub Release and update feed
+    needs: [meta, test, windows, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      IS_TEST: ${{ needs.meta.outputs.test }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          if [ "$IS_TEST" = true ]; then
+            printf 'Pipeline test build of %s. Not a release; safe to delete.\n' "$TAG" > notes.md
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG" --jq .body > notes.md || printf 'Myrlin Apaki %s\n' "$VERSION" > notes.md
+          fi
+          cat notes.md
+      - name: The update feed (latest.json) and checksums
+        run: |
+          set -euo pipefail
+          node apaki/scripts/updater-feed.mjs --dir assets --version "$VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" --notes notes.md --out assets/latest.json
+          ( cd assets && sha256sum * > "$RUNNER_TEMP/SHA256SUMS.txt" )
+          mv "$RUNNER_TEMP/SHA256SUMS.txt" assets/SHA256SUMS.txt
+          cat assets/SHA256SUMS.txt
+          ls -la assets
+      - name: Draft release with the installers
+        run: |
+          set -euo pipefail
+          if [ "$IS_TEST" = true ]; then title="Myrlin Apaki $TAG (pipeline test)"; flags=(--prerelease); else title="Myrlin Apaki $VERSION"; flags=(); fi
+          # A re-run finds its draft and replaces the files in it.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --draft --title "$title" --notes-file notes.md
+          else
+            gh release create "$TAG" --draft --verify-tag --title "$title" --notes-file notes.md "${flags[@]}"
+          fi
+          gh release upload "$TAG" assets/* --clobber
+          gh release view "$TAG" --json isDraft,isPrerelease,assets --jq '{isDraft, isPrerelease, assets: [.assets[].name]}'
+
+  phone-page:
+    name: Publish the phone page and deploy the relay
+    needs: [meta, release]
+    if: needs.meta.outputs.test != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      # The page is built from the tagged sources (what the apps of this release expect) and added to master's copy of the
+      # site, which holds every earlier page: the relay serves the whole folder, and a deploy from a folder missing an
+      # old page would take that page offline.
+      - uses: actions/checkout@v4
+        with:
+          path: tagged
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          path: master
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build and publish the page into master's site folder
+        run: |
+          set -euo pipefail
+          node tagged/apaki/scripts/build-web.mjs --release --site master/relay/site
+      - name: Commit the new page to master
+        working-directory: master
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add relay/site
+          if git diff --cached --quiet; then echo "the page of this release is already on master"; exit 0; fi
+          page="$(git diff --cached --name-only | sed -n 's#^relay/site/v/\([^/]*\)/.*#\1#p' | sort -u | head -1)"
+          git commit -q -m "Publish phone page ${page:-?} (release $TAG)" -m "Built by the release workflow from the tagged sources (build-web.mjs --release); the relay is deployed from this commit."
+          for i in 1 2 3; do
+            git push origin HEAD:master && break
+            git pull --rebase origin master
+          done
+      - name: Deploy the relay
+        working-directory: master/relay
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx wrangler deploy --env=""
+
+  ios:
+    name: TestFlight
+    needs: [meta, windows, macos]
+    if: needs.meta.outputs.test != 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/ios-testflight.yml
+    with:
+      target: testflight
+      # The upload raises the build number; the tag's commit is not a branch, so the new number is committed to master.
+      build_number_branch: master
+    secrets: inherit

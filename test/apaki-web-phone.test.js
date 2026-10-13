@@ -998,3 +998,35 @@ test('a blocked phone: the PC\'s words on screen, remembered for that PC, shown 
   S.appStarted = false;
   dom.session.removeItem('apaki.home');
 });
+
+test('the app tells the PC which app it is (client), only once the channel is in; the hello keeps its version fields for the page', async () => {
+  const imp = await web();
+  // A direct pairing: the channel is in as soon as it opens.
+  const direct = await openLink(imp, { phone: null, viaAccount: false });
+  try {
+    assert.equal(direct.link.state, 'open');
+    direct.link.sendClient({ kind: 'ios', version: '0.2.0', build: '9' });
+    await until(() => direct.sent.length === 1);
+    assert.deepEqual(direct.sentJson().at(-1), { t: 'client', kind: 'ios', version: '0.2.0', build: '9' });
+    // The hello's version fields reach the page's handler untouched (boot.js checkAppVersion reads them).
+    direct.link.message(() => helloFor({ appVersion: '0.3.0', minPhoneApp: '0.2.0' }));
+    assert.equal(direct.seen.hello.at(-1).minPhoneApp, '0.2.0');
+    assert.equal(direct.seen.hello.at(-1).appVersion, '0.3.0');
+  } finally { direct.link.stop(); }
+
+  // An account connection is held until the PC decides: nothing is sent before phone-ok.
+  const phone = await (await imp('store.js', '?via-store')).getPhoneKey();
+  const held = await openLink(imp, { phone, viaAccount: true });
+  try {
+    held.link.message(() => helloFor({ asAccount: true, nonce: b64urlEncode(randomBytes(16)), features: ['phone-key'] }));
+    await until(() => held.sent.length === 1);
+    const before = held.sent.length;
+    held.link.sendClient({ kind: 'ios', version: '0.2.0' });
+    await sleep(30);
+    assert.equal(held.sent.length, before, 'a held connection says nothing but via');
+    held.link.message(() => ({ t: 'phone-ok' }));
+    held.link.sendClient({ kind: 'ios', version: '0.2.0' });
+    await until(() => held.sent.length === before + 1);
+    assert.deepEqual(held.sentJson().at(-1), { t: 'client', kind: 'ios', version: '0.2.0' });
+  } finally { held.link.stop(); }
+});

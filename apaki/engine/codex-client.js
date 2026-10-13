@@ -32,6 +32,7 @@ import { EventEmitter } from 'node:events';
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { APP_VERSION } from './app-version.js';
 
 /** A request that gets no answer in this long fails (the process is probably hung). thread/read of a huge rollout is the slow one. */
 export const REQUEST_TIMEOUT_MS = 120 * 1000;
@@ -160,7 +161,7 @@ export class CodexAppServer extends EventEmitter {
     this.binary = binary;
     this.overrides = overrides;
     this.env = env;
-    this.clientInfo = clientInfo || { name: 'myrlin-apaki', title: 'Myrlin Apaki', version: '0.1.0' };
+    this.clientInfo = clientInfo || { name: 'myrlin-apaki', title: 'Myrlin Apaki', version: APP_VERSION };
     this.spawnFn = spawn;
     this.locate = locate;
     this.requestTimeoutMs = requestTimeoutMs;

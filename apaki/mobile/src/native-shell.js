@@ -220,7 +220,11 @@ async function launchPayload() {
  */
 export async function installShell({ build = {}, demo = false } = {}) {
   document.body.classList.add('app', `app-${platform()}`);
-  globalThis.apakiApp = Object.freeze({ platform: platform(), site: SITE, siteHost: SITE_HOST, relay: RELAY, keysInKeychain: !demo, build: Object.freeze({ ...build }) });
+  // The app's own version (CFBundleShortVersionString / versionName, written from apaki/VERSION by apaki/scripts/version.mjs) and
+  // build number: the page tells the PC (boot.js tellClient) and checks it against what the PC wants (apaki/remote/compat.js).
+  let facts = {};
+  if (!demo) { try { facts = (await AppInfo.info()) || {}; } catch { facts = {}; } }
+  globalThis.apakiApp = Object.freeze({ platform: platform(), site: SITE, siteHost: SITE_HOST, relay: RELAY, keysInKeychain: !demo, version: String(facts.version || ''), buildNumber: String(facts.build || ''), build: Object.freeze({ ...build }) });
   // The web client's "add to Home Screen" hint has nothing to do in the app.
   try { localStorage.setItem('apaki.installHint.v1', 'app'); } catch { /* no storage */ }
   if (!demo) {

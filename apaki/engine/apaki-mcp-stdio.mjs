@@ -24,6 +24,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { APP_VERSION } from './app-version.js';
 import { ArtifactStore } from './artifacts.js';
 import { SHOW_DESCRIPTION, createApakiTools, showShape } from './apaki-tools.js';
 import { browserToolSpecs } from './browser-tools.js';
@@ -39,7 +40,7 @@ const post = async (route, body, { timeoutMs = 4000, json = false } = {}) => {
   } catch { return json ? null : false; }
 };
 
-const server = new McpServer({ name: 'apaki', version: '0.1.0' });
+const server = new McpServer({ name: 'apaki', version: APP_VERSION });
 
 /** An MCP result from the engine's { ok, text, image?, mimeType? }. */
 const asResult = (r) => ({

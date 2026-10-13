@@ -64,6 +64,7 @@
  */
 
 import { createDeviceIdentity, parsePairingUrl } from './protocol.js';
+import { APP_UPDATE_TITLE, oldAppText, phoneAppState } from './compat.js';
 import { Link } from './link.js';
 import { installShim } from './shim.js';
 import * as store from './store.js';
@@ -313,6 +314,34 @@ function maybeAutoConnect(pcs) {
   // Once per visit: if it does not work out (the PC went offline meanwhile) the person chooses.
   S.noAuto = true;
   connect(pc);
+}
+
+/* ---------- the app's version against what the PC wants (apaki/remote/compat.js, 2026-10-13) ---------- */
+
+/** The native app tells the PC which app it is, once the channel is in. The web page has no app version and says nothing. */
+function tellClient() {
+  const app = globalThis.apakiApp;
+  if (!app?.version || !S.link || S.link.state !== 'open') return;
+  S.link.sendClient({ kind: app.platform, version: app.version, ...(app.buildNumber ? { build: app.buildNumber } : {}) });
+}
+
+/**
+ * The PC's hello names the oldest phone app it works with (minPhoneApp). A native app under that shows "Update the Apaki app"
+ * once per page session (Continue anyway lets it be used; it is advice, the PC still answers). The web page has no app version,
+ * and a PC that does not say (an older Apaki) never flags anything.
+ */
+function checkAppVersion(m) {
+  const app = globalThis.apakiApp;
+  if (!app?.version || !m || phoneAppState(app.version, m.minPhoneApp) !== 'old') return;
+  const key = `${m.minPhoneApp}|${app.version}`;
+  if (S.appOldShown === key) return;
+  S.appOldShown = key;
+  const pc = S.link?.pcName || S.pc?.pcName || 'This PC';
+  const where = app.platform === 'ios' ? 'Open TestFlight and update Apaki there.' : 'Update Apaki from the store you installed it from.';
+  show(`<div class="pair-kicker">${esc(pc)}</div><h1>${esc(APP_UPDATE_TITLE)}</h1>
+    <p>${esc(oldAppText({ version: app.version, min: m.minPhoneApp, pcVersion: m.appVersion, pcName: pc }))}</p>
+    <p class="pair-note">${esc(where)} What is running on the PC keeps running meanwhile.</p>
+    ${S.appStarted ? '<button class="pair-btn quiet" data-k="back">Continue anyway</button>' : ''}`);
 }
 
 /** A short line at the top of the screen that goes away by itself (saved to the account, signed in, ...). */
@@ -732,6 +761,9 @@ function linkHandlers() {
     // Connected PC that asks first is asked once by itself (linkCurrent); a Private or older PC never is.
     hello: (m) => {
       renderPcLine();
+      // The native app says which app it is, and hears whether this PC wants a newer one (compat.js).
+      tellClient();
+      checkAppVersion(m);
       if (S.pc && (m?.mode === 'private' || m?.mode === 'connected') && S.pc.mode !== m.mode) {
         S.pc = { ...S.pc, mode: m.mode };
         store.updatePc(S.pc.roomId, { mode: m.mode }).catch(() => {});
@@ -752,6 +784,8 @@ function linkHandlers() {
     phone: (info) => {
       if (info.kind === 'wait') S.phoneWaited = true;
       else if (info.kind === 'ok' && S.phoneWaited) { S.phoneWaited = false; toast(`${S.link?.pcName || 'The PC'} let this phone in.`); }
+      // An account connection is held until the PC decides: the app's own version goes once it is let in.
+      if (info.kind === 'ok') tellClient();
     },
     // The PC switched between Private and Connected while this phone is connected.
     mode: (mode) => {
