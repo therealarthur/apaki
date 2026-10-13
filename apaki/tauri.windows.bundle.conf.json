@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Myrlin",
+    "category": "DeveloperTool",
+    "shortDescription": "A desktop home for every Claude Code session, linked to Myrlin Glass.",
+    "icon": ["icons/icon.ico"],
+    "resources": {
+      "build-win/engine": "engine",
+      "build-win/node": "node",
+      "build-win/bin": "bin"
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "template": "nsis/installer.nsi",
+        "installerHooks": "nsis/hooks.nsh",
+        "displayLanguageSelector": false,
+        "languages": ["English"],
+        "compression": "lzma"
+      }
+    }
+  }
+}
