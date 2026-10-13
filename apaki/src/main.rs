@@ -175,9 +175,17 @@ fn log_path() -> PathBuf {
     dir.join("apaki-engine.log")
 }
 
+/// A line from the page for apaki-window.log (2026-10-13): a stall of the page's main thread over a second, so a
+/// freeze leaves a trace of what the window was doing. One short line.
+#[tauri::command]
+fn ui_log(text: String) {
+    let one: String = text.chars().take(300).collect::<String>().replace(['\n', '\r'], " ");
+    wlog(&format!("page: {one}"));
+}
+
 /// One line in ~/.claude/latch/apaki-window.log (2026-10-11): the window's own connection story (connected, ended
 /// and why, reconnecting), which a Windows GUI program cannot print anywhere else. Kept under about 1 MB.
-fn wlog(msg: &str) {
+pub(crate) fn wlog(msg: &str) {
     let path = log_path().with_file_name("apaki-window.log");
     if std::fs::metadata(&path).map(|m| m.len() > 1_000_000).unwrap_or(false) {
         let _ = std::fs::rename(&path, path.with_extension("log.1"));
@@ -388,7 +396,7 @@ fn main() {
             }
         }))
         .manage(Engine { stdin: Mutex::new(None), restarts: Mutex::new(Vec::new()), gen: std::sync::atomic::AtomicU64::new(0), closing: AtomicBool::new(false), flushed: Mutex::new(None), early: Mutex::new(Some(Vec::new())) })
-        .invoke_handler(tauri::generate_handler![engine_send, browser::browser])
+        .invoke_handler(tauri::generate_handler![engine_send, browser::browser, ui_log])
         .setup(|app| {
             // The browser borrows the main webview's WebView2 environment; nothing starts until one opens.
             browser::init(app.handle());

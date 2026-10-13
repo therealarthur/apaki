@@ -111,7 +111,7 @@ mod imp {
         take_pwstr, AcceleratorKeyPressedEventHandler, CallDevToolsProtocolMethodCompletedHandler,
         CreateCoreWebView2ControllerCompletedHandler, DocumentTitleChangedEventHandler, FocusChangedEventHandler,
         HistoryChangedEventHandler, NavigationCompletedEventHandler, NavigationStartingEventHandler,
-        NewWindowRequestedEventHandler, SourceChangedEventHandler, WindowCloseRequestedEventHandler,
+        NewWindowRequestedEventHandler, ProcessFailedEventHandler, SourceChangedEventHandler, WindowCloseRequestedEventHandler,
     };
     use windows::core::{w, Interface, BOOL, HSTRING, PCWSTR, PWSTR};
     use windows::Win32::Foundation::{E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -185,7 +185,49 @@ mod imp {
             let _ = main.with_webview(|pw| {
                 ENV.with(|e| *e.borrow_mut() = Some(pw.environment()));
                 MAIN.with(|c| *c.borrow_mut() = Some(pw.controller()));
+                if let Ok(wv) = unsafe { pw.controller().CoreWebView2() } {
+                    watch_main(&wv);
+                }
             });
+        }
+    }
+
+    /// The window's own page when its WebView2 processes fail (2026-10-13). Arthur: "myrlin apaki still freezes up
+    /// pretty often and just now crashed": at 00:23 the page's process died out of memory (0xe0000008, the PC's commit
+    /// charge near its limit), and the window sat frozen until it died five minutes later. Now a crashed or hung page
+    /// reloads at once (the engine and every conversation keep running; the page reconnects as after any engine
+    /// restart), a crashed GPU process is left to WebView2, which starts a new one, and a dead browser process, which
+    /// cannot be reloaded in place, starts the app again. Each one is written to apaki-window.log.
+    fn watch_main(wv: &ICoreWebView2) {
+        let mut tok = 0i64;
+        let r = unsafe {
+            wv.add_ProcessFailed(
+                &ProcessFailedEventHandler::create(Box::new(move |sender, args| {
+                    let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                    if let Some(a) = &args {
+                        let _ = a.ProcessFailedKind(&mut kind);
+                    }
+                    if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED || kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE {
+                        let what = if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED { "exited" } else { "stopped responding" };
+                        crate::wlog(&format!("the page's process {what}; reloading the page"));
+                        if let Some(wv) = &sender {
+                            let _ = wv.Reload();
+                        }
+                    } else if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
+                        crate::wlog("WebView2's browser process exited; starting Apaki again");
+                        if let Some(app) = APP.get() {
+                            app.restart();
+                        }
+                    } else {
+                        crate::wlog(&format!("a WebView2 process failed (kind {}); WebView2 recovers it", kind.0));
+                    }
+                    Ok(())
+                })),
+                &mut tok,
+            )
+        };
+        if let Err(e) = r {
+            crate::wlog(&format!("could not watch the page's processes: {e}"));
         }
     }
 

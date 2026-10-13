@@ -393,6 +393,23 @@ function syncWaiting() {
 // Apaki's own hover tooltips in place of the browser's title boxes (tooltip.js, Arthur 2026-10-12).
 initTooltips();
 
+// A freeze leaves a trace (2026-10-13, Arthur: "still freezes up pretty often"): a stall of this page's main thread over
+// a second goes to apaki-window.log with what the window held, at most one line every 5 seconds. Desktop only.
+if (!WEB && typeof PerformanceObserver === 'function') {
+  let lastStall = 0;
+  try {
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        if (e.duration < 1000 || Date.now() - lastStall < 5000) continue;
+        lastStall = Date.now();
+        const panes = [...S.panes.values()];
+        const text = `stall ${Math.round(e.duration)} ms; ${S.tabs?.length ?? '?'} tabs, ${panes.length} panes, ${panes.filter((p) => p.busy).length} working, ${document.visibilityState}, ${document.hasFocus() ? 'focused' : 'unfocused'}`;
+        invoke('ui_log', { text }).catch(() => {});
+      }
+    }).observe({ type: 'longtask', buffered: false });
+  } catch { /* no long-task timing here */ }
+}
+
 const wtc = initWorktrees({
   send, sheet, menu, web: WEB, shortPath: short,
   cap: () => (WEB ? (window.__apakiLink?.cap?.() || 'full') : 'full'),
