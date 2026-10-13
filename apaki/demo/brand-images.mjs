@@ -9,8 +9,9 @@
  *   relay/site/assets/og.jpg
  *       the 1200x630 link preview: the wordmark, one line, and the handoff window (the PC with the phone's session) on the pearl
  *
- * Run after site-media.mjs (the preview uses relay/site/assets/media/handoff-light-2000.webp):
- *   node apaki/demo/brand-images.mjs [playwright=<dir>] [chromium=<exe>] [ffmpeg=<exe>]
+ * Run after capture.mjs (the preview uses the handoff scene's still, stills/handoff-followed-light.png in the capture
+ * folder; until 2026-10-12 round 3 it used the page's handoff-light-2000.webp, which the page no longer carries):
+ *   node apaki/demo/brand-images.mjs [in=D:\apaki-media] [playwright=<dir>] [chromium=<exe>] [ffmpeg=<exe>]
  */
 
 import fs from 'node:fs';
@@ -23,6 +24,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
 const args = Object.fromEntries(process.argv.slice(2).map((a) => { const i = a.indexOf('='); return i < 0 ? [a, '1'] : [a.slice(0, i), a.slice(i + 1)]; }));
+// The capture folder (capture.mjs's out=), for the handoff still in the link preview.
+const MEDIA_IN = path.resolve(args.in || process.env.APAKI_MEDIA_DIR || (process.platform === 'win32' ? 'D:\\apaki-media' : path.join(os.homedir(), 'apaki-media')));
 
 async function loadPlaywright() {
   const tries = [args.playwright && path.join(args.playwright, 'node_modules', 'playwright', 'index.mjs'),
@@ -88,7 +91,7 @@ body { width: 1200px; height: 630px; position: relative; overflow: hidden; backg
 <div class="copy"><div class="wm">${MARK}<span>Apaki</span></div>
 <div class="line">Every Claude Code session on your PC, in one window.</div>
 <div class="fine">Free and open source · apaki.myrlin.io</div></div>
-<div class="win"><img src="data:image/webp;base64,${b64(path.join(REPO, 'relay', 'site', 'assets', 'media', 'handoff-light-2000.webp'))}"></div>
+<div class="win"><img src="data:image/png;base64,${b64(path.join(MEDIA_IN, 'stills', 'handoff-followed-light.png'))}"></div>
 </body></html>`;
 
 const pw = await loadPlaywright();

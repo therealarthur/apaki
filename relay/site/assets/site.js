@@ -23,6 +23,10 @@
  *   Reveal    blocks marked data-reveal rise 24px and fade in once as they enter (not under reduced
  *             motion). Blocks already on screen when this runs are shown at once, so nothing blinks.
  *
+ *   Circles   (round 3) the pearl circles, drawn from a small spec per placement (data-circles).
+ *   Motion    (round 3) the 3D pieces loop in CSS; [data-motion] blocks are .is-live only on screen, and
+ *             a hidden tab pauses them all (.tab-hidden). Reduced motion shows their resting frame.
+ *
  * Only the page's own files are loaded (the CSP allows nothing else). No cookies, no storage.
  */
 (function () {
@@ -279,11 +283,100 @@
     root.classList.add('reveal-on');
   }
 
+  /* ---------- Apaki's pearl circles (round 3, 2026-10-12) ----------
+   * Concentric bands from an anchor just off the frame, drawn here from a small spec so each placement
+   * differs: the band radii and ramp, a peach arc cut into one gap and a short cyan-to-blue arc (the
+   * colours of the M's flare) in another. Units: 2000 to the art's box, the anchor at its centre. The
+   * colours come from CSS variables on each .circles block (site.css), so both themes follow. Only
+   * presentation attributes are written (the page's CSP allows no inline style). */
+
+  var CIRCLES = {
+    // From the hero's bottom left: the light ramp, the peach arc up and to the right, the flare inside it.
+    dawn: {
+      bands: [[150, 228, 'b3'], [244, 318, 'b1'], [334, 378, 'b5', 0.9], [394, 476, 'b2'], [506, 540, 'b4', 0.8], [556, 632, 'b1', 0.92], [648, 690, 'b5', 0.7]],
+      acc: [491, 26, 306, 24], flare: [326, 6, 334, 34],
+      hair: [730, 990, 20], orbits: [[800, 2.4, 10], [946, 1.6, 7]],
+    },
+    // Low on the right under the downloads: wider gaps, the flare leads and the peach is a thin thread.
+    dusk: {
+      bands: [[120, 200, 'b2'], [216, 260, 'b4', 0.85], [276, 370, 'b1'], [386, 420, 'b5', 0.75], [436, 520, 'b3'], [552, 600, 'b2', 0.9], [616, 700, 'b4', 0.7]],
+      acc: [268, 6, 246, 20], flare: [536, 22, 228, 30],
+      hair: [740, 980, 24], orbits: [[860, 2, 9]],
+    },
+  };
+
+  function arcCircle(spec, cls, extra) {
+    var r = spec[0];
+    var c = 2 * Math.PI * r;
+    var len = (spec[3] / 360) * c;
+    var from = spec[2] - spec[3] / 2;
+    return '<circle class="' + cls + '" r="' + r + '" stroke-width="' + spec[1] + '" stroke-dasharray="' + len.toFixed(1) + ' ' + c.toFixed(1) + '" transform="rotate(' + from.toFixed(2) + ')"' + (extra || '') + '/>';
+  }
+
+  /** Fills one .circles block from its spec (data-circles), once. */
+  function drawCircles(el) {
+    var name = el.getAttribute('data-circles');
+    var spec = CIRCLES[name];
+    if (!spec || el.firstChild) return;
+    var id = 'pc-' + name;
+    var bands = '';
+    var pearl = '';
+    spec.bands.forEach(function (b) {
+      var r = (b[0] + b[1]) / 2;
+      var w = b[1] - b[0];
+      bands += '<circle class="pc-band pc-' + b[2] + '" r="' + r + '" stroke-width="' + w + '"' + (b[3] ? ' stroke-opacity="' + b[3] + '"' : '') + '/>';
+      pearl += '<circle class="pc-pearl" r="' + r + '" stroke-width="' + w + '" stroke="url(#' + id + '-p)"/>';
+    });
+    var hair = '';
+    for (var r = spec.hair[0]; r <= spec.hair[1]; r += spec.hair[2]) hair += '<circle r="' + r + '"/>';
+    spec.orbits.forEach(function (o) { hair += '<circle class="pc-orbit" r="' + o[0] + '" stroke-width="' + o[1] + '" stroke-dasharray="' + o[1] + ' ' + o[2] + '"/>'; });
+    // The flare's gradient runs from one end of its arc to the other.
+    var f = spec.flare;
+    var a0 = (f[2] - f[3] / 2) * Math.PI / 180;
+    var a1 = (f[2] + f[3] / 2) * Math.PI / 180;
+    var flareGrad = '<linearGradient id="' + id + '-f" gradientUnits="userSpaceOnUse" x1="' + (f[0] * Math.cos(a0)).toFixed(1) + '" y1="' + (f[0] * Math.sin(a0)).toFixed(1) + '" x2="' + (f[0] * Math.cos(a1)).toFixed(1) + '" y2="' + (f[0] * Math.sin(a1)).toFixed(1) + '"><stop class="pc-f1" offset="0"/><stop class="pc-f2" offset="1"/></linearGradient>';
+    el.innerHTML =
+      '<svg class="pc-hair" viewBox="-1000 -1000 2000 2000" focusable="false">' + hair + '</svg>' +
+      '<div class="pc-bands"><svg viewBox="-720 -720 1440 1440" focusable="false"><defs><linearGradient id="' + id + '-p" gradientUnits="userSpaceOnUse" x1="-700" y1="-700" x2="700" y2="700"><stop class="pc-s1" offset="0"/><stop class="pc-s2" offset=".36"/><stop class="pc-s3" offset=".66"/><stop class="pc-s4" offset="1"/></linearGradient></defs>' + bands + pearl + '</svg></div>' +
+      '<div class="pc-arcs"><svg viewBox="-720 -720 1440 1440" focusable="false"><defs>' + flareGrad + '</defs>' + arcCircle(spec.acc, 'pc-acc') + arcCircle(f, 'pc-flare', ' stroke="url(#' + id + '-f)"') + '</svg></div>';
+    window.requestAnimationFrame(function () { el.classList.add('is-drawn'); });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-circles]'), drawCircles);
+
+  /* ---------- the 3D pieces: live only on screen (round 3, 2026-10-12) ----------
+   * Every [data-motion] block (the circles, the Glass rings, the pane fan, the worktree branches, the relay
+   * tunnel, the horizon's arc) loops in CSS. Here it is marked .is-live while it is on screen, so off screen
+   * its loops hold still (site.css pauses them); .was-seen marks the first good look, for things drawn once
+   * (the branches); a hidden tab pauses all of them. Under reduced motion site.css shows the resting frame. */
+
+  var motionEls = Array.prototype.slice.call(document.querySelectorAll('[data-motion]'));
+  function motionClass() { root.classList.toggle('motion-on', !reducedMq.matches); }
+  motionClass();
+  on(reducedMq, motionClass);
+  if (hasIO) {
+    var motionIO = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        e.target.classList.toggle('is-live', e.isIntersecting);
+        if (e.isIntersecting && e.intersectionRatio >= 0.25) e.target.classList.add('was-seen');
+      });
+    }, { rootMargin: '8% 0px 8% 0px', threshold: [0, 0.25] });
+    motionEls.forEach(function (el) { motionIO.observe(el); });
+  } else {
+    motionEls.forEach(function (el) { el.classList.add('is-live', 'was-seen'); });
+  }
+  document.addEventListener('visibilitychange', function () { root.classList.toggle('tab-hidden', document.hidden); });
+
   /* ---------- the header ---------- */
 
   var head = document.querySelector('.site-head');
   if (head) {
-    var mark = function () { head.classList.toggle('is-scrolled', window.scrollY > 8); };
+    // Over the dark chapter (round 3) the header takes the night's colours, so it never sits light on dark.
+    var night = document.querySelector('.night');
+    var mark = function () {
+      head.classList.toggle('is-scrolled', window.scrollY > 8);
+      if (night) head.classList.toggle('is-night', night.getBoundingClientRect().top < head.offsetHeight * 0.6);
+    };
     mark();
     window.addEventListener('scroll', mark, { passive: true });
   }
