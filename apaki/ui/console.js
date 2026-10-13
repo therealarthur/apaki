@@ -286,6 +286,8 @@ export class PaneConsole {
       this.pane.note(`${command ? `${command} opens` : 'The console is'} ${this.agent() === 'Codex' ? 'Codex' : 'Claude Code'}'s own terminal UI, which runs on the PC. Open the conversation there and switch it to the console.`, 'warn');
       return;
     }
+    // A pane that follows another pane's conversation (the shared view) has none of its own to open.
+    if (this.pane.following) { this.pane.note('This pane shows another pane\'s conversation. Open the console in that pane.', 'warn'); return; }
     // Already showing: a command goes straight to the TUI.
     if (this.shown && this.state === 'running') { if (command) this.pane.send('consoleInput', { data: `${command}\r` }); this.term?.focus(); return; }
     this.state = 'opening';
