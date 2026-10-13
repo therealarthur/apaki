@@ -40,7 +40,7 @@ version lower than the 1.0 builds already in TestFlight, start the shared versio
 | Job | Runs on | What |
 | - | - | - |
 | meta | ubuntu | the tag must be `v<apaki/VERSION>` and `version.mjs check` must pass |
-| test | ubuntu | `npm test` |
+| test | windows-latest | `npm test` (the suite is written for Windows: on Linux and macOS about twenty tests fail over paths and PowerShell behaviour they check on purpose; the runner's long temp folder is set because its default short name confuses the worktree tests) |
 | windows | windows-latest | `package-apaki-win.ps1 -Updater`: the NSIS installer and its signature; then `smoke-win-installer.ps1` installs it silently on the runner, looks inside (files, the engine's version, node-pty, Claude Code, the search binary, PATH, App Paths), starts the app and checks it reaches its engine, and uninstalls |
 | macos | macos-latest (Apple Silicon) | `package-apaki-mac.sh --updater`: the `.app` (ad-hoc signed), the `.dmg` and the update archive with its signature; the app's own engine reports the right version |
 | release | ubuntu | `latest.json` from the two signatures, `SHA256SUMS.txt`, the draft release with all files |
