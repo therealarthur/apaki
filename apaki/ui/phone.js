@@ -343,7 +343,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     if (s.state === 'connecting' && s.relay) detail = `Reaching ${s.relay}…`;
     if (s.state === 'offline' && s.retryInMs != null) detail = `${s.error ? `${s.error} ` : `${s.relay || 'The relay'} is not answering. `}Trying again in ${Math.max(1, Math.round(s.retryInMs / 1000))} s.`;
     const toggle = s.relayConfigured === false && !s.enabled ? '' : `<button data-k="toggle"${s.enabled ? '' : ' class="primary"'}>${s.enabled ? 'Turn off' : 'Turn on'}</button>`;
-    const keys = s.protection === 'dpapi' ? 'Keys on this PC are sealed with Windows DPAPI for your account.' : s.protection === 'file' ? 'Keys on this PC are in a file only your account can read.' : '';
+    const keys = s.protection === 'dpapi' ? 'Keys on this PC are sealed with Windows DPAPI for your account.' : s.protection === 'keychain' ? 'Keys on this Mac are sealed with a key in your login Keychain.' : s.protection === 'file' ? 'Keys on this PC are in a file only your account can read.' : '';
     // 2026-10-11 polish: the status shows on top only when something is not right (off, offline, a problem); while it
     // is on, it lives in the options line under the QR with the mode and the page check.
     const statusHtml = `<div class="ph-status" data-state="${esc(s.state)}"><div class="ph-status-t"><span class="ph-state">${esc(label)}</span><span class="ph-line">${esc(detail)}</span></div>${toggle}</div>`;

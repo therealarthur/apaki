@@ -672,7 +672,8 @@ test('what opens a terminal in a folder', () => {
   assert.equal(terminalCommand('win32', 'C:\\w').cmd, 'wt.exe');
   assert.deepEqual(terminalCommand('win32', 'C:\\w').args, ['-d', 'C:\\w']);
   assert.equal(terminalCommand('win32', 'C:\\w').fallback.cmd, 'cmd.exe');
-  assert.deepEqual(terminalCommand('darwin', '/w'), { cmd: 'open', args: ['-a', 'Terminal', '/w'] });
+  // exists: () => false, so a Mac with iTerm installed still gets the plain Terminal answer here (the iTerm choice is in apaki-platform.test.js).
+  assert.deepEqual(terminalCommand('darwin', '/w', { exists: () => false, env: {} }), { cmd: 'open', args: ['-a', 'Terminal', '/w'] });
   assert.equal(terminalCommand('linux', '/w').cwd, '/w');
 });
 

@@ -30,6 +30,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { latchDir } from './host.js';
+import { terminalCommand as platformTerminalCommand } from '../../src/platform.js';
 
 /* ---------- running git and gh ---------- */
 
@@ -866,12 +867,11 @@ export async function execute(plan, { runner = run } = {}) {
 
 /**
  * What opens a terminal in a folder (Open terminal in the worktree menu): Windows Terminal, else a plain console
- * window; Terminal on a Mac; the desktop's default on Linux. Pure, so the choice is tested without opening anything.
+ * window; iTerm when installed, else Terminal, on a Mac (2026-10-12); the desktop's default on Linux. Pure, so the choice
+ * is tested without opening anything. The choice itself lives in src/platform.js (the same one serves Open in a terminal).
  */
-export function terminalCommand(platform, dir) {
-  if (platform === 'win32') return { cmd: 'wt.exe', args: ['-d', dir], fallback: { cmd: 'cmd.exe', args: ['/c', 'start', '', '/D', dir, 'cmd.exe'] } };
-  if (platform === 'darwin') return { cmd: 'open', args: ['-a', 'Terminal', dir] };
-  return { cmd: 'x-terminal-emulator', args: [], cwd: dir };
+export function terminalCommand(platform, dir, opts) {
+  return platformTerminalCommand(platform, dir, opts);
 }
 
 /* ---------- the engine's view of all repositories ---------- */

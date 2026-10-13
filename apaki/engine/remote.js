@@ -2473,7 +2473,7 @@ export class RemoteBridge {
       // canSkip: the site could not be checked (not a page that differs), so the sheet may offer Pair without checking the page.
       page: this.page ? { state: this.page.state, version: this.page.version || null, url: this.page.url || null, at: this.page.at, text: this.page.state === 'checking' ? 'Checking the phone page…' : pageText(this.page), canSkip: this.page.state === 'unreachable' } : null,
       pcName: this.pcName,
-      protection: this.scheme === 'dpapi-user' ? 'dpapi' : this.scheme ? 'file' : null,
+      protection: this.scheme === 'dpapi-user' ? 'dpapi' : this.scheme === 'keychain-aes' ? 'keychain' : this.scheme ? 'file' : null,
       // The saved keys cannot be opened ('locked' or 'unreadable'): the sheet offers Start over (remoteReset).
       keysProblem: this.keysProblem || null,
       recovered: this.recovered,
