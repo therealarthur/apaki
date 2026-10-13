@@ -103,6 +103,11 @@ jobs:
           git config --global user.email "ci@example.invalid"
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
+        env:
+          # The default temp folder of a runner is a short 8.3 name (C:\Users\RUNNER~1\...) while git reports the long one,
+          # so the worktree tests, which compare folders, see two different places. The runner's own temp folder is long.
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
 
   windows:
     name: Windows installer
