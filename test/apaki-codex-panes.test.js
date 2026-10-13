@@ -96,7 +96,7 @@ test('a restricted phone\'s Codex pane is read-only and never asks, whatever the
     assert.equal(s.codex.setMode(p, 'full-access'), false);
     assert.equal(s.codex.setMode(p, 'auto'), false);
     assert.equal(p.mode, 'read-only');
-    assert.deepEqual(s.of('settings').at(-1), { ev: 'settings', paneId: PHONE, model: 'm1', effort: 'low', mode: 'read-only' });
+    assert.deepEqual(s.of('settings').at(-1), { ev: 'settings', paneId: PHONE, model: 'm1', effort: 'low', mode: 'read-only', tune: { summary: null, speed: null } });
     await s.codex.send('r2', p, 'hello', []);
     const turn = s.client.of('turn/start')[0];
     assert.equal(turn.approvalPolicy, 'never');

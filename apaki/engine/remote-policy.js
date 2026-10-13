@@ -9,6 +9,8 @@
  *   sessions, search                         the session list
  *   open, attach, send, interrupt, answer,   its own conversations
  *   model, effort, mode, commands, close
+ *   tune                                     (2026-10-13) Ultracode and its workflow size on a Claude pane, the reasoning summary and
+ *                                            speed on a Codex pane; Ultracode ON needs Full access (capTuneText)
  *   artifactGet                              when the engine has it (artifacts track)
  *   historyBefore, historyBlock              read only: more of a conversation it has open
  *   codexModels, codexThreads                read only (2026-10-12): Codex's models and threads; a Codex pane uses the
@@ -101,6 +103,9 @@ export const PHONE_PREFIX = 'phone:';
 export const PHONE_OPS = Object.freeze([
   'sessions', 'search',
   'open', 'attach', 'send', 'interrupt', 'answer', 'model', 'effort', 'mode', 'commands', 'close',
+  // 2026-10-13 (tune.js): Ultracode and its workflow size on a Claude pane, the reasoning summary and speed on a Codex pane.
+  // Turning Ultracode ON needs Full access (capTuneText); everything else here is open to every access level.
+  'tune',
   'artifactGet',
   // 2026-10-10: steering a queued message into the running turn (same power as send), and the context meter.
   'steer', 'contextUsage',
@@ -143,7 +148,7 @@ export const PHONE_OPS = Object.freeze([
 export const WORKTREE_KINDS = Object.freeze(['create', 'remove', 'commit', 'push', 'pr', 'merge']);
 
 /** Ops that act on one pane (paneId required). */
-const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile', 'historyPrompts', 'follow', 'unfollow', 'transcribe']);
+const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'tune', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile', 'historyPrompts', 'follow', 'unfollow', 'transcribe']);
 
 /** Session-list actions that change what the PC keeps (2026-10-12): not for a Chat only phone. */
 export const SESSION_WRITE_OPS = Object.freeze(['rename', 'forkSession', 'archive', 'folder', 'pin']);
@@ -161,6 +166,11 @@ export const BROADCAST_EVENTS = new Set(['folders', 'glass', 'index', 'meaning',
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const MODES = ['bypassPermissions', 'acceptEdits', 'plan', 'default'];
+// 2026-10-13 (tune.js keeps the same lists; test/apaki-tune.test.js checks they agree): the workflow sizes Ultracode takes and
+// the reasoning summaries Codex takes. A Codex speed is a service tier id the model lists, so only its shape is checked.
+const WORKFLOW_SIZES = ['small', 'medium', 'large', 'unrestricted'];
+const CODEX_SUMMARIES = ['auto', 'concise', 'detailed', 'none'];
+const CODEX_SPEED_RE = /^[a-z][a-z0-9_-]{0,23}$/;
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 /*
@@ -310,6 +320,17 @@ export function capModeText(cap, mode) {
   return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, so it cannot use ${mode === 'bypassPermissions' ? 'Bypass permissions' : String(mode).slice(0, 40)}.`;
 }
 
+/**
+ * Why Ultracode cannot be turned on from a phone below Full access (2026-10-13). Ultracode makes Claude plan and run workflows of
+ * sub-agents on its own. A phone's tool limits (the blocked tool list, the capability hook, plan mode) are enforced inside the
+ * one Claude Code process, and nothing shows they reach the agents a workflow starts; the "ultracode" keyword in a prompt is a
+ * second way in. So No shell and Chat only get no workflows at all (tune.js startSettings turns the feature off for them), and
+ * the toggle says so. Turning Ultracode off, and the Codex settings (summary, speed), are open to every access level.
+ */
+export function capTuneText(cap) {
+  return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, so Ultracode stays off: it runs sub-agents, and this phone's limits on tools are not shown to cover them. The person can change the phone's access in Apaki's Phone sheet on the PC.`;
+}
+
 /** Why a worktree action was refused for a phone below Full access (the PC owner can change it in the Phone sheet). */
 export function capWorktreeText(cap) {
   return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, so it can look at worktrees and their changes but not create, commit, push, merge or remove them. The person can change the phone's access in Apaki's Phone sheet on the PC.`;
@@ -422,6 +443,23 @@ export function capPreToolUse(getCap) {
       return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: capDeniedText(cap, input.tool_name) } };
     }],
   };
+}
+
+/**
+ * The tune fields a command names (op tune, or the `tune` object of an open), checked for a Codex pane (summary, speed) or a
+ * Claude pane (ultracode, size). Only the keys that were named come back; null puts a key back to its default. Returns
+ * { tune } or { error }. The access rule for turning Ultracode on is the caller's (capTuneText).
+ */
+function tuneFields(src, codex) {
+  const out = {};
+  if (codex) {
+    if (src.summary !== undefined) { if (src.summary !== null && !CODEX_SUMMARIES.includes(src.summary)) return { error: 'Unknown reasoning summary.' }; out.summary = src.summary; }
+    if (src.speed !== undefined) { if (src.speed !== null && !(typeof src.speed === 'string' && CODEX_SPEED_RE.test(src.speed))) return { error: 'Unknown speed.' }; out.speed = src.speed; }
+  } else {
+    if (src.ultracode !== undefined) { if (typeof src.ultracode !== 'boolean') return { error: 'Ultracode is on or off.' }; out.ultracode = src.ultracode; }
+    if (src.size !== undefined) { if (src.size !== null && !WORKFLOW_SIZES.includes(src.size)) return { error: 'Unknown workflow size.' }; out.size = src.size; }
+  }
+  return { tune: out };
 }
 
 const LOCAL_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
@@ -552,7 +590,7 @@ export function checkPhoneCommand(cmd, ctx) {
     }
     // Ops on a follower act on the desktop pane it follows (artifactGet and close stay on the phone's own pane id).
     if (followed && op !== 'follow' && op !== 'unfollow' && op !== 'close' && op !== 'artifactGet') {
-      if (op === 'model' || op === 'effort' || op === 'mode') return fail(FOLLOW_SETTINGS_TEXT, cmd);
+      if (op === 'model' || op === 'effort' || op === 'mode' || op === 'tune') return fail(FOLLOW_SETTINGS_TEXT, cmd);
       if (DRIVE_OPS.has(op) && cap !== 'full') return fail(capFollowText(cap), cmd, { readOnly: true });
       out.paneId = followed;
       follower = { paneId, desktopPaneId: followed };
@@ -597,6 +635,15 @@ export function checkPhoneCommand(cmd, ctx) {
         if (cmd.mode != null) {
           if (codexOpen) { if (!CODEX_MODES.includes(cmd.mode)) return fail('Unknown permission mode.', cmd); out.mode = capCodexModes(cap).includes(cmd.mode) ? cmd.mode : capCodexModes(cap)[0]; }
           else { if (!MODES.includes(cmd.mode)) return fail('Unknown permission mode.', cmd); out.mode = clampMode(cap, cmd.mode); }
+        }
+        // 2026-10-13: Ultracode, its size, or a Codex pane's summary and speed. Clamped like the mode: an open never fails over it,
+        // a phone below Full access just opens with Ultracode off.
+        if (cmd.tune !== undefined) {
+          if (!isObj(cmd.tune)) return fail('Bad settings.', cmd);
+          const t = tuneFields(cmd.tune, codexOpen);
+          if (t.error) return fail(t.error, cmd);
+          if (!codexOpen && cap !== 'full' && t.tune.ultracode === true) t.tune.ultracode = false;
+          out.tune = t.tune;
         }
       }
       break;
@@ -689,6 +736,16 @@ export function checkPhoneCommand(cmd, ctx) {
       if (!(codexPane ? CODEX_EFFORT_RE.test(String(cmd.effort)) : EFFORTS.includes(cmd.effort))) return fail('Unknown effort.', cmd);
       out.effort = cmd.effort;
       break;
+    case 'tune': {
+      // Ultracode and its workflow size (Claude), the reasoning summary and speed (Codex). Turning Ultracode ON needs Full access;
+      // off, a size and the Codex settings are open to every level (they start nothing).
+      const t = tuneFields(cmd, codexPane);
+      if (t.error) return fail(t.error, cmd);
+      if (!Object.keys(t.tune).length) return fail('Nothing to change.', cmd);
+      if (!codexPane && t.tune.ultracode === true && cap !== 'full') return fail(capTuneText(cap), cmd);
+      Object.assign(out, t.tune);
+      break;
+    }
     case 'mode':
       // A Codex pane takes the Codex app's presets; only a Full phone may leave read-only (the PC's sandbox is what enforces it).
       if (codexPane) {

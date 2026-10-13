@@ -113,10 +113,16 @@ export function normalizeModels(data) {
     const efforts = (Array.isArray(m.supportedReasoningEfforts) ? m.supportedReasoningEfforts : [])
       .map((e) => (isObj(e) ? { value: str(e.reasoningEffort), description: str(e.description) } : { value: str(e), description: '' }))
       .filter((e) => e.value);
+    // The faster speeds the model offers (2026-10-13): [{ id, name, description }], e.g. priority "Fast". Standard speed is the
+    // service tier "default" and is not listed.
+    const serviceTiers = (Array.isArray(m.serviceTiers) ? m.serviceTiers : [])
+      .filter((t) => isObj(t) && /^[a-z][a-z0-9_-]{0,23}$/.test(str(t.id)))
+      .map((t) => ({ id: str(t.id), name: str(t.name) || str(t.id), description: str(t.description) }));
     out.push({
       id: str(m.model || m.id), name: str(m.displayName) || str(m.model || m.id), description: str(m.description),
       efforts: efforts.length ? efforts : FALLBACK_EFFORTS.map((value) => ({ value, description: '' })),
       defaultEffort: str(m.defaultReasoningEffort) || efforts[0]?.value || 'medium', isDefault: Boolean(m.isDefault), hidden: Boolean(m.hidden),
+      serviceTiers,
     });
   }
   return out;

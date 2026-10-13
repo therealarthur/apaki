@@ -410,6 +410,26 @@ export class SessionRunner {
     if (this.q) await this.q.setPermissionMode(mode);
   }
 
+  /**
+   * Merges settings into the running process's flag layer (the SDK's applyFlagSettings, 2026-10-13): effort and Ultracode
+   * take hold at once, without a restart. False when no process runs (the next start reads flagSettings and the
+   * effort), or when this Claude Code would not take the call, so the caller can fall back to a restart.
+   */
+  async applyFlags(flags) {
+    if (!this.q || typeof this.q.applyFlagSettings !== 'function' || !flags || !Object.keys(flags).length) return false;
+    try { await this.q.applyFlagSettings(flags); return true; } catch { return false; }
+  }
+
+  /**
+   * What the running Claude Code says it will really send next: { model, effort, ultracode, ultracodeRequested,
+   * ultracodeAvailable, advisor } (the `applied` block of the SDK's get_settings request, which the typings do not list but
+   * the bundled SDK answers). Null when no process runs or the call is not there; never throws.
+   */
+  async appliedSettings() {
+    if (!this.q || typeof this.q.getSettings !== 'function') return null;
+    try { return (await this.q.getSettings())?.applied || null; } catch { return null; }
+  }
+
   /** Ends the process after any running turn; resolves when it has exited (or after 8s). */
   async stop() {
     if (!this.q) return;
