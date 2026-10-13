@@ -135,6 +135,8 @@ prepare_engine() {
   mirror "$repo/src" "$e/src"
   mirror "$repo/bin" "$e/bin"
   mirror "$app/engine" "$e/apaki/engine"
+  # The app's one version (apaki/VERSION, apaki/scripts/version.mjs): the engine reports it (engine/app-version.js).
+  cp "$app/VERSION" "$e/apaki/VERSION"
   mirror "$app/remote" "$e/apaki/remote"
   mirror "$app/bin" "$e/apaki/bin"
   # The phone page check builds the page this Apaki expects from its own window code: it needs these sources.
@@ -190,7 +192,7 @@ prepare() {
   prepare_tauri_cli
 }
 
-version() { sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$app/tauri.conf.json" | head -1; }
+version() { tr -d '\r\n ' < "$app/VERSION"; }
 
 bundle() {
   [ -d "$stage/engine" ] && [ -x "$stage/node/node" ] && [ -f "$stage/icons/icon.icns" ] || die "nothing prepared in $stage; run without --bundle-only first"

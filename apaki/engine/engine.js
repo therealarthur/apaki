@@ -217,6 +217,7 @@ import { listSessions, lockInfo, lockStolen, readTail, releaseLock, rememberCrea
 import { makeLoader } from '../../src/ui/picker.js';
 import { noteRunnerUse, setOn as setWarm, statusText as warmStatus, summary as warmSummary, warmSessions } from '../../src/warm.js';
 import { folderStats, listDir, makeDir } from '../../src/places.js';
+import { APP_VERSION } from './app-version.js';
 import { createRemote } from './remote.js';
 // Real permission prompts: the canUseTool every pane gets (2026-10-12).
 import { createPermissionGate } from './permissions.js';
@@ -2084,7 +2085,7 @@ remote = createRemote({
   emit,
   dispatch: (c) => dispatch(c),
   // voice: whether this PC has Whisper, so a phone shows its mic (op transcribe, 2026-10-12); it was always false here.
-  readyEvent: () => ({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), codex: CODEX_FOUND }),
+  readyEvent: () => ({ ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), codex: CODEX_FOUND }),
   engine: {
     hasOp: (op) => typeof handlers[op] === 'function',
     paneExists: (id) => panes.has(id),
@@ -2550,7 +2551,7 @@ fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => {
 });
 setTimeout(() => { authStatus(null).catch(() => {}); }, 1500).unref();
 
-emit({ ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND });
+emit({ ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND });
 // The transcript archive: a minute after start, then every 6 hours (2026-10-12).
 setTimeout(() => { runTranscriptArchive(); }, 60 * 1000).unref();
 setInterval(() => { runTranscriptArchive(); }, 6 * 60 * 60 * 1000).unref();
@@ -2656,7 +2657,7 @@ function hostWindowConnected(conn) {
   lifecycle?.windowConnected();
   const desk = [...panes.values()].filter((p) => !parsePhoneId(p.id));
   conn.send({
-    ev: 'ready', billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND,
+    ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND,
     host: { pid: process.pid, startedAt: host?.startedAt || null, panes: desk.length, running: desk.filter((p) => p.runner?.running).length, working: desk.filter((p) => paneWorking(p)).length },
   });
   // What changed while no window was connected: the index lines and keep-warm marks as last sent, Glass read now.

@@ -166,6 +166,7 @@ import {
   b64urlDecode, b64urlEncode, deviceIdFor, randomBytes,
 } from '../remote/protocol.js';
 import { Inbox, Outbox, WIRE_VERSION } from '../remote/wire.js';
+import { APP_VERSION } from './app-version.js';
 import { BROADCAST_EVENTS, PHONE_OPS, checkPhoneCommand, hashText, parsePhoneId, phoneView, routeEvent } from './remote-policy.js';
 import { CAPS, CAP_LABEL, AskGate, capDefaultMode, capFollowNote, capNote, capOf, followerView, phonePaneId } from './remote-policy.js';
 import * as store from './remote-store.js';
@@ -1181,7 +1182,7 @@ export class RemoteBridge {
     }
     // expiresAt: when this phone's pairing runs out (null: never), so the phone can show it and explain an expiry.
     // mode (Private or Connected) and cap (what this phone may make Claude do), since 2026-10-10.
-    c.outbox.send({ t: 'hello', v: WIRE_VERSION, pcName: this.pcName, ops: this.phoneOps(), features: this.helloFeatures(), expiresAt: self?.expiresAt || null, mode: this.mode(), cap, nonce: b64urlEncode(c.nonce), ...(self?.kind === 'account' ? { asAccount: true } : {}) });
+    c.outbox.send({ t: 'hello', v: WIRE_VERSION, appVersion: APP_VERSION, pcName: this.pcName, ops: this.phoneOps(), features: this.helloFeatures(), expiresAt: self?.expiresAt || null, mode: this.mode(), cap, nonce: b64urlEncode(c.nonce), ...(self?.kind === 'account' ? { asAccount: true } : {}) });
     if (c.held) {
       c.graceTimer = unref(setTimeout(() => this.viaGrace(c).catch((e) => this.log(`phone key grace: ${e.message}`)), this.viaGraceMs));
     } else {

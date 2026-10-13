@@ -34,6 +34,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { APP_VERSION } from './app-version.js';
 import { CodexAppServer, tomlList, tomlString, tomlTable } from './codex-client.js';
 import { CodexHistory, PAGE as HISTORY_PAGE } from './codex-history.js';
 import { createRolloutScanner } from './codex-rollouts.js';
@@ -181,7 +182,7 @@ export function createCodex(env) {
   function getClient() {
     if (client) return client;
     const s = env.shared?.() || null;
-    const opts = { overrides: processOverrides(s), env: processEnv(s), clientInfo: { name: 'myrlin-apaki', title: 'Myrlin Apaki', version: '0.1.0' } };
+    const opts = { overrides: processOverrides(s), env: processEnv(s), clientInfo: { name: 'myrlin-apaki', title: 'Myrlin Apaki', version: APP_VERSION } };
     client = env.createClient ? env.createClient(opts) : new CodexAppServer(opts);
     client.on('notification', (method, params) => { try { onNotification(method, params); } catch (e) { log(`codex ${method}: ${e.stack || e.message}`); } });
     client.on('request', (id, method, params) => { onRequest(id, method, params).catch((e) => { log(`codex ${method}: ${e.message}`); client.respondError(id, -32603, `Apaki could not handle ${method}`); }); });

@@ -101,6 +101,8 @@ function Mirror($from, $to, [switch]$Whole) {
 Mirror (Join-Path $repo 'src') (Join-Path $engine 'src')
 Mirror (Join-Path $repo 'bin') (Join-Path $engine 'bin')
 Mirror (Join-Path $repo 'apaki\engine') (Join-Path $engine 'apaki\engine')
+# The app's one version (apaki\VERSION, apaki\scripts\version.mjs): the engine reports it (engine\app-version.js).
+Copy-Item (Join-Path $repo 'apaki\VERSION') (Join-Path $engine 'apaki\VERSION')
 # Phone access (2026-10-09): the engine imports apaki\remote\protocol.js and wire.js.
 Mirror (Join-Path $repo 'apaki\remote') (Join-Path $engine 'apaki\remote')
 # The BROWSER shim the engine gives Claude Code (apaki-open.cmd + .mjs), so pages open inside Apaki.

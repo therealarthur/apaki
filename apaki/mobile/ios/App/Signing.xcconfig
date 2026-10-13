@@ -14,7 +14,8 @@
 //                        team cannot sign Associated Domains, so for such a team the scripts pass
 //                        AppPersonal.entitlements instead (ios-device.sh --personal); the app then runs
 //                        without passkeys and Universal Links.
-//   MARKETING_VERSION    the version people see (1.0).
+//   MARKETING_VERSION    the version people see. Written by apaki/scripts/version.mjs from apaki/VERSION (the one version of every Apaki
+//                        app; a pre-release suffix is dropped here, iOS takes three numbers). Do not edit it by hand.
 //   CURRENT_PROJECT_VERSION   the build number. scripts/ios-testflight.sh raises it by one for every
 //                        TestFlight upload and commits the new number; App Store Connect refuses a number it
 //                        has seen for this version.
@@ -30,7 +31,7 @@ PRODUCT_BUNDLE_IDENTIFIER = io.myrlin.apaki
 CODE_SIGN_STYLE = Automatic
 APAKI_ENTITLEMENTS = App.entitlements
 CODE_SIGN_ENTITLEMENTS = App/$(APAKI_ENTITLEMENTS)
-MARKETING_VERSION = 1.0
+MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 9
 
 #include? "Signing.local.xcconfig"
