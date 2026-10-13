@@ -312,7 +312,7 @@ test('Apaki\'s tool server lists the browser tools only when the shell has a bro
   assert.deepEqual(await list(createApakiTools({ store })), ['show']);
   const { shell } = fakeShell(scripted());
   const withBrowser = createApakiTools({ store, browser: createBrowserTools({ shell, owner: () => 'p1' }) });
-  assert.deepEqual(await list(withBrowser), ['show', 'browser_open', 'browser_read', 'browser_click', 'browser_type', 'browser_back', 'browser_screenshot']);
+  assert.deepEqual(await list(withBrowser), ['show', 'browser_open', 'browser_read', 'browser_click', 'browser_type', 'browser_back', 'browser_screenshot', 'browser_tabs']);
   assert.match(withBrowser.appendSystemPrompt, /browser_open/);
   assert.doesNotMatch(createApakiTools({ store }).appendSystemPrompt, /browser_open/);
 });

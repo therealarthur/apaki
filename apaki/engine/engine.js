@@ -64,14 +64,22 @@
  *   op shellReply  { id, ok, result | error }   its answer
  *   op shellHello  { version, features }        the shell's first line
  * With a browser, every pane's Claude Code also gets browser_open, _read,
- * _click, _type, _back and _screenshot (browser-tools.js), and web pages
+ * _click, _type, _back, _screenshot and _tabs (browser-tools.js), and web pages
  * from show, caught commands and BROWSER open in that browser.
+ * One browser pane per conversation, tabs inside it (2026-10-12, Arthur: "the
+ * session that opens a browser should have that window ... and additional tabs
+ * should open IN the browser pane"): every shell browser id a pane owns is a tab
+ * of its one pane; the tools act on the ACTIVE tab (browser-tools.js).
  *   ev openUrl     gains browserId when the page went to the built-in browser
  *   ev browserActivity { paneId, browserId, action, text }   what Claude just did there
  *   op browserTool { paneId, tool, input } -> ev browserToolResult { ok, text, image? }
  *                  (runs one of Claude's browser tools for a pane: checks, later the phone)
- *   op browserView { paneId } -> ev browserView { ok, text, state, image, mime, width, height, at }
- *                  (2026-10-12: one quiet JPEG of the page in the pane's browser, for a phone's Browser view)
+ *   op browserView { paneId, tab? } -> ev browserView { ok, text, state, image, mime, width, height, at, tabs }
+ *                  (2026-10-12: one quiet JPEG of the page in the pane's browser, for a phone's Browser view;
+ *                  tab is a browser id of that pane's own tabs: it becomes the active tab first, and the desktop
+ *                  pane follows through a browserActivity select; tabs is [{ id, title, url, loading, active }] or null)
+ *   op browserTab { paneId, browserId }   the person picked a tab in the pane's tab strip: that tab is the one
+ *                  Claude's browser tools act on from now on (silent: no event; desktop only, never a phone op)
  *
  * The background host (2026-10-10, Arthur: closing Apaki must not close the
  * Claude sessions that are open; see host.js for the whole design): the
@@ -337,7 +345,17 @@ async function openPage(p, o) {
   const base = { ev: 'openUrl', paneId: p.id, sessionId: p.runner?.sessionId || p.sessionId || null, url: o.url, title: o.title || null, reason: o.reason || 'show', toolUseId: o.toolUseId || null };
   if (shell.has('browser') && /^https?:\/\//i.test(o.url)) {
     try {
-      const st = await shell.request('browser.open', { owner: p.id, url: o.url, hint: 'reuse', reason: o.reason || 'show' }, { timeout: 8000 });
+      // One browser pane per conversation with tabs inside it (2026-10-12): a tab already showing this address is opened
+      // again by id (a reload; the window reveals it), anything else is a new tab of the pane. Without browser tools
+      // there is no tab list, so it stays the old "reuse the owner's browser".
+      const bt = (() => { try { return toolsFor(p).browser; } catch { return null; } })();
+      let same = null;
+      if (bt) {
+        try { same = (await bt.tabs()).find((t) => sameAddress(t.url, o.url)) || null; } catch { /* no list: a new tab */ }
+      }
+      const args = same ? { owner: p.id, id: same.id, url: o.url, reason: o.reason || 'show' } : { owner: p.id, url: o.url, hint: bt ? 'tab' : 'reuse', reason: o.reason || 'show' };
+      const st = await shell.request('browser.open', args, { timeout: 8000 });
+      bt?.adopt(st.id);
       emit({ ...base, browserId: st.id });
       return;
     } catch (e) {
@@ -345,6 +363,12 @@ async function openPage(p, o) {
     }
   }
   emit(base);
+}
+
+/** The same page address, ignoring the #fragment and one trailing slash (openPage reuses a tab already showing it). */
+function sameAddress(a, b) {
+  const norm = (u) => String(u || '').replace(/#.*$/, '').replace(/\/$/, '');
+  return Boolean(a) && Boolean(b) && norm(a) === norm(b);
 }
 
 /** BROWSER and friends for a pane's Claude Code, so tools that open a browser open in Apaki. */
@@ -1461,11 +1485,19 @@ const handlers = {
   // What a phone sees of the page this pane's Claude opened in the built-in browser (2026-10-12, remote-policy.js
   // browserView): one quiet JPEG of the part in view and the page's address, title and loading state. Read only; the
   // phone refreshes it when a browserActivity line arrives. Only the pane's own browser (the shell finds it by owner).
+  // tab: a phone may look at another tab of its own conversation's browser; browser-tools.js checks that it is one of the pane's.
   browserView: async (c) => {
     const p = getPane(c.paneId);
     const b = toolsFor(p).browser;
-    const r = b ? await b.view() : { ok: false, text: 'This PC has no built-in browser right now.' };
-    emit({ ev: 'browserView', reqId: c.reqId, paneId: p.id, ok: Boolean(r.ok), text: r.ok ? '' : String(r.text || ''), state: r.state || null, image: r.image || null, mime: r.mimeType || null, width: r.width || null, height: r.height || null, at: Date.now() });
+    const r = b ? await b.view({ tab: typeof c.tab === 'string' ? c.tab : null }) : { ok: false, text: 'This PC has no built-in browser right now.' };
+    emit({ ev: 'browserView', reqId: c.reqId, paneId: p.id, ok: Boolean(r.ok), text: r.ok ? '' : String(r.text || ''), state: r.state || null, image: r.image || null, mime: r.mimeType || null, width: r.width || null, height: r.height || null, at: Date.now(), tabs: r.tabs || null });
+  },
+  // The person picked a tab in the browser pane's tab strip (2026-10-12): Claude's browser tools act on that tab from now on.
+  // Silent, and not in remote-policy.js PHONE_OPS: only the desktop window may switch the tool's tab this way.
+  browserTab: async (c) => {
+    // Only a conversation that is open here (a pick never makes an empty pane record).
+    const p = panes.get(String(c.paneId || ''));
+    if (p) await toolsFor(p).browser?.select(String(c.browserId || ''));
   },
   transcribe: (c) => transcribe(c.reqId, c.wav, c.paneId || null),
   sessions: (c) => sessions(c.reqId),

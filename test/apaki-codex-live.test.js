@@ -66,7 +66,7 @@ test('the real app-server answers initialize, model/list, config/read, thread/li
   assert.ok(startup.some((s) => s.name === 'apaki' && s.status === 'ready'), `the apaki tool server started: ${JSON.stringify(startup.filter((s) => s.name === 'apaki'))}`);
   const st = await c.request('mcpServerStatus/list', { threadId: th.thread.id, detail: 'toolsAndAuthOnly' });
   const tools = Object.keys((st.data || []).find((x) => x.name === 'apaki')?.tools || {});
-  assert.deepEqual(tools.sort(), ['browser_back', 'browser_click', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'show']);
+  assert.deepEqual(tools.sort(), ['browser_back', 'browser_click', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_tabs', 'browser_type', 'show']);
   await c.request('thread/unsubscribe', { threadId: th.thread.id }).catch(() => {});
 
   if (!rows.length) return;

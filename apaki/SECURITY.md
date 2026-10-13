@@ -408,6 +408,14 @@ Haiku call with no tools over the PC's own search indexes, about a cent) but
 one question at a time per phone (AskGate). Dig deeper, stopSession,
 revealFolder, openExternal and browserTool stay out of reach of a phone.
 
+Update 2026-10-12 (browser tabs): browserView takes an optional `tab` (a plain
+id, /^[A-Za-z0-9_-]{1,40}$/, anything else is refused with "Bad tab.").
+browser-tools.js switches only among the tabs that pane's own conversation owns
+(it checks the id against the shell's list filtered by owner), so a phone can
+look at another tab of its own conversation's browser and nothing else. The
+desktop-only browserTab op (the person picking a tab) is not in the phone
+allowlist.
+
 | Question | Answer | Where |
 |---|---|---|
 | Can a phone switch a conversation to bypassPermissions? | Yes, on open or with the mode op | remote-policy.js:45, 147, 201-204 |
