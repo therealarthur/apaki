@@ -14,8 +14,23 @@ bash apaki/scripts/package-apaki-mac.sh
 
 That prepares the resources, runs `tauri build`, and leaves `apaki/dist/Myrlin Apaki.app` and `apaki/dist/Myrlin Apaki_<version>_aarch64.dmg`
 (ad-hoc signed). Options: `--prepare-only`, `--bundle-only`, `--skip-index`, `--no-dmg`, `--clean-target`, `--out DIR`; the script's header
-documents them. Free disk space is checked before each big step (`APAKI_MIN_FREE_GB`, default 5). A full build uses about 4 GB, most of it
-cargo's target folders; `--clean-target` removes them once the products are copied out.
+documents them. Free disk space is checked before each big step (`APAKI_MIN_FREE_GB`, default 5).
+
+Disk a full release build needs (measured on the Mac Mini, cold caches), for planning the Mac and CI:
+
+| What | Size |
+| - | - |
+| `apaki/target` (Tauri release build, includes `release/bundle`: the .app 433 MB and the .dmg 161 MB again) | 1.9 GB |
+| `index/target` (tantivy, ONNX Runtime) | 0.85 GB |
+| cargo's crate cache (`CARGO_HOME`) | 0.31 GB |
+| `apaki/build-mac` (Node 108 MB, engine and production node_modules 345 MB, icons, npm cache, the Node tarball) | 0.6 GB |
+| `apaki/dist` (the finished .app 467 MB and .dmg 161 MB) | 0.63 GB |
+| ONNX Runtime download (`~/Library/Caches/ort.pyke.io`, outside the clone) | 0.08 GB |
+
+That is about 4.4 GB at the peak, so 5 GB free is the least to start with. After the build `--clean-target` removes both target folders, and `apaki/build-mac` and
+`CARGO_HOME` can go too (regenerated, with downloads); what stays is `apaki/dist`, about 0.8 GB with the clone. A rebuild after a source change (cargo's cache and
+`build-mac` kept) needs about 2.6 GB. Running the app adds `~/.claude/latch`: about 250 MB (search index, embedding model, logs) plus the transcript archive, which copies every
+transcript gzipped (about 390 MB for 1.6 GB of transcripts; `APAKI_ARCHIVE_DIR` moves it, `APAKI_NO_ARCHIVE=1` turns it off). A GitHub macOS runner has the room.
 
 Checks that run on any OS: `npm test` (the platform switches, the Keychain sealer against a fake `security`, and the rest) and, in `apaki/`,
 `cargo test` (bundle folders and PATH helpers in `src/mac.rs`). On a Mac, `node apaki/scripts/mac-smoke.mjs --root "<app>/Contents/Resources/engine" --phone`
