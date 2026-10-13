@@ -132,7 +132,7 @@ The web version of the phone client is code served by apaki.myrlin.io, so your P
 ## Install
 
 - **Windows:** [the releases page](https://github.com/therealarthur/apaki/releases), or build the package from source ([apaki/docs/contributing.md](apaki/docs/contributing.md)). The package carries Claude Code, Node and Myrlin Glass; sign in with Claude Code's own login (`claude auth login`, offered at the end of the install) or use an Anthropic API key. WebView2 is part of Windows 11 and is installed if it is missing.
-- **iPhone:** in TestFlight, by invite for now. The App Store comes later.
+- **iPhone:** [join the TestFlight](https://testflight.apple.com/join/xzWTHjSP). The App Store comes later.
 - **Any phone browser:** [apaki.myrlin.io/app](https://apaki.myrlin.io/app/), then pair it from the Phone sheet on your PC.
 
 ## Run your own relay

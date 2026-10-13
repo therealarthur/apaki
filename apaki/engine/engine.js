@@ -136,8 +136,22 @@
  *   op sessionInfo { sessionId } -> ev sessionInfo { sessionId, ok, info }   read only: transcript facts, size, live state
  *   op pin { sessionId, pinned } -> ev sessions (rows carry pinned: true)   Pin to top
  *   op exportSession { sessionId, inline? } -> ev exported { ok, name, path | markdown }   Export as Markdown
- *   (Open in a terminal sends op openTerminal { sessionId, kind, paneId? }, which the console toggle's work builds)
+ *   (Open in a terminal sends op openTerminal { sessionId, kind, paneId? }: console.js and "The console" below)
  *   ev sessions rows also carry model (the last reply's, from the tail last-active.js reads)
+ *
+ * The console (2026-10-12, console.js; Arthur: "a toggle console that transitions a pane to console for either claude or
+ * codex SEAMLESSLY ... should be the authentic tui experience"): a pane flips to `claude --resume <id>` or `codex resume
+ * <id>` in a pseudo-terminal (node-pty) the window draws with xterm.js, and back. One writer: the pane's own process is
+ * idle and let go first; the pane reads the transcript again when the TUI ends. PC only (remote-policy.js PC_ONLY_OPS).
+ *   op consoleOpen   { paneId, cols, rows, command?, wait?, stop? } -> ev console { state, ... } then ev consoleData
+ *   op consoleInput  { paneId, data }        keys and pastes, as the terminal sends them
+ *   op consoleResize { paneId, cols, rows }
+ *   op consoleClose  { paneId, wait?, stop? } the TUI's own quit, then the pane takes the conversation back
+ *   op consoleView   { paneId } -> ev consoleView { text, state }   a plain look at the console that holds the conversation
+ *                    this pane asked for (the phone's read-only view; the only console op a phone may send)
+ *   op openTerminal  { paneId?, sessionId, kind? } the same command in a terminal window on the PC (apaki/bin/apaki-terminal.mjs);
+ *                    ev terminal { paneId, sessionId, kind, state: 'opened' | 'closed' | 'error', display?, note? }
+ *   ev opened        gains console: true when the pane's conversation is in its console (a window that reloaded)
  *
  *   op hostStatus -> ev host { pid, window, remoteOn, panes, lifecycle }
  *   op hostQuit { whenIdle: true } | { now: true } -> ev hostQuit { ok, pending, waiting }
@@ -228,6 +242,13 @@ import { hashText, parsePhoneId, windowOf } from './remote-policy.js';
 import { WorktreeIndex, diffOf, execute as wtExecute, findRepo as wtFindRepo, plan as wtPlan, run as wtRun, samePath as wtSame, terminalCommand } from './worktrees.js';
 // What a paired phone may make Claude do (2026-10-10, apaki/SECURITY.md 4.4 item 4): enforced on every phone pane below.
 import { CAP_PLAN_TEXT, capCanUseTool, capDefaultMode, capModeText, capModes, capPreToolUse, capRunnerOptions, capTuneText, clampMode } from './remote-policy.js';
+// The console: a pane's conversation in its real terminal UI, and "Open in terminal" (2026-10-12, console.js).
+import crypto from 'node:crypto';
+import { DEFAULT_KEY_WORDS } from '../../src/auth.js';
+import {
+  applyEnv as consoleEnv, claudeCommand, codexCommand, createConsoleControl, createConsoles, ensureDir as consoleDirReady, readHeld, takeBackHeld,
+  terminalLaunch, userHasRelayHook,
+} from './console.js';
 
 // Locks this engine takes name it, so a blocked terminal window can say who has the session.
 setLockApp('apaki');
@@ -969,7 +990,8 @@ async function closeRunner(p) {
  * session was taken from it (no runner, a "Taken over" card) no longer counts.
  */
 function paneWith(sessionId, exceptId) {
-  for (const p of panes.values()) if (p.id !== exceptId && (p.runner || isCodexPane(p)) && p.sessionId && p.sessionId === sessionId) return p;
+  // A pane whose conversation is in its console has it too (console.js): its TUI is the writer.
+  for (const p of panes.values()) if (p.id !== exceptId && (p.runner || isCodexPane(p) || consoles.has(p.id)) && p.sessionId && p.sessionId === sessionId) return p;
   return null;
 }
 
@@ -979,6 +1001,8 @@ function paneWith(sessionId, exceptId) {
  * "Session in use" and "Taken over" cards.
  */
 function holderOf(p) {
+  // In a pane's console on the PC (2026-10-12): a phone's card says "Open in the console on the PC" and can look at it (consoleView).
+  if (consoles.has(p.id)) return { name: 'the console on the PC', app: 'apaki-console', at: consoles.get(p.id)?.startedAt ? new Date(consoles.get(p.id).startedAt).toISOString() : new Date().toISOString(), alive: true };
   const phone = remote?.windowName(p.id) || null;
   return { name: phone ? `${phone} (phone)` : 'Apaki on this PC', app: phone ? 'apaki-phone' : 'apaki', at: p.openedAt || new Date().toISOString(), alive: true };
 }
@@ -997,6 +1021,8 @@ async function takeFrom(other, taker) {
     // window that took it, so the pane can say where the conversation went (askcard.js goneNote, 2026-10-12).
     emit({ ev: 'ask_gone', askId: id, paneId: other.id, why: 'taken', by: holderOf(taker).name });
   }
+  // Its console ends (a turn there is stopped) and does not take the conversation back (console.js).
+  await consoleCtl.shut(other, { reopen: false });
   const r = other.runner;
   other.runner = null;
   // Interrupted for the takeover: what it had queued stays unsent, like after a Stop.
@@ -1089,6 +1115,12 @@ function dropStaleAsks(paneId, { olderThanMs = 0, questionsOnly = false, keepSub
  */
 async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   const p = getPane(paneId);
+  // The pane's conversation is in its console (a window that reloaded or came back): it stays there and shows again.
+  // Another conversation asked for: the console ends first, without taking the old one back (console.js).
+  if (consoles.has(p.id)) {
+    if ((p.sessionId || null) === (sessionId || null)) { await consoleAttach(reqId, p); return; }
+    await consoleCtl.shut(p, { reopen: false });
+  }
   // Only in the archive: shown from it, and nothing starts until a message restores it (send, 2026-10-12).
   if (archivedOnly(sessionId)) opts = { ...opts, warm: false };
   // A Codex thread, or a new conversation asked to be Codex (2026-10-12): without the codex command the old hint stays.
@@ -1102,10 +1134,21 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     // Open in the other window of this engine (the desktop and a phone): the
     // same card as a session held by another app, with Take over here.
     const held = await getSessionInfo(sessionId).catch(() => null);
+    // What this pane asked for, so a phone can look at the console that has it (consoleView).
+    p.lockedOn = sessionId;
     emit({ ev: 'locked', reqId, paneId: p.id, sessionId, holder: holderOf(other), title: held?.customTitle || held?.summary || null, cwd: cwd || held?.cwd || '' });
     return;
   }
   if (other) await takeFrom(other, p);
+  // Open in a terminal window (Open in terminal, console.js): the same "in use" card; Take over here makes that window
+  // stop before it writes again, then this pane goes on.
+  const termHeld = sessionId ? readHeld(CONSOLE_DIR, sessionId) : null;
+  if (termHeld && !opts.force) {
+    p.lockedOn = sessionId;
+    emit({ ev: 'locked', reqId, paneId: p.id, sessionId, holder: termHeld, title: null, cwd: cwd || termHeld.cwd || '' });
+    return;
+  }
+  if (termHeld) await takeBackHeld(CONSOLE_DIR, sessionId);
   await closeRunner(p);
   if (wantCodex) {
     // Another conversation in this pane: what was queued for the old one no longer applies (as below for Claude).
@@ -1237,6 +1280,11 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
 
 async function send(reqId, paneId, text, images = []) {
   const p = getPane(paneId);
+  // One writer (2026-10-12, console.js): the conversation is in this pane's console, or in a terminal window
+  // (Open in terminal). Say so instead of writing over it; the pane's own card offers to take it back.
+  if (consoleCtl.active(p.id)) { emit({ ev: 'error', reqId, paneId: p.id, message: 'This conversation is open in this pane\'s console. Switch back to Apaki\'s view (Ctrl+`) to send from here.' }); return; }
+  const termHeld = p.sessionId ? readHeld(CONSOLE_DIR, p.sessionId) : null;
+  if (termHeld) { emit({ ev: 'taken_over', reqId, paneId: p.id, sessionId: p.sessionId, holder: termHeld }); return; }
   // A Codex thread whose pane let go of it (idle with no window, or taken over and taken back): open it again, then send.
   if (!isCodexPane(p) && isCodexId(p.sessionId)) {
     await open(null, p.id, p.sessionId, null, { warm: false });
@@ -1291,6 +1339,8 @@ async function send(reqId, paneId, text, images = []) {
  */
 async function attach(reqId, paneId, sessionId, cwd) {
   const p = panes.get(String(paneId));
+  // Its conversation is in its console: the pane's state and the console's screen again, the TUI untouched.
+  if (p && consoles.has(p.id) && (p.sessionId || null) === (sessionId || null)) { await consoleAttach(reqId, p); return; }
   // A Codex pane that is still here: its state and history again, the server and its turn untouched.
   if (p && isCodexPane(p) && (p.sessionId || null) === (sessionId || null)) { await codex.attach(reqId, p); return; }
   if (!p || !p.runner || (p.sessionId || null) !== (sessionId || null)) { await open(reqId, paneId, sessionId, cwd, { warm: false, kind: isCodexId(sessionId) ? 'codex' : undefined }); return; }
@@ -1363,10 +1413,194 @@ async function closePane(reqId, paneId) {
     a.resolve({ behavior: 'deny', message: 'The pane was closed.' });
     emit({ ev: 'ask_gone', askId: id, paneId: p.id, why: 'closed' });
   }
+  // Its console ends first (a running turn there is stopped), without taking the conversation back.
+  await consoleCtl.shut(p, { reopen: false });
   await closeRunner(p);
   openServer?.forget(p.id);
   panes.delete(p.id);
   emit({ ev: 'closed', reqId, paneId: p.id });
+}
+
+/* ---------- the console and Open in terminal (console.js, 2026-10-12) ---------- */
+
+// The console's files (settings for --settings, terminal specs, held records), with their note (console.js ensureDir).
+const CONSOLE_DIR = path.join(latchDir(), 'console');
+const TERMINAL_SCRIPT = path.join(ENGINE_ROOT, 'apaki', 'bin', 'apaki-terminal.mjs');
+// The packaged prompt-relay hook, for a pane billed to an API key (see console.js claudeCommand).
+const RELAY_HOOK = path.join(ENGINE_ROOT, 'hooks', 'prompt-relay.js');
+
+/** 'codex' for a Codex pane, also one whose thread is let go (a console holds it), else 'claude'. */
+const consoleKind = (p) => (isCodexPane(p) || isCodexId(p?.sessionId) ? 'codex' : 'claude');
+/** The pane's folder: its runner's, its Codex thread's, or the one it had before its process was let go. */
+const paneCwd = (p) => p?.runner?.cwd || p?.codex?.cwd || p?.consoleCwd || null;
+/** Runs fn in the pane's queue (after an open or a send in flight) and returns its promise. */
+function serialRun(p, fn) {
+  const run = (p.queue || Promise.resolve()).then(fn);
+  p.queue = run.catch(() => {});
+  return run;
+}
+
+/** The pane lets go of its conversation so the console or a terminal window is its only writer. */
+async function releaseForConsole(p) {
+  p.consoleCwd = paneCwd(p) || p.consoleCwd || null;
+  if (isCodexPane(p)) {
+    // Only what was picked in the pane travels back with it (codex-panes.js threadParams).
+    const t = p.codex?.touched || {};
+    p.consolePicks = { model: t.model ? p.model : undefined, effort: t.effort ? p.effort : undefined, mode: t.mode ? p.mode : undefined };
+    await codex.close(p);
+    return;
+  }
+  await closeRunner(p);
+}
+
+/** The pane takes its conversation back after the console or a terminal window: it reads the transcript again. */
+async function reopenAfterConsole(p, { kind, sessionId, cwd }) {
+  if (kind === 'codex') {
+    if (!CODEX_FOUND) return;
+    await codex.open(null, p, sessionId || null, cwd || null, { ...(p.consolePicks || {}) });
+    return;
+  }
+  await open(null, p.id, sessionId || null, cwd || null, { warm: false });
+}
+
+/** The exact command for a pane's conversation (the console and Open in terminal both run it). */
+function consoleCommand(p, { kind, sessionId, newSessionId = null, cwd, holderPid = process.pid }) {
+  if (kind === 'codex') {
+    return codexCommand({ codex: findCodex(), threadId: sessionId ? threadIdOf(sessionId) : null, model: p?.model || undefined, effort: p?.effort || undefined, mode: p?.mode || undefined, cwd });
+  }
+  const credential = p ? (p.credential.follow ? glassCredential() : p.credential) : defaults.credential;
+  return claudeCommand({
+    bin: claudeBinary(), sessionId, newSessionId, model: p?.model || defaults.model, effort: p?.effort || defaults.effort, mode: p?.mode || defaults.mode,
+    // The same per-process settings the pane's SDK runs get (runner.flagSettings above).
+    flagSettings: compactSettings(prefs.autoCompact),
+    credential, hookFile: fs.existsSync(RELAY_HOOK) ? RELAY_HOOK : null, userHook: userHasRelayHook(path.join(CLAUDE_DIR, 'settings.json')),
+    holderPid, nodeDir: path.dirname(process.execPath), settingsDir: consoleDirReady(CONSOLE_DIR), defaultKeyWords: DEFAULT_KEY_WORDS,
+  });
+}
+
+const consoles = createConsoles({ emit, log: (line) => process.stderr.write(`apaki: ${line}\n`) });
+const consoleCtl = createConsoleControl({
+  emit, consoles, getPane,
+  kindOf: consoleKind,
+  turnBusy: (p) => (isCodexPane(p) ? Boolean(p.busy) : paneTurnBusy(p)),
+  interrupt: async (p) => { p.userStopped = true; if (isCodexPane(p)) await codex.interrupt(p); else await p.runner?.interrupt(); },
+  release: releaseForConsole,
+  reopen: reopenAfterConsole,
+  cwdOf: paneCwd,
+  lock: {
+    // A terminal window first (Open in terminal), then, for Claude Code, the session lock (latch, another Apaki).
+    take: (sessionId, kind) => {
+      const held = readHeld(CONSOLE_DIR, sessionId);
+      if (held) return held;
+      if (kind !== 'claude') return null;
+      const pid = takeLock(sessionId, { app: 'apaki-console' });
+      return pid ? (lockInfo(sessionId) || { pid }) : null;
+    },
+    release: (sessionId, kind) => { if (kind === 'claude') releaseLock(sessionId); },
+  },
+  command: (p, o) => consoleCommand(p, o),
+  envFor: (spec) => consoleEnv(childEnv(null), spec),
+  serial: (p, fn) => serialRun(p, fn),
+  sessionExists: (id) => Boolean(historyFileOf(id)),
+  adopt: (p, id) => { rememberCreated(id); p.sessionId = id; p.createdHere = true; markAway(p, { s: id }); emit({ ev: 'session_id', paneId: p.id, sessionId: id }); },
+  log: (line) => process.stderr.write(`apaki: ${line}\n`),
+});
+
+/** A window came back to a pane whose conversation is in its console: the pane's state, then the console's screen. */
+async function consoleAttach(reqId, p) {
+  const con = consoles.get(p.id);
+  const kind = con?.kind || consoleKind(p);
+  const info = kind === 'claude' && p.sessionId ? await getSessionInfo(p.sessionId).catch(() => null) : null;
+  emit({
+    ev: 'opened', attached: true, console: true, busy: false, turn: false, running: false, reqId, paneId: p.id, sessionId: p.sessionId || null, cwd: con?.cwd || paneCwd(p) || '',
+    title: info?.customTitle || info?.summary || p.codexTitle || 'New conversation', model: p.model, effort: p.effort, mode: p.mode,
+    billing: kind === 'codex' ? { name: 'Codex', source: 'codex', follow: false, isKey: false } : billingInfo(p), terminal: [], ...(kind === 'codex' ? { kind: 'codex' } : {}),
+  });
+  if (kind === 'claude' && p.sessionId) await sendHistory(p, p.sessionId);
+  consoles.replay(p.id, { reqId });
+}
+
+/** Conversations open in a terminal window, watched until it closes: sessionId -> { paneId, kind, cwd, at, seen }. */
+const terminalWatch = new Map();
+let terminalTimer = null;
+
+/** A terminal window let go of a conversation: the pane that had it reads it again. */
+async function terminalClosed(sessionId, w) {
+  const p = w.paneId ? panes.get(w.paneId) : null;
+  if (p && p.sessionId === sessionId && !p.runner && !isCodexPane(p) && !consoles.has(p.id)) {
+    await serialRun(p, () => reopenAfterConsole(p, { kind: w.kind, sessionId, cwd: w.cwd })).catch((e) => process.stderr.write(`apaki: terminal reopen: ${e.message}\n`));
+  }
+  emit({ ev: 'terminal', paneId: p?.id || null, sessionId, kind: w.kind, state: 'closed' });
+}
+
+function watchTerminals() {
+  for (const [sid, w] of terminalWatch) {
+    if (readHeld(CONSOLE_DIR, sid)) { w.seen = true; continue; }
+    // The window may still be opening: it has 20 s to say it has the conversation.
+    if (!w.seen && Date.now() - w.at < 20000) continue;
+    terminalWatch.delete(sid);
+    terminalClosed(sid, w);
+  }
+  if (!terminalWatch.size && terminalTimer) { clearInterval(terminalTimer); terminalTimer = null; }
+}
+
+/**
+ * Open in terminal (Arthur, 2026-10-12: "an "open in terminal" button to just open the exact session with all
+ * settings/effort/models/etc in a terminal window"): the pane's command (consoleCommand) in a terminal window on this
+ * PC, Windows Terminal or PowerShell. The pane that has the conversation lets go of it first; the window's runner
+ * (apaki/bin/apaki-terminal.mjs) says it has it, so a send from the pane meanwhile shows "in use" instead of writing
+ * over it, and the pane reads the conversation again when the window closes. The sidebar's row menu sends the same op.
+ */
+async function openTerminal(c) {
+  const reqId = c.reqId || null;
+  const asked = c.paneId != null ? panes.get(String(c.paneId)) || null : null;
+  const sessionId = c.sessionId || asked?.sessionId || null;
+  const kind = c.kind === 'codex' || isCodexId(sessionId) || (asked && !sessionId && consoleKind(asked) === 'codex') ? 'codex' : 'claude';
+  const say = (state, extra = {}) => emit({ ev: 'terminal', reqId, paneId: asked?.id || null, sessionId, kind, state, ...extra });
+  if (asked && parsePhoneId(asked.id)) { say('error', { note: 'Open in terminal is for the PC.' }); return; }
+  if (!sessionId) { say('error', { note: 'Send a message first: a new conversation has nothing to open in a terminal yet.' }); return; }
+  // The desktop pane that has this conversation, if any (this one, or the one the sidebar row points at).
+  const p = asked && asked.sessionId === sessionId ? asked : [...panes.values()].find((x) => x.sessionId === sessionId && !parsePhoneId(x.id)) || null;
+  if (p && consoleCtl.active(p.id)) { say('error', { note: 'This conversation is open in its pane\'s console. Switch that pane back first.' }); return; }
+  if (readHeld(CONSOLE_DIR, sessionId)) { say('error', { note: 'This conversation is already open in a terminal window.' }); return; }
+  if (p && (isCodexPane(p) ? p.busy : paneTurnBusy(p))) { say('error', { note: `${kind === 'codex' ? 'Codex' : 'Claude'} is working in this conversation. Wait for the turn to end (or stop it), then open it in a terminal.` }); return; }
+  // A phone pane, or another app (latch, another Apaki), has it: not opened over it.
+  const phonePane = [...panes.values()].find((x) => x.sessionId === sessionId && parsePhoneId(x.id) && (x.runner || isCodexPane(x)));
+  if (phonePane) { say('error', { note: `${remote?.windowName(phonePane.id) || 'A phone'} has this conversation open. Close it there first.` }); return; }
+  if (kind === 'claude') {
+    const h = lockStolen(sessionId);
+    if (h) { say('error', { note: `${h.name || 'Another window'} has this conversation open${h.pid ? ` (pid ${h.pid})` : ''}. Close it there first.` }); return; }
+  }
+  let cwd = (p && paneCwd(p)) || c.cwd || null;
+  if (!cwd && kind === 'claude') cwd = (await getSessionInfo(sessionId).catch(() => null))?.cwd || null;
+  if (!cwd && kind === 'codex') cwd = codex.cachedRows().find((r) => r.id === sessionId)?.cwd || null;
+  if (!cwd || !fs.existsSync(cwd)) cwd = os.homedir();
+  // One writer: the pane lets go first (it resumes from the transcript afterwards).
+  if (p) await serialRun(p, () => releaseForConsole(p));
+  // Claude Code's settings come from the pane when one has it, else from Apaki's defaults; the runner holds the lock (holderPid null).
+  const spec = consoleCommand(p, { kind, sessionId, cwd, holderPid: null });
+  const back = async () => { if (p) await serialRun(p, () => reopenAfterConsole(p, { kind, sessionId, cwd })).catch(() => {}); };
+  if (spec.error) { say('error', { note: spec.error }); await back(); return; }
+  let specFile;
+  try {
+    consoleDirReady(CONSOLE_DIR);
+    specFile = path.join(CONSOLE_DIR, `terminal-${crypto.randomUUID()}.json`);
+    // The environment's changes only, never the environment itself (no secrets on disk).
+    fs.writeFileSync(specFile, JSON.stringify({ sessionId, kind, cwd, file: spec.file, args: spec.args, envSet: spec.envSet, envUnset: spec.envUnset, pathPrepend: spec.pathPrepend, note: spec.note, display: spec.display }));
+  } catch (e) { say('error', { note: `Could not prepare the terminal: ${e.message}` }); await back(); return; }
+  const title = `${kind === 'codex' ? 'Codex' : 'Claude Code'}: ${(p?.codexTitle || state.byId.get(sessionId)?.title || sessionId).slice(0, 60)}`;
+  const launch = terminalLaunch(process.platform, { cwd, title, file: process.execPath, args: [TERMINAL_SCRIPT, specFile] });
+  const start = (t, fallback) => {
+    try {
+      const child = spawn(t.cmd, t.args, { cwd: t.cwd || cwd, detached: true, stdio: 'ignore', windowsHide: false });
+      child.on('error', () => { if (fallback) start(fallback, null); else say('error', { note: `No terminal could be opened (${t.cmd}).` }); });
+      child.unref();
+    } catch { if (fallback) start(fallback, null); }
+  };
+  start(launch, launch.fallback || null);
+  terminalWatch.set(sessionId, { paneId: p?.id || null, kind, cwd, at: Date.now(), seen: false });
+  if (!terminalTimer) terminalTimer = setInterval(watchTerminals, 1500);
+  say('opened', { display: spec.display, note: spec.note || null, tone: spec.tone || 'info' });
 }
 
 /* ---------- voice (local Whisper) ---------- */
@@ -2086,6 +2320,20 @@ const handlers = {
   // remote-policy.js does not allow them for phones.
   hostStatus: (c) => emit(hostControl({ ...c, op: 'hostStatus' })),
   hostQuit: (c) => emit(hostControl(c)),
+  // The console and Open in terminal (2026-10-12, console.js and the section above): the desktop window only, except
+  // consoleView, a read-only look a phone may take (remote-policy.js).
+  consoleOpen: (c) => (parsePhoneId(String(c.paneId || '')) ? undefined : consoleCtl.open(c)),
+  consoleInput: (c) => { consoleCtl.input(c); },
+  consoleResize: (c) => { consoleCtl.resize(c); },
+  consoleClose: (c) => consoleCtl.close(c),
+  consoleView: (c) => {
+    const p = getPane(c.paneId);
+    const sid = p.sessionId || p.lockedOn || null;
+    const con = consoles.get(p.id) || consoles.bySession(sid);
+    const v = con ? consoles.view(con.paneId, 40) : null;
+    emit({ ev: 'consoleView', reqId: c.reqId || null, paneId: p.id, sessionId: sid, state: v ? v.state : 'none', text: v ? v.text : '', at: Date.now() });
+  },
+  openTerminal: (c) => openTerminal(c),
 };
 
 const SERIAL_OPS = new Set(['open', 'attach', 'send', 'close', 'model', 'mode', 'effort', 'tune', 'billing']);
@@ -2223,6 +2471,8 @@ function shutdown(reason = 'stdin closed') {
     fs.unwatchFile(LIVE_LOGIN);
     // Asked to stop now: running turns are interrupted, as closing the window did before the host.
     if (reason === 'quit-now') for (const p of panes.values()) if (p.runner?.running && paneTurnBusy(p)) await p.runner.interrupt();
+    // Consoles quit the way a person quits them (console.js), before the engine goes.
+    await consoles.shutdown().catch(() => {});
     await Promise.all([...panes.values()].map((p) => closeRunner(p)));
     await codex.shutdown();
     process.exit(0);
@@ -2761,10 +3011,12 @@ function hostView() {
   return {
     remoteOn: Boolean(remote?.state?.enabled),
     panes: [...panes.values()].map((p) => ({
-      id: p.id, sessionId: p.sessionId || null, phone: Boolean(parsePhoneId(p.id)), open: Boolean(p.runner) || isCodexPane(p), running: Boolean(p.runner?.running) || (isCodexPane(p) && Boolean(p.busy)),
-      busy: paneTurnBusy(p), working: paneWorking(p), tasks: p.bgTasks?.size || 0, asks: asksOf(p.id), lastActiveAt: p.lastActiveAt || 0,
+      // A console (console.js) counts as open and running, and as working while a turn runs in its TUI.
+      id: p.id, sessionId: p.sessionId || null, phone: Boolean(parsePhoneId(p.id)), open: Boolean(p.runner) || isCodexPane(p) || consoles.has(p.id), running: Boolean(p.runner?.running) || (isCodexPane(p) && Boolean(p.busy)) || consoles.has(p.id),
+      busy: paneTurnBusy(p) || consoles.busy(p.id), working: paneWorking(p) || consoles.busy(p.id), tasks: p.bgTasks?.size || 0, asks: asksOf(p.id), lastActiveAt: p.lastActiveAt || 0,
       // The window's tab that holds this pane is not showing, since when (hiddenDesktopPanes); a Codex pane is never released for it.
-      hiddenSince: hiddenSince.get(p.id) || 0, codex: isCodexPane(p),
+      // A pane in its console is never released for it either (its TUI holds the conversation): it counts as a Codex one here.
+      hiddenSince: hiddenSince.get(p.id) || 0, codex: isCodexPane(p) || consoles.has(p.id),
     })),
   };
 }

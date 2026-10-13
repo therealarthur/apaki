@@ -27,6 +27,8 @@ import { CODEX_LOCAL, CODEX_MODES, codexFooter, codexMode, earlierText, effortNa
 // The branch label in the header when the conversation's folder is in a git repository (worktree.js, 2026-10-12).
 import { GLYPH_WORKTREE, branchLabel, branchName, changeText, relPath, tooltip, trouble } from './worktree.js';
 import { setTip } from './tooltip.js';
+// The console: this conversation in the real Claude Code or Codex terminal UI, toggled in place (console.js, 2026-10-12).
+import { CLAUDE_TUI_BARE, CODEX_TUI_BARE, PaneConsole, tuiCommand } from './console.js';
 // Every streaming reply in the window is painted by one painter (streampaint.js, 2026-10-12, input lag).
 import { createStreamPainter } from './streampaint.js';
 // Older messages of a long conversation are folded into chunks the browser can skip (chunks.js, pane.js sealOld).
@@ -186,7 +188,10 @@ export class Pane {
       folder: q('.folder-chip'), wt: q('.wt-btn'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'), ctx: q('.chip-btn.ctx'),
       statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
       pin: q('.prompt-pin'), artReopen: q('.art-reopen'), tasksBtn: q('.tasks-btn'), kindMark: q('.kind-mark'),
+      consoleBtn: q('.console-btn'), termBtn: q('.term-btn'),
     };
+    // The console (console.js): made now, drawn the first time it opens.
+    this.console = new PaneConsole(this);
     // Scrolled near the top of a long conversation: its earlier messages load (see loadEarlier).
     this.$.ground.addEventListener('scroll', () => { this.noteScroll(); this.schedulePin(); this.host.dirty?.(); this.maybeLoadEarlier(); }, { passive: true });
     // The composer floats over the conversation (frosted); keep the last
@@ -239,6 +244,19 @@ export class Pane {
     this.$.close.onclick = () => this.host.close(this);
     if (this.$.artReopen) this.$.artReopen.onclick = () => this.artifactsMenu();
     if (this.$.tasksBtn) this.$.tasksBtn.onclick = () => this.host.openTasksPanel?.(this, this.$.tasksBtn);
+    // The console toggle and Open in terminal (2026-10-12): in the header, and in the menu a right-click on the title opens.
+    if (this.$.consoleBtn) this.$.consoleBtn.onclick = () => this.console.toggle();
+    if (this.$.termBtn) this.$.termBtn.onclick = () => this.openTerminal();
+    // The phone cannot host a terminal: no buttons there (a conversation in the PC's console shows read only, showLocked).
+    if (!this.host.consoleAvailable?.()) for (const b of [this.$.consoleBtn, this.$.termBtn]) if (b) b.hidden = true;
+    this.$.title.closest('.title-block')?.addEventListener('contextmenu', (e) => {
+      if (!this.host.consoleAvailable?.()) return;
+      e.preventDefault();
+      menu({ x: e.clientX, y: e.clientY }, [
+        { value: 'console', label: this.console.shown ? 'Back to Apaki\'s view' : 'Open the console', hint: 'Ctrl+`' },
+        { value: 'terminal', label: 'Open in a terminal window' },
+      ], { above: false, width: 230, onPick: (v) => (v === 'console' ? this.console.toggle() : this.openTerminal()) });
+    });
     this.$.title.ondblclick = () => this.host.renameSession?.(this, this.$.title);
     this.$.title.title = 'Double-click to rename';
     this.$.grip.addEventListener('dragstart', (e) => this.host.dragPane(this, e));
@@ -686,6 +704,8 @@ Click for changes, commit, push, pull request, merge`;
       this.open(null, { warm: false });
     };
     this.$.T.append(card);
+    // Held by the PC's console (2026-10-12): what it shows, read only (the phone cannot run a terminal).
+    if (h.app === 'apaki-console') this.watchConsole(card);
     this.scrollDown(true);
     this.host.changed(this);
   }
@@ -2238,6 +2258,11 @@ Click for changes, commit, push, pull request, merge`;
     const text = input.value.trim();
     if (!text && !this.attachments.length) return;
     this.hideSlash();
+    // Commands that only work in the terminal UI (/config, the /model picker, /permissions...) open the console for
+    // themselves instead of failing (2026-10-12). Without a console (the phone), the bare ones keep Apaki's answer.
+    const tui = text.startsWith('/') && !this.attachments.length ? tuiCommand(this.kind, text) : null;
+    const bare = tui && (this.kind === 'codex' ? CODEX_TUI_BARE : CLAUDE_TUI_BARE).includes(tui.slice(1));
+    if (tui && (this.host.consoleAvailable?.() || !bare)) { input.value = ''; this.autosize(); this.console.open({ command: tui }); return; }
     if (text.startsWith('/') && !this.attachments.length && this.localCommand(text)) { input.value = ''; this.autosize(); return; }
     // A conversation that starts in a new worktree: this first message names the branch, the sheet shows the command and
     // creates it, and then the message goes (it stays in the box until then, and if the sheet is cancelled).
@@ -2414,8 +2439,17 @@ Click for changes, commit, push, pull request, merge`;
         this.renderTasksButton();
         if (!e.sessionId) this.flushOpenNotes();
         this.send('commands');
+        // The console (console.js): with console: true the engine still runs it and its screen follows; a pane that had
+        // it open when the window or the engine went (restored, or reconnected to an engine without it) opens it again.
+        if (e.console) this.consoleRestore = false;
+        else if (this.consoleRestore) { this.consoleRestore = false; if (this.host.consoleAvailable?.()) setTimeout(() => this.console.open(), 0); }
         this.host.changed(this);
         break;
+      // The console's state and output, a look at a console from elsewhere (the phone), and Open in terminal (2026-10-12).
+      case 'console': this.console.handle(e); break;
+      case 'consoleData': this.console.data(e); break;
+      case 'consoleView': this.onConsoleView(e); break;
+      case 'terminal': this.onTerminal(e); break;
       case 'history': if (e.sessionId === this.sessionId) this.renderHistory(e.messages, e.total, e); break;
       case 'historyChecked': this.onHistoryChecked(e); break;
       // Earlier messages of this conversation (Load earlier, scrolling up, Ctrl+F's Search all), and one cut block in full.
@@ -2487,14 +2521,57 @@ Click for changes, commit, push, pull request, merge`;
    * going; otherwise the turn stopped and the pane says so then).
    */
   engineLost() {
+    // A console on screen: the engine that comes back shows it again, or this pane opens it again (see 'opened').
+    if (this.console?.shown) this.consoleRestore = true;
     this.lostBusy = this.busy || this.lostBusy;
     if (this.busy) this.setBusy(false);
     this.setStatus('');
   }
 
+  /* ---------- the console and Open in terminal (console.js, 2026-10-12) ---------- */
+
+  /** This conversation in a terminal window on the PC, with this pane's settings (engine openTerminal). */
+  openTerminal() {
+    if (!this.host.consoleAvailable?.()) return;
+    if (!this.sessionId) { this.note('Send a message first: a new conversation has nothing to open in a terminal yet.'); return; }
+    if (this.console.shown) { this.note('Switch back from the console first (Ctrl+`): one window writes to a conversation at a time.', 'warn'); return; }
+    this.send('openTerminal', { sessionId: this.sessionId, kind: this.kind });
+  }
+
+  onTerminal(e) {
+    if (e.state === 'opened') {
+      this.note(`Opened in a terminal window: ${e.display || ''}. This pane leaves the conversation alone until that window closes, then reads it again.`);
+      if (e.note) this.note(e.note, e.tone === 'warn' ? 'warn' : '');
+    } else if (e.state === 'closed') this.note('The terminal window closed, so this pane has the conversation again.');
+    else if (e.state === 'error') this.note(e.note || 'The terminal window could not open.', 'warn');
+  }
+
+  /** The "in use" card of a conversation held by the PC's console: a read-only look at it, kept fresh while it shows. */
+  watchConsole(card) {
+    const pre = el('pre', 'tk-console', '');
+    pre.setAttribute('aria-label', 'The console on the PC, read only');
+    card.querySelector('.tk-row')?.before(pre);
+    this.consoleViewPre = pre;
+    clearInterval(this.consoleViewTimer);
+    const ask = () => {
+      if (!card.isConnected) { clearInterval(this.consoleViewTimer); return; }
+      if (!document.hidden) this.send('consoleView');
+    };
+    ask();
+    this.consoleViewTimer = setInterval(ask, 1500);
+  }
+
+  onConsoleView(e) {
+    if (!this.consoleViewPre?.isConnected) return;
+    this.consoleViewPre.textContent = e.state === 'none' ? 'The console on the PC has closed.' : (e.text || '');
+    this.consoleViewPre.scrollTop = this.consoleViewPre.scrollHeight;
+  }
+
   destroy() {
     for (const live of this.streams.values()) painter.cancel(live);
     clearInterval(this.tick);
+    clearInterval(this.consoleViewTimer);
+    this.console?.destroy();
     this.stopDriftWatch();
     this.el.remove();
   }

@@ -24,6 +24,8 @@
  *   sessionInfo, exportSession               read only, every access level: a session's Details, and its Markdown
  *                                            sent back as text (2026-10-12; a phone never writes a file on the PC)
  *   pin                                      Pin to top, a session-list write like folder (Full and No shell)
+ *   consoleView                              read only (2026-10-12): the text of the PC console that has the
+ *                                            conversation its pane asked for; the console itself is PC_ONLY_OPS
  * Never billing, never the remote* ops (pairing, devices), never voice,
  * Dig deeper (it starts an Opus session outside a conversation), folders
  * beyond move and create, stopSession, revealFolder or openExternal (they act
@@ -142,13 +144,23 @@ export const PHONE_OPS = Object.freeze([
   // level (an export comes back as text: a phone never writes a file on the PC); Pin to top changes the list like a folder
   // move, so it is a SESSION_WRITE_OPS op. Not here on purpose: openTerminal (Open in a terminal), which opens a window on the PC.
   'sessionInfo', 'exportSession', 'pin',
+  // The console (2026-10-12, console.js): read only, a plain-text look at the PC console that has the conversation this
+  // phone's pane asked for ("Open in the console on the PC"). Everything else about the console is PC_ONLY_OPS below.
+  'consoleView',
 ]);
+
+/**
+ * Ops only the PC's own window may send, never a phone, whatever its access (2026-10-12): the console runs a terminal
+ * program on the PC's screen and takes its keyboard (like billing and the Phone sheet, it is the PC user's), and Open in
+ * terminal opens a window on the PC. Not in PHONE_OPS, so checkPhoneCommand refuses them; listed so a test keeps it so.
+ */
+export const PC_ONLY_OPS = Object.freeze(['consoleOpen', 'consoleInput', 'consoleResize', 'consoleClose', 'openTerminal']);
 
 /** What worktreePlan and worktreeRun can be asked to do (worktrees.js KINDS; test/apaki-worktrees-engine.test.js keeps the lists equal). */
 export const WORKTREE_KINDS = Object.freeze(['create', 'remove', 'commit', 'push', 'pr', 'merge']);
 
 /** Ops that act on one pane (paneId required). */
-const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'tune', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile', 'historyPrompts', 'follow', 'unfollow', 'transcribe']);
+const PANE_OPS = new Set(['open', 'attach', 'send', 'interrupt', 'model', 'effort', 'mode', 'tune', 'commands', 'close', 'steer', 'contextUsage', 'historyBefore', 'historyBlock', 'historyCheck', 'browserView', 'codexOpenFile', 'historyPrompts', 'follow', 'unfollow', 'transcribe', 'consoleView']);
 
 /** Session-list actions that change what the PC keeps (2026-10-12): not for a Chat only phone. */
 export const SESSION_WRITE_OPS = Object.freeze(['rename', 'forkSession', 'archive', 'folder', 'pin']);
@@ -936,6 +948,9 @@ export function checkPhoneCommand(cmd, ctx) {
       if (typeof cmd.sessionId !== 'string' || !SESSION_RE.test(cmd.sessionId)) return fail('Bad session id.', cmd);
       out.sessionId = cmd.sessionId;
       out.pinned = cmd.pinned !== false;
+      break;
+    case 'consoleView':
+      // Nothing but the pane: the engine shows the console holding the conversation that pane asked for (read only).
       break;
     default:
       return fail('Not available from a phone.', cmd);
