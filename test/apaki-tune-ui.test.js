@@ -199,11 +199,11 @@ test('the pane builds its popup from tune.js, keeps the tune, sends it with open
   assert.equal(/^const EFFORT_HINTS/m.test(pane), false, 'the hints live in tune.js now');
 });
 
-test('the window keeps the tune in the saved workspace, hands it to new panes from the one they came from, and tells the popup its access', () => {
+test('the window keeps the tune in the saved workspace, hands new panes the workflow size but never Ultracode itself, and tells the popup its access', () => {
   const app = read('apaki', 'ui', 'app.js');
   assert.match(app, /tune: p\?\.tune \|\| null/);
   assert.equal((app.match(/tune: lf\.tune/g) || []).length, 2, 'both ways a saved pane comes back');
-  assert.match(app, /const inheritable = [^\n]*tune: \{ ultracode: base\.tune\?\.ultracode === true/);
+  assert.match(app, /const inheritable = [^\n]*tune: \{ ultracode: false, size: base\.tune\?\.size \|\| null \}/);
   assert.match(app, /phoneCap: \(\) => phoneCap\(\)/);
   assert.match(app, /defaults: \{[^}]*tune: \{ ultracode: false, size: null \}/);
 });

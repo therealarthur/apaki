@@ -858,8 +858,12 @@ function createTab(root = null, { name = '', arrange = 'auto', max = null, shape
   return t;
 }
 
-/** The model, effort and mode a new pane takes from the pane it comes from: Claude's own, never a Codex pane's. */
-const inheritable = (base) => (base && base.kind !== 'codex' ? { model: base.model, effort: base.effort, mode: base.mode, tune: { ultracode: base.tune?.ultracode === true, size: base.tune?.size || null } } : {});
+/**
+ * The model, effort and mode a new pane takes from the pane it comes from: Claude's own, never a Codex pane's.
+ * Ultracode itself is not passed on (2026-10-13): it spends far more than any effort level, so each pane turns it on
+ * where it is wanted; the workflow size a person picked is kept, ready for when they do.
+ */
+const inheritable = (base) => (base && base.kind !== 'codex' ? { model: base.model, effort: base.effort, mode: base.mode, tune: { ultracode: false, size: base.tune?.size || null } } : {});
 
 /** A new tab with one pane, holding `session` or a new conversation. */
 function addTab({ session = null, cwd = null, activate = true } = {}) {
