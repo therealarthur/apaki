@@ -850,7 +850,7 @@ async function startApp() {
   hideScreen();
   // The desktop's message box hint mentions dropping files; a phone attaches with the clip.
   const box = $('paneTpl')?.content.querySelector('textarea');
-  if (box) box.placeholder = 'Message Claude, / for commands';
+  if (box) box.placeholder = 'Message Claude';
   await import('./app.js');
   // The phone app (native.js): a workspace that had a conversation open starts in it, one Back from the list.
   const saved = restored ? localStorage.getItem(WORKSPACE) || '' : '';

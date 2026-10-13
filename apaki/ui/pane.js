@@ -302,7 +302,11 @@ export class Pane {
     const codex = this.kind === 'codex';
     this.el.classList.toggle('codex', codex);
     if (this.$.kindMark) this.$.kindMark.hidden = !codex;
-    this.$.input.placeholder = codex ? 'Message Codex, / for commands, paste or drop files' : 'Message Claude, / for commands, paste or drop images';
+    // The phone's field is one line beside the clip, mic and send (2026-10-12: Arthur saw the long hint wrap and cut off
+    // there), so it gets just the name; / still opens the commands. The desktop keeps the full hint.
+    this.$.input.placeholder = window.apakiShell === 'web'
+      ? (codex ? 'Message Codex' : 'Message Claude')
+      : (codex ? 'Message Codex, / for commands, paste or drop files' : 'Message Claude, / for commands, paste or drop images');
     this.$.file.accept = codex ? '' : 'image/*';
     this.$.file.closest('label')?.setAttribute('title', codex ? 'Attach images or files' : 'Attach images');
     this.renderChips();
