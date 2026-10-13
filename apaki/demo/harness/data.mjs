@@ -500,6 +500,46 @@ PRESETS.browser = () => {
 };
 
 /**
+ * Tabs, layouts and viewers (2026-10-12, apaki/docs/layout.md): five tabs named by their projects, laid out by count
+ * (one large and two stacked, side by side, a 2x2 grid, three over three, one alone), the first with the flaky test's
+ * browser beside it holding two pages as tabs. Saved the way the window saves now (name, arrange, max, tabs).
+ */
+const split = (dir, sizes, ...children) => ({ type: 'split', dir, sizes, children });
+const conv = (pane, key, cwd, extra = {}) => leaf(pane, key ? ID[key] : null, { title: key ? (buildSessions(0).find((s) => s.id === ID[key])?.title || '') : 'New conversation', cwd, ...extra });
+PRESETS.layout = () => ({
+  active: 0,
+  tabs: [
+    { focused: 'la1', name: '', arrange: 'auto', max: null, root: split('row', [0.5, 0.5],
+      split('col', [0.6, 0.4], conv('la1', 'flaky', CWD.web), { type: 'leaf', pane: 'lb1', web: { url: 'http://localhost:3000/cart', title: 'Cart · Acme Store', owner: 'la1', active: 'lb1', tabs: [{ id: 'lb1', url: 'http://localhost:3000/cart', title: 'Cart · Acme Store' }, { id: 'lb2', url: 'http://localhost:3000/checkout', title: 'Checkout · Acme Store' }] } }),
+      split('col', [0.5, 0.5], conv('la2', 'dashboard', CWD.web), conv('la3', 'uploads', CWD.web))) },
+    { focused: 'lc1', name: '', arrange: 'auto', max: null, root: split('row', [0.5, 0.5], conv('lc1', 'invoices', CWD.billing), conv('lc2', 'backfill', CWD.billing)) },
+    { focused: 'ld1', name: 'Mobile release', arrange: 'auto', max: null, root: split('col', [0.5, 0.5], split('row', [0.5, 0.5], conv('ld1', 'push', CWD.mobile), conv('ld2', 'darkmode', CWD.mobile)), split('row', [0.5, 0.5], conv('ld3', 'onboarding', CWD.mobile), conv('ld4', 'review', CWD.billing))) },
+    { focused: 'le1', name: '', arrange: 'auto', max: null, root: split('col', [0.5, 0.5],
+      split('row', [1 / 3, 1 / 3, 1 / 3], conv('le1', 'vpc', CWD.infra), conv('le2', 'creds', CWD.infra), conv('le3', 'ci', CWD.infra)),
+      split('row', [1 / 3, 1 / 3, 1 / 3], conv('le4', 'changelog', CWD.docs), conv('le5', 'docsearch', CWD.docs), conv('le6', null, ''))) },
+    { focused: 'lf1', name: '', arrange: 'auto', max: null, root: conv('lf1', null, '') },
+  ],
+  scripts: { [ID.flaky]: ['browse-checkout'] },
+  rail: { view: 'all', expanded: [], scroll: 0, width: 312, collapsed: false },
+});
+
+/**
+ * The same window as saved before 2026-10-12: no names, no arrangement, and the flaky test's second page in a browser
+ * pane of its own in a tab of its own (the old hint 'tab'). It must come back with that page folded into the
+ * conversation's browser pane as a tab, the extra tab gone, and every tree exactly as saved.
+ */
+PRESETS['layout-old'] = () => {
+  const p = PRESETS.layout();
+  const strip = (t) => { const { name, arrange, max, ...rest } = t; void name; void arrange; void max; return rest; };
+  const tabs = p.tabs.map(strip);
+  tabs[0] = { focused: 'la1', root: split('row', [0.4, 0.2, 0.4],
+    conv('la1', 'flaky', CWD.web), { type: 'leaf', pane: 'lb1', web: { url: 'http://localhost:3000/cart', title: 'Cart · Acme Store', owner: 'la1' } },
+    split('col', [0.5, 0.5], conv('la2', 'dashboard', CWD.web), conv('la3', 'uploads', CWD.web))) };
+  tabs.splice(1, 0, { focused: 'lb2', root: { type: 'leaf', pane: 'lb2', web: { url: 'http://localhost:3000/checkout', title: 'Checkout · Acme Store', owner: 'la1' } } });
+  return { ...p, tabs, active: 2 };
+};
+
+/**
  * The handoff (2026-10-12): the desktop has one tab of three sessions, the sidebar folded away. "Fix flaky
  * checkout test" (the left column, focused) is the one you were in; it is idle, the two on the right work.
  */

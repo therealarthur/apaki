@@ -3185,3 +3185,150 @@ body:has(> .menu:not(.out)) .rail-resize { pointer-events: none; }
   .srow .sr-lead .arc { animation: none; }
   .srow .sr-detail, .folder-kids, .folder-row .chev, .srow .sr-time, .srow .sr-more { transition: none; }
 }
+
+/* ==========================================================================
+   Tabs, layouts and viewers (2026-10-12, apaki/docs/layout.md).
+   Arthur: "its all incredibly messy right now ... make it so that its not
+   confusing". A tab is named after its workspace, with a quiet second name
+   only to tell two apart; the Layout button names the arrangement; every
+   viewer carries a link chip in its conversation's accent and the
+   conversation a matching mark, and hovering either rings the other (a ring
+   all the way round, never one lit side); a pane can fill the window.
+   The accents mean "these belong together" and nothing else: none is the
+   focus periwinkle, the waiting orange or the finished green.
+   ========================================================================== */
+.acc-0 { --acc-hsl: 174, 79%, 27%; }
+.acc-1 { --acc-hsl: 263, 48%, 54%; }
+.acc-2 { --acc-hsl: 339, 45%, 48%; }
+.acc-3 { --acc-hsl: 208, 67%, 43%; }
+.acc-4 { --acc-hsl: 39, 82%, 33%; }
+.acc-5 { --acc-hsl: 76, 68%, 28%; }
+:root[data-theme="dark"] .acc-0 { --acc-hsl: 172, 57%, 60%; }
+:root[data-theme="dark"] .acc-1 { --acc-hsl: 259, 76%, 79%; }
+:root[data-theme="dark"] .acc-2 { --acc-hsl: 340, 78%, 78%; }
+:root[data-theme="dark"] .acc-3 { --acc-hsl: 210, 80%, 73%; }
+:root[data-theme="dark"] .acc-4 { --acc-hsl: 42, 73%, 63%; }
+:root[data-theme="dark"] .acc-5 { --acc-hsl: 76, 54%, 62%; }
+.pane { --acc: hsl(var(--acc-hsl, 232, 12%, 50%)); }
+
+/* A viewer's link chip: whose it is, in that conversation's accent. A soft rounded rectangle, no capsule, no dot. */
+.link-chip {
+  display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; max-width: 34%; height: 26px; padding: 0 8px 0 6px;
+  border: 0; border-radius: 7px; background: hsla(var(--acc-hsl, 232, 12%, 50%), .1); cursor: pointer;
+  font: 700 var(--fs-micro)/1 var(--font-display); font-stretch: 108%; letter-spacing: .01em; color: var(--acc);
+  transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.link-chip[hidden] { display: none; }
+.link-chip svg, .link-mark svg { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.link-chip .lc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-chip:hover, .link-chip:focus-visible, .pane.link-from .link-chip { background: hsla(var(--acc-hsl, 232, 12%, 50%), .18); }
+.link-chip:focus-visible, .link-mark:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; }
+/* Its conversation is closed: the name stays, quiet, and a click opens it again. */
+.link-chip.gone { background: var(--tint); color: var(--faint); font-weight: 600; }
+.link-chip.gone:hover { color: var(--soft); }
+
+/* A conversation's mark: it has viewers (how many, from two), in its accent. */
+.link-mark {
+  display: inline-flex; align-items: center; gap: 3px; flex: none; height: 28px; min-width: 28px; padding: 0 6px; justify-content: center;
+  border: 0; border-radius: 7px; background: hsla(var(--acc-hsl, 232, 12%, 50%), .1); color: var(--acc); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-hover);
+}
+.link-mark[hidden] { display: none; }
+.link-mark .lm-n { font: 700 var(--fs-micro)/1 var(--font-mono); }
+.link-mark:hover, .pane.link-from .link-mark { background: hsla(var(--acc-hsl, 232, 12%, 50%), .18); }
+
+/* Hovering a link rings the other end, all the way round. */
+.pane.link-hi, .stage.multi .pane.link-hi, .stage.multi .pane.focused.link-hi {
+  box-shadow: inset 0 0 0 2px hsla(var(--acc-hsl, 232, 12%, 50%), .75); border-radius: 10px;
+}
+.pane { transition: box-shadow var(--dur-fast) var(--ease-hover); }
+
+/* Gone to from the sidebar: a short ring that fades (still and brief with reduced motion). */
+.pane.flash { animation: pane-flash 900ms var(--ease-out); }
+@keyframes pane-flash {
+  0% { box-shadow: inset 0 0 0 2px hsla(var(--pearl-stop-blue), .85); }
+  100% { box-shadow: inset 0 0 0 2px hsla(var(--pearl-stop-blue), 0); }
+}
+
+/* Maximize: the pane fills the window under the top strip (the window buttons and the tabs stay). */
+.icon-btn.max-btn { flex: none; }
+.max-btn svg { width: 14px; height: 14px; fill: none; stroke: var(--soft); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.max-btn .i-shrink, .max-btn.on .i-grow { display: none; }
+.max-btn.on .i-shrink { display: block; }
+.max-btn.on { background: var(--tint); }
+.max-btn.on svg { stroke: var(--ink); }
+.pane-slot { min-width: 0; min-height: 0; background: transparent; }
+.pane-max-layer { position: fixed; z-index: 9; left: 0; right: 0; top: var(--top); bottom: 0; display: none; padding: 0 8px 8px; background: hsl(var(--w)); }
+body.pane-max .pane-max-layer { display: flex; animation: max-in 180ms var(--ease-out); }
+@keyframes max-in { from { opacity: 0; } to { opacity: 1; } }
+.pane-max-layer > .pane { flex: 1; min-width: 0; min-height: 0; border: 1px solid var(--sec-line); border-radius: 12px; overflow: hidden; box-shadow: 0 10px 34px -26px rgba(var(--shadow-rgb), .5); }
+body.maximized .pane-max-layer { padding: 0; }
+body.maximized .pane-max-layer > .pane { border-radius: 0; border-width: 1px 0 0; }
+body.pane-max .rail-resize { display: none; }
+body.pane-max .tabs-tools { opacity: .45; pointer-events: none; }
+
+/* Tab names: the workspace's name strong, a quiet second name only to tell two tabs apart, the conversations counted. */
+.tab-s { flex: 0 1 auto; min-width: 0; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-micro); font-weight: 520; color: var(--faint); }
+.tab.on .tab-s { color: var(--soft); }
+.tab.named .tab-t { font-style: normal; }
+.tab-rename {
+  width: 150px; min-width: 0; height: 24px; padding: 0 7px; border: 1px solid var(--brand); border-radius: 6px;
+  background: var(--ground); color: var(--ink); font: 700 var(--fs-small)/1 var(--font-display); outline: 0;
+  box-shadow: 0 0 0 3px hsla(var(--pearl-stop-blue), .16);
+}
+.layout-btn .chev { width: 10px; height: 10px; margin-left: -2px; stroke: var(--faint); }
+
+/* A browser pane's pages as tabs (browser.js, "like codex/gpt"): one row under the address strip, from two pages. */
+.pane.web.tabbed .pane-bar { flex-wrap: wrap; row-gap: 4px; padding-bottom: 6px; }
+.web-tabs { order: 20; flex: 1 0 100%; display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 0 0 0 20px; }
+.web-tabs[hidden] { display: none; }
+.web-tabs::-webkit-scrollbar { display: none; }
+.web-tab {
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 1 190px; min-width: 76px; height: 26px; padding: 0 3px 0 5px;
+  border: 0; border-radius: 7px; background: none; cursor: pointer; color: var(--soft);
+  font: 600 var(--fs-micro)/1 var(--font-body); text-align: left;
+  transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.web-tab:hover { background: var(--ghost-hover); color: var(--ink); }
+.web-tab.on { background: var(--tint-deep); color: var(--ink); font-weight: 720; }
+.web-tab:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.wt-i {
+  display: grid; place-items: center; flex: none; width: 16px; height: 16px; border-radius: 4px;
+  background: var(--tint); color: var(--soft); font: 760 var(--fs-micro)/1 var(--font-display);
+}
+.web-tab.on .wt-i { background: hsla(var(--w), .9); color: var(--ink); box-shadow: 0 0 0 1px var(--hairline-strong); }
+.web-tab.loading .wt-i { animation: wt-load 1.1s var(--ease-hover) infinite alternate; }
+@keyframes wt-load { from { opacity: 1; } to { opacity: .45; } }
+.web-tab.failed .wt-t { color: var(--action-strong); }
+.wt-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wt-x { display: grid; place-items: center; flex: none; width: 18px; height: 18px; border-radius: 5px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-hover); }
+.wt-x svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.web-tab:hover .wt-x, .web-tab.on .wt-x { opacity: .75; }
+.wt-x:hover { opacity: 1; background: var(--ghost-press); }
+.pane.web .new-tab svg { stroke-width: 1.6; }
+
+@container pane (max-width: 520px) {
+  .link-chip { max-width: 30%; }
+  .link-chip .lc-t { display: none; }
+  .web-tab { flex-basis: 120px; }
+}
+@container pane (max-width: 380px) {
+  .pane-bar .max-btn { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane.flash { animation: none; box-shadow: inset 0 0 0 2px hsla(var(--pearl-stop-blue), .7); }
+  body.pane-max .pane-max-layer { animation: none; }
+  .web-tab.loading .wt-i { animation: none; opacity: .6; }
+  .pane, .link-chip, .link-mark, .web-tab, .wt-x { transition: none; }
+}
+/* The count and the Layout button stay in view however many tabs there are; tabs give up width before the row scrolls. */
+.tab-tools-slot { display: flex; align-items: center; flex: none; min-width: 0; }
+.tabs .tab { flex: 0 1 auto; }
+/* With the strip showing, the active tab names the page, so the address takes the title's line. */
+.pane.web.tabbed .web-head .title { display: none; }
+.pane.web.tabbed .web-addr { margin-top: 0; }
+.tabs .tab.on { flex-shrink: 0; }
+.tab-tools-slot .tab-count { white-space: nowrap; }
+@media (max-width: 1280px) { .tab-tools-slot .tab-count { display: none; } }
+/* A narrow pane keeps its header on one line: the title gives way first (the mark and close stay in reach). */
+@container pane (max-width: 340px) { .pane-bar .title-block { min-width: 64px; } }

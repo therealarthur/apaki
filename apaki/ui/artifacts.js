@@ -237,8 +237,8 @@ export class ArtifactPane {
     this.$.title.textContent = this.title;
     this.$.title.title = this.title;
     this.$.badge.innerHTML = `${glyph(a.kind)}<span>${esc(label(a.kind))}</span>`;
-    const from = this.sourcePane ? this.host.paneTitle?.(this.sourcePane) : null;
-    this.$.meta.textContent = [a.source ? a.source.replace(/^C:\\Users\\[^\\]+/i, '~') : '', fmtSize(a.size), from ? `from ${from}` : ''].filter(Boolean).join('  ·  ');
+    // Whose it is shows in the header's link chip since 2026-10-12 (app.js renderLinks), in that conversation's accent.
+    this.$.meta.textContent = [a.source ? a.source.replace(/^C:\\Users\\[^\\]+/i, '~') : '', fmtSize(a.size)].filter(Boolean).join('  ·  ');
     const revs = a.revs || [];
     this.$.revs.hidden = revs.length < 2;
     if (revs.length > 1) {

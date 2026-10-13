@@ -76,7 +76,8 @@ test('every preset names panes whose sessions exist', () => {
   for (const [name, make] of Object.entries(PRESETS)) {
     const p = make();
     assert.ok(p.tabs.length >= 1 || p.desktopTabs, name);
-    for (const t of p.tabs) for (const lf of leaves(t.root)) assert.ok(ids.has(lf.s), `${name}: ${lf.s}`);
+    // A browser pane, and a conversation not started yet (no session), name no session (the layout preset, 2026-10-12).
+    for (const t of p.tabs) for (const lf of leaves(t.root)) if (!lf.web && lf.s !== null) assert.ok(ids.has(lf.s), `${name}: ${lf.s}`);
     for (const t of p.desktopTabs || []) for (const d of t.panes) assert.ok(ids.has(d.sessionId), `${name} desktop: ${d.sessionId}`);
   }
 });
