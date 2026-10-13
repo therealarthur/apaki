@@ -380,7 +380,7 @@ const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
  * @param {object} [o.timing]  { flushMs, quitStepMs, quitWaitMs, killWaitMs, readyQuietMs, readyMaxMs } (tests shorten them)
  */
 export function createConsoles({ emit, loadPty = loadNodePty, headless = loadHeadless, log = () => {}, now = Date.now, timing = {} } = {}) {
-  const t = { flushMs: FLUSH_MS, quitStepMs: 150, quitWaitMs: 1800, killWaitMs: 2500, readyQuietMs: 500, readyMaxMs: 10000, ...timing };
+  const t = { flushMs: FLUSH_MS, quitStepMs: 150, quitWaitMs: 1800, killWaitMs: 2500, readyQuietMs: 1200, readyMaxMs: 15000, ...timing };
   /** paneId -> console */
   const live = new Map();
   let ptyMod = null;
@@ -491,7 +491,12 @@ export function createConsoles({ emit, loadPty = loadNodePty, headless = loadHea
     }
     if (con.exited) return;
     con.pty.write(text);
-    await sleep(60);
+    // Enter once the TUI shows what was typed and its command list settled (found live, 2026-10-13: an Enter sent right
+    // after the text, while Claude Code was still drawing its list, was dropped).
+    const typedAt = now();
+    const shown = () => (con.term ? screen(con, con.rows) : plainText(con.tail.slice(-6000), 80)).includes(text);
+    while (!con.exited && now() - typedAt < 3000 && !shown()) await sleep(50);
+    while (!con.exited && now() - typedAt < 4000 && now() - con.lastOutputAt < Math.min(300, t.readyQuietMs)) await sleep(40);
     if (!con.exited) con.pty.write('\r');
   }
 

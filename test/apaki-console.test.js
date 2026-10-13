@@ -32,7 +32,7 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-console-'));
 const tick = (ms = 15) => new Promise((r) => { setTimeout(r, ms); });
 
 /** A pty module whose processes are plain objects: what was written, sizes, kills, and exit on the TUI's own quit. */
-function fakePty({ quitOn = '\x03\x03', exitOnKill = true } = {}) {
+function fakePty({ quitOn = '\x03\x03', exitOnKill = true, echo = false } = {}) {
   const spawned = [];
   return {
     spawned,
@@ -40,7 +40,7 @@ function fakePty({ quitOn = '\x03\x03', exitOnKill = true } = {}) {
       const h = {
         file, args, opts, pid: 4000 + spawned.length, written: '', sizes: [], killed: 0, exited: false,
         onData(cb) { h.dataCb = cb; }, onExit(cb) { h.exitCb = cb; },
-        write(s) { h.written += s; if (quitOn && h.written.includes(quitOn)) setTimeout(() => h.exit(0), 3); },
+        write(s) { h.written += s; if (echo && s !== '\r') setTimeout(() => h.out(s), 2); if (quitOn && h.written.includes(quitOn)) setTimeout(() => h.exit(0), 3); },
         resize(c, r) { h.sizes.push([c, r]); },
         kill() { h.killed += 1; if (exitOnKill) setTimeout(() => h.exit(1), 3); },
         out(s) { h.dataCb(s); },
@@ -222,15 +222,22 @@ test('consoles: a TUI that ignores its quit is ended by PID; stopTurn sends Esc 
 });
 
 test('consoles: a command typed from the pane waits until the TUI is up and quiet', async () => {
-  const mod = fakePty();
+  const mod = fakePty({ echo: true });
   const cons = createConsoles({ emit: () => {}, loadPty: () => mod, headless: () => null, timing: quick });
   cons.start('p1', { sessionId: SID, kind: 'claude', spec: { file: 'c', args: [] }, env: {}, cwd: '.', cols: 80, rows: 24, type: '/config' });
   const h = mod.spawned[0];
   await tick(40);
   assert.equal(h.written, '', 'nothing before it drew');
   h.out('> ');
-  await tick(150);
-  assert.equal(h.written, '/config\r');
+  await tick(200);
+  assert.equal(h.written, '/config\r', 'Enter once the TUI shows the text and settles');
+  // A TUI that never shows the text still gets its Enter, a few seconds later, never before the text.
+  const mute = fakePty();
+  const c2 = createConsoles({ emit: () => {}, loadPty: () => mute, headless: () => null, timing: quick });
+  c2.start('p2', { sessionId: SID, kind: 'claude', spec: { file: 'c', args: [] }, env: {}, cwd: '.', cols: 80, rows: 24, type: '/mcp' });
+  mute.spawned[0].out('> ');
+  await tick(200);
+  assert.equal(mute.spawned[0].written, '/mcp');
 });
 
 test('consoles: no node-pty says why', () => {

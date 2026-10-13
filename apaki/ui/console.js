@@ -89,7 +89,8 @@ export function loadXterm() {
     if (!document.querySelector('link[data-xterm]')) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
-      link.href = './vendor/xterm/xterm.css';
+      // Next to this module, whatever page loaded it.
+      link.href = new URL('./vendor/xterm/xterm.css', import.meta.url).href;
       link.dataset.xterm = '';
       document.head.append(link);
     }
@@ -182,10 +183,11 @@ export class PaneConsole {
     term.onData((data) => this.pane.send('consoleInput', { data }));
     term.onBinary((data) => this.pane.send('consoleInput', { data }));
     term.attachCustomKeyEventHandler((e) => this.key(e));
-    // Ctrl+V with only a picture on the clipboard: the TUI reads the clipboard itself (Claude Code's image paste).
+    // Ctrl+V with only a picture on the clipboard: the TUI reads the clipboard itself, with its own image paste key
+    // (Claude Code on Windows: Alt+V, as its /help says; Codex: Ctrl+V).
     this.$term.addEventListener('paste', (e) => {
       const text = e.clipboardData?.getData('text/plain');
-      if (!text && e.clipboardData?.files?.length) { e.preventDefault(); this.pane.send('consoleInput', { data: '\x16' }); }
+      if (!text && e.clipboardData?.files?.length) { e.preventDefault(); this.pane.send('consoleInput', { data: this.pane.kind === 'codex' ? '\x16' : '\x1bv' }); }
     }, true);
     new ResizeObserver(() => this.refit()).observe(this.$term);
     // The window's theme changes (Settings, or Windows in auto): the terminal follows.

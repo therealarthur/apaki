@@ -3369,8 +3369,9 @@ body.pane-max .tabs-tools { opacity: .45; pointer-events: none; }
   .pane.console-on > .console { transition: opacity 120ms linear, visibility 0s; }
   .pane > .ground, .pane > .composer-wrap, .pane > .prompt-pin, .pane.console-on > .ground, .pane.console-on > .composer-wrap, .pane.console-on > .prompt-pin { transform: none; transition: opacity 120ms linear; }
 }
-.console-term { min-width: 0; min-height: 0; padding: 10px 6px 8px 14px; overflow: hidden; }
-.console-term .xterm { height: 100%; }
+/* The padding is the terminal element's own, so the fit addon (which subtracts it) never sizes a row past the bottom. */
+.console-term { min-width: 0; min-height: 0; overflow: hidden; }
+.console-term .xterm { height: 100%; padding: 10px 6px 8px 14px; }
 .console-term .xterm-viewport { background: transparent !important; }
 .console-bar {
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 14px;
