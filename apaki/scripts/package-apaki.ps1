@@ -122,6 +122,19 @@ if (Test-Path (Join-Path $repo 'hooks')) { Mirror (Join-Path $repo 'hooks') (Joi
 $node = (Get-Command node -ErrorAction Stop).Source
 Copy-Item $node (Join-Path $dist 'node\node.exe')
 
+# The console (2026-10-12, apaki/engine/console.js): node-pty is a native module (its ConPTY binding ships prebuilt in
+# node_modules\node-pty\prebuilds\win32-x64, N-API, so any Node loads it). Check it loads with the Node this package
+# carries, from the packaged engine folder, so an installed app never finds out later. Without it, the console says
+# node-pty is missing and everything else works.
+$ptyDir = Join-Path $engine 'node_modules\node-pty'
+if (Test-Path $ptyDir) {
+  $ptyCheck = & (Join-Path $dist 'node\node.exe') -e "require(process.argv[1]); process.stdout.write('ok')" $ptyDir 2>&1
+  if ("$ptyCheck" -ne 'ok') { throw "node-pty does not load with the packaged Node: $ptyCheck" }
+  'console: node-pty loads with the packaged Node'
+} else {
+  "WARNING: node_modules\node-pty is missing (npm install in the repo); the console will say so (Open in terminal does not need it)."
+}
+
 $cmd = @{
   'apaki.cmd' = "@echo off`r`nrem apaki: opens Myrlin Apaki, or brings the open window forward.`r`nstart `"`" `"%~dp0..\myrlin-apaki.exe`" %*`r`n"
   'latch.cmd' = "@echo off`r`nrem latch: the terminal app on the same engine as Myrlin Apaki.`r`n`"%~dp0..\node\node.exe`" `"%~dp0..\engine\bin\latch.js`" %*`r`n"
