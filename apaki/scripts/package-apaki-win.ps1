@@ -205,6 +205,8 @@ function Prepare-Engine {
   $pty = Join-Path $e 'node_modules\node-pty'
   if (Test-Path -LiteralPath $pty) {
     foreach ($d in @(Get-ChildItem -LiteralPath (Join-Path $pty 'prebuilds') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'win32-x64' })) { Remove-Item -LiteralPath $d.FullName -Recurse -Force }
+    # Debug symbols (.pdb) are about 60 MB of the 64 MB node-pty ships; the app never reads them (same trim as package-apaki.ps1).
+    Get-ChildItem -LiteralPath $pty -Recurse -Filter '*.pdb' -File | Remove-Item -Force
     if (-not (Test-Path -LiteralPath (Join-Path $pty 'prebuilds\win32-x64\conpty.node'))) { Die 'node-pty has no win32-x64 prebuild (prebuilds\win32-x64\conpty.node)' }
     $ptyCheck = & (Join-Path $stage 'node\node.exe') -e "require(process.argv[1]); process.stdout.write('ok')" $pty 2>&1
     if ("$ptyCheck" -ne 'ok') { Die "node-pty does not load with the packaged Node: $ptyCheck" }
