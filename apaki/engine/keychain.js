@@ -60,28 +60,35 @@ const HEX_KEY = /^[0-9a-f]{64}$/;
  * A Keychain-backed sealer. `run` is injectable; the key is cached in memory after the first successful read, so the
  * Keychain is asked once per process.
  */
-export function createKeychain({ run = runSecurity, service = process.env.APAKI_KEYCHAIN_SERVICE || KEYCHAIN_SERVICE, account = KEYCHAIN_ACCOUNT } = {}) {
+export function createKeychain({
+  run = runSecurity,
+  service = process.env.APAKI_KEYCHAIN_SERVICE || KEYCHAIN_SERVICE,
+  account = KEYCHAIN_ACCOUNT,
+  // A keychain file other than the login Keychain (a test's own, APAKI_KEYCHAIN_FILE); none: the user's default, the login Keychain.
+  file = process.env.APAKI_KEYCHAIN_FILE || null,
+} = {}) {
   let cached = null;
+  const LOCKED_HINT = 'unlock your login Keychain (Keychain Access) or sign in at the Mac\'s screen, then Apaki tries again';
 
   const read = async () => {
-    const r = await run(['find-generic-password', '-a', account, '-s', service, '-w']);
+    const r = await run(['find-generic-password', '-a', account, '-s', service, '-w', ...(file ? [file] : [])]);
     if (r.code === 0) {
       const hex = r.stdout.trim().toLowerCase();
       if (!HEX_KEY.test(hex)) throw new KeychainError('missing', 'the Keychain item for phone access holds something other than Apaki\'s key');
       return Buffer.from(hex, 'hex');
     }
     if (r.code === NOT_FOUND) return null;
-    throw new KeychainError('locked', `the Keychain would not open (security exit ${r.code}${r.stderr ? `: ${r.stderr.trim().split('\n')[0]}` : ''})`);
+    throw new KeychainError('locked', `the Keychain would not open (security exit ${r.code}${r.stderr ? `: ${r.stderr.trim().split('\n')[0]}` : ''}); ${LOCKED_HINT}`);
   };
 
   /** Adds the key if there is none. Returns once an item exists; a lost race (item already there) is fine. */
   const create = async () => {
     const key = crypto.randomBytes(32);
     // security -i reads its commands from stdin: the key is on no command line. No -U: never overwrite a key another process just made.
-    const r = await run(['-i'], `add-generic-password -a ${account} -s ${service} -w ${key.toString('hex')}\n`);
+    const r = await run(['-i'], `add-generic-password -a ${account} -s ${service} -w ${key.toString('hex')}${file ? ` ${/\s/.test(file) ? `"${file}"` : file}` : ''}\n`);
     key.fill(0);
     // In interactive mode security reports a failure on stderr and may still exit 0, so the read below is the check.
-    if (r.code !== 0 && r.code !== EXISTS) throw new KeychainError('locked', `could not save the key to the Keychain (security exit ${r.code})`);
+    if (r.code !== 0 && r.code !== EXISTS) throw new KeychainError('locked', `could not save the key to the Keychain (security exit ${r.code}); ${LOCKED_HINT}`);
   };
 
   /** The 32-byte key; makes it when `make` and there is none. */
@@ -92,7 +99,7 @@ export function createKeychain({ run = runSecurity, service = process.env.APAKI_
       await create();
       k = await read();
     }
-    if (!k) throw new KeychainError('missing', make ? 'the key was not saved to the Keychain' : 'the Keychain item for phone access is gone');
+    if (!k) throw new KeychainError('missing', make ? `the key was not saved to the Keychain; ${LOCKED_HINT}` : `the Keychain item for phone access was not found (it was deleted, or the Keychain is locked: ${LOCKED_HINT})`);
     cached = k;
     return k;
   };

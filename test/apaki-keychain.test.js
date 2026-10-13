@@ -24,14 +24,15 @@ function fakeSecurity({ locked = false } = {}) {
     if (args[0] === 'find-generic-password') {
       const a = args[args.indexOf('-a') + 1];
       const s = args[args.indexOf('-s') + 1];
-      const v = items.get(`${s}/${a}`);
+      const f = args[args.indexOf('-w') + 1] || '';   // a keychain file named last, or none (the login Keychain)
+      const v = items.get(`${f}${s}/${a}`);
       return v ? { code: 0, stdout: `${v}\n`, stderr: '' } : { code: 44, stdout: '', stderr: 'security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.\n' };
     }
     if (args[0] === '-i') {
       // Interactive mode: commands on stdin. An add of an item that exists reports on stderr and still exits 0.
-      const m = /^add-generic-password -a (\S+) -s (\S+) -w (\S+)\n$/.exec(stdin || '');
+      const m = /^add-generic-password -a (\S+) -s (\S+) -w (\S+)(?: "?([^"\n]+)"?)?\n$/.exec(stdin || '');
       assert.ok(m, `unexpected interactive command: ${stdin}`);
-      const k = `${m[2]}/${m[1]}`;
+      const k = `${m[4] || ''}${m[2]}/${m[1]}`;
       if (items.has(k)) return { code: 0, stdout: '', stderr: 'security: SecKeychainItemCreateFromContent: The specified item already exists in the keychain.\n' };
       items.set(k, m[3]);
       return { code: 0, stdout: '', stderr: '' };
@@ -119,6 +120,20 @@ test('keychain: two processes making the key at once end up with the same key', 
   const sealed = await second.protect(Buffer.from('second'));
   assert.equal((await first.unprotect(sealed)).toString(), 'second', 'the second process ended up on the first key');
   assert.equal(sec.items.size, 1, 'one key, not two');
+});
+
+test('keychain: a keychain file other than the login one (a test\'s own) is named on both commands, spaces quoted', async () => {
+  const sec = fakeSecurity();
+  const file = '/tmp/with space/apaki test.keychain-db';
+  const kc = createKeychain({ run: sec.run, file });
+  const sealed = await kc.protect(Buffer.from('x'));
+  assert.deepEqual(await kc.unprotect(sealed), Buffer.from('x'));
+  const add = sec.calls.find((c) => c.args[0] === '-i');
+  assert.ok(add.stdin.trimEnd().endsWith(` "${file}"`), add.stdin);
+  const find = sec.calls.find((c) => c.args[0] === 'find-generic-password');
+  assert.equal(find.args.at(-1), file);
+  assert.equal(sec.items.size, 1);
+  assert.ok([...sec.items.keys()][0].startsWith(file), 'the item is in that keychain, not the default one');
 });
 
 test('keychain: a stored value that is not a key is refused', async () => {

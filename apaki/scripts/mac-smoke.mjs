@@ -19,6 +19,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,6 +42,17 @@ const env = {
   LATCH_WARM_NO_KEEPER: '1',
 };
 delete env.PROMPT_RELAY_CHILD;
+// On a Mac the phone steps seal their scratch keys in a throwaway keychain file (made and unlocked here, deleted at the
+// end), so the login Keychain is never touched and a locked login keychain (an ssh session) does not matter.
+// --login-keychain uses the real one instead (what the app does).
+let tempKeychain = null;
+if (wantPhone && process.platform === 'darwin' && !process.env.APAKI_KEYCHAIN_FILE && !process.argv.includes('--login-keychain')) {
+  tempKeychain = path.join(scratch, 'smoke.keychain-db');
+  const pw = crypto.randomBytes(12).toString('hex');
+  execFileSync('/usr/bin/security', ['create-keychain', '-p', pw, tempKeychain], { stdio: 'ignore' });
+  execFileSync('/usr/bin/security', ['unlock-keychain', '-p', pw, tempKeychain], { stdio: 'ignore' });
+  env.APAKI_KEYCHAIN_FILE = tempKeychain;
+}
 const indexBin = path.join(root, 'index', 'target', 'release', process.platform === 'win32' ? 'latch-index.exe' : 'latch-index');
 if (fs.existsSync(indexBin) && !env.LATCH_INDEX_BIN) env.LATCH_INDEX_BIN = indexBin;
 
@@ -68,10 +80,13 @@ const ask = async (op, match, ms) => { const p = next(match, ms); send(op); retu
 
 function deleteKeychainItem() {
   if (process.platform !== 'darwin') return;
-  try { execFileSync('/usr/bin/security', ['delete-generic-password', '-a', 'secret-key-v1', '-s', service], { stdio: 'ignore' }); } catch { /* none was made */ }
+  if (tempKeychain) { try { execFileSync('/usr/bin/security', ['delete-keychain', tempKeychain], { stdio: 'ignore' }); } catch { /* already gone */ } return; }
+  try { execFileSync('/usr/bin/security', ['delete-generic-password', '-a', 'secret-key-v1', '-s', service, ...(env.APAKI_KEYCHAIN_FILE ? [env.APAKI_KEYCHAIN_FILE] : [])], { stdio: 'ignore' }); } catch { /* none was made */ }
 }
 
 async function main() {
+  // The index event comes when the first update ends, usually before the later steps ask: listen from the start.
+  const indexed = next((e) => e.ev === 'index', 180000);
   const ready = await next((e) => e.ev === 'ready', 60000);
   check('engine started and said ready', Boolean(ready), ready ? `pid ${ready.pid}, voice ${ready.voice}, codex ${ready.codex}, artifacts ${ready.artifacts}` : stderr.split('\n').slice(-3).join(' | '));
   if (!ready) return;
@@ -94,7 +109,7 @@ async function main() {
     send({ op: 'close', reqId: 'c1', paneId: 'smoke' });
   } else check('a pane opens a session', false, 'no Claude Code session to open');
 
-  const idx = await next((e) => e.ev === 'index', 120000);
+  const idx = await indexed;
   check('the search index updated', Boolean(idx?.ok), idx ? `${idx.ms} ms` : 'no index event');
   const query = pick ? String(pick.title || pick.firstPrompt || 'session').split(/\s+/).slice(0, 4).join(' ') : 'session';
   const found = await ask({ op: 'search', reqId: 'q1', query }, (e) => e.ev === 'search' && e.reqId === 'q1' && e.deep, 60000);
@@ -116,6 +131,7 @@ async function phone() {
   s = await on;
   check('phone access turns on and reaches the relay', s?.state === 'online', s ? `state ${s.state}${s.error ? `, ${s.error}` : ''}` : 'no answer');
   check('the secrets are sealed by the platform store', process.platform === 'darwin' ? s?.protection === 'keychain' : s?.protection != null, `protection: ${s?.protection}`);
+  if (s?.protection === 'file' && process.platform === 'darwin') console.log(stderr.split('\n').filter((l) => /apaki remote/.test(l)).join('\n'));
   const rawFile = path.join(scratch, 'remote', 'secret.json');
   if (fs.existsSync(rawFile)) {
     const f = JSON.parse(fs.readFileSync(rawFile, 'utf8'));
