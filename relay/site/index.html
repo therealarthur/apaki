@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <!-- impeccable-disable marquee -- the only infinite horizontal animations here are the pearl background's slow drift (the desktop app's own background) and, on the home page, the security diagram's packet moving along its lane; neither scrolls content, and both stop under prefers-reduced-motion (2026-10-12) -->
+  <!-- impeccable-disable marquee: the only infinite horizontal animations here are the pearl background's slow drift (the desktop app's own background) and, on the home page, sealed frames travelling through the relay tunnel in the security section; neither scrolls content, both pause off screen, and both stop under prefers-reduced-motion (2026-10-12) -->
   <meta charset="utf-8">
   <!--
     The product home page of Myrlin Apaki at apaki.myrlin.io (relay/site, served as static files by the
@@ -9,13 +9,16 @@
     (apaki/scripts/build-web.mjs --release) no longer touches it, it rewrites /app/ instead.
     Every recording on it shows Apaki's real window on invented demo data (apaki/demo, node apaki/demo/capture.mjs).
     The repository is public at github.com/therealarthur/apaki (2026-10-12); Download goes to its releases page.
+    Round 3 (2026-10-12, Arthur's review): close-ups of the real UI instead of whole windows (one full view, in the
+    hero), light 3D pieces that act out what each part does (assets/site.js and site.css), freer layouts, Apaki's own
+    pearl circles, and one curved horizon into a single dark chapter instead of a cut between every section.
   -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#FDFDFF" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#121120" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#F9F7F7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#15120F" media="(prefers-color-scheme: dark)">
   <title>Myrlin Apaki: every Claude Code session on your PC, in one window</title>
   <meta name="description" content="Apaki is a free, open source desktop app for Claude Code on Windows. It lists every session on your PC, switches accounts with Myrlin Glass, gives Claude a browser pane, and puts your sessions on your phone through an end to end encrypted relay you can host yourself.">
   <meta property="og:title" content="Myrlin Apaki">
@@ -33,6 +36,7 @@
   <script src="assets/theme.js"></script>
   <link rel="stylesheet" href="site.css">
   <script src="assets/site.js" defer></script>
+  <script src="assets/splash.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to the content</a>
@@ -61,199 +65,172 @@
 
   <main id="main">
 
-    <!-- ===== Hero ===== -->
+    <!-- ===== Hero: the one full view on the page (the PC and the phone in step, scenes.mjs "handoff") ===== -->
     <section class="hero" aria-labelledby="hero-title">
+      <!-- Apaki's pearl circles (site.js draws them): anchored off the bottom left, they run behind the stage into Glass. -->
+      <div class="circles circles-dawn" data-circles="dawn" data-motion aria-hidden="true"></div>
       <div class="wrap">
+        <div class="hero-top">
+        <!-- The splash (round 3, assets/splash.js): a slow mesh gradient in a skewed band behind the words, drawn by a
+             small WebGL shader; the CSS poster under the canvas is what shows without WebGL. -->
+        <div class="splash" aria-hidden="true"><canvas class="splash-gl"></canvas></div>
         <p class="hero-kicker">Open source, free to use and to self-host</p>
         <h1 class="wordmark" id="hero-title">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 32 15" class="m-mark wordmark-mark" aria-hidden="true"><defs><linearGradient id="mflare-hero" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#07B6D5"/><stop offset="1" stop-color="#3C83F6"/></linearGradient></defs><path class="m-fold" d="M12.292 9 C13.331 9 14.221 9.801 14.28 10.788 L14.554 15.346 L12.18 22.327 C11.916 23.105 11.452 23.858 11.15 24 L11.115 24 C9.996 24 9.36 23.019 9.246 21.115 L9.029 17.495 L10.838 12.173 C11.395 10.538 11.996 9.141 12.206 9 L12.292 9Z"/><path class="m-stroke" d="M0.5 24 L6.904 24 L10.925 12.173 C11.481 10.538 12.083 9.141 12.292 9 L7.042 9 C6.18 9 5.413 9.549 5.136 10.366Z"/><path class="m-fold" d="M23.369 9 C24.408 9 25.298 9.801 25.357 10.788 L25.745 17.258 C25.133 17.737 24.444 18.836 24.013 20.106 L23.257 22.327 C22.993 23.105 22.529 23.858 22.227 24 L22.192 24 C21.073 24 20.437 23.019 20.323 21.115 L20.106 17.495 L21.915 12.173 C22.471 10.538 23.073 9.141 23.283 9 L23.369 9Z"/><path class="m-stroke" d="M11.115 24 L16.538 24 C17.401 24 18.167 23.451 18.445 22.634 L22.002 12.173 C22.558 10.538 23.16 9.141 23.369 9 L18.119 9 C17.257 9 16.49 9.549 16.213 10.366 L12.146 22.327 C11.881 23.105 11.418 23.858 11.115 24Z"/><path d="M22.192 24 L27.615 24 C28.478 24 29.244 23.451 29.522 22.634 L31.438 17 L26.303 17 C25.605 17 24.559 18.398 23.978 20.106 L23.223 22.327 C22.958 23.105 22.494 23.858 22.192 24Z" fill="url(#mflare-hero)"/></svg>
           <span class="sr-only">Myrlin </span><span class="wordmark-word">Apaki</span>
         </h1>
         <div class="hero-grid">
-        <p class="hero-lead">Every Claude Code session on your PC, in one window.</p>
-        <div class="hero-right">
-        <p class="hero-sub">Apaki finds your sessions, switches accounts with Myrlin Glass, gives Claude a browser pane of its own, and puts your sessions on your phone through an encrypted relay. It is free and open source, and you can run the relay yourself.</p>
-        <div class="hero-actions">
-          <a class="btn btn-primary" href="https://github.com/therealarthur/apaki/releases">Download for Windows</a>
-          <a class="btn btn-secondary" href="app/">Open the web app</a>
-        </div>
-        <p class="hero-fine">For Claude Code on Windows. iPhone app in TestFlight. Codex sessions are listed today; Codex panes are coming. <a href="https://github.com/therealarthur/apaki">Read the source</a>.</p>
+          <p class="hero-lead">Every Claude Code session on your PC, in one window.</p>
+          <div class="hero-right">
+            <p class="hero-sub">Apaki finds your sessions, switches accounts with Myrlin Glass, gives Claude a browser pane of its own, and puts your sessions on your phone through an encrypted relay. It is free and open source, and you can run the relay yourself.</p>
+            <div class="hero-actions">
+              <a class="btn btn-primary" href="https://github.com/therealarthur/apaki/releases">Download for Windows</a>
+              <a class="btn btn-secondary" href="app/">Open the web app</a>
+            </div>
+            <p class="hero-fine">For Claude Code on Windows. iPhone app in TestFlight. Codex sessions are listed today; Codex panes are coming. <a href="https://github.com/therealarthur/apaki">Read the source</a>.</p>
+          </div>
         </div>
         </div>
 
-        <!-- The PC and the phone, recorded in step (apaki/demo scenes.mjs "handoff"): the phone takes over the session
-             on the left at 3.8 s; the PC pane says so and keeps up from the transcript. data-link-at lights both. -->
-        <div class="hero-stage player" data-together data-play-at="0.12" data-link-at="3.8" role="group" aria-label="Recording: the PC and a phone at the same moment. The phone opens the session on the left of the PC from its list of what is on the desktop, takes it over, and asks Claude for the fix; the pane on the PC says the phone took it and shows the same message and reply.">
-          <div class="window window-hero">
+        <!-- The hero close-up (round 3): the pane the phone takes over and the phone, recorded in step at 2x (apaki/demo
+             scenes.mjs "handoff", crop hero-pane). From data-link-at both wear the peach ring: the same session. -->
+        <div class="hero-stage player" data-together data-play-at="0.2" data-link-at="3.8" role="group" aria-label="Recording, close up: a conversation on the PC and a phone at the same moment. The phone opens the session from its list of what is on the desktop, takes it over and asks Claude for the fix; the pane on the PC says the phone took it and shows the same message and reply.">
+          <div class="shot hero-pane">
             <div class="clip is-current">
               <picture>
-                <source media="(prefers-color-scheme: dark)" srcset="assets/media/handoff-dark-1200.webp 1200w, assets/media/handoff-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
-                <img src="assets/media/handoff-light-1200.webp" srcset="assets/media/handoff-light-1200.webp 1200w, assets/media/handoff-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="Apaki on the PC with three conversations; the one on the left says Maya's iPhone 16 took this session, and shows the message sent from the phone and Claude's reply" fetchpriority="high" decoding="async">
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/hero-pane-dark.webp">
+                <img src="assets/media/hero-pane-light.webp" width="1200" height="1430" alt="A conversation in Apaki on the PC that says Maya's iPhone 16 took this session, with the message sent from the phone and Claude's reply" fetchpriority="high" decoding="async">
               </picture>
-              <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/handoff-light.mp4" data-dark="assets/media/handoff-dark.mp4"></video>
+              <video muted playsinline preload="none" width="1200" height="1430" aria-hidden="true" data-light="assets/media/hero-pane-light.mp4" data-dark="assets/media/hero-pane-dark.mp4"></video>
             </div>
-            <span class="link-ring link-ring-left" aria-hidden="true"></span>
             <button class="clip-toggle" type="button" hidden aria-label="Pause the recordings"></button>
           </div>
-
-          <div class="float float-phone">
+          <div class="hero-phone">
             <div class="phone">
               <div class="phone-screen">
                 <div class="clip is-current">
                   <picture>
-                    <source media="(prefers-color-scheme: dark)" srcset="assets/media/handoff-phone-dark.webp">
-                    <img src="assets/media/handoff-phone-light.webp" width="780" height="1688" alt="The same conversation in the Apaki phone app, with the message sent from the phone and Claude's reply" decoding="async">
+                    <source media="(prefers-color-scheme: dark)" srcset="assets/media/hero-phone-dark.webp">
+                    <img src="assets/media/hero-phone-light.webp" width="600" height="1298" alt="The same conversation in the Apaki phone app, with the message sent from the phone and Claude's reply" decoding="async">
                   </picture>
-                  <video muted playsinline preload="none" width="390" height="844" aria-hidden="true" data-light="assets/media/handoff-phone-light.mp4" data-dark="assets/media/handoff-phone-dark.mp4"></video>
+                  <video muted playsinline preload="none" width="600" height="1298" aria-hidden="true" data-light="assets/media/hero-phone-light.mp4" data-dark="assets/media/hero-phone-dark.mp4"></video>
                 </div>
               </div>
             </div>
           </div>
+          <p class="stage-note">The phone picks up a session that is open on the PC. The PC says the phone has it and keeps up with the conversation. Recorded in step from the real app, on made-up demo data.</p>
         </div>
-        <p class="stage-note">The phone picks up the session on the left of the PC. The PC says the phone has it and keeps up with the conversation. Recorded in step from the real app, on made-up demo data.</p>
       </div>
     </section>
 
-    <!-- ===== Open source ===== -->
-    <section class="band sec sec-cut-y g-ink-lattice on-dark" id="self-host" aria-labelledby="oss-title">
-      <div class="wrap band-grid">
-        <div class="band-copy" data-reveal>
-          <h2 id="oss-title">Open source, and yours to run</h2>
-          <p>The desktop app, the phone app and the relay live in one public repository. Apaki needs no account, and pairing a phone through our hosted relay costs nothing.</p>
-          <p>If you would rather not depend on us at all, the relay is a single Cloudflare Worker. Deploy it to your own account (the free plan is enough for a few people), point Apaki at it with two settings, and the phone page comes from your server instead of ours.</p>
-          <p class="links">
-            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/self-hosting.md">Self-hosting guide</a>
-            <a href="https://github.com/therealarthur/apaki/blob/master/relay/README.md">The relay's README</a>
-          </p>
-        </div>
-        <figure class="code-card" data-reveal="2">
-          <figcaption>Run your own relay</figcaption>
-<pre><code><span class="c"># relay/wrangler.jsonc: set "routes" to your hostname</span>
-cd relay
-node ../apaki/scripts/build-web.mjs --release \
-  --relay wss://relay.example.com
-npx wrangler deploy --env=""
-
-<span class="c"># then start Apaki with</span>
-APAKI_RELAY_URL=wss://relay.example.com
-APAKI_WEB_URL=https://relay.example.com/</code></pre>
-        </figure>
-      </div>
-    </section>
-
-    <!-- ===== Glass ===== -->
-    <section class="feature sec sec-cut-top g-lilac-dome" id="glass" aria-labelledby="glass-title">
-      <div class="wrap">
-        <div class="feature-head" data-reveal>
-          <div>
-            <h2 id="glass-title">See every account, and switch in one click</h2>
+    <!-- ===== Glass: the card and its switch, close up, over account rings turning in depth ===== -->
+    <section class="sec sec-glass" id="glass" aria-labelledby="glass-title">
+      <div class="wrap glass-grid">
+        <div class="glass-stage" data-reveal>
+          <!-- Accounts as rings: each turns at its own pace, and the peach light moves from one to the next, as a switch does. -->
+          <div class="gauges" data-motion aria-hidden="true">
+            <div class="g-plane">
+              <i class="g-axis"></i>
+              <div class="g-ring g-r1"><i class="g-spin"><b class="g-arc"></b><b class="g-live"></b></i></div>
+              <div class="g-ring g-r2"><i class="g-spin"><b class="g-arc"></b><b class="g-live"></b></i></div>
+              <div class="g-ring g-r3"><i class="g-spin"><b class="g-arc"></b><b class="g-live"></b></i></div>
+              <div class="g-ring g-r4"><i class="g-spin"><b class="g-arc"></b><b class="g-live"></b></i></div>
+            </div>
           </div>
-          <p>Myrlin Glass is built in. Its card at the bottom of the sidebar shows the live Claude and Codex accounts and how much each has left. Pick another subscription, or move to an Anthropic API key when a limit is close, and the conversation's billing follows. When Glass switches by itself, open conversations move with it before their next message.</p>
-        </div>
-        <div class="feature-media" data-reveal>
-          <div class="player window" role="group" aria-label="Recording: opening the Myrlin Glass panel and switching Claude to a team subscription, then to an API key">
+          <div class="player shot shot-glass" role="group" aria-label="Recording, close up: the Myrlin Glass card at the bottom of the sidebar opens its panel, and Claude moves to a team subscription, then to an API key">
             <div class="clip is-current">
               <picture>
-                <source media="(prefers-color-scheme: dark)" srcset="assets/media/glass-swap-dark-1200.webp 1200w, assets/media/glass-swap-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
-                <img src="assets/media/glass-swap-light-1200.webp" srcset="assets/media/glass-swap-light-1200.webp 1200w, assets/media/glass-swap-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="The Myrlin Glass panel in Apaki: the live Claude account, two more subscriptions and an API key, each with what it has left" loading="lazy" decoding="async">
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/glass-card-dark.webp">
+                <img src="assets/media/glass-card-light.webp" width="784" height="998" alt="The Myrlin Glass panel over Apaki's sidebar: the live Claude account, two more subscriptions and an API key, each with what it has left" loading="lazy" decoding="async">
               </picture>
-              <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/glass-swap-light.mp4" data-dark="assets/media/glass-swap-dark.mp4"></video>
+              <video muted playsinline preload="none" width="784" height="998" aria-hidden="true" data-light="assets/media/glass-card-light.mp4" data-dark="assets/media/glass-card-dark.mp4"></video>
             </div>
             <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
           </div>
         </div>
-        <ul class="points points-grid" data-reveal>
-          <li>A conversation that moves to an API key keeps its context. It continues in the same Claude Code session file, so nothing forks, and you can move it back.</li>
-          <li>Billing is per conversation: one pane can run on your subscription while another runs on a key, labelled with the dollars it has left.</li>
-          <li>Apaki can keep an idle API-key session's prompt cache warm, with a daily cap. Measured on Opus 5.5 after 68 minutes: the next turn of a kept-warm conversation cost $0.125, and the same conversation left cold cost $0.478.</li>
-        </ul>
+        <div class="glass-copy" data-reveal="2">
+          <h2 id="glass-title">See every account, and switch in one click</h2>
+          <p class="lede">Myrlin Glass is built in. Its card at the bottom of the sidebar shows the live Claude and Codex accounts and how much each has left. Pick another subscription, or move to an Anthropic API key when a limit is close, and the conversation's billing follows. When Glass switches by itself, open conversations move with it before their next message.</p>
+          <ul class="points">
+            <li>A conversation that moves to an API key keeps its context. It continues in the same Claude Code session file, so nothing forks, and you can move it back.</li>
+            <li>Billing is per conversation: one pane can run on your subscription while another runs on a key, labelled with the dollars it has left.</li>
+            <li>Apaki can keep an idle API-key session's prompt cache warm, with a daily cap. Measured on Opus 5.5 after 68 minutes: the next turn of a kept-warm conversation cost $0.125, and the same conversation left cold cost $0.478.</li>
+          </ul>
+        </div>
       </div>
     </section>
 
-    <!-- ===== Sessions ===== -->
-    <section class="feature sec g-rings" id="sessions" aria-labelledby="sessions-title">
+    <!-- ===== Sessions: a centred head, then the list and the search scattered either side of the details ===== -->
+    <section class="sec sec-sessions" id="sessions" aria-labelledby="sessions-title">
       <div class="wrap">
-        <div class="feature-head" data-reveal>
-          <div>
-            <h2 id="sessions-title">Every session on this PC, already listed</h2>
-          </div>
-          <p>Apaki reads Claude Code's own transcripts, so the list has the sessions you started in a terminal, headless runs and background workers too. A session open in a terminal window shows up within about two seconds, marked working or waiting, and opens in a pane with a click.</p>
+        <div class="head-center" data-reveal>
+          <h2 id="sessions-title">Every session on this PC, already listed</h2>
+          <p class="lede">Apaki reads Claude Code's own transcripts, so the list has the sessions you started in a terminal, headless runs and background workers too. A session open in a terminal window shows up within about two seconds, marked working or waiting, and opens in a pane with a click.</p>
         </div>
-        <div class="feature-media" data-reveal>
-          <div class="player reel">
-            <div class="reel-tabs" role="tablist" aria-label="Recordings">
-              <button type="button" role="tab" id="tab-sessions" aria-selected="true" aria-controls="clip-sessions"><span>The session list</span><i class="reel-bar" aria-hidden="true"></i></button>
-              <button type="button" role="tab" id="tab-search" aria-selected="false" aria-controls="clip-search" tabindex="-1"><span>Search by meaning</span><i class="reel-bar" aria-hidden="true"></i></button>
+        <div class="scatter">
+          <figure class="scatter-list" data-reveal>
+            <div class="shot shot-sessions">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/sessions-list-dark.webp">
+                <img src="assets/media/sessions-list-light.webp" width="704" height="880" alt="Apaki's session list: sessions working and waiting in terminal windows, and a Codex session marked read-only" loading="lazy" decoding="async">
+              </picture>
             </div>
-            <div class="window">
-              <div class="clip is-current" id="clip-sessions" role="tabpanel" aria-labelledby="tab-sessions">
+            <figcaption>The list</figcaption>
+          </figure>
+          <ul class="points scatter-points" data-reveal="2">
+            <li>Search finds sessions by words and by meaning. The index and the embedding model run on your PC, and nothing is uploaded to search.</li>
+            <li>Not sure which one it was? Ask Claude: it reads the best matches and says why each one fits.</li>
+            <li>Sessions stay in Claude Code's files. Continue one in a terminal with /resume, then come back to it here.</li>
+            <li>Codex sessions are listed and searchable today, read-only. Opening them in panes is coming.</li>
+          </ul>
+          <figure class="scatter-search" data-reveal="3">
+            <div class="player shot shot-search" role="group" aria-label="Recording, close up: a vague search finds sessions by meaning, then Ask Claude picks the ones that fit and says why">
+              <div class="clip is-current">
                 <picture>
-                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/sessions-dark-1200.webp 1200w, assets/media/sessions-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
-                  <img src="assets/media/sessions-light-1200.webp" srcset="assets/media/sessions-light-1200.webp 1200w, assets/media/sessions-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="The Apaki sidebar: folders, sessions working in terminal windows, and a Codex session marked read-only" loading="lazy" decoding="async">
+                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/search-meaning-dark.webp">
+                  <img src="assets/media/search-meaning-light.webp" width="704" height="1268" alt="A search for payment page randomly failing, with the sessions Claude picked and why each one fits" loading="lazy" decoding="async">
                 </picture>
-                <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/sessions-light.mp4" data-dark="assets/media/sessions-dark.mp4"></video>
-              </div>
-              <div class="clip" id="clip-search" role="tabpanel" aria-labelledby="tab-search" aria-hidden="true">
-                <picture>
-                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/search-dark-1200.webp 1200w, assets/media/search-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
-                  <img src="assets/media/search-light-1200.webp" srcset="assets/media/search-light-1200.webp 1200w, assets/media/search-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="A search for payment page randomly failing, with the matching sessions found by meaning" loading="lazy" decoding="async">
-                </picture>
-                <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/search-light.mp4" data-dark="assets/media/search-dark.mp4"></video>
+                <video muted playsinline preload="none" width="704" height="1268" aria-hidden="true" data-light="assets/media/search-meaning-light.mp4" data-dark="assets/media/search-meaning-dark.mp4"></video>
               </div>
               <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
             </div>
-          </div>
-          <div class="float float-detail float-right" aria-hidden="true">
-            <picture>
-              <source media="(prefers-color-scheme: dark)" srcset="assets/media/search-hits-dark.webp">
-              <img src="assets/media/search-hits-light.webp" width="690" height="600" alt="" loading="lazy" decoding="async">
-            </picture>
-          </div>
+            <figcaption>Search by meaning</figcaption>
+          </figure>
         </div>
-        <ul class="points points-grid" data-reveal>
-          <li>Search finds sessions by words and by meaning. The index and the embedding model run on your PC, and nothing is uploaded to search.</li>
-          <li>Not sure which one it was? Ask Claude: it reads the best matches and says why each one fits.</li>
-          <li>Sessions stay in Claude Code's files. Continue one in a terminal with /resume, then come back to it here.</li>
-          <li>Codex sessions are listed and searchable today, read-only. Opening them in panes is coming.</li>
-        </ul>
       </div>
     </section>
 
-    <!-- ===== Tabs and panes ===== -->
-    <section class="feature sec sec-cut-y g-warm-field" id="panes" aria-labelledby="panes-title">
-      <div class="wrap">
-        <div class="feature-head" data-reveal>
-          <div>
-            <h2 id="panes-title">Up to six conversations in every tab</h2>
-          </div>
-          <p>Shift-click a session to open it beside the others, or drag it onto the edge of a pane to split. Each pane is a full Claude Code conversation with its own model, effort and permission mode, and each one streams on its own.</p>
+    <!-- ===== Tabs and panes: real panes fanning out in depth, then the steer line close up ===== -->
+    <section class="sec sec-panes" id="panes" aria-labelledby="panes-title">
+      <div class="wrap panes-grid">
+        <div class="panes-copy" data-reveal>
+          <h2 id="panes-title" class="h-display">Up to six conversations in every tab</h2>
+          <p class="lede">Shift-click a session to open it beside the others, or drag it onto the edge of a pane to split. Each pane is a full Claude Code conversation with its own model, effort and permission mode, and each one streams on its own.</p>
         </div>
-        <div class="feature-media" data-reveal>
-          <div class="player reel">
-            <div class="reel-tabs" role="tablist" aria-label="Recordings">
-              <button type="button" role="tab" id="tab-steer" aria-selected="true" aria-controls="clip-steer"><span>Queue and steer</span><i class="reel-bar" aria-hidden="true"></i></button>
-              <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="clip-history" tabindex="-1"><span>The whole transcript</span><i class="reel-bar" aria-hidden="true"></i></button>
-            </div>
-            <div class="window">
-              <div class="clip is-current" id="clip-steer" role="tabpanel" aria-labelledby="tab-steer">
-                <picture>
-                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/steer-dark-1200.webp 1200w, assets/media/steer-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
-                  <img src="assets/media/steer-light-1200.webp" srcset="assets/media/steer-light-1200.webp 1200w, assets/media/steer-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="A message steered into a running turn, and a subagent at work" loading="lazy" decoding="async">
-                </picture>
-                <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/steer-light.mp4" data-dark="assets/media/steer-dark.mp4"></video>
-              </div>
-              <div class="clip" id="clip-history" role="tabpanel" aria-labelledby="tab-history" aria-hidden="true">
-                <picture>
-                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/history-dark-1200.webp 1200w, assets/media/history-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
-                  <img src="assets/media/history-light-1200.webp" srcset="assets/media/history-light-1200.webp 1200w, assets/media/history-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="A long transcript with a Stop hook's feedback, an API retry and a usage warning shown as system lines" loading="lazy" decoding="async">
-                </picture>
-                <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/history-light.mp4" data-dark="assets/media/history-dark.mp4"></video>
-              </div>
-              <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
-            </div>
+        <!-- Four panes from one tab of the demo (scenes.mjs "split"), stacked like tabs, then fanned out in depth. -->
+        <div class="fan" data-motion aria-hidden="true">
+          <div class="fan-plane">
+            <picture class="fan-card fan-d"><source media="(prefers-color-scheme: dark)" srcset="assets/media/pane-d-dark.webp"><img src="assets/media/pane-d-light.webp" width="1416" height="838" alt="" loading="lazy" decoding="async"></picture>
+            <picture class="fan-card fan-c"><source media="(prefers-color-scheme: dark)" srcset="assets/media/pane-c-dark.webp"><img src="assets/media/pane-c-light.webp" width="1416" height="838" alt="" loading="lazy" decoding="async"></picture>
+            <picture class="fan-card fan-b"><source media="(prefers-color-scheme: dark)" srcset="assets/media/pane-b-dark.webp"><img src="assets/media/pane-b-light.webp" width="1416" height="838" alt="" loading="lazy" decoding="async"></picture>
+            <picture class="fan-card fan-a"><source media="(prefers-color-scheme: dark)" srcset="assets/media/pane-a-dark.webp"><img src="assets/media/pane-a-light.webp" width="1416" height="838" alt="" loading="lazy" decoding="async"></picture>
           </div>
         </div>
-        <ul class="points points-grid" data-reveal>
+        <p class="sr-only">Four conversations from one tab, each in its own pane.</p>
+        <figure class="panes-steer" data-reveal>
+          <div class="player shot shot-steer" role="group" aria-label="Recording, close up: while Claude works, Enter queues a message and Ctrl+Enter steers another into the running turn; the context meter sits at the end of the settings line">
+            <div class="clip is-current">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/steer-line-dark.webp">
+                <img src="assets/media/steer-line-light.webp" width="1520" height="420" alt="A message steered into a running turn, a queued message with its Steer button, and the composer with the context meter" loading="lazy" decoding="async">
+              </picture>
+              <video muted playsinline preload="none" width="1520" height="420" aria-hidden="true" data-light="assets/media/steer-line-light.mp4" data-dark="assets/media/steer-line-dark.mp4"></video>
+            </div>
+            <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+          </div>
+          <figcaption>Queue and steer</figcaption>
+        </figure>
+        <ul class="points panes-points" data-reveal="2">
           <li>Enter queues your next message while Claude works. Ctrl+Enter steers it into the turn that is running.</li>
           <li>What Claude Code reports shows in the conversation: hook output, API retries, usage warnings and compaction.</li>
           <li>A Tasks button lists each conversation's subagents and background shells, and opens any of them in a viewer that follows it live.</li>
@@ -262,101 +239,114 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
       </div>
     </section>
 
-    <!-- ===== Worktrees (shipped 2026-10-12; apaki/remote/WORKTREES.md) ===== -->
-    <section class="feature sec sec-cut-bottom g-teal-arch" id="worktrees" aria-labelledby="worktrees-title">
-      <div class="wrap">
-        <div class="feature-head" data-reveal>
-          <div>
-            <h2 id="worktrees-title">A git worktree for each piece of work</h2>
+    <!-- ===== Worktrees (shipped 2026-10-12; apaki/remote/WORKTREES.md): branches splitting off a trunk, then the label and its diff ===== -->
+    <section class="sec sec-worktrees" id="worktrees" aria-labelledby="worktrees-title">
+      <div class="wrap wt-grid">
+        <!-- The demo's repository (harness/worktrees.mjs): main, and branches that leave it on a tilted plane, each with a flag. -->
+        <div class="branches" data-motion aria-hidden="true">
+          <div class="br-plane">
+            <svg class="br-lines" viewBox="0 0 640 400">
+              <path class="br-trunk" d="M24 300 L560 300"/>
+              <path class="br-path br-p1" d="M120 300 C 200 300 210 190 300 190 L 460 190"/>
+              <path class="br-path br-p2" d="M250 300 C 320 300 330 92 420 92 L 530 92"/>
+              <path class="br-path br-p3" d="M350 300 C 410 300 420 370 470 370 L 510 370"/>
+              <circle class="br-dot" cx="120" cy="300" r="5"/><circle class="br-dot" cx="250" cy="300" r="5"/><circle class="br-dot" cx="350" cy="300" r="5"/>
+              <circle class="br-dot br-commit" cx="360" cy="190" r="4"/><circle class="br-dot br-commit" cx="410" cy="190" r="4"/><circle class="br-dot br-commit" cx="470" cy="92" r="4"/>
+              <circle class="br-tip br-t1" cx="460" cy="190" r="7"/><circle class="br-tip br-t2" cx="530" cy="92" r="7"/><circle class="br-tip br-t3" cx="510" cy="370" r="7"/>
+            </svg>
+            <span class="br-flag br-f0"><b>main</b></span>
+            <span class="br-flag br-f1"><b>fix-flaky-checkout</b> <em class="add">+11</em> <em class="del">-2</em></span>
+            <span class="br-flag br-f2"><b>signed-uploads</b></span>
+            <span class="br-flag br-f3"><b>dashboard-flash</b></span>
           </div>
-          <p>Start a conversation in a new worktree from the Starts in sheet, with the branch named from your first message. The sidebar's Worktrees view groups conversations by repository and branch, and every pane shows its branch and what changed, like fix-flaky-checkout +11 -2.</p>
         </div>
-        <div class="feature-media" data-reveal>
-          <div class="player window" role="group" aria-label="Recording: the Worktrees view in the sidebar, the branch label on a conversation, its menu, and View changes opening a diff viewer beside the conversation">
+        <div class="wt-copy" data-reveal>
+          <h2 id="worktrees-title">A git worktree for each piece of work</h2>
+          <p class="lede">Start a conversation in a new worktree from the Starts in sheet, with the branch named from your first message. The sidebar's Worktrees view groups conversations by repository and branch, and every pane shows its branch and what changed, like fix-flaky-checkout +11 -2.</p>
+        </div>
+        <figure class="wt-media" data-reveal>
+          <div class="player shot shot-wt" role="group" aria-label="Recording, close up: the branch label on a conversation, its menu, and View changes opening a diff viewer beside the conversation">
             <div class="clip is-current">
               <picture>
-                <source media="(prefers-color-scheme: dark)" srcset="assets/media/worktrees-dark-1200.webp 1200w, assets/media/worktrees-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
-                <img src="assets/media/worktrees-light-1200.webp" srcset="assets/media/worktrees-light-1200.webp 1200w, assets/media/worktrees-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="A conversation in the worktree fix-flaky-checkout, with its changes open in a diff viewer beside it: three files, eleven lines added and two removed" loading="lazy" decoding="async">
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/worktree-diff-dark.webp">
+                <img src="assets/media/worktree-diff-light.webp" width="1530" height="686" alt="The branch label fix-flaky-checkout +11 -2 on a conversation, with its changes open in a diff viewer beside it" loading="lazy" decoding="async">
               </picture>
-              <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/worktrees-light.mp4" data-dark="assets/media/worktrees-dark.mp4"></video>
+              <video muted playsinline preload="none" width="1530" height="686" aria-hidden="true" data-light="assets/media/worktree-diff-light.mp4" data-dark="assets/media/worktree-diff-dark.mp4"></video>
             </div>
             <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
           </div>
+        </figure>
+        <div class="wt-note" data-reveal="2">
+          <ul class="points">
+            <li>View changes opens a diff viewer beside the conversation: everything since the branch left its base, or only what is not committed yet.</li>
+            <li>Commit, push, open a pull request with gh, or merge into the base. Each action shows the commands it will run first.</li>
+            <li>Remove is refused while a worktree has uncommitted or unpushed work, and merged worktrees are offered for cleanup in one prompt.</li>
+            <li>The phone shows the same branches and changes; its actions need Full access.</li>
+          </ul>
         </div>
-        <ul class="points points-grid" data-reveal>
-          <li>View changes opens a diff viewer beside the conversation: everything since the branch left its base, or only what is not committed yet.</li>
-          <li>Commit, push, open a pull request with gh, or merge into the base. Each action shows the commands it will run first.</li>
-          <li>Remove is refused while a worktree has uncommitted or unpushed work, and merged worktrees are offered for cleanup in one prompt.</li>
-          <li>The phone shows the same branches and changes; its actions need Full access.</li>
-        </ul>
       </div>
     </section>
 
-    <!-- ===== Browser ===== -->
-    <section class="feature sec g-orbs" id="browser" aria-labelledby="browser-title">
+    <!-- ===== Browser: a display heading across the page, the pane close up between the words and the details ===== -->
+    <section class="sec sec-browser" id="browser" aria-labelledby="browser-title">
       <div class="wrap">
-        <div class="feature-head" data-reveal>
-          <div>
-            <h2 id="browser-title">Claude browses in a pane, not in your Chrome</h2>
-          </div>
-          <p>Ask Claude to check a page and it opens in a browser pane beside the conversation. Claude reads the page as an outline of numbered links, buttons and fields, then clicks, types, goes back and takes screenshots while you watch the same page.</p>
-        </div>
-        <div class="feature-media" data-reveal>
-          <div class="player window" role="group" aria-label="Recording: Claude opens a checkout page in a browser pane, types an email address, presses Pay now and reproduces a bug">
-            <div class="clip is-current">
-              <picture>
-                <source media="(prefers-color-scheme: dark)" srcset="assets/media/browser-dark-1200.webp 1200w, assets/media/browser-dark-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw">
-                <img src="assets/media/browser-light-1200.webp" srcset="assets/media/browser-light-1200.webp 1200w, assets/media/browser-light-2000.webp 2000w" sizes="(min-width: 1240px) 1160px, 94vw" width="1440" height="900" alt="A conversation on the left and a checkout page in Apaki's browser pane on the right, with Claude typing into it" loading="lazy" decoding="async">
-              </picture>
-              <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/browser-light.mp4" data-dark="assets/media/browser-dark.mp4"></video>
-            </div>
-            <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
-          </div>
-        </div>
-        <ul class="points points-grid" data-reveal>
-          <li>Pages in the pane cannot reach the app or your sessions.</li>
-          <li>When Claude or a tool tries to open your system browser (<code>vite --open</code>, or Python's <code>webbrowser</code>), the page opens in Apaki instead.</li>
-          <li>Pages, documents, SVG, images and PDFs that Claude wants to show you open in a viewer beside the conversation, with every revision kept.</li>
-        </ul>
-      </div>
-    </section>
-
-    <!-- ===== Phone ===== -->
-    <section class="feature feature-phone sec sec-cut-top g-sky-bowl" id="phone" aria-labelledby="phone-title">
-      <div class="wrap">
-        <div class="phone-head" data-reveal>
-          <h2 id="phone-title">Pick up the same sessions on your phone</h2>
-          <p>Open the Phone sheet on your PC and scan its code with the Apaki iPhone app or your phone's camera. Both screens show the same six digits; you allow the phone on the PC, and it stays paired until you remove it. The phone gets the session list, the conversations and the same Claude Code that runs on the PC.</p>
-        </div>
-        <!-- Recorded in step (scenes.mjs "phone-pair" with its phone): the same six digits on both screens. -->
-        <div class="phone-grid player" data-together role="group" aria-label="Recording: pairing, the PC and the phone at the same moment. The PC shows a QR code; the phone that opened it shows the code 482 913, the PC shows the same code with Allow, and once allowed the phone lists the PC's sessions.">
-          <div class="phone-desk" data-reveal>
-            <div class="window">
+        <h2 id="browser-title" class="h-display h-center" data-reveal>Claude browses in a pane, not in your Chrome</h2>
+        <div class="trio">
+          <p class="lede trio-lede" data-reveal>Ask Claude to check a page and it opens in a browser pane beside the conversation. Claude reads the page as an outline of numbered links, buttons and fields, then clicks, types, goes back and takes screenshots while you watch the same page.</p>
+          <figure class="trio-media" data-reveal="2">
+            <div class="player shot shot-browser" role="group" aria-label="Recording, close up: Claude types an email address into a checkout page in Apaki's browser pane, presses Pay now and reproduces a bug">
               <div class="clip is-current">
                 <picture>
-                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/phone-pair-dark-1200.webp 1200w, assets/media/phone-pair-dark-2000.webp 2000w" sizes="(min-width: 1240px) 860px, 94vw">
-                  <img src="assets/media/phone-pair-light-1200.webp" srcset="assets/media/phone-pair-light-1200.webp 1200w, assets/media/phone-pair-light-2000.webp 2000w" sizes="(min-width: 1240px) 860px, 94vw" width="1440" height="900" alt="Apaki's Phone sheet on the PC: Maya's iPhone 16 wants to connect, with the code 482 913, Deny and Allow" loading="lazy" decoding="async">
+                  <source media="(prefers-color-scheme: dark)" srcset="assets/media/browser-pane-dark.webp">
+                  <img src="assets/media/browser-pane-light.webp" width="840" height="1100" alt="A checkout page in Apaki's browser pane, with Claude typing into the email field and its action shown above the page" loading="lazy" decoding="async">
                 </picture>
-                <video muted playsinline preload="none" width="1440" height="900" aria-hidden="true" data-light="assets/media/phone-pair-light.mp4" data-dark="assets/media/phone-pair-dark.mp4"></video>
+                <video muted playsinline preload="none" width="840" height="1100" aria-hidden="true" data-light="assets/media/browser-pane-light.mp4" data-dark="assets/media/browser-pane-dark.mp4"></video>
               </div>
-              <button class="clip-toggle" type="button" hidden aria-label="Pause the recordings"></button>
+              <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
             </div>
+          </figure>
+          <ul class="points trio-points" data-reveal="3">
+            <li>Pages in the pane cannot reach the app or your sessions.</li>
+            <li>When Claude or a tool tries to open your system browser (<code>vite --open</code>, or Python's <code>webbrowser</code>), the page opens in Apaki instead.</li>
+            <li>Pages, documents, SVG, images and PDFs that Claude wants to show you open in a viewer beside the conversation, with every revision kept.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Phone: the pairing code on both screens, recorded in step (scenes.mjs "phone-pair" with its phone) ===== -->
+    <section class="sec sec-phone" id="phone" aria-labelledby="phone-title">
+      <div class="wrap phone-layout">
+        <div class="phone-copy" data-reveal>
+          <h2 id="phone-title">Pick up the same sessions on your phone</h2>
+          <p class="lede">Open the Phone sheet on your PC and scan its code with the Apaki iPhone app or your phone's camera. Both screens show the same six digits; you allow the phone on the PC, and it stays paired until you remove it. The phone gets the session list, the conversations and the same Claude Code that runs on the PC.</p>
+        </div>
+        <div class="pair-stage player" data-together data-reveal="2" role="group" aria-label="Recording, close up: pairing, the PC and the phone at the same moment. The PC shows a QR code; the phone that opened it shows the code 482 913, the PC shows the same code with Allow, and once allowed the phone lists the PC's sessions.">
+          <div class="shot shot-pair">
+            <div class="clip is-current">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/pair-sheet-dark.webp">
+                <img src="assets/media/pair-sheet-light.webp" width="1120" height="514" alt="Apaki's Phone sheet on the PC: Maya's iPhone 16 wants to connect, with the code 482 913, Deny and Allow" loading="lazy" decoding="async">
+              </picture>
+              <video muted playsinline preload="none" width="1120" height="514" aria-hidden="true" data-light="assets/media/pair-sheet-light.mp4" data-dark="assets/media/pair-sheet-dark.mp4"></video>
+            </div>
+            <button class="clip-toggle" type="button" hidden aria-label="Pause the recordings"></button>
           </div>
-          <div class="phone-side" data-reveal="2">
+          <div class="pair-phone">
             <div class="phone">
               <div class="phone-screen">
                 <div class="clip is-current">
                   <picture>
-                    <source media="(prefers-color-scheme: dark)" srcset="assets/media/phone-pair-phone-dark.webp">
-                    <img src="assets/media/phone-pair-phone-light.webp" width="780" height="1688" alt="The phone at the same moment: Check the code, 482 913, Studio PC shows a code too" loading="lazy" decoding="async">
+                    <source media="(prefers-color-scheme: dark)" srcset="assets/media/pair-phone-dark.webp">
+                    <img src="assets/media/pair-phone-light.webp" width="520" height="1126" alt="The phone at the same moment: Check the code, 482 913, Studio PC shows a code too" loading="lazy" decoding="async">
                   </picture>
-                  <video muted playsinline preload="none" width="390" height="844" aria-hidden="true" data-light="assets/media/phone-pair-phone-light.mp4" data-dark="assets/media/phone-pair-phone-dark.mp4"></video>
+                  <video muted playsinline preload="none" width="520" height="1126" aria-hidden="true" data-light="assets/media/pair-phone-light.mp4" data-dark="assets/media/pair-phone-dark.mp4"></video>
                 </div>
               </div>
             </div>
           </div>
         </div>
-        <ul class="points points-grid" data-reveal>
+        <ul class="points phone-points" data-reveal>
           <li>Free, with no account. The connection is end to end encrypted between the phone and the PC.</li>
           <li>You choose on the PC what each phone may do: Full, No shell, or Chat only. The PC enforces it whatever the phone sends, and billing, accounts and pairing stay on the PC.</li>
           <li>On the phone, your desktop's tabs are listed first. Open one the PC is using and the phone takes it over; the pane on the PC says so and keeps up with the conversation.</li>
@@ -366,152 +356,190 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
       </div>
     </section>
 
-    <!-- ===== Security ===== -->
-    <section class="feature feature-security sec sec-cut-top g-violet-dots on-dark" id="security" aria-labelledby="security-title">
-      <div class="wrap">
-        <div class="security-head" data-reveal>
-          <h2 id="security-title">Nobody in between can read it, including us</h2>
-          <p>Phone access is end to end encrypted between your phone and your PC. Your PC never accepts incoming connections: it keeps one outgoing connection to the relay, and the relay forwards sealed frames it cannot open.</p>
-        </div>
+    <!-- ===== The night: one horizon, then security, self-hosting, what comes next, downloads and questions on one dark ground.
+         The horizon's rings run across the edge, light above it and dark below, so the change reads as one curve. ===== -->
+    <div class="night on-dark">
+      <div class="horizon" data-motion aria-hidden="true"><i class="hz-rings"></i><i class="hz-arc"></i></div>
 
-        <div class="flow" data-reveal aria-hidden="true">
-          <div class="flow-node">
-            <svg viewBox="0 0 32 32" class="flow-icon"><rect x="4" y="6" width="24" height="16" rx="2.5"/><path d="M12 26h8M16 22v4"/></svg>
-            <b>Your PC</b>
-            <span>Claude Code, your logins and the keys</span>
+      <!-- ===== Security ===== -->
+      <section class="sec sec-security" id="security" aria-labelledby="security-title">
+        <div class="wrap">
+          <div class="head-center" data-reveal>
+            <h2 id="security-title">Nobody in between can read it, including us</h2>
+            <p class="lede">Phone access is end to end encrypted between your phone and your PC. Your PC never accepts incoming connections: it keeps one outgoing connection to the relay, and the relay forwards sealed frames it cannot open.</p>
           </div>
-          <div class="flow-line"><i class="flow-lane"><em></em></i><i class="flow-lane flow-back"><em></em></i></div>
-          <div class="flow-node flow-relay">
-            <svg viewBox="0 0 32 32" class="flow-icon"><circle cx="16" cy="16" r="10"/><path d="M6 16h20M16 6c3 3 4.5 6.5 4.5 10S19 23 16 26M16 6c-3 3-4.5 6.5-4.5 10S13 23 16 26"/></svg>
-            <b>The relay</b>
-            <span>Ours or yours. Forwards sealed frames</span>
-          </div>
-          <div class="flow-line"><i class="flow-lane"><em></em></i><i class="flow-lane flow-back"><em></em></i></div>
-          <div class="flow-node">
-            <svg viewBox="0 0 32 32" class="flow-icon"><rect x="10" y="3" width="12" height="26" rx="2.5"/><path d="M14.5 25.5h3"/></svg>
-            <b>Your phone</b>
-            <span>Its own key, made on the phone</span>
-          </div>
-        </div>
-        <p class="sr-only">Your PC and your phone each hold their own keys. Between them, the relay passes along frames that only the two ends can open.</p>
 
-        <div class="ledger" data-reveal>
-          <div>
-            <h3>What the relay cannot do</h3>
-            <ul>
-              <li>Read your prompts, replies, files or session list.</li>
-              <li>Change, replay or reorder a frame without the connection failing.</li>
-              <li>Pair a phone, pose as your PC or your phone, or connect to your PC.</li>
-              <li>Touch your Claude or Codex logins. They never leave the PC.</li>
-            </ul>
+          <!-- The relay as a tunnel: sealed frames travel through it both ways and pass the relay's gate unopened. -->
+          <div class="tunnel" data-motion data-reveal aria-hidden="true">
+            <div class="tn-stage">
+              <div class="tn-tube">
+                <i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring tn-gate"></i><i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring"></i><i class="tn-ring"></i>
+                <i class="tn-rail"></i>
+              </div>
+              <div class="tn-run tn-out"><span class="tn-pk"><b></b><b></b><b></b><b></b><b></b><b></b></span></div>
+              <div class="tn-run tn-back"><span class="tn-pk"><b></b><b></b><b></b><b></b><b></b><b></b></span></div>
+              <div class="tn-run tn-out tn-late"><span class="tn-pk"><b></b><b></b><b></b><b></b><b></b><b></b></span></div>
+            </div>
+            <div class="tn-ends">
+              <div class="tn-end">
+                <svg viewBox="0 0 32 32" class="flow-icon"><rect x="4" y="6" width="24" height="16" rx="2.5"/><path d="M12 26h8M16 22v4"/></svg>
+                <b>Your PC</b>
+                <span>Claude Code, your logins and the keys</span>
+              </div>
+              <div class="tn-end tn-mid">
+                <svg viewBox="0 0 32 32" class="flow-icon"><circle cx="16" cy="16" r="10"/><path d="M6 16h20M16 6c3 3 4.5 6.5 4.5 10S19 23 16 26M16 6c-3 3-4.5 6.5-4.5 10S13 23 16 26"/></svg>
+                <b>The relay</b>
+                <span>Ours or yours. Forwards sealed frames</span>
+              </div>
+              <div class="tn-end">
+                <svg viewBox="0 0 32 32" class="flow-icon"><rect x="10" y="3" width="12" height="26" rx="2.5"/><path d="M14.5 25.5h3"/></svg>
+                <b>Your phone</b>
+                <span>Its own key, made on the phone</span>
+              </div>
+            </div>
           </div>
-          <div>
-            <h3>What it can see</h3>
-            <ul>
-              <li>IP addresses, when your PC and phones connect, and how much data moves.</li>
-              <li>With an Apaki account: its name, its passkeys' public keys, and a vault it cannot open.</li>
-              <li>Our relay code keeps no logs and platform logging is off. That part you have to take on trust.</li>
-            </ul>
+          <p class="sr-only">Your PC and your phone each hold their own keys. Between them, the relay passes along frames that only the two ends can open.</p>
+
+          <div class="ledger" data-reveal>
+            <div>
+              <h3>What the relay cannot do</h3>
+              <ul>
+                <li>Read your prompts, replies, files or session list.</li>
+                <li>Change, replay or reorder a frame without the connection failing.</li>
+                <li>Pair a phone, pose as your PC or your phone, or connect to your PC.</li>
+                <li>Touch your Claude or Codex logins. They never leave the PC.</li>
+              </ul>
+            </div>
+            <div>
+              <h3>What it can see</h3>
+              <ul>
+                <li>IP addresses, when your PC and phones connect, and how much data moves.</li>
+                <li>With an Apaki account: its name, its passkeys' public keys, and a vault it cannot open.</li>
+                <li>Our relay code keeps no logs and platform logging is off. That part you have to take on trust.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="trust" data-reveal>
+            <p><strong>Where the trust sits.</strong> The phone web page is code that apaki.myrlin.io serves, as with any web app. Before your PC shows a pairing code, it builds that page from its own code and checks that the site serves exactly that, and while phone access is on it checks again every hour. The iPhone app carries its own copy of the code and loads none of it from our site. If you would rather not trust our site at all, run your own relay and page.</p>
+            <p class="fine">P-256 key exchange, AES-256-GCM, fresh keys for every connection. The one-time pairing secret travels only in the part of the QR link after #, which browsers never send to a server. Claude Code itself still talks to Anthropic as it always does; this encryption covers the path between your phone and your PC.</p>
+            <p class="links">
+              <a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/security.md">Security in plain words</a>
+              <a href="https://github.com/therealarthur/apaki/blob/master/apaki/SECURITY.md">The full security review</a>
+              <a href="https://github.com/therealarthur/apaki/blob/master/apaki/remote/PROTOCOL.md">The protocol</a>
+            </p>
           </div>
         </div>
+      </section>
 
-        <div class="trust" data-reveal>
-          <p><strong>Where the trust sits.</strong> The phone web page is code that apaki.myrlin.io serves, as with any web app. Before your PC shows a pairing code, it builds that page from its own code and checks that the site serves exactly that, and while phone access is on it checks again every hour. The iPhone app carries its own copy of the code and loads none of it from our site. If you would rather not trust our site at all, run your own relay and page.</p>
-          <p class="fine">P-256 key exchange, AES-256-GCM, fresh keys for every connection. The one-time pairing secret travels only in the part of the QR link after #, which browsers never send to a server. Claude Code itself still talks to Anthropic as it always does; this encryption covers the path between your phone and your PC.</p>
-          <p class="links">
-            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/security.md">Security in plain words</a>
-            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/SECURITY.md">The full security review</a>
-            <a href="https://github.com/therealarthur/apaki/blob/master/apaki/remote/PROTOCOL.md">The protocol</a>
-          </p>
-        </div>
-      </div>
-    </section>
+      <!-- ===== Open source and self-hosting ===== -->
+      <section class="sec sec-selfhost" id="self-host" aria-labelledby="oss-title">
+        <div class="wrap band-grid">
+          <figure class="code-card" data-reveal>
+            <figcaption>Run your own relay</figcaption>
+<pre><code><span class="c"># relay/wrangler.jsonc: set "routes" to your hostname</span>
+cd relay
+node ../apaki/scripts/build-web.mjs --release \
+  --relay wss://relay.example.com
+npx wrangler deploy --env=""
 
-    <!-- ===== Coming ===== -->
-    <section class="feature sec g-blobs" id="next" aria-labelledby="next-title">
-      <div class="wrap">
-        <div class="section-head" data-reveal>
-          <h2 id="next-title">Coming next</h2>
+<span class="c"># then start Apaki with</span>
+APAKI_RELAY_URL=wss://relay.example.com
+APAKI_WEB_URL=https://relay.example.com/</code></pre>
+          </figure>
+          <div class="band-copy" data-reveal="2">
+            <h2 id="oss-title">Open source, and yours to run</h2>
+            <p>The desktop app, the phone app and the relay live in one public repository. Apaki needs no account, and pairing a phone through our hosted relay costs nothing.</p>
+            <p>If you would rather not depend on us at all, the relay is a single Cloudflare Worker. Deploy it to your own account (the free plan is enough for a few people), point Apaki at it with two settings, and the phone page comes from your server instead of ours.</p>
+            <p class="links">
+              <a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/self-hosting.md">Self-hosting guide</a>
+              <a href="https://github.com/therealarthur/apaki/blob/master/relay/README.md">The relay's README</a>
+            </p>
+          </div>
         </div>
-        <div class="cards cards-two">
-          <article class="card" data-reveal>
+      </section>
+
+      <!-- ===== Coming ===== -->
+      <section class="sec sec-next" id="next" aria-labelledby="next-title">
+        <div class="wrap next-grid">
+          <h2 id="next-title" class="h-display" data-reveal>Coming next</h2>
+          <article class="card next-a" data-reveal>
             <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="3.5" y="6" width="25" height="20" rx="3"/><path d="M8.5 13l4 3-4 3M15 19.5h7"/></svg>
             <h3>Codex, side by side</h3>
             <p>Codex threads open as panes next to Claude's, with Codex's own model, effort and approval choices, its questions and approvals as sheets, and the same browser pane and viewer.</p>
           </article>
-          <article class="card" data-reveal="2">
+          <article class="card next-b" data-reveal="2">
             <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><path d="M9.5 24.5h13.5a5.5 5.5 0 0 0 .6-11A7.5 7.5 0 0 0 9.2 12a6.3 6.3 0 0 0 .3 12.5z"/></svg>
             <h3>Apaki Cloud</h3>
             <p>Sign in from any browser and leave nothing behind, a Cloud button on the desktop that lists your machines, and a push to your phone when Claude asks or finishes. A paid option on our relay; a relay you run gets every feature.</p>
           </article>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ===== Download ===== -->
-    <section class="feature sec sec-cut-top g-glow-notch" id="download" aria-labelledby="download-title">
-      <div class="wrap">
-        <div class="section-head" data-reveal>
-          <h2 id="download-title">Get Apaki</h2>
+      <!-- ===== Download ===== -->
+      <section class="sec sec-download" id="download" aria-labelledby="download-title">
+        <div class="circles circles-dusk" data-circles="dusk" data-motion aria-hidden="true"></div>
+        <div class="wrap">
+          <h2 id="download-title" class="h-center" data-reveal>Get Apaki</h2>
+          <div class="cards">
+            <article class="card card-get" data-reveal>
+              <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="4" y="6" width="24" height="16" rx="2.5"/><path d="M12 26h8M16 22v4"/></svg>
+              <h3>Apaki for Windows</h3>
+              <p>The desktop app, with Claude Code and Myrlin Glass in the package. Sign in with Claude Code's own login, or use an Anthropic API key.</p>
+              <a class="btn btn-primary" href="https://github.com/therealarthur/apaki/releases">Download for Windows</a>
+            </article>
+            <article class="card card-get" data-reveal="2">
+              <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="10" y="3" width="12" height="26" rx="2.5"/><path d="M14.5 25.5h3"/></svg>
+              <h3>Apaki for iPhone</h3>
+              <p>Pairs with your PC by scanning its code and keeps its key in the Secure Enclave. In TestFlight now; the App Store comes later.</p>
+              <!-- PLACEHOLDER(Arthur): the TestFlight public link, once a public beta group exists. Until then no button, so nothing points at a dead link. -->
+              <p class="fine">TestFlight is by invite for now.</p>
+            </article>
+            <article class="card card-get" data-reveal="3">
+              <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="4" y="6" width="24" height="20" rx="3"/><path d="M4 11.5h24"/><circle cx="7.6" cy="8.8" r=".9"/><circle cx="10.6" cy="8.8" r=".9"/></svg>
+              <h3>The web app</h3>
+              <p>Runs in any phone browser. Pair it from your PC's Phone sheet, or sign in with your passkey to see your PCs.</p>
+              <a class="btn btn-secondary" href="app/">Open the web app</a>
+            </article>
+          </div>
         </div>
-        <div class="cards">
-          <article class="card card-get" data-reveal>
-            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="4" y="6" width="24" height="16" rx="2.5"/><path d="M12 26h8M16 22v4"/></svg>
-            <h3>Apaki for Windows</h3>
-            <p>The desktop app, with Claude Code and Myrlin Glass in the package. Sign in with Claude Code's own login, or use an Anthropic API key.</p>
-            <a class="btn btn-primary" href="https://github.com/therealarthur/apaki/releases">Download for Windows</a>
-          </article>
-          <article class="card card-get" data-reveal="2">
-            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="10" y="3" width="12" height="26" rx="2.5"/><path d="M14.5 25.5h3"/></svg>
-            <h3>Apaki for iPhone</h3>
-            <p>Pairs with your PC by scanning its code and keeps its key in the Secure Enclave. In TestFlight now; the App Store comes later.</p>
-            <!-- PLACEHOLDER(Arthur): the TestFlight public link, once a public beta group exists. Until then no button, so nothing points at a dead link. -->
-            <p class="fine">TestFlight is by invite for now.</p>
-          </article>
-          <article class="card card-get" data-reveal="3">
-            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="4" y="6" width="24" height="20" rx="3"/><path d="M4 11.5h24"/><circle cx="7.6" cy="8.8" r=".9"/><circle cx="10.6" cy="8.8" r=".9"/></svg>
-            <h3>The web app</h3>
-            <p>Runs in any phone browser. Pair it from your PC's Phone sheet, or sign in with your passkey to see your PCs.</p>
-            <a class="btn btn-secondary" href="app/">Open the web app</a>
-          </article>
-        </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ===== FAQ ===== -->
-    <section class="feature feature-faq" id="faq" aria-labelledby="faq-title">
-      <div class="wrap faq-grid">
-        <div class="section-head" data-reveal>
-          <h2 id="faq-title">Questions</h2>
-          <p><a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/faq.md">More in the FAQ</a></p>
+      <!-- ===== FAQ ===== -->
+      <section class="sec sec-faq" id="faq" aria-labelledby="faq-title">
+        <div class="wrap faq-grid">
+          <div class="section-head" data-reveal>
+            <h2 id="faq-title">Questions</h2>
+            <p><a href="https://github.com/therealarthur/apaki/blob/master/apaki/docs/faq.md">More in the FAQ</a></p>
+          </div>
+          <div class="faq" data-reveal="2">
+            <details>
+              <summary>Is Apaki made by Anthropic?</summary>
+              <p>No. Apaki is a Myrlin Labs project and is not affiliated with or endorsed by Anthropic or OpenAI. It runs the Claude Code you sign in to with your own account.</p>
+            </details>
+            <details>
+              <summary>Does it change Claude Code?</summary>
+              <p>No. Apaki runs Claude Code unmodified through Anthropic's Agent SDK, with Claude Code's own system prompt and every settings source, so your CLAUDE.md, skills, plugins, hooks, MCP servers and slash commands work as they do in a terminal.</p>
+            </details>
+            <details>
+              <summary>What does it cost?</summary>
+              <p>Apaki is free, and so is pairing a phone through our relay. Your Claude and Codex usage is billed by Anthropic and OpenAI as usual. Apaki Cloud, when it ships, will be a paid option on our hosted relay; a relay you run yourself gets the same features at no cost.</p>
+            </details>
+            <details>
+              <summary>What leaves my PC?</summary>
+              <p>Claude Code talks to Anthropic as it always does. Search, its index and its embedding model run locally. With phone access on, encrypted frames pass through the relay; without it, Apaki makes no connection to us.</p>
+            </details>
+            <details>
+              <summary>Which platforms?</summary>
+              <p>The desktop app is for Windows. The phone side is the iPhone app (TestFlight for now) or the web app in any phone browser.</p>
+            </details>
+          </div>
         </div>
-        <div class="faq" data-reveal="2">
-          <details>
-            <summary>Is Apaki made by Anthropic?</summary>
-            <p>No. Apaki is a Myrlin Labs project and is not affiliated with or endorsed by Anthropic or OpenAI. It runs the Claude Code you sign in to with your own account.</p>
-          </details>
-          <details>
-            <summary>Does it change Claude Code?</summary>
-            <p>No. Apaki runs Claude Code unmodified through Anthropic's Agent SDK, with Claude Code's own system prompt and every settings source, so your CLAUDE.md, skills, plugins, hooks, MCP servers and slash commands work as they do in a terminal.</p>
-          </details>
-          <details>
-            <summary>What does it cost?</summary>
-            <p>Apaki is free, and so is pairing a phone through our relay. Your Claude and Codex usage is billed by Anthropic and OpenAI as usual. Apaki Cloud, when it ships, will be a paid option on our hosted relay; a relay you run yourself gets the same features at no cost.</p>
-          </details>
-          <details>
-            <summary>What leaves my PC?</summary>
-            <p>Claude Code talks to Anthropic as it always does. Search, its index and its embedding model run locally. With phone access on, encrypted frames pass through the relay; without it, Apaki makes no connection to us.</p>
-          </details>
-          <details>
-            <summary>Which platforms?</summary>
-            <p>The desktop app is for Windows. The phone side is the iPhone app (TestFlight for now) or the web app in any phone browser.</p>
-          </details>
-        </div>
-      </div>
-    </section>
+      </section>
+    </div>
   </main>
 
-  <footer class="site-foot sec on-dark">
+  <footer class="site-foot site-foot-night on-dark">
     <div class="wrap foot-grid">
       <div class="foot-brand">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 32 15" class="m-mark" aria-hidden="true"><defs><linearGradient id="mflare-foot" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#07B6D5"/><stop offset="1" stop-color="#3C83F6"/></linearGradient></defs><path class="m-fold" d="M12.292 9 C13.331 9 14.221 9.801 14.28 10.788 L14.554 15.346 L12.18 22.327 C11.916 23.105 11.452 23.858 11.15 24 L11.115 24 C9.996 24 9.36 23.019 9.246 21.115 L9.029 17.495 L10.838 12.173 C11.395 10.538 11.996 9.141 12.206 9 L12.292 9Z"/><path class="m-stroke" d="M0.5 24 L6.904 24 L10.925 12.173 C11.481 10.538 12.083 9.141 12.292 9 L7.042 9 C6.18 9 5.413 9.549 5.136 10.366Z"/><path class="m-fold" d="M23.369 9 C24.408 9 25.298 9.801 25.357 10.788 L25.745 17.258 C25.133 17.737 24.444 18.836 24.013 20.106 L23.257 22.327 C22.993 23.105 22.529 23.858 22.227 24 L22.192 24 C21.073 24 20.437 23.019 20.323 21.115 L20.106 17.495 L21.915 12.173 C22.471 10.538 23.073 9.141 23.283 9 L23.369 9Z"/><path class="m-stroke" d="M11.115 24 L16.538 24 C17.401 24 18.167 23.451 18.445 22.634 L22.002 12.173 C22.558 10.538 23.16 9.141 23.369 9 L18.119 9 C17.257 9 16.49 9.549 16.213 10.366 L12.146 22.327 C11.881 23.105 11.418 23.858 11.115 24Z"/><path d="M22.192 24 L27.615 24 C28.478 24 29.244 23.451 29.522 22.634 L31.438 17 L26.303 17 C25.605 17 24.559 18.398 23.978 20.106 L23.223 22.327 C22.958 23.105 22.494 23.858 22.192 24Z" fill="url(#mflare-foot)"/></svg>
