@@ -1,6 +1,6 @@
 {
   "name": "apaki-mobile",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Myrlin Apaki for iOS and Android: Apaki's own phone UI bundled into a Capacitor app, with pairings in the Keychain, the device key in the Secure Enclave, native QR scanning and passkeys.",
   "type": "module",

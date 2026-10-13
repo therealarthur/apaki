@@ -1,6 +1,6 @@
 [package]
 name = "myrlin-apaki"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Myrlin Apaki: a desktop home for every Claude Code session on this PC, linked to Myrlin Glass."
 publish = false

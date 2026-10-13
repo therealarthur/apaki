@@ -111,6 +111,10 @@ test('set refuses a version that is not semver, and changes nothing', () => {
   } finally { cleanup(root); }
 });
 
+// The repo's own version, which every scratch copy starts from (the tests below never assume a number).
+const CURRENT = readVersion();
+const CURRENT_RE = CURRENT.replace(/[.+]/g, (c) => `[${c}]`);
+
 test('set refuses while the places disagree, names the one that does, and --force repairs it', () => {
   const root = scratch();
   try {
@@ -118,7 +122,7 @@ test('set refuses while the places disagree, names the one that does, and --forc
     fs.writeFileSync(conf, fs.readFileSync(conf, 'utf8').replace(/"version": "[^"]+"/, '"version": "9.9.9"'));
     assert.ok(check(root).some((p) => p.includes('tauri.conf.json') && p.includes('9.9.9')));
     assert.throws(() => setVersion('0.2.0', { root }), /disagree already[\s\S]*tauri\.conf\.json/);
-    assert.match(read(root, 'apaki/VERSION'), /^0\.1\.0/, 'nothing was written');
+    assert.match(read(root, 'apaki/VERSION'), new RegExp(`^${CURRENT_RE}`), 'nothing was written');
     setVersion('0.2.0', { root, force: true });
     assert.deepEqual(check(root), []);
   } finally { cleanup(root); }
@@ -131,8 +135,8 @@ test('a place whose version cannot be found stops the whole set before any file 
     fs.writeFileSync(gradle, fs.readFileSync(gradle, 'utf8').replace(/versionName "[^"]+"/, '// no version here'));
     assert.ok(check(root).some((p) => p.includes('Android') && p.includes('no version found')));
     assert.throws(() => setVersion('0.2.0', { root, force: true }), /Android versionName[\s\S]*no version found/);
-    assert.match(read(root, 'apaki/VERSION'), /^0\.1\.0/);
-    assert.match(read(root, 'apaki/tauri.conf.json'), /"version": "0\.1\.0"/);
+    assert.match(read(root, 'apaki/VERSION'), new RegExp(`^${CURRENT_RE}`));
+    assert.match(read(root, 'apaki/tauri.conf.json'), new RegExp(`"version": "${CURRENT_RE}"`));
   } finally { cleanup(root); }
 });
 
@@ -140,7 +144,7 @@ test('the command line: get, check, set, ios and tag, with exit codes', () => {
   const root = scratch();
   const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, '--root', root], { encoding: 'utf8' });
   try {
-    assert.equal(run('get').stdout.trim(), '0.1.0');
+    assert.equal(run('get').stdout.trim(), CURRENT);
     assert.equal(run('check').status, 0);
     assert.equal(run('set', 'v0.3.0-ci.2').status, 0, 'a leading v is accepted');
     assert.equal(run('get').stdout.trim(), '0.3.0-ci.2');
