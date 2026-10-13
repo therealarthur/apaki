@@ -69,6 +69,8 @@
  *               a time per phone (AskGate), billed to the phone's focused pane.
  *   browserView Full only, like the browser tools: only a Full pane's Claude
  *               can open a page there, and a phone sees only its own pane's.
+ *               tab (optional, a browser id) looks at another tab of that same
+ *               pane's browser; the engine only switches among the pane's own tabs.
  *
  * Permission prompts (2026-10-12, permissions.js): in Ask permissions and
  * Auto-accept edits a tool Claude Code would ask about is asked on the
@@ -223,7 +225,7 @@ export function clampMode(cap, mode) {
  * the "apaki" MCP server). Listed here so this file stays free of imports;
  * test/apaki-remote-caps.test.js checks the two lists agree.
  */
-export const APAKI_BROWSER_TOOLS = Object.freeze(['browser_open', 'browser_read', 'browser_click', 'browser_type', 'browser_back', 'browser_screenshot'].map((t) => `mcp__apaki__${t}`));
+export const APAKI_BROWSER_TOOLS = Object.freeze(['browser_open', 'browser_read', 'browser_click', 'browser_type', 'browser_back', 'browser_screenshot', 'browser_tabs'].map((t) => `mcp__apaki__${t}`));
 
 /** Tools a 'noshell' or 'chat' phone pane never gets: commands, file edits, Apaki's browser. */
 export const CAP_BLOCKED_TOOLS = Object.freeze(['Bash', 'PowerShell', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', ...APAKI_BROWSER_TOOLS]);
@@ -850,7 +852,12 @@ export function checkPhoneCommand(cmd, ctx) {
       out.path = cmd.path;
       break;
     case 'browserView':
-      // Nothing but the pane: the engine shows the page that pane's own Claude opened (paneId checked above).
+      // The pane, and optionally which of its tabs to look at (2026-10-12): a plain id. The engine switches only among the
+      // tabs that pane's own conversation owns (browser-tools.js view), so this cannot reach another conversation's browser.
+      if (cmd.tab !== undefined && cmd.tab !== null) {
+        if (typeof cmd.tab !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(cmd.tab)) return fail('Bad tab.', cmd);
+        out.tab = cmd.tab;
+      }
       break;
     case 'transcribe':
       // A WAV as base64, for the PC's Whisper; the text comes back to this phone pane only (paneId checked above).

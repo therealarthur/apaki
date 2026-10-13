@@ -38,7 +38,7 @@ test('the browser tools as specs match the in-process server\'s tools word for w
   assert.deepEqual(APAKI_BROWSER_TOOLS, specs.map((s) => `mcp__apaki__${s.name}`), 'a restricted phone is refused exactly these');
 });
 
-test('the tool server in proxy mode lists show and the six browser tools and forwards every call to the engine with the process\'s token', async (t) => {
+test('the tool server in proxy mode lists show and the seven browser tools and forwards every call to the engine with the process\'s token', async (t) => {
   const dir = tmp();
   t.after(() => rm(dir));
   const store = new ArtifactStore({ root: path.join(dir, 'artifacts') });
@@ -62,7 +62,7 @@ test('the tool server in proxy mode lists show and the six browser tools and for
   t.after(() => client.close());
   await client.connect(transport);
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((x) => x.name).sort(), ['browser_back', 'browser_click', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_type', 'show']);
+  assert.deepEqual(tools.map((x) => x.name).sort(), ['browser_back', 'browser_click', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_tabs', 'browser_type', 'show']);
   const show = tools.find((x) => x.name === 'show');
   assert.match(show.description, /Show the user something inside Myrlin Apaki/);
   assert.deepEqual(show.inputSchema.required.sort(), ['kind', 'title']);

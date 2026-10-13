@@ -17,7 +17,17 @@
  *   drag         drop on a pane's edge to split, in its middle to replace it,
  *                on a tab to add it there, on + for a new tab
  * Panes move by dragging the grip at the left of their header.
- * Keys: Ctrl+T new tab, Ctrl+W close pane, Ctrl+Tab next tab, Ctrl+1..6 pane.
+ * Keys: Ctrl+T new tab, Ctrl+W close pane, Ctrl+Tab next tab, Ctrl+1..6 pane,
+ * Ctrl+Shift+Enter maximize or restore the focused pane.
+ *
+ * Tabs, layouts and viewers (2026-10-12, apaki/docs/layout.md, rules in
+ * workspace.js): a tab is named after the project its conversations share
+ * (or by you, double-click); new panes join an automatic layout chosen by
+ * count and shape (or a preset from the Layout menu; a tree you drag into
+ * shape stays as you made it); every viewer sits beside the conversation that
+ * drives it and is linked to it by an accent; a conversation has one browser
+ * pane whose pages are tabs; a session open anywhere is gone to, not opened
+ * again; any pane can be maximized to the whole window and put back exactly.
  *
  * The tabs and layout are saved in localStorage and come back at launch;
  * restored panes start Claude Code on their first message.
@@ -48,7 +58,9 @@ import { DRAG_TASK, KIND_LABEL, TaskPane, closeTasksPanel, newTaskViewerId, spec
 // Codex panes and rows (codex.js, 2026-10-12).
 import { CARD_ONLY_VIA } from './codex.js';
 import { ArtifactPane, isPublicWebUrl, newViewerId } from './artifacts.js';
-import { BrowserPane } from './browser.js';
+import { BrowserPane, samePage } from './browser.js';
+// Tab names, automatic layouts, viewer links, maximize (2026-10-12, apaki/docs/layout.md).
+import * as W from './workspace.js';
 // Git worktrees (2026-10-12): the branch label, the Worktrees view, the actions, and the diff viewer.
 import { GLYPH_WORKTREE, branchName, hasLinked, initWorktrees } from './worktree.js';
 import { DiffPane, newDiffViewerId } from './diff.js';
@@ -101,6 +113,8 @@ const S = {
   // questions and permission prompts waiting for an answer (askId -> paneId: a row says "waiting"), and whether the
   // folder list has arrived (the open folders are pruned only against a real list).
   info: new Map(), waiting: new Map(), foldersKnown: false,
+  // The link accent of each conversation that has viewers (workspace.js accents), kept while it is free in its tab.
+  accents: new Map(),
 };
 
 /**
@@ -208,6 +222,62 @@ function focusedPane() {
 }
 const paneBySession = (id) => (id ? [...S.panes.values()].find((p) => p.sessionId === id) : null);
 
+/* ---------- arrangements (2026-10-12, workspace.js) ---------- */
+
+/** A tab's viewers: browsers, artifacts, diffs and tasks. */
+const viewersIn = (t) => L.ids(t?.root).map((id) => S.panes.get(id)).filter((p) => p && p.isViewer);
+/** The viewers that belong to conversation pane `id`, wherever they are. */
+const viewersOf = (id) => (id ? [...S.panes.values()].filter((v) => v.isViewer && v.sourcePane === id) : []);
+/** What the layout rules need to know of a pane: a viewer or not, and whose. */
+const paneInfo = (id) => { const p = S.panes.get(id); return { viewer: Boolean(p?.isViewer), source: p?.isViewer ? p.sourcePane || null : null }; };
+
+/** The size of a tab's stage for the layout rules; a tab in the background measures as the one in front. */
+function stageBox(t) {
+  let r = t?.stage?.getBoundingClientRect();
+  if (!r || r.width < 2 || r.height < 2) r = $('stages')?.getBoundingClientRect();
+  return { w: Math.round(r?.width || window.innerWidth || 1600), h: Math.round(r?.height || window.innerHeight || 900) };
+}
+
+/** Lays tab t out again by its arrangement (a tree you made by hand stays as it is). order: the panes in the order to use. */
+function rearrange(t, { order = null } = {}) {
+  if (!t?.root || t.arrange === 'custom') return false;
+  const box = stageBox(t);
+  t.root = W.arrange(order || L.ids(t.root), paneInfo, { preset: t.arrange, ...box });
+  t.shape = W.shapeOf(box.w, box.h);
+  return true;
+}
+
+/**
+ * Puts pane `id` into tab t: into its arrangement (Arthur, 2026-10-12: "they need to organize properly, not just split
+ * side by side"), or, in a tree you made by hand, beside its conversation (a viewer) or into the largest pane.
+ */
+function joinTab(t, id, { source = null } = {}) {
+  if (!t.root) { t.root = L.leaf(id); return; }
+  if (L.has(t.root, id)) return;
+  if (t.arrange === 'custom') {
+    t.root = W.placeCustom(t.root, id, { source, viewersOf: (s) => viewersOf(s).map((v) => v.id), ...stageBox(t) });
+    return;
+  }
+  rearrange(t, { order: [...L.ids(t.root), id] });
+}
+
+/** Takes pane `id` out of tab t; its arrangement closes the gap (a hand-made tree gives the space to the neighbours). */
+function leaveTab(t, id) {
+  t.root = L.remove(t.root, id);
+  if (t.max === id) t.max = null;
+  if (t.root) rearrange(t);
+}
+
+/** Pane `v` takes the place of pane `oldId` in tab t (a viewer of the same kind reused, or a drop on a pane's middle). */
+function replaceInTab(t, oldId, v) {
+  t.root = L.mapLeaves(t.root, (lf) => (lf.pane === oldId ? L.leaf(v.id) : lf));
+  if (t.focused === oldId) t.focused = v.id;
+  if (t.max === oldId) t.max = v.id;
+}
+
+/** You arranged tab t by hand (a pane dropped on an edge, two swapped): new panes now fit around what you made. */
+function madeCustom(t) { if (t) t.arrange = 'custom'; }
+
 const host = {
   defaults: S.defaults,
   send,
@@ -239,7 +309,8 @@ const host = {
   worktreeMenu: (p, anchor) => wtc.paneMenu(p, anchor),
   makeWorktree: (p, text) => wtc.makeFor(p, text),
   wt: null, // set below, once the controller exists (the diff viewer reads it)
-  changed: () => { renderTabs(); renderRailMarks(); save(); },
+  // A title changed: the tab names and the viewers' link chips (the conversation's name) follow (2026-10-12).
+  changed: () => { renderTabs(); renderRailMarks(); renderLinks(); save(); },
   // Something worth saving changed (a draft, the queue, where you scrolled); no redraw.
   dirty: () => save(),
   // Subagents, shells, monitors (tasks.js).
@@ -257,7 +328,9 @@ const host = {
   codexAvailable: () => S.codexAvailable,
   codexModels: () => S.codex,
   askCodexModels: () => askCodexModels(),
-  showSession: (id) => { const p = paneBySession(id); if (p) { const t = tabOf(p); if (t && t.id !== S.active) switchTab(t); focusPane(p); return; } const s = S.sessions.find((x) => x.id === id); if (s) openFromRail(s, { ctrlKey: true }); },
+  showSession: (id) => { const p = paneBySession(id); if (p) { revealPane(p); return; } const s = S.sessions.find((x) => x.id === id); if (s) openFromRail(s, { ctrlKey: true }); },
+  // A tab picked in a browser pane's strip (browser.js, 2026-10-12): Claude's browser tools act on that page from now on.
+  tabPicked: (b, browserId) => { if (b.sourcePane && !WEB) send('browserTab', { paneId: b.sourcePane, browserId }); syncSoon(); renderLinks(); save(); },
   dragPane: (p, e) => {
     e.dataTransfer.setData(DRAG_PANE, p.id);
     e.dataTransfer.effectAllowed = 'move';
@@ -364,6 +437,7 @@ function knownFolders() {
 function createDiffViewer(spec, id = newDiffViewerId()) {
   const v = new DiffPane(id, host, spec);
   S.panes.set(v.id, v);
+  decorate(v);
   return v;
 }
 
@@ -394,8 +468,20 @@ function openDiff(spec) {
     return v;
   }
   const v = createDiffViewer({ ...spec, ownerPane: src && !src.isViewer ? src.id : null });
-  const anchor = src && L.has(t.root, src.id) ? src.id : t.focused || L.ids(t.root)[0];
-  t.root = L.insert(t.root, anchor, v.id, 'right');
+  // One diff viewer per conversation (2026-10-12): another worktree's changes take the place of the one it shows.
+  const old = src && !src.isViewer ? W.viewerFor([...S.panes.values()], 'diff', src.id) : null;
+  const ot = old && tabOf(old);
+  if (old && ot) {
+    replaceInTab(ot, old.id, v);
+    S.panes.delete(old.id);
+    old.destroy();
+    layout(ot);
+    focusPane(v);
+    renderTabs();
+    save();
+    return v;
+  }
+  joinTab(t, v.id, { source: v.sourcePane });
   layout(t);
   focusPane(v);
   renderTabs();
@@ -421,6 +507,7 @@ const viewers = () => [...S.panes.values()].filter((p) => p.isViewer && !p.isBro
 function createViewer(art, id = newViewerId()) {
   const v = new ArtifactPane(id, host, art);
   S.panes.set(v.id, v);
+  decorate(v);
   return v;
 }
 
@@ -454,7 +541,8 @@ function openViewerIn(art, { focus = false, auto = false } = {}) {
   const src = S.panes.get(art.sourcePane) || null;
   let v = viewers().find((x) => x.art.id === art.id && x.art.sessionId === art.sessionId) || null;
   const t = (v && tabOf(v)) || (src && tabOf(src)) || activeTab();
-  if (!v && t?.root) v = L.ids(t.root).map((id) => S.panes.get(id)).find((x) => x?.isViewer && !x.isBrowser && x.sourcePane === art.sourcePane) || null;
+  // The conversation's artifact viewer, wherever it is (one of a kind per conversation, 2026-10-12; a diff or task viewer is not one).
+  if (!v && art.sourcePane) v = W.viewerFor([...S.panes.values()], 'artifact', art.sourcePane);
   const keep = document.activeElement;
   const restoreFocus = () => { if (!focus && keep && document.contains(keep) && document.activeElement !== keep) keep.focus({ preventScroll: true }); };
   if (v) {
@@ -477,8 +565,8 @@ function openViewerIn(art, { focus = false, auto = false } = {}) {
     return v;
   }
   v = createViewer(art);
-  const anchor = src && L.has(t.root, src.id) ? src.id : t.focused || L.ids(t.root)[0];
-  t.root = t.root ? L.insert(t.root, anchor, v.id, 'right') : L.leaf(v.id);
+  // Beside its conversation, in that conversation's part of the layout, at the viewer's smaller share (2026-10-12).
+  joinTab(t, v.id, { source: v.sourcePane });
   if (!t.focused) t.focused = v.id;
   layout(t);
   if (focus) focusPane(v); else restoreFocus();
@@ -494,8 +582,9 @@ const browsers = () => [...S.panes.values()].filter((p) => p.isBrowser);
 S.alive = new Set();
 
 function createBrowser(o, id) {
-  const b = new BrowserPane(id, host, o);
+  const b = new BrowserPane(id, host, { alive: S.alive, ...o });
   S.panes.set(b.id, b);
+  decorate(b);
   new ResizeObserver(() => syncSoon()).observe(b.$.body);
   return b;
 }
@@ -512,7 +601,12 @@ function openUrlHere(url, from = null, { focus = true, reason = 'card' } = {}) {
   if (WEB) { if (reason === 'card') openOnPhone(url, from); return; }
   let owner = from || focusedPane();
   if (owner?.isViewer) owner = S.panes.get(owner.sourcePane) || null;
-  invoke('browser', { cmd: 'open', args: { owner: owner?.id || null, url, focus, reason } })
+  // The conversation's browser pane already has this page in a tab: that tab is shown (2026-10-12, no page twice).
+  const bp = owner ? W.viewerFor([...S.panes.values()], 'browser', owner.id) : null;
+  const same = bp?.tabs.find((x) => samePage(x.st.url, url));
+  if (same) { bp.activate(same.id, { pick: true }); if (focus) focusPane(bp); syncSoon(); return; }
+  // Otherwise a new tab in that pane (the shell makes the page, placeBrowser puts it in the pane), or the pane itself.
+  invoke('browser', { cmd: 'open', args: { owner: owner?.id || null, url, focus, reason, hint: 'tab' } })
     .catch(() => send('openExternal', { url }));
 }
 
@@ -534,34 +628,54 @@ function openOnPhone(url, from) {
  * its right; in a new tab when the tab is full or Claude asked for one.
  * Claude's own opens never take the focus.
  */
+/** The browser pane that has the shell's page `id` as one of its tabs. */
+const browserOf = (id) => (id ? browsers().find((b) => b.hasTab(id)) || null : null);
+
+/**
+ * The shell made or showed a page (Claude's browser_open, a page from show or BROWSER, a link card's Open, a new tab
+ * from the pane's +). Since 2026-10-12 (Arthur: "additional tabs wanted to be opened by the session should open those
+ * tabs IN the browser pane") a conversation has one browser pane and every page it opens is a tab there: the shell's
+ * hint ('tab', 'new') no longer means an Apaki tab. A conversation with no browser pane yet gets one beside it, in its
+ * part of the layout; a page with no conversation behind it gets a pane of its own. A new Apaki tab only when the
+ * conversation's tab is full. Claude's own opens never take the focus.
+ */
 function placeBrowser(e) {
-  let b = S.panes.get(e.id);
-  if (b?.isBrowser) {
-    b.attach(e.state);
-    if (e.focus) focusPane(b);
+  const keep = document.activeElement;
+  const restoreFocus = () => { if (!e.focus && keep && document.contains(keep) && document.activeElement !== keep) keep.focus({ preventScroll: true }); };
+  let b = browserOf(e.id);
+  if (b) {
+    b.addTab(e.id, e.state, { show: true });
+    if (e.focus) focusPane(b); else restoreFocus();
+    renderTabs();
+    save();
+    syncSoon();
+    return;
+  }
+  const owner = S.panes.get(e.owner) || null;
+  b = owner && !owner.isViewer ? W.viewerFor([...S.panes.values()], 'browser', owner.id) : null;
+  if (b) {
+    b.addTab(e.id, e.state || { url: e.url || '' }, { show: true });
+    const bt = tabOf(b);
+    if (bt && bt.max && bt.max !== b.id && bt.max !== owner.id) { bt.max = null; layout(bt); }
+    if (e.focus) focusPane(b); else restoreFocus();
+    renderTabs();
+    save();
     syncSoon();
     return;
   }
   b = createBrowser({ owner: e.owner, url: e.url || e.state?.url || '', title: e.state?.title || '' }, e.id);
-  b.attach(e.state);
-  const owner = S.panes.get(e.owner) || null;
+  b.attach(e.id, e.state);
   const t = (owner && tabOf(owner)) || activeTab();
-  const keep = document.activeElement;
-  if (e.hint === 'tab' || !t || tabFull(t)) {
+  if (!t || tabFullForViewer(t)) {
     const nt = createTab(L.leaf(b.id));
     nt.focused = b.id;
     layout(nt);
     if (e.focus || !t) { switchTab(nt); focusPane(b); }
   } else {
-    const ids = L.ids(t.root);
-    const mates = ids.map((id) => S.panes.get(id)).filter((x) => x && x !== b && x.isViewer && x.sourcePane && x.sourcePane === e.owner);
-    const anchor = mates.find((x) => x.isBrowser) || mates[0] || (owner && ids.includes(owner.id) ? owner : null);
-    if (!t.root) t.root = L.leaf(b.id);
-    else t.root = L.insert(t.root, anchor?.id || t.focused || ids[0], b.id, anchor && anchor !== owner ? 'bottom' : 'right');
+    joinTab(t, b.id, { source: owner && !owner.isViewer ? owner.id : null });
     if (!t.focused) t.focused = b.id;
     layout(t);
-    if (e.focus) focusPane(b);
-    else if (keep && document.contains(keep) && document.activeElement !== keep) keep.focus({ preventScroll: true });
+    if (e.focus) focusPane(b); else restoreFocus();
   }
   renderTabs();
   save();
@@ -584,7 +698,8 @@ function syncBrowsers() {
   const active = activeTab();
   for (const b of browsers()) {
     const t = tabOf(b);
-    const here = Boolean(t && t === active && b.el.isConnected);
+    // A maximized pane covers its tab (2026-10-12): the tab's other pages step aside, being native windows on top.
+    const here = Boolean(t && t === active && b.el.isConnected && (!t.max || t.max === b.id));
     const r = b.$.body.getBoundingClientRect();
     const covered = cover === 'all' || (Array.isArray(cover) && cover.some((c) => overlaps(c, r)));
     b.place(here && !covered, here && covered ? 'overlay' : 'away');
@@ -686,7 +801,16 @@ function shortcut(key, shift) {
     focusPane(focusedPane());
     return;
   }
-  if (/^[1-6]$/.test(k)) { const id = L.ids(activeTab()?.root)[Number(k) - 1]; if (id) focusPane(S.panes.get(id)); }
+  // Ctrl+Shift+Enter: maximize the focused pane to the whole window, or put it back (2026-10-12).
+  if (k === 'enter' && shift) { const p = focusedPane(); if (p) toggleMaximize(p); return; }
+  if (/^[1-6]$/.test(k)) { const id = L.ids(activeTab()?.root)[Number(k) - 1]; if (id) focusNth(S.panes.get(id)); }
+}
+
+/** Ctrl+1..6: that pane, with a maximized other pane of the tab put back first. */
+function focusNth(p) {
+  const t = p && tabOf(p);
+  if (t?.max && t.max !== p.id) { t.max = null; layout(t); save(); }
+  focusPane(p);
 }
 
 function createPane(settings = {}) {
@@ -694,14 +818,20 @@ function createPane(settings = {}) {
   p.setVoice(S.voice);
   p.renderFolderSelect(S.folders, S.sessions);
   S.panes.set(p.id, p);
+  decorate(p);
   return p;
 }
 
-function createTab(root = null) {
+/**
+ * A tab. name: the one you gave it ('' for the automatic name, workspace.js tabLabel); arrange: how new panes are laid
+ * out ('auto', a preset, or 'custom' for a tree you made by hand); max: the pane maximized to the whole window, if any.
+ */
+function createTab(root = null, { name = '', arrange = 'auto', max = null, shape = null } = {}) {
   const stage = el('div', 'stage');
   stage.append(el('div', 'drop-hint'));
   $('stages').append(stage);
-  const t = { id: newTabId(), root, focused: root ? L.ids(root)[0] : null, stage };
+  // shape: 'wide' or 'tall', what its arrangement was made for (a saved tab laid out for another shape re-flows when shown).
+  const t = { id: newTabId(), root, focused: root ? L.ids(root)[0] : null, stage, name, arrange: W.ARRANGEMENTS.includes(arrange) || arrange === 'custom' ? arrange : 'auto', max, shape: shape === 'wide' || shape === 'tall' ? shape : null };
   wireStage(t);
   S.tabs.push(t);
   return t;
@@ -728,6 +858,9 @@ function switchTab(t) {
   if (!t) return;
   S.active = t.id;
   for (const x of S.tabs) x.stage.classList.toggle('on', x === t);
+  // The tab in front: its own maximized pane (or none), and its arrangement fitted to the window's shape now.
+  if (t.root && t.arrange !== 'custom' && t.shape && t.shape !== W.shapeOf(stageBox(t).w, stageBox(t).h) && rearrange(t)) layout(t);
+  syncMax();
   syncSoon();
   const p = S.panes.get(t.focused);
   if (p) { p.unread = false; p.el.classList.remove('unread'); }
@@ -768,8 +901,39 @@ function focusPane(p, { scroll = true } = {}) {
   renderRailMarks();
 }
 
-function closePane(p, { confirmBusy = true } = {}) {
+/**
+ * Closing a conversation that has viewers asks first (2026-10-12, apaki/docs/layout.md): close them with it, or the
+ * conversation only. A small menu at its close button on the PC, a sheet on the phone.
+ */
+function askCloseWithViewers(p, opts) {
+  const vs = viewersOf(p.id);
+  const n = vs.length;
+  const what = n === 1 ? `its ${W.kindOf(vs[0]) === 'browser' ? 'browser' : 'viewer'}` : `its ${n} viewers`;
+  const go = (with_) => closePane(p, { ...opts, viewers: with_ ? 'close' : 'keep' });
+  if (WEB) {
+    sheet(`<div class="from">${esc(p.title)}</div><h2>Close ${esc(what)} too?</h2>
+      <div class="row"><button data-k="keep">Conversation only</button><button class="primary" data-k="all">Close all</button></div>`, (root, close) => {
+      root.querySelector('[data-k=keep]').onclick = () => { close(); go(false); };
+      root.querySelector('[data-k=all]').onclick = () => { close(); go(true); };
+    });
+    return;
+  }
+  const anchor = p.$?.close?.isConnected && p.$.close.getBoundingClientRect().width ? p.$.close : { x: window.innerWidth / 2, y: 80 };
+  menu(anchor, [
+    { value: 'all', label: `Close with ${what}`, hint: vs.map((v) => v.title).filter(Boolean).slice(0, 3).join(', ') },
+    { value: 'keep', label: 'Close the conversation only', hint: n === 1 ? 'the viewer stays open' : 'the viewers stay open' },
+  ], { above: false, width: 280, onPick: (v) => go(v === 'all') });
+}
+
+function closePane(p, { confirmBusy = true, viewers = 'ask' } = {}) {
+  if (!p.isViewer && viewers === 'ask' && viewersOf(p.id).length && S.panes.has(p.id)) { askCloseWithViewers(p, { confirmBusy }); return; }
   if (confirmBusy && p.busy && !window.confirm(`"${p.title}" is still working. Stop it and close the pane?`)) return;
+  if (!p.isViewer) {
+    const vs = viewersOf(p.id);
+    // Kept viewers remember whose they were, so their chip still says it (and reopens the session).
+    for (const v of vs) { v.sourceTitle = p.title; v.sourceSession = p.sessionId || null; }
+    if (viewers === 'close') for (const v of vs) if (S.panes.has(v.id)) closePane(v, { confirmBusy: false });
+  }
   const t = tabOf(p);
   if (rec?.pane === p) stopVoice(true);
   // A phone pane that follows a desktop pane (followDesktop, below) stops following; it never closes the desktop's.
@@ -780,8 +944,9 @@ function closePane(p, { confirmBusy = true } = {}) {
   p.destroy();
   if (p.isViewer) { viewerClosed(p); refreshArtifactButtons(); }
   if (!t) return;
-  t.root = L.remove(t.root, p.id);
-  if (t.focused === p.id) t.focused = L.ids(t.root)[0] || null;
+  // The tab's arrangement closes the gap (2026-10-12); a tree you made by hand gives the space to the neighbours.
+  leaveTab(t, p.id);
+  if (t.focused === p.id) t.focused = (p.isViewer && p.sourcePane && L.has(t.root, p.sourcePane) ? p.sourcePane : null) || L.ids(t.root)[0] || null;
   if (!t.root && S.tabs.length > 1) { closeTab(t, { confirmBusy: false }); return; }
   layout(t);
   const next = S.panes.get(t.focused);
@@ -827,8 +992,7 @@ function followDesktop({ desktopPaneId, title = '', viewOnly = false } = {}) {
     layout(nt);
     switchTab(nt);
   } else {
-    const anchor = t.focused && L.has(t.root, t.focused) ? t.focused : L.ids(t.root)[0];
-    t.root = L.insert(t.root, anchor, p.id, 'right');
+    joinTab(t, p.id);
     t.focused = p.id;
     layout(t);
   }
@@ -884,15 +1048,16 @@ function newConversation(p, o = {}) {
   const t = activeTab();
   if (!t || !t.root) { addTab({ cwd: o.cwd }); return; }
   if (tabFull(t)) {
-    (S.panes.get(t.focused) || p)?.note?.(`${L.MAX_PANES} panes is the most per tab; opened in a new tab instead.`, 'warn');
+    (S.panes.get(t.focused) || p)?.note?.(`${L.MAX_PANES} conversations is the most per tab; opened in a new tab instead.`, 'warn');
     addTab({ cwd: o.cwd });
     return;
   }
   const base = p || focusedPane();
   // Home folder, like a new terminal ("Starts in" changes it); the model, effort and mode of the pane it came from.
   const np = createPane({ cwd: o.cwd || '', ...inheritable(base) });
-  const anchor = t.focused && L.has(t.root, t.focused) ? t.focused : L.ids(t.root)[0];
-  t.root = L.insert(t.root, anchor, np.id, 'right');
+  // It joins the tab's layout (2026-10-12: side by side, then one large and two stacked, then a grid...).
+  joinTab(t, np.id);
+  if (t.max) t.max = null;
   t.focused = np.id;
   layout(t);
   np.open(null, { warm: true });
@@ -921,7 +1086,10 @@ function layout(t) {
     t.stage.append(empty);
     return;
   }
+  if (t.max && !L.has(t.root, t.max)) t.max = null;
   const build = (node) => {
+    // The maximized pane is drawn above the window (syncMax); its place in the tree keeps its size (2026-10-12).
+    if (node.type === 'leaf' && node.pane === t.max) return el('div', 'pane-slot');
     if (node.type === 'leaf') return S.panes.get(node.pane)?.el || el('div', 'pane missing');
     const box = el('div', `split ${node.dir}`);
     node.children.forEach((c, i) => {
@@ -935,10 +1103,265 @@ function layout(t) {
   const rootEl = build(t.root);
   rootEl.style.flex = '1 1 0px';
   t.stage.append(rootEl);
+  if (t.id === S.active) syncMax();
   for (const [p, top] of scrolls) p.$.ground.scrollTop = top;
   for (const id of L.ids(t.root)) S.panes.get(id)?.el.classList.toggle('focused', id === t.focused);
+  if (!t.shape && t.arrange !== 'custom') t.shape = W.shapeOf(stageBox(t).w, stageBox(t).h);
+  renderLinks();
   syncSoon();
 }
+
+/* ---------- maximize (2026-10-12) ----------
+   Arthur: "a full screen toggle that lets you maximize a pane to take the whole desktop app window size, and then a
+   minimize that has it go back to the original size/location/layout it should be in the tab that it was in". The pane
+   is drawn in a layer over the whole window; its tab's tree is not touched (a placeholder keeps its place), so putting
+   it back is exact, and the other panes keep running behind it. Each tab keeps its own (t.max, saved). */
+
+/** The layer a maximized pane is drawn in. */
+function maxLayer() {
+  let m = $('paneMax');
+  if (!m) { m = el('div', 'pane-max-layer'); m.id = 'paneMax'; document.body.append(m); }
+  return m;
+}
+
+/** Shows the tab in front's maximized pane in the layer, or empties it. */
+function syncMax() {
+  const t = activeTab();
+  const p = t?.max && L.has(t.root, t.max) ? S.panes.get(t.max) : null;
+  const layer = maxLayer();
+  if (p && !WEB) {
+    if (p.el.parentElement !== layer) {
+      const top = p.$?.ground?.scrollTop || 0;
+      layer.replaceChildren(p.el);
+      if (p.$?.ground) p.$.ground.scrollTop = top;
+    }
+    // Its share of the split it came from does not apply here (layout sets it again when it goes back).
+    p.el.style.flex = '1 1 0px';
+    p.el.classList.add('maxed');
+  } else if (layer.childElementCount) {
+    for (const c of layer.children) c.classList.remove('maxed');
+    layer.replaceChildren();
+  }
+  document.body.classList.toggle('pane-max', Boolean(p) && !WEB);
+  for (const x of S.panes.values()) if (x !== p) x.el.classList.remove('maxed');
+  syncMaxButtons();
+}
+
+/** Maximizes pane p to the whole window, or puts it back where it was. */
+function toggleMaximize(p) {
+  if (WEB || !p) return;
+  const t = tabOf(p);
+  if (!t) return;
+  const was = t.max;
+  t.max = W.toggleMax(t, p.id).max;
+  // A pane leaving the layer is put back into its place in the tree.
+  if (was && was !== t.max) { const q = S.panes.get(was); if (q) q.el.classList.remove('maxed'); }
+  layout(t);
+  if (t.id !== S.active) switchTab(t);
+  focusPane(p, { scroll: false });
+  save();
+}
+
+/** Every pane's maximize button says what it does now. */
+function syncMaxButtons() {
+  for (const p of S.panes.values()) {
+    const b = p.el.querySelector(':scope > .pane-bar .max-btn');
+    if (!b) continue;
+    const on = p.el.classList.contains('maxed');
+    b.classList.toggle('on', on);
+    b.title = on ? 'Restore to its place in the tab (Ctrl+Shift+Enter)' : 'Maximize to the whole window (Ctrl+Shift+Enter, or double-click the header)';
+    b.setAttribute('aria-label', on ? 'Restore' : 'Maximize');
+  }
+}
+
+/* ---------- pane headers: maximize, and the links between a conversation and its viewers (2026-10-12) ---------- */
+
+const ICON_MAX = '<svg class="i-grow" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/></svg><svg class="i-shrink" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 6.5h-4v-4M9.5 6.5l4.5-4.5M2.5 9.5h4v4M6.5 9.5 2 14"/></svg>';
+const ICON_LINK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.6 9.4a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.9.9"/><path d="M9.4 6.6a2.6 2.6 0 0 0-3.7 0L3.5 8.8a2.6 2.6 0 0 0 3.7 3.7l.9-.9"/></svg>';
+
+/**
+ * Adds what every pane's header gets from the window: a maximize button before its close button, a double click on
+ * the header's empty space to maximize, and the link parts: a viewer's chip (the conversation that drives it) and a
+ * conversation's mark (how many viewers it has). renderLinks fills them.
+ */
+function decorate(p) {
+  const bar = p.el.querySelector(':scope > .pane-bar');
+  if (!bar || bar.dataset.decorated) return;
+  bar.dataset.decorated = '1';
+  const close = bar.querySelector(':scope > .close');
+  if (!WEB) {
+    const mx = el('button', 'icon-btn max-btn', ICON_MAX);
+    mx.type = 'button';
+    mx.onclick = (e) => { e.stopPropagation(); toggleMaximize(p); };
+    bar.insertBefore(mx, close || null);
+    bar.addEventListener('dblclick', (e) => {
+      // The header's empty space only: the title renames, buttons and the address field keep their own double click.
+      if (e.target.closest('button, input, textarea, select, a, .title, .grip, .web-tabs, .link-chip, .meta-line')) return;
+      toggleMaximize(p);
+    });
+  }
+  if (p.isViewer) {
+    const chip = el('button', 'link-chip', `${ICON_LINK}<span class="lc-t"></span>`);
+    chip.type = 'button';
+    chip.hidden = true;
+    chip.onclick = (e) => { e.stopPropagation(); goToSource(p); };
+    chip.addEventListener('mouseenter', () => linkHover(p, true));
+    chip.addEventListener('mouseleave', () => linkHover(p, false));
+    chip.addEventListener('focus', () => linkHover(p, true));
+    chip.addEventListener('blur', () => linkHover(p, false));
+    const grip = bar.querySelector(':scope > .grip');
+    if (grip) grip.after(chip); else bar.prepend(chip);
+  } else {
+    const mark = el('button', 'link-mark', `${ICON_LINK}<span class="lm-n"></span>`);
+    mark.type = 'button';
+    mark.hidden = true;
+    mark.onclick = (e) => { e.stopPropagation(); goToViewers(p); };
+    mark.addEventListener('mouseenter', () => linkHover(p, true));
+    mark.addEventListener('mouseleave', () => linkHover(p, false));
+    mark.addEventListener('focus', () => linkHover(p, true));
+    mark.addEventListener('blur', () => linkHover(p, false));
+    const before = bar.querySelector(':scope > .max-btn') || close;
+    bar.insertBefore(mark, before || null);
+  }
+}
+
+/** Hovering a link outlines the other end: a viewer's conversation, or a conversation's viewers. */
+function linkHover(p, on) {
+  const others = p.isViewer ? [S.panes.get(p.sourcePane)].filter(Boolean) : viewersOf(p.id);
+  for (const o of others) o.el.classList.toggle('link-hi', on);
+  p.el.classList.toggle('link-from', on);
+}
+
+/** A viewer's chip: to its conversation (put back from maximized if needed), or, once that is closed, its session. */
+function goToSource(v) {
+  linkHover(v, false);
+  const src = S.panes.get(v.sourcePane);
+  if (src) { revealPane(src); return; }
+  if (v.sourceSession) host.showSession(v.sourceSession);
+}
+
+/** A conversation's mark: its viewers in turn. */
+function goToViewers(p) {
+  linkHover(p, false);
+  const vs = viewersOf(p.id);
+  if (!vs.length) return;
+  const f = focusedPane();
+  const next = vs[(vs.indexOf(f) + 1) % vs.length];
+  revealPane(next);
+}
+
+/**
+ * Fills every link: the accent of each conversation that has viewers (workspace.js accents, chosen per tab so
+ * neighbours differ), the chip on each viewer (its conversation's name in that accent) and the mark on each
+ * conversation (the number of its viewers). Cheap: a class and a few words per pane.
+ */
+function renderLinks() {
+  const accOf = new Map();
+  for (const t of S.tabs) {
+    const ids = L.ids(t.root);
+    const linked = ids.filter((id) => { const p = S.panes.get(id); return p && !p.isViewer && viewersOf(id).length; });
+    for (const [id, a] of W.accents(linked, S.accents)) accOf.set(id, a);
+  }
+  // Conversations with viewers in another tab only (moved away) keep an accent too.
+  const rest = [...S.panes.values()].filter((p) => !p.isViewer && !accOf.has(p.id) && viewersOf(p.id).length).map((p) => p.id);
+  for (const [id, a] of W.accents(rest, S.accents)) accOf.set(id, a);
+  S.accents = accOf;
+  for (const p of S.panes.values()) {
+    const bar = p.el.querySelector(':scope > .pane-bar');
+    if (!bar) continue;
+    for (let i = 0; i < W.ACCENTS; i++) p.el.classList.remove(`acc-${i}`);
+    if (p.isViewer) {
+      const chip = bar.querySelector(':scope > .link-chip');
+      if (!chip) continue;
+      const src = S.panes.get(p.sourcePane);
+      const live = src && !src.isViewer;
+      const name = live ? src.title : p.sourceTitle || '';
+      chip.hidden = !name;
+      chip.classList.toggle('gone', !live);
+      if (live && accOf.has(src.id)) p.el.classList.add(`acc-${accOf.get(src.id)}`);
+      const t = chip.querySelector('.lc-t');
+      if (t.textContent !== name) t.textContent = name;
+      chip.title = live ? `Opened by "${name}". Click to go to that conversation; hover to see it.` : name ? `Opened by "${name}", which is closed now. Click to open it again.` : '';
+      chip.setAttribute('aria-label', live ? `Opened by ${name}: go to that conversation` : `Opened by ${name}, closed: open it again`);
+    } else {
+      const mark = bar.querySelector(':scope > .link-mark');
+      if (!mark) continue;
+      const vs = viewersOf(p.id);
+      mark.hidden = !vs.length;
+      if (vs.length && accOf.has(p.id)) p.el.classList.add(`acc-${accOf.get(p.id)}`);
+      mark.querySelector('.lm-n').textContent = vs.length > 1 ? String(vs.length) : '';
+      const names = vs.map((v) => `${W.kindOf(v) === 'browser' ? 'Browser' : W.kindOf(v) === 'diff' ? 'Changes' : W.kindOf(v) === 'task' ? 'Task' : 'Viewer'}: ${v.title}`);
+      mark.title = vs.length ? `${vs.length === 1 ? 'Its viewer' : `Its ${vs.length} viewers`} (click to go there; hover to see):\n${names.join('\n')}` : '';
+      mark.setAttribute('aria-label', vs.length === 1 ? 'Go to its viewer' : `Go to its ${vs.length} viewers`);
+    }
+  }
+}
+
+/**
+ * Goes to a pane wherever it is (Arthur, 2026-10-12: "if a session is already open in a tab somewhere, clicking on the
+ * session in the left navbar should take you directly to that pane"): a maximized other pane of its tab is put back,
+ * its tab comes forward, it takes the focus, its row in the sidebar scrolls into view, and it flashes briefly.
+ */
+function revealPane(p) {
+  if (!p) return;
+  const plan = W.goTo({
+    active: S.active,
+    tabs: S.tabs.map((t) => ({ id: t.id, ids: L.ids(t.root), max: t.max || null })),
+    paneOf: () => p.id,
+  }, p.id);
+  const t = plan && S.tabs.find((x) => x.id === plan.tab);
+  if (t && plan.restore) { t.max = null; layout(t); }
+  if (t && plan.switchTab) switchTab(t);
+  focusPane(p);
+  if (p.sessionId) findRow(p.sessionId)?.scrollIntoView({ block: 'nearest' });
+  p.el.classList.remove('flash');
+  void p.el.offsetWidth;
+  p.el.classList.add('flash');
+  clearTimeout(p.flashTimer);
+  p.flashTimer = setTimeout(() => p.el.classList.remove('flash'), 900);
+  save();
+}
+
+/* ---------- the tab's arrangement: the Layout menu (2026-10-12) ---------- */
+
+const ARRANGE_HINT = { auto: 'by how many and the tab\'s shape', columns: 'all side by side', rows: 'all stacked', grid: 'an even grid', main: 'the focused one large, the rest beside it' };
+/** Each arrangement drawn small, for the Layout button. */
+const LAYOUT_ICON = {
+  auto: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="6" height="11" rx="1"/><rect x="9.5" y="2.5" width="4.5" height="4.6" rx="1"/><rect x="9.5" y="8.9" width="4.5" height="4.6" rx="1"/></svg>',
+  columns: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="3.4" height="11" rx="1"/><rect x="6.3" y="2.5" width="3.4" height="11" rx="1"/><rect x="10.6" y="2.5" width="3.4" height="11" rx="1"/></svg>',
+  rows: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="3" rx="1"/><rect x="2" y="6.5" width="12" height="3" rx="1"/><rect x="2" y="10.5" width="12" height="3" rx="1"/></svg>',
+  grid: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="5" height="4.5" rx="1"/><rect x="9" y="2.5" width="5" height="4.5" rx="1"/><rect x="2" y="9" width="5" height="4.5" rx="1"/><rect x="9" y="9" width="5" height="4.5" rx="1"/></svg>',
+  main: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="7.5" height="11" rx="1"/><rect x="10.5" y="2.5" width="3.5" height="3" rx=".8"/><rect x="10.5" y="6.5" width="3.5" height="3" rx=".8"/><rect x="10.5" y="10.5" width="3.5" height="3" rx=".8"/></svg>',
+  custom: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="4.5" height="7" rx="1"/><rect x="7.5" y="2.5" width="6.5" height="4" rx="1"/><rect x="7.5" y="7.5" width="6.5" height="6" rx="1"/><rect x="2" y="10.5" width="4.5" height="3" rx="1"/></svg>',
+};
+
+/** Sets the active tab's arrangement and lays it out now. */
+function setArrangement(t, preset) {
+  if (!t?.root || !W.ARRANGEMENTS.includes(preset)) return;
+  t.arrange = preset;
+  const order = preset === 'main' ? W.withFirst(L.ids(t.root), paneInfo, S.panes.get(t.focused)?.isViewer ? S.panes.get(t.focused).sourcePane : t.focused) : null;
+  rearrange(t, { order });
+  layout(t);
+  renderTabs();
+  save();
+}
+
+function layoutMenu(anchor) {
+  const t = activeTab();
+  if (!t?.root) return;
+  const items = W.ARRANGEMENTS.map((value) => ({ value, label: W.ARRANGE_LABEL[value], hint: ARRANGE_HINT[value], checked: t.arrange === value }));
+  if (t.arrange === 'custom') items.push({ divider: true }, { value: 'custom', label: 'Custom', hint: 'as you arranged it; pick one above to tidy up', checked: true, disabled: true });
+  menu(anchor, items, { above: false, width: 290, onPick: (v) => setArrangement(t, v) });
+}
+
+// The window's shape changed: a tab laid out by its arrangement follows when it flips between wide and tall (a tree
+// you dragged into shape, and your gutter drags, stay as they are otherwise).
+new ResizeObserver(() => {
+  const t = activeTab();
+  if (!t?.root || t.arrange === 'custom' || !t.shape) return;
+  const box = stageBox(t);
+  if (W.shapeOf(box.w, box.h) !== t.shape && rearrange(t)) { layout(t); save(); }
+}).observe($('stages'));
 
 /** The draggable bar between two neighbours of a split. Double-click evens the split out. */
 function gutter(t, node, i, box) {
@@ -993,13 +1416,11 @@ function gutter(t, node, i, box) {
   return g;
 }
 
-/** Rearranges the active tab's panes into an even grid (2 side by side, 2x2, 3+2, 3x3...). */
+/** Rearranges the active tab's panes into an even grid (2 side by side, 2x2, 3+2, 3x3...), viewers beside their conversations (2026-10-12). */
 function arrangeGrid() {
   const t = activeTab();
   if (!t?.root) return;
-  t.root = L.grid(L.ids(t.root));
-  layout(t);
-  save();
+  setArrangement(t, 'grid');
 }
 
 /* ---------- drag and drop into the stage ---------- */
@@ -1051,7 +1472,7 @@ function showHint(t, z, kind) {
   if (z.where === 'center') {
     if (kind === 'pane') text = L.has(t.root, S.drag?.paneId) ? 'Swap these panes' : 'Move here';
     else if (kind === 'task') text = z.pane.isViewer ? 'Replace this viewer' : 'Open beside this conversation';
-    else text = z.full ? `${L.MAX_PANES} panes is the most per tab. Drop here to replace this one, or on + for a new tab` : z.pane.isBrowser ? 'Replace this browser' : z.pane.isViewer ? 'Replace this viewer' : 'Replace this conversation';
+    else text = z.full ? `${L.MAX_PANES} conversations is the most per tab. Drop here to replace this one, or on + for a new tab` : z.pane.isBrowser ? 'Replace this browser' : z.pane.isViewer ? 'Replace this viewer' : 'Replace this conversation';
     if (z.pane.busy && kind === 'session') text = 'This pane is working; drop on an edge instead';
   }
   hint.textContent = text;
@@ -1112,13 +1533,12 @@ function wireStage(t) {
 function dropSession(t, z, s) {
   if (!s) return;
   const existing = paneBySession(s.id);
-  if (existing) { focusPane(existing); existing.note('This session is already open here.'); return; }
+  if (existing) { revealPane(existing); existing.note('This session is already open here.'); return; }
   if (z.where === 'center' && z.pane.isViewer) {
     // Dropped on a viewer: the session takes the viewer's place.
     const v = z.pane;
     const p = createPane({ cwd: s.cwd, title: s.title });
-    t.root = L.mapLeaves(t.root, (lf) => (lf.pane === v.id ? L.leaf(p.id) : lf));
-    if (t.focused === v.id) t.focused = p.id;
+    replaceInTab(t, v.id, p);
     S.panes.delete(v.id);
     v.destroy();
     layout(t);
@@ -1135,7 +1555,10 @@ function dropSession(t, z, s) {
   }
   const base = z.pane || focusedPane();
   const p = createPane({ cwd: s.cwd, title: s.title, ...inheritable(base) });
-  t.root = z.where === 'root' ? L.leaf(p.id) : L.insert(t.root, z.pane.id, p.id, z.edge);
+  // On an edge you chose: that split, and the tab is yours to arrange (custom). Anywhere else: it joins the layout.
+  if (z.where === 'root') t.root = L.leaf(p.id);
+  else if (z.where === 'edge') { t.root = L.insert(t.root, z.pane.id, p.id, z.edge); madeCustom(t); } else joinTab(t, p.id);
+  if (t.max) t.max = null;
   t.focused = p.id;
   layout(t);
   p.open(s, { warm: true });
@@ -1149,14 +1572,15 @@ function dropPane(t, z, moving) {
   const from = tabOf(moving);
   if (z.where === 'center' && from === t) {
     t.root = L.swap(t.root, moving.id, z.pane.id);
+    madeCustom(t);
     layout(t);
     save();
     return;
   }
-  if (from) from.root = L.remove(from.root, moving.id);
+  if (from) leaveTab(from, moving.id);
   if (z.where === 'root') t.root = L.leaf(moving.id);
-  else if (z.where === 'edge') t.root = L.insert(t.root, z.pane.id, moving.id, z.edge);
-  else t.root = L.insert(t.root, z.pane.id, moving.id, 'right');
+  else if (z.where === 'edge' && L.has(t.root, z.pane.id)) { t.root = L.insert(t.root, z.pane.id, moving.id, z.edge); madeCustom(t); } else joinTab(t, moving.id, { source: moving.isViewer ? moving.sourcePane : null });
+  if (t.max) t.max = null;
   t.focused = moving.id;
   if (from && from !== t) {
     if (from.focused === moving.id) from.focused = L.ids(from.root)[0] || null;
@@ -1167,26 +1591,91 @@ function dropPane(t, z, moving) {
   save();
 }
 
-/** Adds a session to a tab without a drop position: next to its focused pane. */
+/** Adds a session to a tab without a drop position: it joins the tab's layout (2026-10-12; before, it split the focused pane). */
 function addToTab(t, s) {
   if (!t.root) { dropSession(t, { where: 'root' }, s); return; }
   const target = S.panes.get(t.focused) || S.panes.get(L.ids(t.root)[0]);
-  if (tabFull(t)) { target?.note(`${L.MAX_PANES} panes is the most per tab; opened in a new tab instead.`, 'warn'); addTab({ session: s }); return; }
-  dropSession(t, { where: 'edge', edge: 'right', pane: target }, s);
+  if (tabFull(t)) { target?.note(`${L.MAX_PANES} conversations is the most per tab; opened in a new tab instead.`, 'warn'); addTab({ session: s }); return; }
+  dropSession(t, { where: 'join', pane: target }, s);
 }
 
 /* ---------- tab bar ---------- */
 
 let hoverTimer = null;
 
+/**
+ * The project a conversation pane belongs to, for its tab's name (workspace.js projectOf): its repository (a worktree
+ * counts as its repository), else its folder. A new conversation still in the home folder has none yet.
+ */
+function projectOfPane(p) {
+  const pr = W.projectOf(p.cwd, (c) => wtc.forCwd(c)?.repo?.name || null);
+  return !p.sessionId && pr === 'Home' ? null : pr;
+}
+
+/** What workspace.js tabLabels needs of a tab: your name, its conversations' projects and titles, its viewers' titles. */
+function tabModel(t) {
+  const panes = L.ids(t.root).map((id) => S.panes.get(id)).filter(Boolean);
+  return {
+    name: t.name || '',
+    convs: panes.filter((p) => !p.isViewer).map((p) => ({ project: projectOfPane(p), title: p.title })),
+    viewers: panes.filter((p) => p.isViewer).map((p) => ({ title: p.title })),
+  };
+}
+
+/** Every tab's name now (also for the saved workspace, which the phone's "On your desktop" reads). */
+const tabNames = () => W.tabLabels(S.tabs.map(tabModel));
+
+/**
+ * Names a tab (Arthur, 2026-10-12: the tab named after a session in it was confusing): double-click its name and type;
+ * Enter or leaving the field keeps it, Escape cancels, an empty name goes back to the automatic one.
+ */
+function beginTabRename(t, tabEl, current) {
+  if (WEB || S.tabEdit) return;
+  const span = tabEl.querySelector('.tab-t');
+  if (!span) return;
+  const input = el('input', 'tab-rename');
+  input.value = t.name || current;
+  input.maxLength = 60;
+  input.spellcheck = false;
+  input.setAttribute('aria-label', 'Tab name (empty for the automatic name)');
+  span.replaceWith(input);
+  tabEl.querySelector('.tab-s')?.remove();
+  S.tabEdit = t.id;
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (keep) => {
+    if (done) return;
+    done = true;
+    S.tabEdit = null;
+    if (keep) {
+      const v = input.value.replace(/\s+/g, ' ').trim();
+      t.name = v && v !== (W.tabLabel({ ...tabModel(t), name: '' }).text) ? v : '';
+      save();
+    }
+    renderTabs();
+  };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('dblclick', (e) => e.stopPropagation());
+}
+
 function renderTabs() {
   const bar = $('tabs');
+  // A tab being named keeps its field until you finish (a redraw would take the field away under your typing).
+  if (S.tabEdit && bar.querySelector('.tab-rename')) return;
   bar.innerHTML = '';
-  for (const t of S.tabs) {
+  const names = tabNames();
+  for (const [ti, t] of S.tabs.entries()) {
     const panes = L.ids(t.root).map((id) => S.panes.get(id)).filter(Boolean);
     // The number on a tab counts its conversations, not its viewers, browsers or tasks (2026-10-11).
     const convs = panes.filter((p) => !p.isViewer).length;
-    const f = S.panes.get(t.focused) || panes[0];
+    const label = names[ti];
     const busy = panes.some((p) => p.busy);
     const unread = panes.some((p) => p.unread);
     const warm = panes.some((p) => p.sessionId && S.warm.has(p.sessionId));
@@ -1195,10 +1684,14 @@ function renderTabs() {
     const tab = el('div', `tab${t.id === S.active ? ' on' : ''}${busy ? ' busy' : ''}${unread ? ' unread' : ''}${warm ? ' warm' : ''}${waiting ? ' waiting' : ''}`);
     // A tab whose conversations all work in one worktree says which (worktree.js tabNote, 2026-10-12).
     const onBranch = wtc.tabNote(panes.filter((p) => !p.isViewer && p.cwd).map((p) => p.cwd));
-    tab.title = `${onBranch ? `${onBranch}\n` : ''}${panes.map((p) => `${asks.waiting(p.id) ? 'waiting for you: ' : p.busy ? 'working: ' : p.unread ? 'finished: ' : ''}${p.title}`).join('\n') || 'Empty tab'}`;
-    tab.innerHTML = `<span class="tab-t">${esc(f?.title || 'Empty tab')}</span>${convs > 1 ? `<span class="tab-n">${convs}</span>` : ''}${warm ? '<span class="warm-ring" aria-hidden="true"></span>' : ''}${busy ? '<span class="tab-sweep" aria-hidden="true"><i></i></span>' : ''}`;
-    // Double-click the name to rename its session (saved in the session, not only here).
-    tab.querySelector('.tab-t').ondblclick = (e) => { e.stopPropagation(); if (f && !f.isViewer) beginRename(f.sessionId, tab.querySelector('.tab-t'), { pane: f }); };
+    const kinds = (p) => (p.isViewer ? `${W.kindOf(p) === 'browser' ? 'browser' : W.kindOf(p) === 'diff' ? 'changes' : W.kindOf(p) === 'task' ? 'task' : 'viewer'}: ` : '');
+    tab.title = `${label.text}${label.auto ? ' (double-click to name this tab)' : ' (your name for it; double-click to change)'}\n${onBranch ? `${onBranch}\n` : ''}${panes.map((p) => `${asks.waiting(p.id) ? 'waiting for you: ' : p.busy ? 'working: ' : p.unread ? 'finished: ' : ''}${kinds(p)}${p.title}`).join('\n') || 'Empty tab'}`;
+    // The tab's name is the workspace's (the project its conversations share, or yours), never whichever pane has focus
+    // (2026-10-12); a quiet second name only tells two same-named tabs apart.
+    tab.innerHTML = `<span class="tab-t">${esc(label.text)}</span>${label.sub ? `<span class="tab-s">${esc(label.sub)}</span>` : ''}${convs > 1 ? `<span class="tab-n" aria-label="${convs} conversations">${convs}</span>` : ''}${warm ? '<span class="warm-ring" aria-hidden="true"></span>' : ''}${busy ? '<span class="tab-sweep" aria-hidden="true"><i></i></span>' : ''}`;
+    tab.classList.toggle('named', !label.auto);
+    // Double-click names the tab (2026-10-12; it used to rename the focused pane's session, which the pane's own title still does).
+    tab.ondblclick = (e) => { if (e.target.closest('.tab-x')) return; e.stopPropagation(); beginTabRename(t, tab, label.text); };
     const x = el('button', 'tab-x', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>');
     x.title = 'Close tab';
     x.onclick = (e) => { e.stopPropagation(); closeTab(t); };
@@ -1251,9 +1744,10 @@ function renderTabs() {
       if (kind === 'session') { switchTab(t); addToTab(t, JSON.parse(data || 'null')); return; }
       const moving = S.panes.get(data);
       if (!moving || tabOf(moving) === t) return;
-      if (moving.isViewer ? tabFullForViewer(t) : tabFull(t)) { moving.note(`That tab already has ${L.MAX_PANES} panes.`, 'warn'); return; }
+      if (moving.isViewer ? tabFullForViewer(t) : tabFull(t)) { moving.note(moving.isViewer ? 'That tab has no room for another pane.' : `That tab already has ${L.MAX_PANES} conversations.`, 'warn'); return; }
       switchTab(t);
-      dropPane(t, t.root ? { where: 'edge', edge: 'right', pane: S.panes.get(t.focused) || S.panes.get(L.ids(t.root)[0]) } : { where: 'root' }, moving);
+      // It joins that tab's layout (2026-10-12), beside its conversation when it is a viewer of one there.
+      dropPane(t, t.root ? { where: 'join' } : { where: 'root' }, moving);
     });
     bar.append(tab);
   }
@@ -1277,7 +1771,7 @@ function renderTabs() {
     if (kind === 'session') {
       const s = JSON.parse(data || 'null');
       const existing = s && paneBySession(s.id);
-      if (existing) { focusPane(existing); return; }
+      if (existing) { revealPane(existing); return; }
       addTab({ session: s });
       return;
     }
@@ -1291,12 +1785,24 @@ function renderTabs() {
   const tools = el('div', 'tabs-tools');
   const t = activeTab();
   const n = conversationsIn(t).length;
-  const gridBtn = el('button', 'tab-tool', '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="5" height="4.5" rx="1"/><rect x="9" y="2.5" width="5" height="4.5" rx="1"/><rect x="2" y="9" width="5" height="4.5" rx="1"/><rect x="9" y="9" width="5" height="4.5" rx="1"/></svg><span>Even grid</span>');
-  gridBtn.title = 'Arrange this tab\'s panes into an even grid';
-  gridBtn.disabled = n < 2;
-  gridBtn.onclick = arrangeGrid;
-  tools.append(el('span', 'tab-count', n ? `${n} of ${L.MAX_PANES} panes` : ''), gridBtn);
-  bar.append(tools);
+  const nv = viewersIn(t).length;
+  // The Layout menu (2026-10-12) in the place of "Even grid": the tab's arrangement, drawn and named; a click offers
+  // Auto, Columns, Rows, Grid, Main and stack.
+  const arr = t?.arrange || 'auto';
+  const gridBtn = el('button', 'tab-tool layout-btn', `${LAYOUT_ICON[arr] || LAYOUT_ICON.auto}<span>${esc(W.ARRANGE_LABEL[arr] || 'Auto')}</span><svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>`);
+  gridBtn.title = `Layout of this tab: ${W.ARRANGE_LABEL[arr] || 'Auto'}${arr === 'custom' ? ' (as you arranged it)' : ''}. Click to change.`;
+  gridBtn.setAttribute('aria-haspopup', 'menu');
+  gridBtn.disabled = L.count(t?.root) < 2;
+  gridBtn.onclick = () => layoutMenu(gridBtn);
+  // Honest counts (2026-10-12): conversations against their limit, viewers on their own.
+  const counts = n ? `${n} of ${L.MAX_PANES}${nv ? ` · ${nv} viewer${nv === 1 ? '' : 's'}` : ''}` : nv ? `${nv} viewer${nv === 1 ? '' : 's'}` : '';
+  const countEl = el('span', 'tab-count', esc(counts));
+  countEl.title = n || nv ? `This tab: ${n} of ${L.MAX_PANES} conversations${nv ? `, and ${nv} viewer${nv === 1 ? '' : 's'} (browser, artifact, changes or task), which do not count toward the ${L.MAX_PANES}` : ''}.` : '';
+  tools.append(countEl, gridBtn);
+  // On the PC the count and the Layout button sit outside the scrolling tab row, so many tabs never push them out of
+  // sight (2026-10-12); the phone hides the whole row and keeps them in it.
+  const slot = WEB ? null : $('tabTools') || (() => { const s = el('div', 'tab-tools-slot'); s.id = 'tabTools'; bar.after(s); return s; })();
+  if (slot) slot.replaceChildren(tools); else bar.append(tools);
   // A pane waiting for an answer counts like one that finished unseen (askcard.js), once.
   const unread = [...S.panes.values()].filter((p) => p.unread || asks.waiting(p.id)).length;
   const fp = focusedPane();
@@ -1636,6 +2142,7 @@ function folderMenu(sessionId, anchor) {
 function createTaskViewer(spec, id = newTaskViewerId()) {
   const v = new TaskPane(id, host, spec);
   S.panes.set(v.id, v);
+  decorate(v);
   return v;
 }
 
@@ -1670,8 +2177,21 @@ function openTask(spec, { tab = false, inTab = null, focus = true } = {}) {
     return v;
   }
   const v = createTaskViewer(spec);
-  const anchor = src && L.has(t.root, src.id) ? src.id : t.focused || L.ids(t.root)[0];
-  t.root = t.root ? L.insert(t.root, anchor, v.id, 'right') : L.leaf(v.id);
+  // One task viewer per conversation (2026-10-12): another of its subagents or shells takes that viewer's place.
+  const old = src && !src.isViewer && !inTab ? W.viewerFor([...S.panes.values()], 'task', src.id) : null;
+  const ot = old && tabOf(old);
+  if (old && ot) {
+    replaceInTab(ot, old.id, v);
+    S.panes.delete(old.id);
+    old.destroy();
+    layout(ot);
+    if (ot.id !== S.active) switchTab(ot);
+    if (focus) focusPane(v);
+    renderTabs();
+    save();
+    return v;
+  }
+  joinTab(t, v.id, { source: v.sourcePane });
   if (!t.focused) t.focused = v.id;
   layout(t);
   if (t.id !== S.active) switchTab(t);
@@ -1698,16 +2218,15 @@ function dragTask(spec, e) {
 /** A task dropped on a stage: split at an edge, take a viewer's place, or open beside a conversation. */
 function dropTask(t, z, spec) {
   if (!spec?.sessionId) return;
-  if (z.where === 'center' && !z.pane.isViewer && tabFull(t)) { z.pane.note(`${L.MAX_PANES} panes is the most per tab; drop it on + for a new tab.`, 'warn'); return; }
+  if (z.where === 'center' && !z.pane.isViewer && tabFullForViewer(t)) { z.pane.note('This tab has no room for another pane; drop it on + for a new tab.', 'warn'); return; }
   const v = createTaskViewer(spec);
   if (z.where === 'root') t.root = L.leaf(v.id);
-  else if (z.where === 'edge') t.root = L.insert(t.root, z.pane.id, v.id, z.edge);
-  else if (z.pane.isViewer) {
+  else if (z.where === 'edge') { t.root = L.insert(t.root, z.pane.id, v.id, z.edge); madeCustom(t); } else if (z.pane.isViewer) {
     const old = z.pane;
-    t.root = L.mapLeaves(t.root, (lf) => (lf.pane === old.id ? L.leaf(v.id) : lf));
+    replaceInTab(t, old.id, v);
     S.panes.delete(old.id);
     old.destroy();
-  } else t.root = L.insert(t.root, z.pane.id, v.id, 'right');
+  } else joinTab(t, v.id, { source: v.sourcePane });
   t.focused = v.id;
   layout(t);
   focusPane(v);
@@ -1883,9 +2402,10 @@ function sessionMenu(s, e, row = null) {
     width: 280,
     onPick: (v) => {
       if (v === 'rename') { const r = row?.isConnected ? row : findRow(s.id); beginRename(s.id, r?.querySelector('.t') || null); return; }
-      if (v === 'open') { if (pane) focusPane(pane); else openFromRail(s, {}); }
+      // Open, wherever it is open already: that pane (its tab forward, focused, a brief flash; 2026-10-12).
+      if (v === 'open') { if (pane) revealPane(pane); else openFromRail(s, {}); }
       else if (v === 'here') openFromRail(s, { here: true });
-      else if (v === 'tab') { if (pane) focusPane(pane); else openFromRail(s, { ctrlKey: true }); }
+      else if (v === 'tab') { if (pane) revealPane(pane); else openFromRail(s, { ctrlKey: true }); }
       else if (v === 'split') openFromRail(s, { shiftKey: true });
       // openTerminal is built with the console toggle (another branch; reconciled at merge): the exact session in an
       // external terminal window, with the pane's model, effort, mode and billing when it is open in one. PC only.
@@ -2468,7 +2988,9 @@ function renderRailMarks() {
 function openFromRail(s, e = {}) {
   // A Codex thread opens like any session now (2026-10-12): a new tab, the empty pane, or a split; the pane becomes a Codex one.
   const existing = paneBySession(s.id);
-  if (existing) { focusPane(existing); return; }
+  // Open anywhere already: go there (Arthur, 2026-10-12: "clicking on the session in the left navbar should take you
+  // directly to that pane"): its tab, the focus, its row in view, a brief flash.
+  if (existing) { revealPane(existing); return; }
   if (e.ctrlKey || e.metaKey) { addTab({ session: s }); return; }
   const t = activeTab();
   let p = focusedPane();
@@ -2780,6 +3302,8 @@ document.addEventListener('keydown', (e) => {
   if (k === 'w') { e.preventDefault(); const p = focusedPane(); if (p) closePane(p); return; }
   // Ctrl+B: hide or show the sidebar, as in VS Code.
   if (k === 'b' && !e.shiftKey && !WEB) { e.preventDefault(); setRailCollapsed(!S.railCollapsed); return; }
+  // Ctrl+Shift+Enter: the focused pane to the whole window, or back to its place (2026-10-12).
+  if (k === 'enter' && e.shiftKey && !WEB) { e.preventDefault(); const p = focusedPane(); if (p) toggleMaximize(p); return; }
   if (e.key === 'Tab') {
     e.preventDefault();
     const i = S.tabs.indexOf(activeTab());
@@ -2789,7 +3313,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (/^[1-6]$/.test(e.key)) {
     const id = L.ids(activeTab()?.root)[Number(e.key) - 1];
-    if (id) { e.preventDefault(); focusPane(S.panes.get(id)); }
+    if (id) { e.preventDefault(); focusNth(S.panes.get(id)); }
   }
 });
 
@@ -2861,8 +3385,12 @@ let saveTimer = null;
  * scroll; the window's size and place.
  */
 function snapshot() {
-  const tabs = S.tabs.map((t) => ({
+  const names = tabNames();
+  const tabs = S.tabs.map((t, ti) => ({
     focused: t.focused,
+    // 2026-10-12: your name for the tab (empty: automatic), the name it shows (the phone's "On your desktop" reads it),
+    // how it is arranged ('custom' keeps the tree as saved) and its maximized pane. Older workspaces have none of these.
+    name: t.name || '', label: names[ti]?.text || '', arrange: t.arrange || 'auto', max: t.max || null, shape: t.shape || null,
     root: L.mapLeaves(t.root, (lf) => {
       const p = S.panes.get(lf.pane);
       if (p?.isBrowser) return { type: 'leaf', pane: lf.pane, web: p.saved() };
@@ -2909,7 +3437,11 @@ function readLocal() {
 }
 
 function restore(saved = readLocal()) {
-  const tabs = saved?.v === 1 && Array.isArray(saved.tabs) ? saved.tabs : [];
+  // Several browser panes of one conversation (before 2026-10-12, some in tabs of their own) come back as that
+  // conversation's one browser pane with a tab for each page (workspace.js foldBrowsers).
+  const folded = W.foldBrowsers(saved?.v === 1 && Array.isArray(saved.tabs) ? saved.tabs : [], saved?.active ?? 0);
+  const tabs = folded.tabs;
+  if (saved && folded.tabs !== saved.tabs) saved = { ...saved, active: folded.active };
   if (saved?.rail) {
     if (typeof saved.rail.view === 'string') S.view = saved.rail.view;
     S.expanded = new Set(Array.isArray(saved.rail.expanded) ? saved.rail.expanded : []);
@@ -2927,8 +3459,9 @@ function restore(saved = readLocal()) {
     const root = L.mapLeaves(st.root, (lf) => {
       // A subagent or shell viewer comes back following its file.
       if (lf.view?.task) return L.leaf(createTaskViewer(lf.view, lf.pane).id);
-      // A browser comes back with its page, loaded the first time it is on screen.
-      if (lf.web) return L.leaf(createBrowser({ ...lf.web, adopt: S.alive.has(lf.pane) }, lf.pane).id);
+      // A browser comes back with its tabs, each page loaded the first time it is on screen (a page the shell kept
+      // across a reload of the window is taken back as it is: S.alive).
+      if (lf.web) return L.leaf(createBrowser({ ...lf.web }, lf.pane).id);
       // A diff viewer comes back reading its worktree's changes again.
       if (lf.view?.diff) return L.leaf(createDiffViewer(lf.view.diff, lf.pane).id);
       // A viewer comes back showing its artifact's latest revision.
@@ -2956,7 +3489,8 @@ function restore(saved = readLocal()) {
       return L.leaf(p.id);
     });
     if (!root || !L.valid(root)) continue;
-    const t = createTab(root);
+    // A workspace saved before 2026-10-12 has no arrangement: its tree comes back exactly as saved (custom).
+    const t = createTab(root, { name: typeof st.name === 'string' ? st.name.slice(0, 60) : '', arrange: typeof st.arrange === 'string' ? st.arrange : 'custom', max: typeof st.max === 'string' && L.has(root, st.max) ? st.max : null, shape: st.shape || (typeof st.arrange === 'string' ? 'wide' : null) });
     t.focused = L.has(root, st.focused) ? st.focused : L.ids(root)[0];
     layout(t);
   }
@@ -2990,8 +3524,12 @@ await listen('engine', ({ payload: e }) => {
   }
   // What Claude just did in a browser (browser_click, _type...): a line in that browser's strip.
   if (e.ev === 'browserActivity') {
-    const b = S.panes.get(e.browserId);
-    if (b?.isBrowser) b.activity(e.text || e.action || '');
+    // The page is a tab of a conversation's browser pane (2026-10-12): the pane shows the tab Claude works in.
+    const b = browserOf(e.browserId);
+    if (b) {
+      if (b.active !== e.browserId) { b.activate(e.browserId); syncSoon(); save(); }
+      b.activity(e.text || e.action || '');
+    }
     return;
   }
   if (e.paneId && PANE_EVENTS.has(e.ev)) {
@@ -3242,14 +3780,20 @@ await listen('engine', ({ payload: e }) => {
 // The built-in browser's events (src/browser.rs): pages made, their state,
 // the keyboard in a page, a page closing itself.
 await listen('browser', ({ payload: e }) => {
-  const b = S.panes.get(e.id);
+  // e.id is a page; since 2026-10-12 a page is one tab of a browser pane (browser.js), found by browserOf.
+  const b = browserOf(e.id);
   switch (e.ev) {
     case 'created': case 'reveal': placeBrowser(e); break;
-    case 'state': if (b?.isBrowser) { b.update(e); if (!b.live) b.attach(e); } break;
+    case 'state': if (b) { b.update(e.id, e); if (!b.tab(e.id)?.live) b.attach(e.id, e); } break;
     case 'focus': if (b) focusPane(b, { scroll: false }); break;
     case 'key': if (b) focusPane(b, { scroll: false }); shortcut(e.key, e.shift); break;
-    case 'closeRequested': if (b) closePane(b, { confirmBusy: false }); break;
-    case 'closed': if (b?.isBrowser && e.error) b.gone(`The browser could not start: ${e.error}`); break;
+    // A page that closes itself (window.close) takes its tab with it; the last tab takes the pane.
+    case 'closeRequested': if (b) { b.removeTab(e.id); renderTabs(); save(); } break;
+    // Closed by the shell: could not start (its tab says why), or closed by Claude's browser_tabs (the tab goes).
+    case 'closed':
+      if (b && e.error) b.gone(e.id, `The browser could not start: ${e.error}`);
+      else if (b) { b.removeTab(e.id); renderTabs(); save(); }
+      break;
     default: break;
   }
 });
@@ -3352,4 +3896,4 @@ $('refreshSessions').onclick = () => {
 // 2026-10-11: focusPane and openFromRail for the phone (apaki/web/src/pager.js focuses the pane a swipe settles on;
 // desktop.js opens a conversation from "On your desktop" the way a tap in the session list does, or follows the desktop
 // pane with followDesktop when the PC offers 'follow'). The window never calls them.
-window.__apaki = { S, L, wt: wtc, openDiff, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, followDesktop, dropSession: (s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };
+window.__apaki = { S, L, W, wt: wtc, openDiff, openTask, toggleMaximize, revealPane, setArrangement, tabNames, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, followDesktop, dropSession:(s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };

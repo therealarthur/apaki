@@ -19,8 +19,8 @@ test('desktop tabs: panes in layout order with kind, title, session and focus; p
   };
   const tabs = desktopTabs(st);
   assert.deepEqual(tabs, [
-    { index: 0, active: false, panes: [{ paneId: 'p1', kind: 'session', sessionId: 'sess-1', title: 'Fix the build', busy: true, focused: true }, { paneId: 'b1', kind: 'browser', title: 'App Store Connect', focused: false }] },
-    { index: 1, active: true, panes: [{ paneId: 'p2', kind: 'session', sessionId: 'sess-2', title: 'Two lines', busy: false, focused: false }, { paneId: 'p3', kind: 'session', sessionId: 'sess-3', title: 'New conversation', busy: false, focused: true }] },
+    { index: 0, active: false, label: '', panes: [{ paneId: 'p1', kind: 'session', sessionId: 'sess-1', title: 'Fix the build', busy: true, focused: true }, { paneId: 'b1', kind: 'browser', title: 'App Store Connect', for: 'Fix the build', focused: false }] },
+    { index: 1, active: true, label: '', panes: [{ paneId: 'p2', kind: 'session', sessionId: 'sess-2', title: 'Two lines', busy: false, focused: false }, { paneId: 'p3', kind: 'session', sessionId: 'sess-3', title: 'New conversation', busy: false, focused: true }] },
   ]);
   const text = JSON.stringify(tabs);
   for (const secret of ['secret draft', 'token=1', 'example.com', 'private-folder', '"q"']) assert.ok(!text.includes(secret), `${secret} stays on the PC`);
@@ -48,6 +48,6 @@ test('desktop tabs: limits, empty and odd input', () => {
   const many = Array.from({ length: 9 }, (_, i) => leaf({ pane: `p${i}`, s: `s${i}`, title: `t${i}` }));
   assert.equal(desktopTabs({ active: 0, tabs: [{ root: { type: 'split', children: many } }] })[0].panes.length, MAX_PANES);
   assert.deepEqual(desktopTabs(null), []);
-  assert.deepEqual(desktopTabs({ tabs: [{ root: null }] }), [{ index: 0, active: false, panes: [] }]);
+  assert.deepEqual(desktopTabs({ tabs: [{ root: null }] }), [{ index: 0, active: false, label: '', panes: [] }]);
   assert.ok(BROADCAST_EVENTS.has('desktopTabs'), 'every connected phone gets it, and it is cached for phones that connect later');
 });

@@ -105,6 +105,16 @@ test('policy: the browser view needs a pane of this phone\'s own and Full access
   assert.equal(ask({ op: 'browserView', paneId: 'p9' }, 'full', mine).ok, false, 'a pane that is not open');
   assert.equal(ask({ op: 'browserView', paneId: `phone:${DEV}:p1` }, 'full', mine).ok, false, 'a namespaced id');
   assert.equal(ask({ op: 'browserView' }, 'full', mine).ok, false, 'a pane is required');
+  // tab (2026-10-12, browser tabs): a plain browser id is passed on, nothing else about it; anything else is refused.
+  assert.deepEqual(ask({ op: 'browserView', reqId: 'r3', paneId: 'p1', tab: 'b2_x-1', url: 'http://evil' }, 'full', mine).cmd, { op: 'browserView', reqId: `phone:${DEV}:r3`, paneId: `phone:${DEV}:p1`, tab: 'b2_x-1' });
+  assert.equal('tab' in ask({ op: 'browserView', paneId: 'p1', tab: null }, 'full', mine).cmd, false, 'null means no tab');
+  for (const bad of ['', 'b 2', '../b1', 'x'.repeat(41), 'b1;rm', 7, {}, ['b1'], true]) {
+    const r = ask({ op: 'browserView', reqId: 'r4', paneId: 'p1', tab: bad }, 'full', mine);
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.match(r.error, /Bad tab/);
+  }
+  assert.ok(!PHONE_OPS.includes('browserTab'), 'picking a tab in the pane is the desktop window only');
+  assert.equal(ask({ op: 'browserTab', paneId: 'p1', browserId: 'b1' }, 'full', mine).ok, false);
   for (const cap of ['noshell', 'chat']) {
     const r = ask({ op: 'browserView', paneId: 'p1' }, cap, mine);
     assert.equal(r.ok, false, cap);
@@ -278,7 +288,7 @@ test('browser view: a page that is not there, or a failed picture, is an answer 
 
 test('wiring: the engine answers browserView through the pane\'s own browser tools, and the policy and engine agree on the op names', () => {
   const engine = read('../apaki/engine/engine.js');
-  assert.match(engine, /browserView: async \(c\) => \{\n\s+const p = getPane\(c\.paneId\);\n\s+const b = toolsFor\(p\)\.browser;\n\s+const r = b \? await b\.view\(\)/);
+  assert.match(engine, /browserView: async \(c\) => \{\n\s+const p = getPane\(c\.paneId\);\n\s+const b = toolsFor\(p\)\.browser;\n\s+const r = b \? await b\.view\(\{ tab: typeof c\.tab === 'string' \? c\.tab : null \}\)/);
   for (const op of ['rename', 'forkSession', 'archive', 'folder', 'askSearch', 'browserView']) assert.match(engine, new RegExp(`\\n  ${op}: (async )?\\(c\\)`), `engine.js has a ${op} handler`);
   // Every op a phone may send has a handler in the engine (artifactGet is the one it checks for at run time).
   // unfollow is the exception (the shared view): it ends a registry entry in remote.js (endFollow) and never reaches the engine.

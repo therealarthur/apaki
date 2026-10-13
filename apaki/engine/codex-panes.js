@@ -64,7 +64,7 @@ export const DEV_INSTRUCTIONS = [
   'Apaki has a viewer and a built-in browser next to the conversation, and a tool server named "apaki" gives you tools for them.',
   'When you want the user to see something (an HTML page or small app, a chart, an SVG, an image, a Markdown report, a PDF, any local file, or a web page such as a dev server), call the apaki "show" tool instead of opening it with start, Start-Process, explorer, open, xdg-open or python -m webbrowser; Apaki redirects those anyway.',
   'Shown pages run sandboxed without network access, so inline their CSS, scripts and images (data: URLs); call show again with the returned id to revise something.',
-  'You can also use the browser yourself with the apaki tools browser_open, browser_read, browser_click, browser_type, browser_back and browser_screenshot, for example to check a site you are building; the user watches the same browser.',
+  'You can also use the browser yourself with the apaki tools browser_open, browser_read, browser_click, browser_type, browser_back, browser_screenshot and browser_tabs, for example to check a site you are building; the pages of one conversation are tabs in one browser pane, and the user watches the same browser.',
 ].join(' ');
 
 /** Slash commands a Codex pane offers besides the window's own (/new, /resume, /model, /effort, /mode). */
