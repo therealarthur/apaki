@@ -128,6 +128,11 @@ Copy-Item $node (Join-Path $dist 'node\node.exe')
 # node-pty is missing and everything else works.
 $ptyDir = Join-Path $engine 'node_modules\node-pty'
 if (Test-Path $ptyDir) {
+  # node-pty ships every platform's prebuild plus debug symbols (about 64 MB, 2026-10-13). This package is Windows x64:
+  # keep prebuilds\win32-x64 without its .pdb files (about 5 MB). The check below proves what is left still loads.
+  Get-ChildItem (Join-Path $ptyDir 'prebuilds') -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ne 'win32-x64' } | Remove-Item -Recurse -Force
+  Get-ChildItem $ptyDir -Recurse -Filter '*.pdb' -File | Remove-Item -Force
   $ptyCheck = & (Join-Path $dist 'node\node.exe') -e "require(process.argv[1]); process.stdout.write('ok')" $ptyDir 2>&1
   if ("$ptyCheck" -ne 'ok') { throw "node-pty does not load with the packaged Node: $ptyCheck" }
   'console: node-pty loads with the packaged Node'
