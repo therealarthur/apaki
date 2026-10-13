@@ -13,8 +13,8 @@
 import { Turn, TurnAborted } from './turns.mjs';
 
 const MODELS = [
-  { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol', description: 'Latest workhorse model for coding and everyday work.', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map((value) => ({ value, description: `${value[0].toUpperCase()}${value.slice(1)} reasoning` })), defaultEffort: 'low', isDefault: true, hidden: false },
-  { id: 'gpt-6-astra', name: 'GPT-6-Astra', description: 'Frontier intelligence for the most demanding work.', efforts: ['low', 'medium', 'high'].map((value) => ({ value, description: `${value[0].toUpperCase()}${value.slice(1)} reasoning` })), defaultEffort: 'medium', isDefault: false, hidden: false },
+  { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol', description: 'Latest workhorse model for coding and everyday work.', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map((value) => ({ value, description: `${value[0].toUpperCase()}${value.slice(1)} reasoning` })), defaultEffort: 'low', isDefault: true, hidden: false, serviceTiers: [{ id: 'priority', name: 'Fast', description: '2x speed, increased usage' }] },
+  { id: 'gpt-6-astra', name: 'GPT-6-Astra', description: 'Frontier intelligence for the most demanding work.', efforts: ['low', 'medium', 'high'].map((value) => ({ value, description: `${value[0].toUpperCase()}${value.slice(1)} reasoning` })), defaultEffort: 'medium', isDefault: false, hidden: false, serviceTiers: [] },
 ];
 // The plan windows match the Glass card's Codex account in data.mjs (71 percent left of the 5-hour window).
 const ACCOUNT = { name: 'ChatGPT Plus', source: 'codex', follow: false, isKey: false, limits: [{ label: '5-hour', usedPercent: 29, resetsAt: 1790000000 }, { label: 'Weekly', usedPercent: 33, resetsAt: 1790400000 }] };
@@ -142,6 +142,14 @@ export function createCodexDemo({ emit, later, nextId, sessions, panes, now }) {
       }
       case 'model': cx.model = c.model; if (!MODELS.find((m) => m.id === c.model)?.efforts.some((e) => e.value === cx.effort)) cx.effort = MODELS.find((m) => m.id === c.model)?.defaultEffort || cx.effort; later(30, { ev: 'settings', paneId: pane.id, model: cx.model, effort: cx.effort, mode: cx.mode }); return true;
       case 'effort': cx.effort = c.effort; later(30, { ev: 'settings', paneId: pane.id, model: cx.model, effort: cx.effort, mode: cx.mode }); return true;
+      // The reasoning summary and the speed (2026-10-13): kept per pane and echoed with the settings event.
+      case 'tune': {
+        cx.tune = { summary: null, speed: null, ...(cx.tune || {}) };
+        if ('summary' in c) cx.tune.summary = c.summary;
+        if ('speed' in c) cx.tune.speed = c.speed;
+        later(30, { ev: 'settings', paneId: pane.id, model: cx.model, effort: cx.effort, mode: cx.mode, tune: cx.tune });
+        return true;
+      }
       case 'mode': cx.mode = c.mode; later(30, { ev: 'settings', paneId: pane.id, model: cx.model, effort: cx.effort, mode: cx.mode }); return true;
       case 'commands': later(40, { ev: 'commands', reqId: c.reqId, paneId: pane.id, commands: COMMANDS }); return true;
       case 'contextUsage': later(80, context(pane, c.reqId)); return true;

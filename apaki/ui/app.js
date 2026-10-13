@@ -105,7 +105,7 @@ const S = {
   subs: new Map(), // sessionId -> { agents, shells, at } from the engine's subagents op
   sessions: [], folders: [], view: 'all', query: '', results: null, searchInfo: '', ai: null, asking: null, lastSearch: null,
   voice: false, seq: 0, engineLost: false,
-  defaults: { model: 'claude-opus-5-5', effort: 'xhigh', mode: 'bypassPermissions', billing: null },
+  defaults: { model: 'claude-opus-5-5', effort: 'xhigh', mode: 'bypassPermissions', billing: null, tune: { ultracode: false, size: null } },
   tabs: [], active: null, panes: new Map(), drag: null,
   // Codex (2026-10-12): installed here (the engine's ready event), and the model list it read (event codexModels).
   codexAvailable: false, codex: null,
@@ -280,6 +280,8 @@ function madeCustom(t) { if (t) t.arrange = 'custom'; }
 
 const host = {
   defaults: S.defaults,
+  // This window's access on the PC: 'full' on the desktop, a phone's own below Full (the effort popup dims Ultracode under it).
+  phoneCap: () => phoneCap(),
   send,
   // The desktop window tells the engine each pane's queued messages (pane.js syncQueue), so they go out even with the window
   // closed (queue-hold.js). The phone page does not: a phone's queue stays in its own pane.
@@ -856,8 +858,12 @@ function createTab(root = null, { name = '', arrange = 'auto', max = null, shape
   return t;
 }
 
-/** The model, effort and mode a new pane takes from the pane it comes from: Claude's own, never a Codex pane's. */
-const inheritable = (base) => (base && base.kind !== 'codex' ? { model: base.model, effort: base.effort, mode: base.mode } : {});
+/**
+ * The model, effort and mode a new pane takes from the pane it comes from: Claude's own, never a Codex pane's.
+ * Ultracode itself is not passed on (2026-10-13): it spends far more than any effort level, so each pane turns it on
+ * where it is wanted; the workflow size a person picked is kept, ready for when they do.
+ */
+const inheritable = (base) => (base && base.kind !== 'codex' ? { model: base.model, effort: base.effort, mode: base.mode, tune: { ultracode: false, size: base.tune?.size || null } } : {});
 
 /** A new tab with one pane, holding `session` or a new conversation. */
 function addTab({ session = null, cwd = null, activate = true } = {}) {
@@ -3419,6 +3425,8 @@ function snapshot() {
       return {
         // A pane following a desktop pane (followDesktop) is kept as an empty one: reopening its session would take it over.
         type: 'leaf', pane: lf.pane, s: (!p?.following && p?.sessionId) || null, cwd: p?.cwd || '', title: p?.following ? '' : p?.title || '', model: p?.model, effort: p?.effort, mode: p?.mode,
+        // Ultracode and its size (Claude), the reasoning summary and speed (Codex): kept with the pane in the saved workspace (tune.js).
+        tune: p?.tune || null,
         // A new Codex conversation has no session id to say so yet (2026-10-12).
         ...(p?.kind === 'codex' ? { kind: 'codex' } : {}),
         draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ id: q.id, text: q.text })),
@@ -3491,7 +3499,7 @@ function restore(saved = readLocal()) {
       if (lf.view?.id) return L.leaf(createViewer(lf.view, lf.pane).id);
       // A pane that followed a pane on the PC follows it again (the shared view); opening its conversation here would take it over.
       if (typeof lf.follow === 'string' && lf.follow) {
-        const fp = createPane({ id: lf.pane, sessionId: lf.fs || null, cwd: lf.cwd, title: lf.ft, model: lf.model, effort: lf.effort, mode: lf.mode, kind: lf.kind });
+        const fp = createPane({ id: lf.pane, sessionId: lf.fs || null, cwd: lf.cwd, title: lf.ft, model: lf.model, effort: lf.effort, mode: lf.mode, tune: lf.tune, kind: lf.kind });
         fp.setFollowing(lf.follow, { readOnly: phoneCap() !== 'full' });
         send('follow', { paneId: fp.id, desktopPaneId: lf.follow });
         return L.leaf(fp.id);
@@ -3500,7 +3508,7 @@ function restore(saved = readLocal()) {
       const sid = lf.s && !seen.has(lf.s) ? lf.s : null;
       if (sid) seen.add(sid);
       // The session id is set at once so a save before the engine answers keeps it.
-      const p = createPane({ id: lf.pane, sessionId: sid, cwd: lf.cwd, title: lf.title, model: lf.model, effort: lf.effort, mode: lf.mode, kind: lf.kind });
+      const p = createPane({ id: lf.pane, sessionId: sid, cwd: lf.cwd, title: lf.title, model: lf.model, effort: lf.effort, mode: lf.mode, tune: lf.tune, kind: lf.kind });
       // What you were typing, what was queued, where you were reading, a name waiting for its session.
       if (lf.draft) { p.$.input.value = lf.draft; p.autosize(); p.renderSendButton?.(); }
       // The saved id is kept: the engine may hold the same item (it sends it itself when the turn ends with no window), and matches by id (pane.js adoptQueue).

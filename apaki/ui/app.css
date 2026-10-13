@@ -521,6 +521,28 @@ textarea {
 .menu-div { height: 1px; margin: 5px 6px; background: var(--hairline); }
 .menu-head { padding: 7px 10px 3px; font: var(--heavy) var(--fs-micro)/1 var(--font-display); font-stretch: var(--wide); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
 
+/* The effort popup holds settings beside the levels (2026-10-13, tune.js): a quiet line of explanation, and a row of choices
+   side by side (workflow size, reasoning summary, speed). The chosen one is raised on a tinted track; no capsule, no dot. */
+.menu-note { padding: 1px 10px 7px; max-width: 340px; font-size: var(--fs-micro); line-height: 1.45; color: var(--faint); white-space: normal; }
+.menu-seg-label { padding: 6px 10px 3px; font: var(--heavy) var(--fs-micro)/1 var(--font-display); font-stretch: var(--wide); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.menu-seg { display: flex; gap: 2px; margin: 0 6px 5px; padding: 2px; border-radius: var(--radius-sm); background: var(--tint); }
+.menu-seg-item {
+  flex: 1 1 0; min-width: 0; height: 26px; padding: 0 4px; border: 0; border-radius: calc(var(--radius-sm) - 2px); background: none; cursor: pointer;
+  font: 560 var(--fs-small)/1 var(--font-body); color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover);
+}
+.menu-seg-item:hover:not(.on), .menu-seg-item.kb:not(.on) { color: var(--ink); }
+.menu-seg-item.on { background: var(--card); color: var(--ink); font-weight: 650; box-shadow: 0 1px 2px rgba(var(--shadow-rgb), .2); }
+.menu-seg-item:active { transform: scale(.97); }
+
+/* Ultracode (or a faster Codex speed) on the effort chip: two more lowercase words after the effort, in the brand ink. */
+.chip-btn.effort .uc { margin-left: .45em; color: var(--brand-strong); font-weight: 650; }
+.chip-btn.effort .uc-short { display: none; }
+@container composer (max-width: 480px) {
+  .chip-btn.effort .uc-full { display: none; }
+  .chip-btn.effort .uc-short { display: inline; }
+}
+
 /* Narrow panes: chips stay, smaller; the folder chip and path fold away first. */
 @container pane (max-width: 560px) {
   .chip-btn { padding: 0 6px; font-size: var(--fs-small); max-width: 150px; }

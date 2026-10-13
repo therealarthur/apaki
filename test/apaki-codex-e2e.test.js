@@ -127,7 +127,7 @@ test('the model list carries each model\'s own efforts, the presets and the acco
   assert.deepEqual(m.models.map((x) => x.id), ['gpt-6.1-sol', 'gpt-6-astra'], 'a hidden model is not offered');
   assert.deepEqual(m.models[0].efforts.map((e) => e.value), ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
   assert.deepEqual(m.models[1].efforts.map((e) => e.value), ['low', 'medium', 'high']);
-  assert.deepEqual(m.defaults, { model: 'gpt-6.1-sol', effort: 'low', mode: 'auto' });
+  assert.deepEqual(m.defaults, { model: 'gpt-6.1-sol', effort: 'low', mode: 'auto', speed: null });
   assert.deepEqual(m.presets, ['read-only', 'auto', 'full-access']);
   assert.deepEqual({ ...m.account, limits: m.account.limits.map((l) => [l.label, l.usedPercent]) }, { name: 'ChatGPT Pro', source: 'codex', follow: false, isKey: false, limits: [['5-hour', 29], ['Weekly', 33]] });
   w.close();
@@ -270,6 +270,45 @@ test('the pickers: a model, an effort and a preset travel with the next turn; fu
   w.send({ op: 'mode', paneId: 'c4', mode: 'bypassPermissions' });
   const same = await waitFor(w, 'settings after a bad mode', (m) => m.ev === 'settings' && m.paneId === 'c4', 5000, w.events.length - 1).catch(() => null);
   void same;
+  w.close();
+});
+
+test('the settings beside effort: a reasoning summary and a faster speed travel with the next turn only once picked, and a model that lacks the speed drops it', { timeout: 90000 }, async (t) => {
+  const h = await startHost(t);
+  const w = await windowOf(h);
+  const p = await codexPane(w, h, 'c9', { sessionId: SMALL });
+  // Nothing picked: the turn asks for summary auto and sends no service tier (the thread's own speed stands).
+  await p.result(p.send('first'));
+  const first = h.requests('turn/start')[0];
+  assert.equal(first.summary, 'auto');
+  assert.equal('serviceTier' in first, false);
+  w.send({ op: 'tune', paneId: 'c9', summary: 'detailed', speed: 'priority' });
+  const picked = await waitFor(w, 'tune settings', (m) => m.ev === 'settings' && m.paneId === 'c9' && m.tune?.speed === 'priority');
+  assert.deepEqual(picked.tune, { summary: 'detailed', speed: 'priority' });
+  await p.result(p.send('second'));
+  const second = h.requests('turn/start')[1];
+  assert.equal(second.summary, 'detailed');
+  assert.equal(second.serviceTier, 'priority');
+  // Standard speed is the service tier "default", sent explicitly (a pick, not silence).
+  w.send({ op: 'tune', paneId: 'c9', speed: 'default' });
+  await waitFor(w, 'standard speed', (m) => m.ev === 'settings' && m.paneId === 'c9' && m.tune?.speed === 'default');
+  await p.result(p.send('third'));
+  assert.equal(h.requests('turn/start')[2].serviceTier, 'default');
+  assert.equal(h.requests('turn/start')[2].summary, 'detailed', 'the summary stands until it is changed');
+  // A speed the model does not list is not taken, and a model without it gives the thread's own back.
+  w.send({ op: 'tune', paneId: 'c9', speed: 'turbo' });
+  const refused = await waitFor(w, 'unknown speed', (m) => m.ev === 'settings' && m.paneId === 'c9' && m.tune?.speed === 'default' && m !== picked, 5000, w.events.indexOf(picked) + 1);
+  assert.equal(refused.tune.speed, 'default');
+  w.send({ op: 'tune', paneId: 'c9', speed: 'priority' });
+  await waitFor(w, 'fast again', (m) => m.ev === 'settings' && m.paneId === 'c9' && m.tune?.speed === 'priority' && m.model !== 'gpt-6-astra');
+  w.send({ op: 'model', paneId: 'c9', model: 'gpt-6-astra' });
+  const astra = await waitFor(w, 'a model without the tier', (m) => m.ev === 'settings' && m.paneId === 'c9' && m.model === 'gpt-6-astra');
+  assert.equal(astra.tune.speed, null);
+  assert.equal(astra.tune.summary, 'detailed');
+  await p.result(p.send('fourth'));
+  assert.equal('serviceTier' in h.requests('turn/start')[3], false);
+  // Nothing was written to the user's Codex config: the picks ride with the turn (the fake server would see a config/value/write).
+  assert.equal(h.requests('config/value/write').length + h.requests('config/batchWrite').length, 0);
   w.close();
 });
 

@@ -57,7 +57,7 @@ test('models: each model keeps its own efforts; an effort the model lacks falls 
     { nope: true }, null,
   ]);
   assert.equal(list.length, 2);
-  assert.deepEqual(list[0], { id: 'm1', name: 'Model One', description: 'd', efforts: [{ value: 'low', description: 'a' }, { value: 'ultra', description: 'b' }], defaultEffort: 'low', isDefault: true, hidden: false });
+  assert.deepEqual(list[0], { id: 'm1', name: 'Model One', description: 'd', efforts: [{ value: 'low', description: 'a' }, { value: 'ultra', description: 'b' }], defaultEffort: 'low', isDefault: true, hidden: false, serviceTiers: [] });
   assert.deepEqual(list[1].efforts.map((e) => e.value), ['low', 'medium', 'high'], 'a model that lists none gets the common three');
   assert.equal(effortFor(list[0], 'ultra'), 'ultra');
   assert.equal(effortFor(list[0], 'medium'), 'low');

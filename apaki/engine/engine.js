@@ -17,7 +17,8 @@
  *     and the deep index (src/deepindex.js, latch-index).
  *
  * Commands (op): sessions, search, open, send, interrupt, answer, model,
- * effort, mode, billing, commands, folder, close, askSearch, digPrompt, queueSet
+ * effort, mode, tune (Ultracode and its size on a Claude pane, summary and speed on a Codex pane; tune.js, 2026-10-13),
+ * billing, commands, folder, close, askSearch, digPrompt, queueSet
  * (a pane's queued messages, kept for a window-less host: queue-hold.js),
  * autoCompact ("Auto-compact at": prefs.js). Events (ev): ready, index,
  * sessions, search, opened, history, sdk, result, ask, billing, commands, note,
@@ -195,6 +196,8 @@ import { startOpenServer } from './open-server.js';
 import { dropHeld, heldView, resetHeld, setHeld, takeForAutoSend } from './queue-hold.js';
 // "Auto-compact at" (Settings) and the other few settings the engine keeps (prefs.js).
 import { COMPACT_CHOICES, COMPACT_DEFAULT, RELEASE_CHOICES, RELEASE_DEFAULT, compactSettings, loadPrefs, normalizeCompact, normalizeRelease, prefsFile, savePrefs } from './prefs.js';
+// Ultracode and the other settings beside effort: the pane's tune, as Claude Code's flag settings (tune.js, 2026-10-13).
+import { claudeChange, claudeTune, liveSettings, startSettings } from './tune.js';
 // The context meter before a conversation runs: its last call's usage, from the transcript (2026-10-10 night).
 import { estimateEvent, lastUsage } from './context-estimate.js';
 // The session list's times: the last message, not the file's modified time (2026-10-11).
@@ -239,7 +242,7 @@ import { hashText, parsePhoneId, windowOf } from './remote-policy.js';
 // Git worktrees: repositories, branches and change counts, the diff, and the guarded git and gh actions (2026-10-12, worktrees.js).
 import { WorktreeIndex, diffOf, execute as wtExecute, findRepo as wtFindRepo, plan as wtPlan, run as wtRun, samePath as wtSame, terminalCommand } from './worktrees.js';
 // What a paired phone may make Claude do (2026-10-10, apaki/SECURITY.md 4.4 item 4): enforced on every phone pane below.
-import { CAP_PLAN_TEXT, capCanUseTool, capDefaultMode, capModeText, capModes, capPreToolUse, capRunnerOptions, clampMode } from './remote-policy.js';
+import { CAP_PLAN_TEXT, capCanUseTool, capDefaultMode, capModeText, capModes, capPreToolUse, capRunnerOptions, capTuneText, clampMode } from './remote-policy.js';
 // The console: a pane's conversation in its real terminal UI, and "Open in terminal" (2026-10-12, console.js).
 import crypto from 'node:crypto';
 import { DEFAULT_KEY_WORDS } from '../../src/auth.js';
@@ -311,9 +314,10 @@ const state = {
 };
 
 // New panes start from these; the window can pass its own per pane.
-const defaults = { credential: glassCredential(), model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, mode: 'bypassPermissions' };
+// tune (2026-10-13): Ultracode and its workflow size, which the desktop's last pick carries to new desktop panes like its effort.
+const defaults = { credential: glassCredential(), model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, mode: 'bypassPermissions', tune: claudeTune(null) };
 
-/** paneId -> { id, runner, sessionId, credential, model, effort, mode, tools, held (queued messages), heldSent, userStopped } */
+/** paneId -> { id, runner, sessionId, credential, model, effort, mode, tune, tools, held (queued messages), heldSent, userStopped } */
 const panes = new Map();
 
 // Apaki's own settings (prefs.js). autoCompact reaches every Claude Code process started from now on (runner.flagSettings below).
@@ -494,12 +498,48 @@ function getPane(paneId) {
   const id = String(paneId || 'main');
   let p = panes.get(id);
   if (!p) {
-    p = { id, runner: null, sessionId: null, credential: defaults.credential, model: defaults.model, effort: defaults.effort, mode: defaults.mode };
+    p = { id, runner: null, sessionId: null, credential: defaults.credential, model: defaults.model, effort: defaults.effort, mode: defaults.mode, tune: claudeTune(defaults.tune) };
     // A phone pane never starts in the desktop's default mode (it starts as bypassPermissions): it starts in the mode its phone's access allows.
-    if (parsePhoneId(id)) p.mode = capDefaultMode(phoneCap(id));
+    // Nor does it start with the desktop's Ultracode: a phone turns it on for itself (it spends a lot, and only a Full phone may).
+    if (parsePhoneId(id)) { p.mode = capDefaultMode(phoneCap(id)); p.tune = claudeTune(null); }
     panes.set(id, p);
   }
   return p;
+}
+
+/* ---------- Ultracode and the other settings beside effort (tune.js, 2026-10-13) ---------- */
+
+/** A pane that belongs to a phone below Full access: it gets no workflows at all (tune.js startSettings says why). */
+function tuneRestricted(p) {
+  return Boolean(parsePhoneId(p.id)) && phoneCap(p.id) !== 'full';
+}
+
+/** The pane's tune as its window or phone sees it; `available: false` once Claude Code said it cannot run Ultracode here. */
+function tuneView(p) {
+  return p.tuneAvailable === false && p.tune?.ultracode ? { ...p.tune, available: false } : p.tune;
+}
+
+/** ev settings: a pane's model, effort, mode and tune (Claude: ultracode, size; Codex: summary, speed). */
+function paneSettings(p) {
+  return { ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode, tune: tuneView(p) };
+}
+
+/**
+ * After a change to a running Claude Code: asks what it will really apply (the SDK's get_settings) and says so when
+ * Ultracode is on but cannot run (a model that does not support it, Workflows off for this account). A later model that can
+ * run it brings it back by itself (measured: ultracodeRequested stays true), so the pane's wish is kept.
+ */
+async function tuneCheck(p) {
+  if (isCodexPane(p) || !p.runner?.running) return;
+  // Off: nothing to be unavailable (a stale "cannot run it" flag from before it was switched off goes).
+  if (!p.tune?.ultracode) { if (p.tuneAvailable === false) { p.tuneAvailable = true; emit(paneSettings(p)); } return; }
+  const a = await p.runner.appliedSettings();
+  if (!a) return;
+  const ok = !(a.ultracodeRequested && a.ultracodeAvailable === false);
+  if (ok === (p.tuneAvailable !== false)) return;
+  p.tuneAvailable = ok;
+  emit(paneSettings(p));
+  if (!ok) emit({ ev: 'note', paneId: p.id, tone: 'warn', text: `Ultracode is on for this conversation but ${p.model || 'this model'} cannot run it here (the model does not support it, or workflows are off for this account), so it waits. A model that can run it picks it up again.` });
 }
 
 /* ---------- session list ---------- */
@@ -1117,15 +1157,19 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     p.createdHere = false;
     p.sessionId = sessionId || null;
     // The picks of a Claude pane are not Codex's: only what the window sends for this pane (model, effort, mode) counts.
-    await codex.open(reqId, p, sessionId || null, cwd || null, { model: opts.model, effort: opts.effort, mode: opts.mode, force: opts.force });
+    await codex.open(reqId, p, sessionId || null, cwd || null, { model: opts.model, effort: opts.effort, mode: opts.mode, tune: opts.tune, force: opts.force });
     return;
   }
   if (opts.model) p.model = opts.model;
   if (opts.effort) p.effort = opts.effort;
   if (opts.mode) p.mode = opts.mode;
+  // Ultracode and its size travel with open like the other picks; a Codex pane's tune (summary, speed) reads as the defaults here.
+  p.tune = claudeTune(opts.tune !== undefined ? opts.tune : p.tune);
+  p.tuneAvailable = true;
   // A phone pane: the mode, tools and permission answers its phone's access allows (remote-policy.js capabilities).
   const capOpts = parsePhoneId(p.id) ? capRunnerOptions(phoneCap(p.id), p.mode) : null;
   if (capOpts) p.mode = capOpts.permissionMode;
+  if (tuneRestricted(p)) p.tune = claudeTune({ size: p.tune.size });
   let info = null;
   if (sessionId) {
     // Held by a live latch or another Apaki: the pane offers "Take over here",
@@ -1162,7 +1206,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     envExtra: browserEnv(p),
     // "Auto-compact at": passed to this process as its own setting (the SDK's `settings`, like claude --settings),
     // read on every start so a change in Settings applies to conversations as they next start; no settings file is written.
-    flagSettings: () => compactSettings(prefs.autoCompact),
+    // Ultracode and its size are passed the same way (tune.js startSettings); a phone below Full access gets workflows turned off.
+    flagSettings: () => ({ ...(compactSettings(prefs.autoCompact) || {}), ...startSettings(p.tune, { restricted: tuneRestricted(p) }) }),
     model: p.model,
     effort: p.effort,
     permissionMode: p.mode,
@@ -1226,7 +1271,7 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   p.runner = runner;
   // A pane in a folder the lists have no numbers for yet (a new worktree): the branch label follows within a second.
   wtSoon(600);
-  emit({ ev: 'opened', tookOver: Boolean(opts.force),  reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
+  emit({ ev: 'opened', tookOver: Boolean(opts.force),  reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, tune: tuneView(p), billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
   // Phones that watch this desktop pane (the shared view) stay on it through a new conversation; the window's pane may be new.
   if (!parsePhoneId(p.id)) remote?.announceFollowers?.(p.id);
   if (opts.warm !== false) runner.start();
@@ -1304,7 +1349,7 @@ async function attach(reqId, paneId, sessionId, cwd) {
   // busy: a message sent here is still running (its result event follows, which clears it in the window);
   // turn: any turn is running, also one Claude started by itself (the window picks that up from its next
   // message_start); running: its Claude Code process is up (a restored pane not started yet attaches too).
-  emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: paneTurnBusy(p), running: Boolean(p.runner.running), reqId, paneId: p.id, sessionId: p.sessionId, cwd: p.runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [],
+  emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: paneTurnBusy(p), running: Boolean(p.runner.running), reqId, paneId: p.id, sessionId: p.sessionId, cwd: p.runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, tune: tuneView(p), billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [],
     // The queue as this engine holds it (queue-hold.js): what is still queued, and the ids it sent while no window was here.
     ...heldView(p) });
   // A window that came back learns which phones watch this pane (the shared view).
@@ -1351,7 +1396,7 @@ async function followState(c) {
     ev: 'opened', attached: true, follower: true, readOnly: Boolean(c.readOnly), reqId: c.reqId, paneId: to,
     busy: Boolean(p.busy), turn: paneTurnBusy(p), running: Boolean(p.runner?.running),
     sessionId: p.sessionId, cwd: p.runner?.cwd || null, title: info?.customTitle || info?.summary || 'New conversation',
-    model: p.model, effort: p.effort, mode: p.mode, billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [],
+    model: p.model, effort: p.effort, mode: p.mode, tune: tuneView(p), billing: billingInfo(p), terminal: p.sessionId ? terminalSessions().get(p.sessionId) || [] : [],
   });
   // The history and the meter estimate for a conversation with no process: the same helper, named for the phone's pane.
   if (p.sessionId) await sendHistory({ id: to, runner: p.runner, sessionId: p.sessionId }, p.sessionId);
@@ -1742,7 +1787,7 @@ const handlers = {
   search: (c) => search(c.reqId, String(c.query || '')),
   askSearch: (c) => askSearchOp(c.reqId, String(c.query || ''), c.paneId || null),
   digPrompt: (c) => digPromptOp(c.reqId, String(c.query || ''), Array.isArray(c.candidates) ? c.candidates : []),
-  open: (c) => open(c.reqId, c.paneId, c.sessionId || null, c.cwd || null, { warm: c.warm, model: c.model, effort: c.effort, mode: c.mode, force: c.force, kind: c.kind }),
+  open: (c) => open(c.reqId, c.paneId, c.sessionId || null, c.cwd || null, { warm: c.warm, model: c.model, effort: c.effort, mode: c.mode, tune: c.tune, force: c.force, kind: c.kind }),
   attach: (c) => attach(c.reqId, c.paneId, c.sessionId || null, c.cwd || null),
   // A phone pane shows a desktop pane (the shared view): remote.js registered it and sends this once, after checkPhoneCommand.
   follow: (c) => followState(c),
@@ -1807,7 +1852,9 @@ const handlers = {
     if (isCodexPane(p)) { await codex.setModel(p, String(c.model || '')); return; }
     p.model = c.model; if (!parsePhoneId(p.id)) defaults.model = c.model;
     await p.runner?.setModel(c.model);
-    emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
+    emit(paneSettings(p));
+    // A model that cannot run Ultracode (or lacks the effort) changes what the process will really apply: say so (tuneCheck).
+    await tuneCheck(p);
   },
   mode: async (c) => {
     const p = getPane(c.paneId);
@@ -1819,20 +1866,51 @@ const handlers = {
     // A phone pane takes only the modes its phone's access allows (remote-policy.js refuses others first; this holds anyway).
     if (parsePhoneId(p.id) && !capModes(phoneCap(p.id)).includes(c.mode)) {
       emit({ ev: 'error', reqId: c.reqId, paneId: p.id, message: capModeText(phoneCap(p.id), c.mode), refused: true });
-      emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
+      emit(paneSettings(p));
       return;
     }
     p.mode = c.mode; if (!parsePhoneId(p.id)) defaults.mode = c.mode;
     await p.runner?.setPermissionMode(c.mode);
-    emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
+    emit(paneSettings(p));
   },
   effort: async (c) => {
     const p = getPane(c.paneId);
     if (isCodexPane(p)) { codex.setEffort(p, String(c.effort || '')); return; }
+    const prev = { effort: p.effort, ...claudeTune(p.tune) };
     p.effort = c.effort; if (!parsePhoneId(p.id)) defaults.effort = c.effort;
-    if (p.runner?.running) await p.runner.restart({ effort: c.effort });
-    else if (p.runner) p.runner.effort = c.effort;
-    emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
+    if (p.runner?.running) {
+      // Live (2026-10-13): the SDK's flag settings take the new level at once, with Ultracode kept on (it would go off on a bare
+      // effort change: tune.js liveSettings sends both keys). A Claude Code that will not take the call restarts as it always did.
+      const flags = liveSettings(prev, { effort: p.effort, ...claudeTune(p.tune) });
+      p.runner.effort = c.effort;
+      if (Object.keys(flags).length && !(await p.runner.applyFlags(flags))) await p.runner.restart({ effort: c.effort });
+    } else if (p.runner) p.runner.effort = c.effort;
+    emit(paneSettings(p));
+    await tuneCheck(p);
+  },
+  // Ultracode and its workflow size (Claude Code), or the reasoning summary and speed (Codex): the settings beside effort.
+  // They apply to a running process at once and are kept for the pane and, on the desktop, as the default for new panes.
+  tune: async (c) => {
+    const p = getPane(c.paneId);
+    if (isCodexPane(p)) { codex.setTune(p, c); return; }
+    const change = {};
+    if ('ultracode' in c) change.ultracode = c.ultracode === true;
+    if ('size' in c) change.size = c.size;
+    // A phone below Full access never turns workflows on (remote-policy.js refuses first; this holds anyway).
+    if (tuneRestricted(p) && change.ultracode === true) {
+      emit({ ev: 'error', reqId: c.reqId, paneId: p.id, message: capTuneText(phoneCap(p.id)), refused: true });
+      emit(paneSettings(p));
+      return;
+    }
+    const prev = { effort: p.effort, ...claudeTune(p.tune) };
+    p.tune = claudeChange(p.tune, change);
+    if (!parsePhoneId(p.id)) defaults.tune = claudeTune(p.tune);
+    if (p.runner?.running) {
+      const flags = liveSettings(prev, { effort: p.effort, ...p.tune });
+      if (Object.keys(flags).length && !(await p.runner.applyFlags(flags))) await p.runner.restart({});
+    }
+    emit(paneSettings(p));
+    await tuneCheck(p);
   },
   billing: async (c) => {
     const p = getPane(c.paneId);
@@ -2259,7 +2337,7 @@ const handlers = {
   openTerminal: (c) => openTerminal(c),
 };
 
-const SERIAL_OPS = new Set(['open', 'attach', 'send', 'close', 'model', 'mode', 'effort', 'billing']);
+const SERIAL_OPS = new Set(['open', 'attach', 'send', 'close', 'model', 'mode', 'effort', 'tune', 'billing']);
 
 /** Runs one command, from the window (stdin) or from a phone (remote.js, already checked). */
 async function dispatch(c) {
@@ -2320,12 +2398,18 @@ async function capChanged(deviceId) {
     if (isCodexPane(p)) { codex.recap(p); continue; }
     const o = capRunnerOptions(phoneCap(id), p.mode);
     p.mode = clampMode(phoneCap(id), p.mode);
+    // Below Full access: Ultracode goes off and workflows are turned off (a restart below reads that; a busy process is told now).
+    const restricted = tuneRestricted(p);
+    if (restricted) p.tune = claudeTune({ size: p.tune?.size });
     if (p.runner) {
       Object.assign(p.runner, { disallowedTools: o.disallowedTools, allowedTools: o.allowedTools });
       if (p.runner.running && !p.busy && !paneTurnBusy(p)) await p.runner.restart({ permissionMode: p.mode }).catch(() => {});
-      else await p.runner.setPermissionMode(p.mode).catch(() => {});
+      else {
+        await p.runner.setPermissionMode(p.mode).catch(() => {});
+        if (restricted) await p.runner.applyFlags(startSettings(p.tune, { restricted: true }));
+      }
     }
-    emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode });
+    emit(paneSettings(p));
   }
 }
 
@@ -2339,7 +2423,7 @@ remote = createRemote({
     paneExists: (id) => panes.has(id),
     paneCount: (deviceId) => phonePanes(deviceId).length,
     phonePanes,
-    paneInfo: (id) => { const p = panes.get(id); return p ? { sessionId: p.sessionId, running: Boolean(p.runner) || isCodexPane(p), busy: Boolean(p.busy), model: p.model, effort: p.effort, mode: p.mode, kind: isCodexPane(p) ? 'codex' : 'claude' } : null; },
+    paneInfo: (id) => { const p = panes.get(id); return p ? { sessionId: p.sessionId, running: Boolean(p.runner) || isCodexPane(p), busy: Boolean(p.busy), model: p.model, effort: p.effort, mode: p.mode, tune: tuneView(p), kind: isCodexPane(p) ? 'codex' : 'claude' } : null; },
     // Whether a pane runs a Codex thread: its model, effort and mode are Codex's (remote-policy.js checks them against that).
     paneKind: (id) => (isCodexPane(panes.get(id)) ? 'codex' : 'claude'),
     capChanged: (deviceId) => { capChanged(deviceId).catch((e) => process.stderr.write(`apaki: applying a phone's access: ${e.message}

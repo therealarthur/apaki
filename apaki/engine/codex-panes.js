@@ -44,6 +44,8 @@ import {
   informational, isPreset, limitEvents, limitsOf, messageStart, normalizeModels, presetOf, questionAsk, questionReply, reasoningText, rerouteMessage, streamEvent, textDelta, textStart, threadIdOf, threadPermissions, threadRow,
   threadTitle, todoWriteOf, toolOutput, toolResultMessage, toolResultOf, toolUseOf, turnInput, turnPermissions,
 } from './codex-map.js';
+// The settings beside effort: the reasoning summary and the speed (tune.js, 2026-10-13).
+import { codexChange, codexTune, codexTurnFields } from './tune.js';
 
 /** The pseudo pane the shared app-server's open token belongs to (open-server.js paneToken). */
 export const CODEX_SHARED = 'codex-shared';
@@ -267,6 +269,8 @@ export function createCodex(env) {
     return {
       model: model?.id || cfg.model || '', effort: effortFor(model, cfg.model_reasoning_effort),
       mode: presetOf({ approvalPolicy: cfg.approval_policy, sandbox: cfg.sandbox_mode }),
+      // The speed the user's own Codex config starts threads with (service_tier), so the popup shows what really applies.
+      speed: typeof cfg.service_tier === 'string' && /^[a-z][a-z0-9_-]{0,23}$/.test(cfg.service_tier) ? cfg.service_tier : null,
     };
   }
 
@@ -339,7 +343,7 @@ export function createCodex(env) {
     };
   }
 
-  function settingsEvent(p) { emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode }); }
+  function settingsEvent(p) { emit({ ev: 'settings', paneId: p.id, model: p.model, effort: p.effort, mode: p.mode, tune: p.tune }); }
 
   /**
    * Applies a thread's settings to the pane (what the server says it has now), except what the person picked in this
@@ -395,6 +399,9 @@ export function createCodex(env) {
     p.effort = cx.touched.effort ? opts.effort : effortFor(mdl, d.effort);
     cx.touched.mode = isPreset(opts.mode);
     p.mode = cx.touched.mode ? opts.mode : d.mode;
+    // The reasoning summary and speed the pane picked (tune.js); null for each is "never picked": the turn sends nothing for it.
+    p.tune = codexTune(opts.tune);
+    if (p.tune.speed && !speedOffered(mdl, p.tune.speed)) p.tune.speed = null;
     if (restricted(p)) { p.mode = clampPreset(phoneCap(p.id), p.mode); cx.touched.mode = true; }
     const threadId = sessionId ? threadIdOf(sessionId) : null;
     let title = 'New conversation';
@@ -419,7 +426,7 @@ export function createCodex(env) {
       p.sessionId = null;
       cx.cwd = cwd || os.homedir();
     }
-    emit({ ev: 'opened', reqId, paneId: p.id, sessionId: p.sessionId, cwd: cx.cwd, title, model: p.model, effort: p.effort, mode: p.mode, billing: billingOf(), terminal: [], kind: 'codex', tookOver: Boolean(opts.force) });
+    emit({ ev: 'opened', reqId, paneId: p.id, sessionId: p.sessionId, cwd: cx.cwd, title, model: p.model, effort: p.effort, mode: p.mode, tune: p.tune, billing: billingOf(), terminal: [], kind: 'codex', tookOver: Boolean(opts.force) });
     if (threadId) await sendHistory(p);
   }
 
@@ -554,7 +561,7 @@ export function createCodex(env) {
     // its own pane id, marked as a follower. Nothing about the pane changes.
     const to = as?.paneId || p.id;
     const follower = as ? { follower: true, readOnly: Boolean(as.readOnly) } : {};
-    emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: Boolean(p.busy), running: Boolean(client?.ready), reqId, paneId: to, sessionId: p.sessionId, cwd: cx.cwd, title: p.codexTitle || 'Codex', model: p.model, effort: p.effort, mode: p.mode, billing: billingOf(), terminal: [], kind: 'codex', ...follower });
+    emit({ ev: 'opened', attached: true, busy: Boolean(p.busy), turn: Boolean(p.busy), running: Boolean(client?.ready), reqId, paneId: to, sessionId: p.sessionId, cwd: cx.cwd, title: p.codexTitle || 'Codex', model: p.model, effort: p.effort, mode: p.mode, tune: p.tune, billing: billingOf(), terminal: [], kind: 'codex', ...follower });
     if (cx.threadId) await sendHistory(p, as ? { paneId: to } : {});
     for (const [askId, a] of asks) if (a.paneId === p.id) emit({ ev: 'ask', askId, paneId: to, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}), ...(as ? { readOnly: follower.readOnly } : {}) });
     if (cx.usage) sendContext(p, null, to);
@@ -619,6 +626,8 @@ export function createCodex(env) {
     if (cx.touched.model && p.model) o.model = p.model;
     if (cx.touched.effort && p.effort) o.effort = p.effort;
     if (cx.touched.mode || restricted(p)) Object.assign(o, turnPermissions(p.mode, { restricted: restricted(p) }));
+    // summary and serviceTier only when picked (a turn otherwise asks for summary "auto" and keeps the thread's own speed).
+    Object.assign(o, codexTurnFields(p.tune, modelOf(p.model)));
     return o;
   }
 
@@ -703,6 +712,22 @@ export function createCodex(env) {
     // A model that does not offer the current effort takes its own default, as the Codex app does.
     const e = effortFor(known, p.effort);
     if (e !== p.effort) { p.effort = e; cx.touched.effort = true; }
+    // A model that does not offer the speed the pane picked gives the thread's own back.
+    if (p.tune?.speed && !speedOffered(known, p.tune.speed)) p.tune = codexChange(p.tune, { speed: null });
+    settingsEvent(p);
+  }
+
+  /** Whether a model offers a speed: standard ("default") always, a faster tier when the model lists it. */
+  function speedOffered(model, speed) {
+    return speed === 'default' || Boolean(model?.serviceTiers?.some((s) => s.id === speed));
+  }
+
+  /** The reasoning summary and the speed (op tune on a Codex pane): they ride with the next turn; config.toml is never written. */
+  function setTune(p, change) {
+    const next = codexChange(p.tune, change);
+    // A speed this model does not list is not taken; the settings event tells the pane what it really has.
+    if (next.speed && !speedOffered(modelOf(p.model), next.speed)) next.speed = p.tune?.speed ?? null;
+    p.tune = next;
     settingsEvent(p);
   }
 
@@ -1240,7 +1265,7 @@ export function createCodex(env) {
   }
 
   return {
-    isCodexPane, open, attach, send, steer, openFile, interrupt, setModel, setEffort, setMode, models, list, sendContext, historyBefore, historyCheck, sendHistory,
+    isCodexPane, open, attach, send, steer, openFile, interrupt, setModel, setEffort, setMode, setTune, models, list, sendContext, historyBefore, historyCheck, sendHistory,
     runTool, openedLink, pickPane, release, close, rename, fork, recap, shutdown, touchIdle, rpc, commands: () => COMMANDS.map((c) => ({ ...c })), commandsFor,
     prompts,
     /** The thread rows read by the last list() (empty until the Codex view asks). */
