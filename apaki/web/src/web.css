@@ -540,8 +540,12 @@ body.web.native.paged .chat-chrome.bar-on:not(.strip-on) { padding-bottom: 8px; 
 .cn-title.cn-swap { animation: cn-swap 160ms var(--ease-out); }
 @keyframes cn-swap { from { opacity: .2; } }
 .cn-sub { display: flex; justify-content: center; gap: 6px; min-width: 0; margin-top: 1px; font-size: 11px; line-height: 1.25; color: var(--faint); }
-.cn-sub:not(:has(span:not(:empty))) { display: none; }
+.cn-sub:not(:has(span:not(:empty), .cn-link:not([hidden]))) { display: none; }
 .cn-sub span:empty { display: none; }
+/* Whose a viewer is, or a conversation's viewers (2026-10-12): in that conversation's accent (app.css .acc-N); a tap goes there. */
+.cn-link { flex: 0 0 auto; min-width: 0; max-width: 72%; padding: 0; border: 0; background: none; font: inherit; font-weight: 750; color: hsl(var(--acc-hsl, 232, 30%, 50%)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
+.cn-link[hidden] { display: none; }
+.cn-link.gone { color: var(--faint); font-weight: 600; }
 .cn-pos { flex: none; font-weight: 750; font-variant-numeric: tabular-nums; color: var(--brand-strong); }
 .cn-cwd { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cn-acts { flex: none; display: flex; align-items: center; }
@@ -637,6 +641,8 @@ body.web.native.paged .edge-catch { display: block; position: absolute; z-index:
 .desk-kind { flex: none; margin-left: 8px; font: 800 9.5px/1 var(--font-display); font-stretch: 125%; letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
 .desk-row.quiet .desk-name { font-size: 14.5px; font-weight: 560; }
 .desk-m { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; line-height: 1.2; color: var(--faint); }
+/* A viewer's conversation on the PC (2026-10-12): quiet, under the viewer's name, the same size as the row's meta line. */
+.desk-for { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; line-height: 1.2; color: var(--soft); }
 .desk-row.busy .desk-m { color: var(--brand-strong); }
 .desk-row.front .desk-m { color: var(--soft); }
 .desk-more { width: 100%; min-height: 42px; border: 0; border-radius: 12px; background: hsla(238, 26%, 52%, .08); color: var(--brand-deep); font-weight: 720; font-size: 14px; cursor: pointer; }
@@ -843,6 +849,18 @@ body.web.native .pane.finding.find-cut > .prompt-pin { padding-top: 120px; }
 .bv-k { font: 900 var(--fs-micro)/1 var(--font-display); font-stretch: 125%; letter-spacing: .13em; text-transform: uppercase; color: var(--brand-strong); }
 .bv-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 var(--fs-title)/1.25 var(--font-display); font-stretch: 112%; letter-spacing: -.012em; color: var(--ink-deep); }
 .bv-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
+/* The pages of the conversation's browser on the PC (2026-10-12), from two: one sideways row, the one shown filled. */
+.bv-tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; margin: 0 -2px; padding: 0 2px; }
+.bv-tabs[hidden] { display: none; }
+.bv-tabs::-webkit-scrollbar { display: none; }
+.bv-tab {
+  flex: none; max-width: min(56vw, 220px); height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px;
+  background: hsla(238, 26%, 52%, .09); color: var(--soft); font: 650 var(--fs-small)/1 var(--font-body);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation;
+  transition: background-color 160ms var(--ease-hover), color 160ms var(--ease-hover);
+}
+.bv-tab.on { background: var(--card); border-color: var(--hairline-strong); color: var(--ink-deep); }
+@media (prefers-reduced-motion: reduce) { .bv-tab { transition: none; } }
 .bv-body { position: relative; min-height: 0; flex: 0 1 auto; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; border: 1px solid var(--hairline-strong); border-radius: 14px; background: var(--tint); }
 .bv-shot { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; touch-action: manipulation; }
 .bv-shot[hidden] { display: none; }

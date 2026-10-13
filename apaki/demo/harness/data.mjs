@@ -615,6 +615,34 @@ PRESETS['follow-phone'] = () => ({
 });
 
 /**
+ * The phone beside the layout preset's PC (2026-10-12): "On your desktop" shows the PC's tab names (the projects, or
+ * the name given), and the PC's browser pane says whose it is and how many pages it holds. Use with
+ * phone.html?ws=layout-phone; the first conversation plays the browser visit, so its Browser view has two tabs.
+ */
+PRESETS['layout-phone'] = () => ({
+  active: 0,
+  tabs: [],
+  scripts: { [ID.flaky]: ['browse-phone'] },
+  rail: { view: 'all', expanded: [], scroll: 0, width: 352, collapsed: false },
+  desktopTabs: [
+    { index: 0, active: true, label: 'acme-web', panes: [
+      { paneId: 'la1', kind: 'session', sessionId: ID.flaky, title: 'Fix flaky checkout test', busy: false, focused: true },
+      { paneId: 'lb1', kind: 'browser', title: 'Your cart · Acme Store', tabs: 2, for: 'Fix flaky checkout test', focused: false },
+      { paneId: 'la2', kind: 'session', sessionId: ID.dashboard, title: 'Why the dashboard flashes on first load', busy: false, focused: false },
+      { paneId: 'la3', kind: 'session', sessionId: ID.uploads, title: 'Move image uploads to signed URLs', busy: false, focused: false },
+    ] },
+    { index: 1, active: false, label: 'billing-service', panes: [
+      { paneId: 'lc1', kind: 'session', sessionId: ID.invoices, title: 'Migrate invoices to the new tax API', busy: true, focused: true },
+      { paneId: 'lc2', kind: 'session', sessionId: ID.backfill, title: 'Backfill missing invoice PDFs', busy: false, focused: false },
+    ] },
+    { index: 2, active: false, label: 'Mobile release', panes: [
+      { paneId: 'ld1', kind: 'session', sessionId: ID.push, title: 'Add retries to the push notification worker', busy: false, focused: true },
+      { paneId: 'ld2', kind: 'session', sessionId: ID.darkmode, title: 'Dark mode for the settings screen', busy: false, focused: false },
+    ] },
+  ],
+});
+
+/**
  * The phone in the pairing scene: nothing paired yet, so it starts on its own "Connect to your PC" screen
  * (phone-boot.mjs); once the PC allows it, its list shows the desktop of the base preset.
  */

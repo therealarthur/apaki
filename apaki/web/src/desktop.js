@@ -64,6 +64,8 @@ export function deskModel(tabs, { expanded = false, shown = DESK_TABS_SHOWN, ope
     .map((t) => ({
       index: Number(t.index) || 0,
       active: Boolean(t.active),
+      // The name the tab shows on the PC (2026-10-12: its project, or the one you gave it); an older PC sends none.
+      label: typeof t.label === 'string' && t.label.trim() ? t.label.trim() : `Tab ${(Number(t.index) || 0) + 1}`,
       rows: t.panes.map((p) => {
         const kind = ['session', 'browser', 'task', 'viewer'].includes(p?.kind) ? p.kind : 'viewer';
         const go = kind === 'session' && typeof p.sessionId === 'string' && p.sessionId.length > 0;
@@ -73,13 +75,29 @@ export function deskModel(tabs, { expanded = false, shown = DESK_TABS_SHOWN, ope
         const watched = go && typeof p.paneId === 'string' && p.paneId.length > 0 && Boolean(watching(p.paneId));
         const meta = busy ? (watched ? 'Working · Watching' : 'Working') : watched ? 'Watching' : here ? 'Open here' : p.focused && t.active ? 'On screen' : kind === 'session' ? (go ? '' : 'Not started') : KIND_WORD[kind];
         // paneId (2026-10-11): the desktop pane's own id, which a phone can follow without taking it over.
-        return { kind, go, busy, sessionId: go ? p.sessionId : null, paneId: typeof p.paneId === 'string' && p.paneId ? p.paneId : null, title: String(p.title || (kind === 'session' ? 'New conversation' : KIND_WORD[kind])).trim(), meta, focused: Boolean(p.focused) };
+        // A viewer says whose it is (the PC's link chip, 2026-10-12), and a browser how many pages it holds.
+        const owner = kind !== 'session' && typeof p.for === 'string' && p.for.trim() ? p.for.trim() : '';
+        const pages = kind === 'browser' && Number(p.tabs) > 1 ? Number(p.tabs) : 0;
+        return { kind, go, busy, sessionId: go ? p.sessionId : null, paneId: typeof p.paneId === 'string' && p.paneId ? p.paneId : null, title: String(p.title || (kind === 'session' ? 'New conversation' : KIND_WORD[kind])).trim(), meta: pages && !go ? `${meta} · ${pages} tabs` : meta, focused: Boolean(p.focused), for: owner };
       }),
     }));
   list.sort((a, b) => (b.active - a.active) || (a.index - b.index));
   const visible = expanded ? list : list.slice(0, shown);
   const working = list.reduce((n, t) => n + t.rows.filter((r) => r.busy).length, 0);
   return { tabs: visible, hidden: list.length - visible.length, total: list.length, working, panes: list.reduce((n, t) => n + t.rows.length, 0) };
+}
+
+/**
+ * A tab card's count, honest about kinds (2026-10-12): "2 conversations · 1 viewer", as the PC's tab row counts them
+ * (viewers do not count toward a tab's six conversations). Pure (exported for tests).
+ */
+export function paneCount(rows = []) {
+  const c = rows.filter((r) => r.kind === 'session').length;
+  const v = rows.length - c;
+  const parts = [];
+  if (c) parts.push(`${c} conversation${c === 1 ? '' : 's'}`);
+  if (v) parts.push(`${v} viewer${v === 1 ? '' : 's'}`);
+  return parts.join(' · ');
 }
 
 /** "3 tabs · 1 working" for the header. Pure (exported for tests). */
@@ -116,7 +134,9 @@ export function initDesktop({ haptic = () => {}, showChat = () => {} } = {}) {
     const meta = r.meta && r.go ? `<span class="desk-m">${r.busy ? effortGrid('max', { live: true }) : ''}${esc(r.meta)}</span>` : '';
     // A quiet row says its kind on the same line, at the right.
     const kind = !r.go && r.meta ? `<span class="desk-kind">${esc(r.meta)}</span>` : '';
-    const inner = `<span class="desk-g">${GLYPH[r.kind]}</span><span class="desk-t"><span class="desk-name">${esc(r.title)}</span>${meta}</span>${kind}`;
+    // A viewer's conversation, quiet under its name (the link the PC draws as a chip in that conversation's accent).
+    const forLine = r.for ? `<span class="desk-for">for ${esc(r.for)}</span>` : '';
+    const inner = `<span class="desk-g">${GLYPH[r.kind]}</span><span class="desk-t"><span class="desk-name">${esc(r.title)}</span>${meta}${forLine}</span>${kind}`;
     const cls = `desk-row${r.busy ? ' busy' : ''}${r.meta === 'On screen' ? ' front' : ''}`;
     return r.go
       ? `<li><button type="button" class="${cls} go" data-sid="${esc(r.sessionId)}"${r.paneId ? ` data-pane="${esc(r.paneId)}"` : ''} data-title="${esc(r.title)}" aria-label="Open ${esc(r.title)} on this phone${r.busy ? ', working' : ''}">${inner}</button></li>`
@@ -130,7 +150,7 @@ export function initDesktop({ haptic = () => {}, showChat = () => {} } = {}) {
     if (sec.hidden) return;
     sec.classList.toggle('folded', D.folded);
     const cards = m.tabs.map((t) => `<div class="desk-tab${t.active ? ' front' : ''}">
-        <div class="desk-tab-h"><span class="desk-tab-t">Tab ${t.index + 1}</span>${t.active ? '<span class="desk-front">In front</span>' : ''}<span class="desk-tab-n">${t.rows.length} pane${t.rows.length === 1 ? '' : 's'}</span></div>
+        <div class="desk-tab-h"><span class="desk-tab-t">${esc(t.label)}</span>${t.active ? '<span class="desk-front">In front</span>' : ''}<span class="desk-tab-n">${esc(paneCount(t.rows))}</span></div>
         <ul class="desk-rows">${t.rows.map(row).join('')}</ul>
       </div>`).join('');
     const more = m.hidden ? `<button type="button" class="desk-more">Show ${m.hidden} more tab${m.hidden === 1 ? '' : 's'}</button>` : D.expanded && m.total > DESK_TABS_SHOWN ? '<button type="button" class="desk-more">Show fewer</button>' : '';

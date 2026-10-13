@@ -57,7 +57,24 @@ export function viewModel(ev, now = Date.now()) {
     ratio: ev.width > 0 && ev.height > 0 ? ev.width / ev.height : 1.6,
     at: Number(ev.at) || now,
     canOpenHere: isPublicWebUrl(url),
+    tabs: tabsModel(ev.tabs),
   };
+}
+
+/**
+ * The pages of the conversation's browser pane on the PC (2026-10-12: one browser pane per conversation, its pages as
+ * tabs), for the row above the picture: shown from two. Pure (exported for tests).
+ */
+export function tabsModel(tabs) {
+  if (!Array.isArray(tabs)) return [];
+  return tabs
+    .filter((t) => t && typeof t.id === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(t.id))
+    .slice(0, 20)
+    .map((t) => {
+      const url = String(t.url || '');
+      const title = String(t.title || '').trim();
+      return { id: t.id, title: title && title !== url ? title : hostOf(url) || (url === 'about:blank' || !url ? 'New tab' : url), active: Boolean(t.active) };
+    });
 }
 
 /** "Updated 10:42" for the foot of the sheet. */
@@ -78,6 +95,7 @@ export function initBrowserView({ haptic = () => {} } = {}) {
         <h2 class="bv-title" id="bvTitle"></h2>
         <div class="bv-addr mono"></div>
       </div>
+      <div class="bv-tabs" role="tablist" aria-label="Pages in this conversation's browser" hidden></div>
       <div class="bv-body">
         <button type="button" class="bv-shot" aria-label="Zoom the page" hidden></button>
         <div class="bv-state" role="status"></div>
@@ -89,8 +107,19 @@ export function initBrowserView({ haptic = () => {} } = {}) {
   document.body.append(root);
   const q = (s) => root.querySelector(s);
   // The picture's <img> is made when the first one arrives (no empty image in the markup).
-  const el = { title: q('.bv-title'), addr: q('.bv-addr'), shot: q('.bv-shot'), img: null, state: q('.bv-state'), act: q('.bv-act'), at: q('.bv-at'), open: q('[data-k=open]'), refresh: q('[data-k=refresh]'), card: q('.bv') };
-  const V = { pane: null, busy: false, again: false, seq: 0, timer: null, refreshTimer: null, wait: null, model: null, before: null };
+  const el = { title: q('.bv-title'), addr: q('.bv-addr'), shot: q('.bv-shot'), img: null, state: q('.bv-state'), act: q('.bv-act'), at: q('.bv-at'), open: q('[data-k=open]'), refresh: q('[data-k=refresh]'), card: q('.bv'), tabs: q('.bv-tabs') };
+  // tab: a page picked in the row of tabs, sent with the next look (the PC makes it the active tab, its pane follows).
+  const V = { pane: null, busy: false, again: false, seq: 0, timer: null, refreshTimer: null, wait: null, model: null, before: null, tab: null };
+
+  /** The row of the browser pane's tabs, from two: the active one filled; a tap looks at that one. */
+  function drawTabs(list) {
+    const many = Array.isArray(list) && list.length > 1;
+    el.tabs.hidden = !many;
+    if (!many) { el.tabs.replaceChildren(); return; }
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const html = list.map((t) => `<button type="button" role="tab" class="bv-tab${t.active ? ' on' : ''}" data-id="${esc(t.id)}" aria-selected="${t.active}">${esc(t.title)}</button>`).join('');
+    if (html !== el.tabs.dataset.html) { el.tabs.dataset.html = html; el.tabs.innerHTML = html; el.tabs.querySelector('.bv-tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+  }
 
   const send = (msg) => window.__TAURI__.core.invoke('engine_send', { msg }).catch(() => {});
 
@@ -99,6 +128,7 @@ export function initBrowserView({ haptic = () => {} } = {}) {
     el.refresh.disabled = V.busy;
     el.refresh.textContent = V.busy ? 'Looking…' : 'Refresh';
     el.card.classList.toggle('busy', V.busy);
+    drawTabs(m.kind === 'page' ? m.tabs : null);
     if (m.kind === 'page') {
       el.title.textContent = m.title;
       el.addr.textContent = m.address;
@@ -153,7 +183,10 @@ export function initBrowserView({ haptic = () => {} } = {}) {
       draw();
     }, ANSWER_MS);
     draw();
-    send({ op: 'browserView', reqId, paneId: V.pane });
+    // A tab picked in the row goes along once; after that the PC's active tab is that one.
+    const tab = V.tab;
+    V.tab = null;
+    send({ op: 'browserView', reqId, paneId: V.pane, ...(tab ? { tab } : {}) });
   }
 
   function show(paneId) {
@@ -190,6 +223,15 @@ export function initBrowserView({ haptic = () => {} } = {}) {
   el.refresh.onclick = () => { haptic(); look(); };
   el.open.onclick = () => { const u = el.open.dataset.url; if (u) window.open(u, '_blank', 'noopener,noreferrer'); };
   el.shot.onclick = () => { haptic(); el.card.classList.toggle('zoom'); };
+  // Another page of the conversation's browser (2026-10-12): the PC shows that tab, and this view follows it.
+  el.tabs.addEventListener('click', (e) => {
+    const b = e.target.closest('.bv-tab');
+    if (!b || b.classList.contains('on')) return;
+    haptic();
+    for (const x of el.tabs.querySelectorAll('.bv-tab')) x.classList.toggle('on', x === b);
+    V.tab = b.dataset.id;
+    look();
+  });
 
   // What the PC says: the picture, and what Claude is doing there.
   window.__TAURI__.event.listen('engine', ({ payload: ev }) => {

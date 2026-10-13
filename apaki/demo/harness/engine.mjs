@@ -377,11 +377,19 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     return { image: cv.toDataURL('image/jpeg', 0.8).split(',')[1], width: w, height: h };
   }
 
+  // The conversation's browser pane holds two pages as tabs (2026-10-12); the phone's row of tabs picks one (c.tab).
+  let viewTab = 'b-demo';
   function browserView(c) {
-    const state = { url: 'http://localhost:3000/checkout', title: 'Checkout · Acme Store', loading: false, error: null, status: 200, canGoBack: true };
+    if (c.tab === 'b-demo' || c.tab === 'b-demo-cart') viewTab = c.tab;
+    const tabs = [
+      { id: 'b-demo', title: 'Checkout · Acme Store', url: 'http://localhost:3000/checkout', loading: false, active: viewTab === 'b-demo' },
+      { id: 'b-demo-cart', title: 'Your cart · Acme Store', url: 'http://localhost:3000/cart', loading: false, active: viewTab === 'b-demo-cart' },
+    ];
+    const cur = tabs.find((t) => t.active);
+    const state = { url: cur.url, title: cur.title, loading: false, error: null, status: 200, canGoBack: true };
     const shot = pageShot(browserDid);
     later(520, shot
-      ? { ev: 'browserView', reqId: c.reqId, paneId: c.paneId, ok: true, text: '', state, mime: 'image/jpeg', ...shot, at: now() }
+      ? { ev: 'browserView', reqId: c.reqId, paneId: c.paneId, ok: true, text: '', state, mime: 'image/jpeg', ...shot, at: now(), tabs }
       : { ev: 'browserView', reqId: c.reqId, paneId: c.paneId, ok: false, text: 'This page has no canvas to draw the demo page on.', state: null, image: null, at: now() });
   }
 
