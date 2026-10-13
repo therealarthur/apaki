@@ -238,6 +238,16 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     return `${done}<div class="ph-start"><button class="primary" data-k="pair">${p ? 'Show a new code' : 'Pair a phone'}</button><span>${p ? 'That code expired.' : PAIR_HINT}</span></div>`;
   }
 
+  /**
+   * A phone whose Apaki app is older than this PC wants (status devices[].app, apaki/remote/compat.js, 2026-10-13): the
+   * phone itself says "Update the Apaki app"; this tells the person at the PC. Nothing for a phone that is up to date or
+   * never said (the web page has no app version).
+   */
+  function appNote(app) {
+    if (!app || app.state !== 'old') return '';
+    return `<div class="ph-dev-m ph-app-old">Its Apaki app (${esc(app.version)}) is older than this PC wants (${esc(app.min)}). The phone asks to update it${app.kind === 'ios' ? ' in TestFlight' : ''}.</div>`;
+  }
+
   /** The phone keys behind an Apaki account (ENROLL.md): state, last seen, and Block, Allow and Forget for each. */
   function phonesList(d) {
     const phones = d.phones || [];
@@ -248,7 +258,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
       const first = p.firstSeen ? ` · first seen ${esc(day(p.firstSeen))}` : '';
       // 2026-10-11: Allow leads where the phone waits or is blocked, Block is the quiet red one, Forget plain text.
       const acts = `${p.state === 'enrolled' || p.state === 'allowed' ? '' : btn('phone-allow', 'Allow', p, p.state === 'pending' ? 'ph-lead' : '')}${p.state === 'blocked' ? '' : btn('phone-block', 'Block', p, 'ph-block')}${btn('phone-forget', 'Forget', p, 'ph-ghost')}`;
-      return `<li class="ph-phone" data-state="${esc(p.state)}">${phoneGlyph(Boolean(p.online), 'ph-phone-g')}<div class="ph-phone-t"><div class="ph-phone-n">${esc(p.name || 'Phone')}</div><div class="ph-dev-m"><span class="ph-pstate">${esc(PHONE_STATE[p.state] || p.state)}</span> · ${seen}${first}</div></div><div class="ph-phone-a">${acts}</div></li>`;
+      return `<li class="ph-phone" data-state="${esc(p.state)}">${phoneGlyph(Boolean(p.online), 'ph-phone-g')}<div class="ph-phone-t"><div class="ph-phone-n">${esc(p.name || 'Phone')}</div><div class="ph-dev-m"><span class="ph-pstate">${esc(PHONE_STATE[p.state] || p.state)}</span> · ${seen}${first}${p.app ? ` · app ${esc(p.app.version)}` : ''}</div>${appNote(p.app)}</div><div class="ph-phone-a">${acts}</div></li>`;
     }).join('');
     return `<div class="ph-phones-h">Phones signed in to ${esc(d.account || 'this account')}</div><ul class="ph-phones" aria-label="Phones that connected through this account">${rows}</ul>`;
   }
@@ -292,7 +302,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
       const capRow = editCap === d.id ? capSeg(dcap, 'cap-set', d.id, st?.caps || CAPS) : '';
       const sure = confirmRemove === d.id;
       const title = acct ? `Removes the account from this PC: every phone signed in to ${d.account || 'it'} stops reaching it` : 'Removes this phone: it can never reconnect';
-      return `<li class="ph-dev${d.connected ? ' live' : ''}${acct ? ' acct' : ''}">${phoneGlyph(d.connected)}<div class="ph-dev-t"><div class="ph-dev-n">${esc(d.name || 'Phone')}</div><div class="ph-dev-m">${meta}${capLink}${lifeLink}</div>${capRow}${lifeRow}${acct ? phonesList(d) : ''}</div><button class="ph-remove${sure ? ' sure' : ''}" data-k="revoke" data-id="${esc(d.id)}" title="${esc(title)}">${sure ? 'Remove for good' : 'Remove'}</button></li>`;
+      return `<li class="ph-dev${d.connected ? ' live' : ''}${acct ? ' acct' : ''}">${phoneGlyph(d.connected)}<div class="ph-dev-t"><div class="ph-dev-n">${esc(d.name || 'Phone')}</div><div class="ph-dev-m">${meta}${d.app ? ` · app ${esc(d.app.version)}` : ''}${capLink}${lifeLink}</div>${appNote(d.app)}${capRow}${lifeRow}${acct ? phonesList(d) : ''}</div><button class="ph-remove${sure ? ' sure' : ''}" data-k="revoke" data-id="${esc(d.id)}" title="${esc(title)}">${sure ? 'Remove for good' : 'Remove'}</button></li>`;
     }).join('');
     const heading = list.some((d) => d.kind === 'account') ? 'Paired phones and accounts' : 'Paired phones';
     // Connected and no account yet: how to reach this PC from any device (Arthur, 2026-10-10).

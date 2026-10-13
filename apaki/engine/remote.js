@@ -166,6 +166,7 @@ import {
   b64urlDecode, b64urlEncode, deviceIdFor, randomBytes,
 } from '../remote/protocol.js';
 import { Inbox, Outbox, WIRE_VERSION } from '../remote/wire.js';
+import { MIN_PHONE_APP, parseVersion, phoneAppState } from '../remote/compat.js';
 import { APP_VERSION } from './app-version.js';
 import { BROADCAST_EVENTS, PHONE_OPS, checkPhoneCommand, hashText, parsePhoneId, phoneView, routeEvent } from './remote-policy.js';
 import { CAPS, CAP_LABEL, AskGate, capDefaultMode, capFollowNote, capNote, capOf, followerView, phonePaneId } from './remote-policy.js';
@@ -499,6 +500,8 @@ export class RemoteBridge {
     this.attempt = 0;
     this.byeCode = null;
     this.conns = new Map();
+    // Which phone app each connected phone runs (compat.js): device id, or `${account device id}:${phone key id}`. Memory only.
+    this.clientApps = new Map();
     this.offer = null;
     this.offerTimer = null;
     this.request = null;
@@ -1182,7 +1185,7 @@ export class RemoteBridge {
     }
     // expiresAt: when this phone's pairing runs out (null: never), so the phone can show it and explain an expiry.
     // mode (Private or Connected) and cap (what this phone may make Claude do), since 2026-10-10.
-    c.outbox.send({ t: 'hello', v: WIRE_VERSION, appVersion: APP_VERSION, pcName: this.pcName, ops: this.phoneOps(), features: this.helloFeatures(), expiresAt: self?.expiresAt || null, mode: this.mode(), cap, nonce: b64urlEncode(c.nonce), ...(self?.kind === 'account' ? { asAccount: true } : {}) });
+    c.outbox.send({ t: 'hello', v: WIRE_VERSION, appVersion: APP_VERSION, minPhoneApp: MIN_PHONE_APP, pcName: this.pcName, ops: this.phoneOps(), features: this.helloFeatures(), expiresAt: self?.expiresAt || null, mode: this.mode(), cap, nonce: b64urlEncode(c.nonce), ...(self?.kind === 'account' ? { asAccount: true } : {}) });
     if (c.held) {
       c.graceTimer = unref(setTimeout(() => this.viaGrace(c).catch((e) => this.log(`phone key grace: ${e.message}`)), this.viaGraceMs));
     } else {
@@ -1227,6 +1230,7 @@ export class RemoteBridge {
     // Held (an account connection that has not been let in yet): the only thing it may say is via (ENROLL.md).
     if (c.held && !(msg && msg.t === 'via')) return;
     if (msg && msg.t === 'cmd') this.command(c, msg.cmd);
+    else if (msg && msg.t === 'client') this.clientInfo(c, msg);
     else if (msg && msg.t === 'account-link') this.accountLink(c, msg).catch((e) => this.log(`account link: ${e.message}`));
     else if (msg && msg.t === 'account-unlink') this.accountUnlink(c, msg).catch((e) => this.log(`account unlink: ${e.message}`));
     else if (msg && msg.t === 'via') {
@@ -1234,6 +1238,26 @@ export class RemoteBridge {
       // One connection's vias are handled in order (a second one must see what the first one decided).
       c.viaChain = c.viaChain.then(() => this.onVia(c, msg)).catch((e) => this.log(`via: ${e.message}`));
     }
+  }
+
+  /**
+   * The phone app says which app it is ({ t: 'client', kind, version }, apaki/remote/compat.js), so the Phone sheet can say
+   * when it is older than this PC wants (statusInfo, app). Only the native apps send it. Kept in memory while this engine
+   * runs, per phone; nothing about it is saved. A message that does not make sense is ignored.
+   */
+  clientInfo(c, msg) {
+    const kind = msg.kind === 'ios' || msg.kind === 'android' ? msg.kind : null;
+    const version = typeof msg.version === 'string' ? msg.version.trim().slice(0, 32) : '';
+    if (!kind || !parseVersion(version) || !c.device) return;
+    const key = c.phone ? `${c.device.id}:${c.phone.id}` : c.device.id;
+    const was = this.clientApps.get(key);
+    this.clientApps.set(key, { kind, version });
+    if (was?.kind !== kind || was?.version !== version) this.pushStatus();
+  }
+
+  /** A phone's app as the Phone sheet shows it: { kind, version, min, state: 'ok' | 'old' | 'unknown' }, or null when it never said. */
+  appInfo(a) {
+    return a ? { kind: a.kind, version: a.version, min: MIN_PHONE_APP, state: phoneAppState(a.version, MIN_PHONE_APP) } : null;
   }
 
   /* ---------- Apaki accounts (apaki/remote/ACCOUNTS.md) ---------- */
@@ -2431,6 +2455,7 @@ export class RemoteBridge {
     }
     this.cancelGrace(deviceId);
     this.closePhonePanes(deviceId);
+    for (const k of [...this.clientApps.keys()]) if (k === deviceId || k.startsWith(`${deviceId}:`)) this.clientApps.delete(k);
     // An account removed takes its phone keys and their "New phone connected" lines with it.
     this.notices = this.notices.filter((n) => n.accountDeviceId !== deviceId);
   }
@@ -2489,9 +2514,11 @@ export class RemoteBridge {
       devices: this.state.devices.map((d) => ({
         id: d.id, name: d.name, pairedAt: d.pairedAt, lastSeen: d.lastSeen, expiresAt: d.expiresAt || null, connected: connected.has(d.id), panes: (this.engine.phonePanes?.(d.id) || []).length,
         cap: capOf(d),
+        // The phone app it runs and whether this PC wants a newer one (compat.js); null until the phone says.
+        app: this.appInfo(this.clientApps.get(d.id)),
         // phones (2026-10-11, ENROLL.md): the phone keys behind an account device, with whether each is connected now.
         // No paused flag any more: Private lets an account device connect and asks about each phone.
-        ...(d.kind === 'account' ? { kind: 'account', account: d.account || '', by: d.by || '', via: via.get(d.id) || [], phones: (d.phones || []).map((p) => ({ id: p.id, pub: p.pub, name: p.name, state: p.state, firstSeen: p.firstSeen || null, lastSeen: p.lastSeen || null, online: online.has(`${d.id}:${p.id}`) })) } : {}),
+        ...(d.kind === 'account' ? { kind: 'account', account: d.account || '', by: d.by || '', via: via.get(d.id) || [], phones: (d.phones || []).map((p) => ({ id: p.id, pub: p.pub, name: p.name, state: p.state, firstSeen: p.firstSeen || null, lastSeen: p.lastSeen || null, online: online.has(`${d.id}:${p.id}`), app: this.appInfo(this.clientApps.get(`${d.id}:${p.id}`)) })) } : {}),
       })),
       // The QR address holds the one-time secret: it goes to the desktop window only. unchecked: shown without a page check.
       pairing: this.offer && !this.offer.used ? { url: this.offer.url, exp: this.offer.exp, unchecked: Boolean(this.offer.unchecked) } : null,

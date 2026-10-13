@@ -57,7 +57,8 @@ const uiFiles = () => fs.readdirSync(UI).filter((f) => /\.(js|css)$/.test(f) && 
 // pager.js and desktop.js (2026-10-11): the conversation screen's tabs and pages, and "On your desktop" on the list.
 // browserview.js (2026-10-12): the page Claude opened in the PC's browser, as a picture.
 const WEB_FILES = ['boot.js', 'link.js', 'shim.js', 'store.js', 'scan.js', 'account.js', 'native.js', 'phonekey.js', 'pager.js', 'desktop.js', 'browserview.js', 'web.css', 'sandbox.html'];
-const REMOTE_FILES = ['protocol.js', 'wire.js'];
+// compat.js (2026-10-13): the version contract with the PC (the phone compares its app's version with what the PC wants).
+const REMOTE_FILES = ['protocol.js', 'wire.js', 'compat.js'];
 const RELAY_PLACEHOLDER = 'wss://relay.apaki.invalid';
 
 function parseArgs(argv) {

@@ -23,6 +23,8 @@ import {
 } from '../apaki/engine/remote-policy.js';
 import * as store from '../apaki/engine/remote-store.js';
 import { RemoteBridge, isPlaceholder, relayUrl, webUrl, RELAY_PLACEHOLDER } from '../apaki/engine/remote.js';
+import { APP_VERSION } from '../apaki/engine/app-version.js';
+import { MIN_PHONE_APP } from '../apaki/remote/compat.js';
 
 const DEV = 'AbCdEfGhIjKlMnOpQrStUv'; // 22 chars, like a device id
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -687,4 +689,55 @@ test('policy: a phone may steer its own running pane and ask for its context met
   assert.equal(meter.ok, true);
   assert.deepEqual(meter.cmd, { op: 'contextUsage', paneId: phonePaneId(DEV, 'p1') });
   assert.equal(checkPhoneCommand({ op: 'contextUsage', paneId: 'p1' }, { ...ctx, paneExists: () => false }).ok, false, 'only its own open panes');
+});
+
+test('bridge: hello carries the PC\'s version and the oldest phone app; a phone app that says its version is checked against it', async () => {
+  const dir = tmp();
+  process.env.APAKI_REMOTE_PROTECT = 'file';
+  const relay = fakeRelay();
+  const { b, last } = bridgeFor(relay, dir);
+  try {
+    await b.op({ op: 'remoteEnable' });
+    await until(() => b.status === 'online');
+    await b.op({ op: 'remotePairStart' });
+    const ph = relay.phone();
+    await until(() => b.conns.has(ph.conn));
+    const device = await createDeviceIdentity();
+    const phone = await phoneClient(ph, new PhoneSession({ device, offer: parsePairingUrl(last().pairing.url), name: 'Old app phone' }));
+    await phone.pump(() => phone.sas);
+    await until(() => last().request);
+    await b.op({ op: 'remotePairDecision', approve: true });
+    await phone.pump(() => phone.events.some((e) => e.ev === 'ready'));
+
+    // The hello names this Apaki and the oldest phone app it works with (apaki/remote/compat.js).
+    const hello = phone.events.find((e) => e.wire?.t === 'hello').wire;
+    assert.equal(hello.appVersion, APP_VERSION);
+    assert.equal(hello.minPhoneApp, MIN_PHONE_APP);
+    assert.equal(last().devices[0].app, null, 'a phone that has not said which app it is shows nothing (the web page never does)');
+
+    // Messages that make no sense are ignored: an unknown kind, something that is not a version.
+    await phone.out.send({ t: 'client', kind: 'toaster', version: '1.0.0' });
+    await phone.out.send({ t: 'client', kind: 'ios', version: 'not a version' });
+    await phone.out.send({ t: 'client', kind: 'ios' });
+    await sleep(80);
+    assert.equal(last().devices[0].app, null);
+
+    // An app under the minimum is marked old in the status the Phone sheet reads.
+    await phone.out.send({ t: 'client', kind: 'ios', version: '0.0.1', build: '4' });
+    await until(() => last().devices[0].app);
+    assert.deepEqual(last().devices[0].app, { kind: 'ios', version: '0.0.1', min: MIN_PHONE_APP, state: 'old' });
+
+    // The same phone after it updated: the sheet follows, without a reconnect.
+    await phone.out.send({ t: 'client', kind: 'ios', version: MIN_PHONE_APP });
+    await until(() => last().devices[0].app?.state === 'ok');
+    assert.equal(last().devices[0].app.version, MIN_PHONE_APP);
+
+    // Removing the phone forgets what it said.
+    await b.op({ op: 'remoteRevoke', deviceId: last().devices[0].id });
+    assert.equal(b.clientApps.size, 0);
+  } finally {
+    b.stop();
+    delete process.env.APAKI_REMOTE_PROTECT;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

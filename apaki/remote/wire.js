@@ -9,7 +9,9 @@
  * commands the desktop window does, so the web client can run Apaki's own UI.
  *
  *   phone -> PC   { t: 'cmd', cmd }                one engine command (engine.js op)
- *   PC -> phone   { t: 'hello', v, pcName, ops }   right after the channel opens
+ *   phone -> PC   { t: 'client', kind, version }   once the channel is in, from the native apps only (compat.js)
+ *   PC -> phone   { t: 'hello', v, pcName, ops }   right after the channel opens; since 2026-10-13 also appVersion (the
+ *                                                  PC's Apaki) and minPhoneApp (the oldest phone app it works with)
  *                 { t: 'evs', list }               engine events, batched
  *   either way    { t: 'big', stream, bytes }      then binary chunks of that stream:
  *                                                  one message too large for a
