@@ -109,6 +109,37 @@ export function terminalCommand(platform, dir, { exists = fs.existsSync, env = p
 /** AppleScript text literal: backslash and double quote escaped. */
 const asString = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
+/** A POSIX shell word. */
+const shWord = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+/** A PowerShell single-quoted string. */
+const psWord = (s) => `'${String(s).replace(/'/g, "''")}'`;
+
+/**
+ * What opens a terminal window that RUNS a program in a folder (2026-10-13, Apaki's "Open in terminal": the exact
+ * session in a terminal window). The same terminal terminalCommand picks: Windows Terminal (a new window with a title),
+ * else PowerShell in a console window of its own; on macOS iTerm or Terminal (an AppleScript that runs the line; another
+ * APAKI_TERMINAL_APP cannot be handed a command, so Terminal runs it); elsewhere the desktop's terminal with -e.
+ * `file` and `args` are the program and its arguments, quoted here for the shell that runs them.
+ * @returns {{ cmd, args, cwd?, fallback? }}
+ */
+export function terminalRunCommand(platform, { dir, title = 'Terminal', file, args = [] }, opts = {}) {
+  if (platform === 'win32') {
+    const ps = { cmd: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-Command', `$Host.UI.RawUI.WindowTitle = ${psWord(title)}; & ${[file, ...args].map(psWord).join(' ')}`], cwd: dir };
+    // Windows Terminal splits its command line at ';' (a new tab): such a line goes through PowerShell instead.
+    if ([dir, title, file, ...args].some((a) => String(a).includes(';'))) return ps;
+    return { cmd: 'wt.exe', args: ['-w', 'new', 'new-tab', '-d', dir, '--title', title, '--', file, ...args], fallback: ps };
+  }
+  const line = `cd ${shWord(dir)} && ${[file, ...args].map(shWord).join(' ')}`;
+  if (platform === 'darwin') {
+    const app = terminalCommand(platform, dir, opts).args[1];
+    if (app === 'iTerm') {
+      return { cmd: 'osascript', args: ['-e', 'tell application "iTerm"', '-e', 'activate', '-e', `create window with default profile command ${asString(`/bin/zsh -lc ${shWord(line)}`)}`, '-e', 'end tell'] };
+    }
+    return { cmd: 'osascript', args: ['-e', 'tell application "Terminal"', '-e', 'activate', '-e', `do script ${asString(line)}`, '-e', 'end tell'] };
+  }
+  return { cmd: 'x-terminal-emulator', args: ['-e', 'sh', '-c', line], cwd: dir };
+}
+
 /**
  * Runs `<claude> auth login` where the person can finish the browser sign-in. Windows: a console window of its own
  * (cmd start). macOS: a new Terminal window (AppleScript do script). Elsewhere: null, and the caller says what to run.

@@ -43,6 +43,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { claudeArgs } from '../../src/launch.js';
+import { terminalRunCommand } from '../../src/platform.js';
 import { PRESETS } from './codex-map.js';
 
 const require = createRequire(import.meta.url);
@@ -257,24 +258,15 @@ export function applyEnv(base, { envSet = {}, envUnset = [], pathPrepend = null 
 /* ---------- an outside terminal window ---------- */
 
 /** A PowerShell single-quoted string. */
-const psQuote = (s) => `'${String(s).replace(/'/g, "''")}'`;
-
 /**
- * How to open a terminal window that runs `file args` in `cwd` on this platform: Windows Terminal when it is there,
- * else PowerShell in its own console window; Terminal on a Mac; x-terminal-emulator elsewhere.
- * @returns {{ cmd, args, cwd?, fallback? } | null}
+ * How to open a terminal window that runs `file args` in `cwd` on this platform. The launcher is the one the Mac port
+ * shares (src/platform.js terminalRunCommand, next to its terminalCommand): Windows Terminal when it is there, else
+ * PowerShell in its own console window; iTerm or Terminal on a Mac; x-terminal-emulator elsewhere.
+ * @param {object} [opts]  { exists, env, home } for the Mac's app choice (tests pass their own)
+ * @returns {{ cmd, args, cwd?, fallback? }}
  */
-export function terminalLaunch(platform, { cwd, title = 'Claude Code', file, args = [] }) {
-  if (platform === 'win32') {
-    const ps = { cmd: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-Command', `$Host.UI.RawUI.WindowTitle = ${psQuote(title)}; & ${[file, ...args].map(psQuote).join(' ')}`], cwd };
-    // Windows Terminal splits its command line at ';' (a new tab): such a path goes through PowerShell instead.
-    if ([cwd, title, file, ...args].some((a) => String(a).includes(';'))) return ps;
-    return { cmd: 'wt.exe', args: ['-w', 'new', 'new-tab', '-d', cwd, '--title', title, '--', file, ...args], fallback: ps };
-  }
-  const sh = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
-  const line = `cd ${sh(cwd)} && ${[file, ...args].map(sh).join(' ')}`;
-  if (platform === 'darwin') return { cmd: 'osascript', args: ['-e', `tell application "Terminal" to do script ${JSON.stringify(line)}`, '-e', 'tell application "Terminal" to activate'] };
-  return { cmd: 'x-terminal-emulator', args: ['-e', 'sh', '-c', line], cwd };
+export function terminalLaunch(platform, { cwd, title = 'Claude Code', file, args = [] }, opts = {}) {
+  return terminalRunCommand(platform, { dir: cwd, title, file, args }, opts);
 }
 
 /* ---------- a terminal window that holds a conversation (Open in terminal) ---------- */

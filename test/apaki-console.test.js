@@ -148,7 +148,14 @@ test('terminal window: Windows Terminal with PowerShell as the fallback; a semic
   const semi = terminalLaunch('win32', { cwd: 'C:/a;b', title: 't', file: 'n', args: [] });
   assert.equal(semi.cmd, 'powershell.exe');
   assert.match(terminalLaunch('win32', { cwd: 'C:/w', title: "it's", file: 'n', args: [] }).fallback.args.at(-1), /'it''s'/);
-  assert.equal(terminalLaunch('darwin', { cwd: '/w', file: 'node', args: ['x'] }).cmd, 'osascript');
+  // The Mac (src/platform.js, shared with the Mac port): Terminal runs the line; iTerm when it is installed.
+  const term = terminalLaunch('darwin', { cwd: '/w x', file: '/n/node', args: ["it's"] }, { exists: () => false, env: {}, home: '/Users/a' });
+  assert.equal(term.cmd, 'osascript');
+  assert.ok(term.args.includes('tell application "Terminal"'));
+  assert.match(term.args.find((a) => a.startsWith('do script')), /cd '\/w x' && '\/n\/node' 'it'\\\\''s'/);
+  const iterm = terminalLaunch('darwin', { cwd: '/w', file: 'node', args: [] }, { exists: (p) => p.endsWith('iTerm.app'), env: {}, home: '/Users/a' });
+  assert.ok(iterm.args.includes('tell application "iTerm"'));
+  assert.equal(terminalLaunch('linux', { cwd: '/w', file: 'node', args: [] }).cmd, 'x-terminal-emulator');
 });
 
 /* ---------- the running TUIs (fake pty) ---------- */

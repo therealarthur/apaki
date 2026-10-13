@@ -135,7 +135,7 @@
  *   op sessionInfo { sessionId } -> ev sessionInfo { sessionId, ok, info }   read only: transcript facts, size, live state
  *   op pin { sessionId, pinned } -> ev sessions (rows carry pinned: true)   Pin to top
  *   op exportSession { sessionId, inline? } -> ev exported { ok, name, path | markdown }   Export as Markdown
- *   (Open in a terminal sends op openTerminal { sessionId, kind, paneId? }, which the console toggle's work builds)
+ *   (Open in a terminal sends op openTerminal { sessionId, kind, paneId? }: console.js and "The console" below)
  *   ev sessions rows also carry model (the last reply's, from the tail last-active.js reads)
  *
  * The console (2026-10-12, console.js; Arthur: "a toggle console that transitions a pane to console for either claude or
