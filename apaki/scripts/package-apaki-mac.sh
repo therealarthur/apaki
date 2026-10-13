@@ -26,6 +26,9 @@
 #   --bundle-only    skip the preparation; build the .app and .dmg from what is in apaki/build-mac
 #   --skip-index     reuse index/target/release/latch-index instead of building it
 #   --no-dmg         the .app only
+#   --updater        also the update archive Tauri's updater downloads (Myrlin-Apaki_<version>_<arch>.app.tar.gz and its .sig,
+#                    in --out). Needs the signing key in TAURI_SIGNING_PRIVATE_KEY (and TAURI_SIGNING_PRIVATE_KEY_PASSWORD);
+#                    the release workflow passes them from repository secrets (apaki/docs/releasing.md)
 #   --clean-target   delete apaki/target and index/target when done (a small disk; the products are copied out first)
 #   --out DIR        where the finished .app and .dmg go (default apaki/dist)
 # Environment: CARGO_HOME and CARGO_TARGET_DIR are respected; APAKI_MIN_FREE_GB (default 5) is the free disk space
@@ -48,7 +51,7 @@ repo="$(cd "$here/../.." && pwd)"
 app="$repo/apaki"
 stage="$app/build-mac"
 out="$app/dist"
-do_prepare=1; do_bundle=1; skip_index=0; want_dmg=1; clean_target=0
+do_prepare=1; do_bundle=1; skip_index=0; want_dmg=1; clean_target=0; want_updater=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -56,6 +59,7 @@ while [ $# -gt 0 ]; do
     --bundle-only) do_prepare=0 ;;
     --skip-index) skip_index=1 ;;
     --no-dmg) want_dmg=0 ;;
+    --updater) want_updater=1 ;;
     --clean-target) clean_target=1 ;;
     --out) shift; case "$1" in /*) out="$1" ;; *) out="$PWD/$1" ;; esac ;;
     -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -154,6 +158,20 @@ prepare_engine() {
   local claude="$e/node_modules/@anthropic-ai/claude-agent-sdk-darwin-$node_arch/claude"
   [ -f "$claude" ] || die "missing $claude: npm did not install the Agent SDK's claude binary for darwin-$node_arch"
   chmod 755 "$claude"
+  # The console (apaki/engine/console.js) runs on node-pty, a native module with a prebuilt binding per platform under
+  # prebuilds/ (N-API, so any Node loads it). Only this Mac's goes into the app. npm ci ran with --ignore-scripts, which
+  # skips node-pty's post-install step that makes its spawn-helper executable, so that is done here. Then check it loads
+  # with the Node the app carries (the script only builds for the Mac it runs on), so an installed app never finds out later.
+  local pty="$e/node_modules/node-pty" d
+  [ -d "$pty" ] || die "node_modules/node-pty is missing from the production install; the console needs it"
+  for d in "$pty"/prebuilds/*; do
+    [ -d "$d" ] || continue
+    [ "$(basename "$d")" = "darwin-$node_arch" ] || rm -rf "$d"
+  done
+  [ -f "$pty/prebuilds/darwin-$node_arch/pty.node" ] || die "node-pty has no darwin-$node_arch prebuild"
+  chmod 755 "$pty/prebuilds/darwin-$node_arch/spawn-helper" "$pty/prebuilds/darwin-$node_arch/pty.node"
+  [ "$("$stage/node/node" -e "require(process.argv[1]); process.stdout.write('ok')" "$pty" 2>&1)" = "ok" ] || die "node-pty does not load with the packaged Node"
+  say "  console: node-pty loads with the packaged Node"
   printf '# engine\n\nApaki'"'"'s engine and latch, copied from the repo by apaki/scripts/package-apaki-mac.sh, with production node_modules and latch-index built for this Mac. Regenerated on every package run. See ../../_WHY_THIS_IS_HERE.md\n' > "$e/_WHY_THIS_IS_HERE.md"
 }
 
@@ -200,10 +218,15 @@ bundle() {
   need_free "tauri build (the Rust app)"
   local targets="app,dmg"
   [ "$want_dmg" = 1 ] || targets="app"
-  say "tauri build --bundles $targets"
+  local cfg=(--config tauri.macos.bundle.conf.json)
+  if [ "$want_updater" = 1 ]; then
+    [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ] || die "--updater needs the updater signing key in TAURI_SIGNING_PRIVATE_KEY (and TAURI_SIGNING_PRIVATE_KEY_PASSWORD)"
+    cfg+=(--config tauri.updater.conf.json)
+  fi
+  say "tauri build ${cfg[*]} --bundles $targets"
   # CI=true makes the bundler skip Finder scripting (AppleScript) for the .dmg layout: it needs a logged-in desktop and
   # an Automation permission, and hangs without them (an ssh session, a runner). The .dmg is plain but complete.
-  ( cd "$app" && CI=true "$stage/.tools/node_modules/.bin/tauri" build --config tauri.macos.bundle.conf.json --bundles "$targets" )
+  ( cd "$app" && CI=true "$stage/.tools/node_modules/.bin/tauri" build "${cfg[@]}" --bundles "$targets" )
 
   local target="${CARGO_TARGET_DIR:-$app/target}" ver; ver="$(version)"
   local built_app="$target/release/bundle/macos/Myrlin Apaki.app"
@@ -225,6 +248,15 @@ bundle() {
     rm -rf "$src"
   fi
   if [ -n "$dmg" ]; then cp "$dmg" "$out/"; fi
+  if [ "$want_updater" = 1 ]; then
+    # What the updater downloads: the .app as a tar.gz and its signature, named with the version and the CPU (no spaces:
+    # GitHub turns a space in an asset name into a dot, and the update feed must name the file exactly as it is served).
+    local upd="$target/release/bundle/macos/Myrlin Apaki.app.tar.gz"
+    [ -f "$upd" ] && [ -f "$upd.sig" ] || die "the bundler made no update archive with a signature ($upd and $upd.sig); is createUpdaterArtifacts set (tauri.updater.conf.json)?"
+    cp "$upd" "$out/Myrlin-Apaki_${ver}_${bundle_arch}.app.tar.gz"
+    cp "$upd.sig" "$out/Myrlin-Apaki_${ver}_${bundle_arch}.app.tar.gz.sig"
+    say "update archive: Myrlin-Apaki_${ver}_${bundle_arch}.app.tar.gz (+ .sig)"
+  fi
   printf '# dist\n\nThe finished macOS build of Myrlin Apaki (apaki/scripts/package-apaki-mac.sh): Myrlin Apaki.app and its .dmg, ad-hoc signed. Safe to delete; regenerated by the script. Install: open the .dmg and drag the app to Applications (a downloaded copy needs right-click, Open the first time, until it is signed with a Developer ID and notarized).\n' > "$out/_WHY_THIS_IS_HERE.md"
 
   say "verifying the app"

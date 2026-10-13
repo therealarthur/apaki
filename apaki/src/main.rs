@@ -69,6 +69,8 @@ mod browser;
 mod host;
 // macOS only in what it does: the menu bar, the page tweaks, the PATH; its pure helpers (bundle folders) run everywhere.
 mod mac;
+// Updates itself from GitHub Releases (2026-10-13): looks at the feed, downloads and verifies, installs on Restart.
+mod updater;
 
 /// How long a host this window started may take to answer.
 const HOST_START_TIMEOUT: Duration = Duration::from_secs(45);
@@ -395,11 +397,16 @@ fn main() {
                 let _ = w.set_focus();
             }
         }))
+        // Self-update (2026-10-13): Tauri's updater plugin (feed, signature check, installer) and the window's quiet
+        // "Update ready" card (updater.js). updater.rs decides when to look.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(updater::plugin())
         .manage(Engine { stdin: Mutex::new(None), restarts: Mutex::new(Vec::new()), gen: std::sync::atomic::AtomicU64::new(0), closing: AtomicBool::new(false), flushed: Mutex::new(None), early: Mutex::new(Some(Vec::new())) })
-        .invoke_handler(tauri::generate_handler![engine_send, browser::browser, ui_log])
+        .invoke_handler(tauri::generate_handler![engine_send, browser::browser, ui_log, updater::update_status, updater::update_check, updater::update_install])
         .setup(|app| {
             // The browser borrows the main webview's WebView2 environment; nothing starts until one opens.
             browser::init(app.handle());
+            updater::init(app.handle());
             #[cfg(target_os = "macos")]
             mac::install_menu(app.handle())?;
             // What the window sends before the engine answers (its start-up
