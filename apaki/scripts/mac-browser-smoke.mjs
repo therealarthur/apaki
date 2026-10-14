@@ -24,7 +24,7 @@
  * is stopped by its pid (never by name).
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -51,6 +51,16 @@ const results = [];
 const at = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
 const check = (name, ok, detail = '') => { results.push({ name, ok }); console.log(`[${at()}] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${String(detail).replace(/\s+/g, ' ').slice(0, 220)})` : ''}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Runs a program without blocking this process (its own servers must keep answering meanwhile). */
+const exec = (file, args, env) => new Promise((resolve) => {
+  const c = spawn(file, args, { env });
+  let out = '';
+  let err = '';
+  c.stdout.on('data', (d) => { out += d; });
+  c.stderr.on('data', (d) => { err += d; });
+  c.on('error', (e) => resolve({ status: null, stdout: out, stderr: err, error: e }));
+  c.on('close', (status) => resolve({ status, stdout: out, stderr: err }));
+});
 
 /* ---------- a small site to browse ---------- */
 
@@ -121,6 +131,9 @@ async function run(mouse) {
       try { m = JSON.parse(line); } catch { return; }
       if (m.op === 'shellHello') shell?.hello(m);
       else if (m.op === 'shellReply') shell?.reply(m);
+      // The window asks for its saved workspace; an empty one that is newer than anything it kept itself starts every run
+      // from a clean window (the page keeps its own copy in the app's web storage and would restore the last run's panes).
+      else if (m.op === 'loadState') conn?.send({ ev: 'state', reqId: m.reqId, state: { v: 1, savedAt: Date.now() + 3600 * 1000, tabs: [], active: 0 } });
     },
     onGone: () => { conn = null; },
   });
@@ -159,6 +172,15 @@ async function run(mouse) {
     // An inline link reads [link "name" ref=N], a block one link "name" [ref=N].
     const refOf = (text, kind, name) => { const m = text.match(new RegExp(`${kind} "${name}"(?: \\[ref=(\\d+)\\]| ref=(\\d+))`)); return m ? Number(m[1] || m[2]) : NaN; };
     check('browser_read gives the title, headings, links and fields with refs', r.ok && /Page: Smoke home/.test(outline) && /heading "Apaki browser smoke"/.test(outline) && refOf(outline, 'link', 'Go to page two') > 0 && refOf(outline, 'textbox', 'Search') > 0, outline.slice(0, 400));
+
+    // What the page library holds in the isolated world right after the read (a probe for refs that go stale).
+    const probe = async (expression) => {
+      const x = await shell.request('browser.cdp', { owner, method: 'Runtime.evaluate', params: { expression, contextId: 1, returnByValue: true, awaitPromise: true } });
+      return JSON.stringify(x.result?.result?.value ?? x.result?.exceptionDetails ?? x);
+    };
+    console.log(`  probe 1: ${await probe(`(() => { const a = window.__apaki; const r = a && a.refs.get(1); const el = r && r.deref(); return { have: Boolean(a), v: a && a.v, seq: a && a.seq, refs: a && a.refs.size, el: el ? el.tagName : String(el), connected: el ? el.isConnected : null }; })()`)}`);
+    await sleep(500);
+    console.log(`  probe 2: ${await probe(`(() => { const a = window.__apaki; const r = a && a.refs.get(1); const el = r && r.deref(); return { have: Boolean(a), refs: a && a.refs.size, el: el ? el.tagName : String(el) }; })()`)}`);
 
     // click a link
     r = await call('click', { ref: refOf(outline, 'link', 'Go to page two') });
@@ -205,7 +227,9 @@ async function run(mouse) {
     // status and errors
     r = await call('open', { url: `${base}/gone` });
     check('an HTTP 404 is reported with its status', r.ok && /404/.test(r.text), r.text);
-    r = await call('open', { url: 'http://127.0.0.1:9/' });
+    // A port nothing listens on: ask for one, close it.
+    const closed = await new Promise((resolve) => { const t = http.createServer(); t.listen(0, '127.0.0.1', () => { const p = t.address().port; t.close(() => resolve(p)); }); });
+    r = await call('open', { url: `http://127.0.0.1:${closed}/` });
     check('an address that cannot be reached is reported, not hung', !r.ok && /could not load|connect/.test(r.text), r.text);
 
     // tabs
@@ -299,9 +323,9 @@ async function shim() {
   const env = { ...process.env, APAKI_NODE: path.join(resources, 'node', 'node'), APAKI_OPEN_URL: `http://127.0.0.1:${open.address().port}/open`, APAKI_OPEN_TOKEN: 'smoke-token', APAKI_OPEN_NO_FALLBACK: '1' };
   try {
     const url = 'http://127.0.0.1:5173/p?a=1&b=2&c=3';
-    const r = spawnSync(sh, [url], { env, encoding: 'utf8' });
+    const r = await exec(sh, [url], env);
     check('apaki-open runs on the app\'s own Node and hands a URL with "&" to the engine whole', r.status === 0 && got.length === 1 && got[0].url === url && got[0].token === 'smoke-token', r.stderr || JSON.stringify(got));
-    const py = spawnSync('python3', ['-c', "import webbrowser,sys; sys.exit(0 if webbrowser.open('http://127.0.0.1:8888/tree?token=abc&x=1') else 5)"], { env: { ...env, BROWSER: sh }, encoding: 'utf8' });
+    const py = await exec('python3', ['-c', "import webbrowser,sys; sys.exit(0 if webbrowser.open('http://127.0.0.1:8888/tree?token=abc&x=1') else 5)"], { ...env, BROWSER: sh });
     if (py.error) console.log('  (no python3: the webbrowser check is skipped)');
     else check('Python\'s webbrowser, with BROWSER set to apaki-open, reaches the engine', py.status === 0 && got.length === 2 && got[1].url === 'http://127.0.0.1:8888/tree?token=abc&x=1', py.stderr || JSON.stringify(got));
   } finally { open.close(); }

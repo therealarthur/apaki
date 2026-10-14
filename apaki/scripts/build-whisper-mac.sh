@@ -11,7 +11,9 @@
 # One static program: Metal's shader library is embedded in the binary (GGML_METAL_EMBED_LIBRARY, compiled by the GPU driver
 # at first use, so no Xcode Metal toolchain and no loose .metallib file), ggml and whisper are linked in (no .dylib to sign
 # or lose), and the only things it loads are system libraries (checked below). The CPU part is built for a generic Apple
-# Silicon (GGML_NATIVE=OFF), so a program built on a newer chip still runs on an M1.
+# Silicon (GGML_NATIVE=OFF), so a program built on a newer chip still runs on an M1. The BLAS backend is off: it calls
+# Accelerate functions that exist only from macOS 13.3, the GPU does the heavy work anyway, and without it the program
+# does not depend on a newer Accelerate than the Metal build needs (macOS 13).
 #
 # Usage: bash apaki/scripts/build-whisper-mac.sh --out DIR [--cache DIR]
 #   --out DIR    where it leaves bin/Release/whisper-cli (the layout of the Windows voice folder) and LICENSE-whisper.cpp
@@ -66,6 +68,7 @@ cmake -S "$src" -B "$build" \
   -DBUILD_SHARED_LIBS=OFF \
   -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON \
   -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
+  -DGGML_BLAS=OFF \
   -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF \
   -DWHISPER_SDL2=OFF -DWHISPER_CURL=OFF >/dev/null
 say "whisper.cpp: building whisper-cli"

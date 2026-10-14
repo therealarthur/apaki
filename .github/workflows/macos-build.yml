@@ -139,6 +139,17 @@ jobs:
           fi
           ls -la apaki/dist
 
+      # Kept before the tests below on purpose: when one fails, the finished app is still there to download and look at.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            apaki/dist/*.dmg
+            apaki/dist/*.app.tar.gz
+            apaki/dist/*.app.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Run the app and drive its browser
         run: |
           set -euo pipefail
@@ -155,16 +166,6 @@ jobs:
           echo "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002  $RUNNER_TEMP/model/ggml-base.en.bin" | shasum -a 256 -c -
           res="apaki/dist/Myrlin Apaki.app/Contents/Resources"
           "$res/node/node" apaki/scripts/mac-browser-smoke.mjs --app "$PWD/apaki/dist/Myrlin Apaki.app" --mouse none --voice --model "$RUNNER_TEMP/model/ggml-base.en.bin"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos
-          path: |
-            apaki/dist/*.dmg
-            apaki/dist/*.app.tar.gz
-            apaki/dist/*.app.tar.gz.sig
-          if-no-files-found: error
-          retention-days: 7
 
       - name: Remove the signing keychain and the API key file
         if: always()

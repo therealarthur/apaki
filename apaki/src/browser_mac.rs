@@ -575,6 +575,8 @@ define_class!(
         fn did_commit(&self, _wv: &WKWebView, _nav: Option<&WKNavigation>) {
             let id = self.ivars().id.clone();
             trace(format!("{id} commit"));
+            // The address that was asked for, before the view's own takes over.
+            let asked = BROWSERS.with(|m| m.borrow().get(&id).map(|b| b.url.clone())).unwrap_or_default();
             BROWSERS.with(|m| {
                 if let Ok(mut m) = m.try_borrow_mut() {
                     if let Some(b) = m.get_mut(&id) {
@@ -584,6 +586,19 @@ define_class!(
                 }
             });
             refresh(&id);
+            // WebKit refuses some addresses (a blocked port such as 9) by committing a blank page without a word.
+            let now = BROWSERS.with(|m| m.borrow().get(&id).map(|b| b.url.clone())).unwrap_or_default();
+            if (now.is_empty() || now == "about:blank") && !asked.is_empty() && asked != "about:blank" {
+                trace(format!("{id} the view shows a blank page for {asked}"));
+                BROWSERS.with(|m| {
+                    if let Ok(mut m) = m.try_borrow_mut() {
+                        if let Some(b) = m.get_mut(&id) {
+                            b.url = asked.clone();
+                            b.error = Some("the page could not be shown (WebKit refused this address or port)".to_string());
+                        }
+                    }
+                });
+            }
             emit_state(&id);
         }
 
