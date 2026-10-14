@@ -114,6 +114,7 @@ async function run(mouse) {
 
   let conn = null;
   let shell = null;
+  let booted = false;
   const lines = [];
   const server = new HostServer({
     appId: 'io.myrlin.apaki',
@@ -131,6 +132,8 @@ async function run(mouse) {
       try { m = JSON.parse(line); } catch { return; }
       if (m.op === 'shellHello') shell?.hello(m);
       else if (m.op === 'shellReply') shell?.reply(m);
+      // The window asks for the worktrees as the very last step of its start (after restoring its workspace).
+      else if (m.op === 'worktrees') booted = true;
     },
     onGone: () => { conn = null; },
   });
@@ -151,6 +154,10 @@ async function run(mouse) {
     check('the window said hello with the browser feature', shell.has('browser'), JSON.stringify(shell.info));
     if (!shell.has('browser')) return;
 
+    // The window closes pages the shell holds from before it started (a reload of the window) at the end of its own start:
+    // a test that opens a page earlier than that would see its page closed under it. Wait for the window to finish starting.
+    for (let i = 0; i < 100 && !booted; i++) await sleep(200);
+    check('the window finished starting', booted);
     await shell.request('browser.mouseMode', { mode: mouse });
     const owner = 'smoke-pane';
     const tools = createBrowserTools({ shell, owner: () => owner });
@@ -160,6 +167,8 @@ async function run(mouse) {
     // open + read
     let r = await call('open', { url: `${base}/` });
     check('browser_open loads a page and waits for it', r.ok && /HTTP 200/.test(r.text), r.text);
+    // The window makes a pane for the page and places it a moment later; clicks go out as real mouse events once it is on screen.
+    for (let i = 0; i < 60 && !((await dbg()).browsers || []).some((x) => x.shown); i++) await sleep(250);
     await sleep(300);
     const st = await shell.request('browser.state', { owner });
     check('the browser reports the page title and address', st.title === 'Smoke home' && st.url === `${base}/` && st.loading === false, JSON.stringify(st));
@@ -200,7 +209,7 @@ async function run(mouse) {
     const out3 = r.text || '';
     r = await call('click', { ref: refOf(out3, 'checkbox', 'Tick me') });
     const afterCb = (await call('read')).text || '';
-    check('browser_click ticks a checkbox', r.ok && /checkbox "Tick me"[^\n]*\[checked\]/.test(afterCb) && /checkbox on/.test(afterCb), afterCb.split('\n').filter((l) => /checkbox|state|idle/.test(l)).join(' | '));
+    check('browser_click ticks a checkbox', r.ok && /checkbox "Tick me"[^\n]*\[checked[,\]]/.test(afterCb) && /checkbox on/.test(afterCb), afterCb.split('\n').filter((l) => /checkbox|state|idle/.test(l)).join(' | '));
     r = await call('type', { ref: refOf(out3, 'combobox', 'sel'), text: 'Beta' });
     check('browser_type picks an option in a dropdown', r.ok && /Beta/.test(r.text), r.text);
     r = await call('click', { ref: refOf(out3, 'button', 'count') });
