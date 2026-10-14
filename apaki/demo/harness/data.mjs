@@ -20,6 +20,9 @@
  *   PRESETS             named starting workspaces (tabs and layouts) per scene
  */
 
+// The viewers preset (2026-10-13): which invented artifact each viewer pane shows (artifacts.mjs).
+import { ARTIFACT_VIEWERS, artifactKind, artifactTitle } from './artifacts.mjs';
+
 export const MIN = 60_000;
 export const HOUR = 60 * MIN;
 export const DAY = 24 * HOUR;
@@ -668,4 +671,27 @@ PRESETS.split = () => {
   ];
   p.scripts = { [ID.invoices]: ['background-invoices'], [ID.push]: ['background-push'], [ID.review]: ['background-review'] };
   return p;
+};
+
+/**
+ * The viewers (2026-10-13; viewers like ChatGPT's side window): one tab per kind of artifact, each a conversation with
+ * its viewer beside it (code, a 100,000 row CSV, a chart, a spreadsheet, a Word document, a JSON tree and records, a
+ * Markdown note the user edited, four more charts, an SVG). ?tab=<n> starts on tab n. Use with desktop.html?ws=viewers
+ * and phone.html?ws=viewers.
+ */
+PRESETS.viewers = () => {
+  const titles = buildSessions(0);
+  const titleOf = (key) => titles.find((s) => s.id === ID[key])?.title || '';
+  const tab = Number(new URLSearchParams(globalThis.location?.search || '').get('tab') || 0);
+  return {
+    active: Number.isInteger(tab) && tab >= 0 && tab < ARTIFACT_VIEWERS.length ? tab : 0,
+    tabs: ARTIFACT_VIEWERS.map(([aid, key], i) => ({
+      focused: `vv${i}`, name: '', arrange: 'auto', max: null,
+      root: split('row', [0.36, 0.64],
+        leaf(`pv${i}`, ID[key], { title: titleOf(key), cwd: CWD.web }),
+        { type: 'leaf', pane: `vv${i}`, view: { sessionId: ID[key], id: aid, title: artifactTitle(aid), kind: artifactKind(aid), sourcePane: `pv${i}` } }),
+    })),
+    scripts: {},
+    rail: { view: 'all', expanded: [], scroll: 0, width: 312, collapsed: true },
+  };
 };

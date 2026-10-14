@@ -77,7 +77,9 @@ test('every preset names panes whose sessions exist', () => {
     const p = make();
     assert.ok(p.tabs.length >= 1 || p.desktopTabs, name);
     // A browser pane, and a conversation not started yet (no session), name no session (the layout preset, 2026-10-12).
-    for (const t of p.tabs) for (const lf of leaves(t.root)) if (!lf.web && lf.s !== null) assert.ok(ids.has(lf.s), `${name}: ${lf.s}`);
+    for (const t of p.tabs) for (const lf of leaves(t.root)) if (!lf.web && !lf.view && lf.s !== null) assert.ok(ids.has(lf.s), `${name}: ${lf.s}`);
+    // A viewer pane (the viewers preset, 2026-10-13) names the session of the artifact it shows.
+    for (const t of p.tabs) for (const lf of leaves(t.root)) if (lf.view) assert.ok(ids.has(lf.view.sessionId), `${name} viewer: ${lf.view.sessionId}`);
     for (const t of p.desktopTabs || []) for (const d of t.panes) if (!d.kind || d.kind === 'session') assert.ok(ids.has(d.sessionId), `${name} desktop: ${d.sessionId}`);
   }
 });
@@ -218,4 +220,36 @@ test('phone-boot.mjs shows boot.js\'s own pairing screens (its copy still matche
   }
   // follow is planned on the PC side, so the phone must not use it in recordings.
   assert.match(copy, /supports: \(f\) => f !== 'follow'/);
+});
+
+/* ---------- the close-up scenes (2026-10-12) ---------- */
+
+test('close-up scenes: crops sit inside the window, are never encoded wider than their 2x pixels, and make the files the page uses', async () => {
+  const { SCENES } = await import('./scenes.mjs');
+  const outputs = new Set();
+  for (const [name, sc] of Object.entries(SCENES)) {
+    if (!sc.crop) continue;
+    assert.ok(sc.hero, `${name} names the moment its poster is`);
+    if (sc.crop.each) {
+      // One still per matching element, only at the named moment.
+      assert.ok(sc.stillsOnly && sc.crop.at && sc.crop.names.length >= 1, name);
+      for (const n of sc.crop.names) outputs.add(n);
+      continue;
+    }
+    const { x, y, w, h } = sc.crop;
+    for (const v of [x, y, w, h]) assert.ok(Number.isInteger(v) && v >= 0, `${name}: the crop is in whole CSS pixels`);
+    assert.ok(w > 0 && h > 0 && x + w <= 1440 && y + h <= 900, `${name}: the crop is inside the 1440x900 window`);
+    // At 2x the crop is w*2 wide; a clip is scaled down to maxWidth, never up, and x264 wants even sizes.
+    assert.ok(sc.maxWidth <= w * 2 && sc.maxWidth % 2 === 0, `${name}: maxWidth ${sc.maxWidth} against a crop ${w * 2} wide at 2x`);
+    outputs.add(name);
+    if (sc.pair) {
+      assert.ok(sc.pair.name && sc.pair.maxWidth <= 390 * 2 && sc.pair.maxWidth % 2 === 0, `${name}: the phone half is named and no wider than the phone page at 2x`);
+      assert.ok(!sc.pair.crop, `${name}: the phone half is the whole page`);
+      outputs.add(sc.pair.name);
+    }
+  }
+  // The names the home page is coded against (site-media.mjs CROP_CLIPS and CROP_STILLS).
+  for (const want of ['hero-pane', 'hero-phone', 'glass-card', 'steer-line', 'worktree-diff', 'search-meaning', 'browser-pane', 'pair-sheet', 'pair-phone', 'codex-pair', 'sessions-list', 'pane-a', 'pane-b', 'pane-c', 'pane-d']) {
+    assert.ok(outputs.has(want), `no close-up scene makes ${want}`);
+  }
 });

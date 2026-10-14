@@ -62,7 +62,7 @@ test('the tool server in proxy mode lists show and the seven browser tools and f
   t.after(() => client.close());
   await client.connect(transport);
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((x) => x.name).sort(), ['browser_back', 'browser_click', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_tabs', 'browser_type', 'show']);
+  assert.deepEqual(tools.map((x) => x.name).sort(), ['browser_back', 'browser_click', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_tabs', 'browser_type', 'show', 'view_read']);
   const show = tools.find((x) => x.name === 'show');
   assert.match(show.description, /Show the user something inside Myrlin Apaki/);
   assert.deepEqual(show.inputSchema.required.sort(), ['kind', 'title']);

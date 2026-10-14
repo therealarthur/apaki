@@ -59,6 +59,12 @@ const uiFiles = () => fs.readdirSync(UI).filter((f) => /\.(js|css)$/.test(f) && 
 const WEB_FILES = ['boot.js', 'link.js', 'shim.js', 'store.js', 'scan.js', 'account.js', 'native.js', 'phonekey.js', 'pager.js', 'desktop.js', 'browserview.js', 'web.css', 'sandbox.html'];
 // compat.js (2026-10-13): the version contract with the PC (the phone compares its app's version with what the PC wants).
 const REMOTE_FILES = ['protocol.js', 'wire.js', 'compat.js'];
+// The viewer's libraries (2026-10-13, apaki/ui/lazy.js): syntax colours, workbooks and Word documents, with their
+// licenses, under vendor/ as on the desktop. The page loads them only when a viewer of that kind opens, so the service
+// worker does not fetch them up front either (they are still part of the build and of its hash, so the PC's page
+// check covers them like every other file).
+const VENDOR_DIRS = ['highlight', 'sheetjs', 'mammoth'];
+const LAZY_PREFIX = 'vendor/';
 const RELAY_PLACEHOLDER = 'wss://relay.apaki.invalid';
 
 function parseArgs(argv) {
@@ -94,6 +100,16 @@ export function build({ relay = process.env.APAKI_RELAY_URL || RELAY_PLACEHOLDER
   for (const f of WEB_FILES) copy(path.join(SRC, f), f);
   for (const f of REMOTE_FILES) copy(path.join(REMOTE, f), f);
   for (const f of fs.readdirSync(path.join(UI, 'fonts'))) if (f.endsWith('.woff2')) copy(path.join(UI, 'fonts', f), `fonts/${f}`);
+  // The viewer's vendored libraries, folder by folder (sorted, so the build is the same on every machine).
+  const copyTree = (from, rel) => {
+    fs.mkdirSync(path.join(out, rel), { recursive: true });
+    for (const name of fs.readdirSync(from).sort()) {
+      const full = path.join(from, name);
+      if (fs.statSync(full).isDirectory()) copyTree(full, `${rel}/${name}`);
+      else copy(full, `${rel}/${name}`);
+    }
+  };
+  for (const d of VENDOR_DIRS) copyTree(path.join(UI, 'vendor', d), `vendor/${d}`);
   for (const f of fs.readdirSync(path.join(WEB, 'icons'))) if (f.endsWith('.png')) copy(path.join(WEB, 'icons', f), `icons/${f}`);
   copy(path.join(APAKI, 'icons', 'source', 'apaki-icon.svg'), 'icons/favicon.svg');
   copy(path.join(SRC, 'manifest.webmanifest'), 'manifest.webmanifest');
@@ -154,7 +170,7 @@ export function build({ relay = process.env.APAKI_RELAY_URL || RELAY_PLACEHOLDER
   fs.writeFileSync(path.join(out, 'index.html'), html);
   files.push('index.html');
 
-  const assets = ['./', ...files, `app.css?v=${v}`, `web.css?v=${v}`, `boot.js?v=${v}`].map((f) => (f === './' ? f : `./${f}`));
+  const assets = ['./', ...files.filter((f) => !f.startsWith(LAZY_PREFIX)), `app.css?v=${v}`, `web.css?v=${v}`, `boot.js?v=${v}`].map((f) => (f === './' ? f : `./${f}`));
   const sw = lf(fs.readFileSync(path.join(SRC, 'sw.js'), 'utf8')).replace('__VERSION__', v).replace('__ASSETS__', () => JSON.stringify(assets));
   fs.writeFileSync(path.join(out, 'sw.js'), sw);
   files.push('sw.js');

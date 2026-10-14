@@ -23,6 +23,8 @@ import { Turn, TurnAborted, SCRIPTS } from './turns.mjs';
 import { createCodexDemo } from './codex.mjs';
 // Git worktrees (2026-10-12): the pretend of the engine's worktree ops, on invented repositories.
 import { createWorktrees } from './worktrees.mjs';
+// The viewers (2026-10-13): invented artifacts of every kind, for the viewer panes of the "viewers" preset.
+import { createArtifactsDemo } from './artifacts.mjs';
 
 const MODEL = 'claude-opus-5-5';
 const PAIR_URL = 'https://apaki.myrlin.io/pair#v1.q7T2mK9xRw4LbN8cHf3Yp6Ds5GjV1eAu';
@@ -70,6 +72,7 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
   let browserDid = '';
   const emit = (ev) => { if (ev?.ev === 'browserActivity') browserDid += ` ${ev.text || ev.action || ''}`; send(ev); };
   const codexDemo = createCodexDemo({ emit, later, nextId, sessions, panes, now });
+  const artifactsDemo = createArtifactsDemo({ send, later, now });
 
   /* billing, Glass */
 
@@ -447,6 +450,7 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     // A Codex pane's ops (and the two only Codex has) are answered there; the workspace starts with Codex only in the codex preset.
     if (codexDemo.handle(c, pane)) return;
     if (worktrees.handle(c)) return;
+    if (artifactsDemo.handle(c)) return;
     switch (c.op) {
       case 'sessions': sendSessions(c.reqId); break;
       case 'loadState': later(10, { ev: 'state', state: { v: 1, savedAt: now() + 5000, active: start.active || 0, tabs: start.tabs, rail: start.rail, win: null } }); break;

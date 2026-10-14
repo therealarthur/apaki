@@ -13,8 +13,9 @@
  *   APAKI_TOOL_PROXY=1 (what a Codex pane sets)   the tools are show plus browser_open, _read, _click, _type, _back and
  *       _screenshot, and every call is forwarded to the running engine (POST /tool on APAKI_OPEN_URL's server, with
  *       APAKI_OPEN_TOKEN): the engine runs it for the Codex pane whose turn is running, so the viewer, the browser and
- *       the cards are the pane's own. Nothing is stored here.
- *   otherwise (kept for tests and for a stand-alone run)   one tool, show: it writes the artifact into
+ *       the cards are the pane's own. Nothing is stored here. Since 2026-10-13 view_read too (the user's edits of what was
+ *       shown), forwarded the same way.
+ *   otherwise (kept for tests and for a stand-alone run)   show (and view_read, which reads the same folder): show writes the artifact into
  *       ~/.claude/latch/artifacts/<APAKI_SESSION_ID>/ and tells the engine on /shown (and web pages on /open):
  *         APAKI_OPEN_URL    http://127.0.0.1:<port>/open of the engine (its /shown and /tool sit next to it)
  *         APAKI_OPEN_TOKEN  the pane's token
@@ -26,7 +27,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { APP_VERSION } from './app-version.js';
 import { ArtifactStore } from './artifacts.js';
-import { SHOW_DESCRIPTION, createApakiTools, showShape } from './apaki-tools.js';
+import { SHOW_DESCRIPTION, VIEW_READ_DESCRIPTION, createApakiTools, showShape, viewReadShape } from './apaki-tools.js';
 import { browserToolSpecs } from './browser-tools.js';
 
 const openUrl = process.env.APAKI_OPEN_URL || '';
@@ -52,6 +53,8 @@ if (proxy) {
   // Every call runs in the engine. The browser tools wait for pages to load, so the timeout is long.
   const forward = (tool) => async (args, extra) => asResult(await post('/tool', { tool, input: args || {}, meta: extra?._meta || {} }, { timeoutMs: 110000, json: true }));
   server.registerTool('show', { title: 'Show in Apaki', description: SHOW_DESCRIPTION, inputSchema: showShape(), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false } }, forward('show'));
+  // 2026-10-13: what the user made of an artifact (their edits in the viewer), read in the engine for the pane.
+  server.registerTool('view_read', { title: 'Read from Apaki', description: VIEW_READ_DESCRIPTION, inputSchema: viewReadShape(), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, forward('view_read'));
   for (const s of browserToolSpecs()) server.registerTool(s.name, { title: s.annotations.title, description: s.description, inputSchema: s.shape, annotations: s.annotations }, forward(s.name));
 } else {
   const tools = createApakiTools({
@@ -63,6 +66,10 @@ if (proxy) {
   });
   server.registerTool('show', { title: 'Show in Apaki', description: SHOW_DESCRIPTION, inputSchema: showShape() }, async (args) => {
     const r = await tools.show(args, { via: 'show' });
+    return { content: [{ type: 'text', text: r.text }], isError: !r.ok };
+  });
+  server.registerTool('view_read', { title: 'Read from Apaki', description: VIEW_READ_DESCRIPTION, inputSchema: viewReadShape() }, async (args) => {
+    const r = await tools.viewRead(args);
     return { content: [{ type: 'text', text: r.text }], isError: !r.ok };
   });
 }

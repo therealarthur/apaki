@@ -3536,7 +3536,8 @@ function restore(saved = readLocal()) {
 /* ---------- engine events ---------- */
 
 // console, consoleData, consoleView, terminal (2026-10-12): the pane's console and Open in terminal (console.js).
-const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context', 'historyPage', 'historyBlock', 'historyPrompts', 'historyCount', 'followers', 'peerMessage', 'console', 'consoleData', 'consoleView', 'terminal']);
+// artifactSaved, artifactEdited (2026-10-13): a viewer's Download and Save of an edit (artifacts.js).
+const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context', 'historyPage', 'historyBlock', 'historyPrompts', 'historyCount', 'followers', 'peerMessage', 'console', 'consoleData', 'consoleView', 'terminal', 'artifactSaved', 'artifactEdited']);
 
 /** Phone access (phone.js), set up at start; null in the phone web client. */
 let phone = null;
