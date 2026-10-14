@@ -313,18 +313,20 @@ function voice() {
   if (!model || model === true || !fs.existsSync(model)) { console.log('  (no --model file: the spoken-sentence check is skipped)'); return; }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-voice-smoke-'));
   try {
-    execFileSync('say', ['-o', path.join(tmp, 'a.aiff'), 'Hello from the Apaki voice check, one two three.']);
-    execFileSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', path.join(tmp, 'a.aiff'), path.join(tmp, 'a.wav')]);
     const wav = path.join(tmp, 'a.wav');
     const t1 = Date.now();
     const go = (extra = []) => { const r = spawnSync(cli, ['-m', model, '-f', wav, '-nt', '-np', '-l', 'en', ...extra], { encoding: 'utf8' }); return { r, text: String(r.stdout || '').replace(/\s+/g, ' ').trim() }; };
     const good = (t) => /hello/i.test(t) && /(one|1).*(two|2)/i.test(t);
-    let { r, text } = go();
-    let note = '';
-    // A virtual machine's GPU can answer with nothing; say whether the CPU does (the program is the same without -ng).
-    if (!good(text)) {
-      const cpu = go(['-ng']);
-      note = `; the sentence file is ${fs.statSync(wav).size} bytes; on the CPU (-ng) it reads "${cpu.text}"; stderr tail: ${String(r.stderr || '').trim().split(/\r?\n/).slice(-4).join(' | ')}`;
+    // A runner's speech synthesizer or virtual GPU now and then hands over silence or nothing (seen once in six runs): up to
+    // three tries with a fresh recording each time, so a stray miss does not stop a release; three misses in a row do.
+    let r; let text = ''; let note = ''; let tries = 0;
+    while (tries < 3 && !good(text)) {
+      tries += 1;
+      execFileSync('say', ['-o', path.join(tmp, 'a.aiff'), 'Hello from the Apaki voice check, one two three.']);
+      execFileSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', path.join(tmp, 'a.aiff'), wav]);
+      ({ r, text } = go());
+      // Say whether the CPU hears it when the GPU did not (the program is the same without -ng).
+      if (!good(text)) note += `; try ${tries}: the sentence file is ${fs.statSync(wav).size} bytes, the GPU read "${text}", the CPU (-ng) reads "${go(['-ng']).text}", stderr tail: ${String(r.stderr || '').trim().split(/\r?\n/).slice(-3).join(' | ')}`;
     }
     check('whisper-cli transcribes a spoken sentence on this Mac', r.status === 0 && good(text), `"${text}" in ${Date.now() - t1} ms${/metal|GPU/i.test(r.stderr || '') ? ', Metal in use' : ''}${note}`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
