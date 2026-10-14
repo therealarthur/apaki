@@ -1,0 +1,16 @@
+{
+  "name": "Myrlin Apaki",
+  "short_name": "Apaki",
+  "description": "Your PC's Claude Code sessions, on your phone. End to end encrypted through the Apaki relay.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#121120",
+  "theme_color": "#121120",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
