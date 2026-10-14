@@ -31,6 +31,13 @@
 //! state | focus | key | closeRequested | closed.
 //! Idle cost: nothing exists until the first browser is opened; after that
 //! only WebView2's own events, no timers.
+//!
+//! macOS (2026-10-13, phase 2 of the port): src/browser_mac.rs, behind the very same
+//! commands, events and `features()`. A WKWebView per tab, made there (no Tauri IPC in
+//! it either), laid over the window's page where the pane's body is. WKWebView has no
+//! DevTools protocol, so `cdp` there answers the few protocol calls the engine makes
+//! (apaki/engine/browser-tools.js) from WKWebView's own APIs and a small JS bridge in
+//! an isolated content world; the engine is the same on both systems.
 
 use serde_json::{json, Value};
 use tauri::AppHandle;
@@ -40,25 +47,25 @@ pub type Reply = Box<dyn FnOnce(Result<Value, String>) + Send + 'static>;
 
 /// What the shell tells the engine it can do (shellHello).
 pub fn features() -> Vec<&'static str> {
-    if cfg!(windows) {
+    if cfg!(any(windows, target_os = "macos")) {
         vec!["browser"]
     } else {
         vec![]
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub use imp::{dispatch, init, parent_moved};
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn init(_app: &AppHandle) {}
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn parent_moved(_app: &AppHandle) {}
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn dispatch(_app: &AppHandle, _cmd: String, _args: Value, reply: Reply) {
-    reply(Err("Apaki's built-in browser needs Windows for now.".into()));
+    reply(Err("Apaki's built-in browser needs Windows or macOS for now.".into()));
 }
 
 /// One request from the engine: {ev:"shell", id, cmd:"browser.<name>", args}.
@@ -94,6 +101,10 @@ pub async fn browser(app: AppHandle, cmd: String, args: Option<Value>) -> Result
     .await
     .map_err(|e| e.to_string())?
 }
+
+#[cfg(target_os = "macos")]
+#[path = "browser_mac.rs"]
+mod imp;
 
 #[cfg(windows)]
 mod imp {

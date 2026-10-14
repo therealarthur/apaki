@@ -35,6 +35,7 @@
  */
 
 import { esc } from './markdown.js';
+import { pc } from './platform.js';
 import { leftShare, leftText } from './glasscard.js';
 import { paintRings, windowsDetailHtml } from './usage-rings.js';
 
@@ -108,7 +109,7 @@ function row(provider, a, ui) {
   // The live account's details (2026-10-12): every usage window, its ring, the share used and the exact reset.
   const detail = a.active && !a.isKey && !needs ? windowsDetailHtml(a.windows || []) : '';
   const acts = [];
-  if (!a.active && !needs) acts.push('<button class="gp-btn primary" data-a="use" title="Make this the live login on this PC">Use</button>');
+  if (!a.active && !needs) acts.push('<button class="gp-btn primary" data-a="use" title="Make this the live login on this ' + pc() + '">Use</button>');
   if (needs) acts.push(`<button class="gp-btn" data-a="login" title="Sign this account in again in a browser window">Sign in</button>`);
   const menuOpen = ui.menu === a.id;
   acts.push(`<button class="gp-icon gp-more${menuOpen ? ' on' : ''}" data-a="menu" aria-haspopup="menu" aria-expanded="${menuOpen}" title="Rename, sign in again, ${a.isKey ? 'remove' : 'hide'}">${ICON.more}</button>`);
@@ -149,7 +150,7 @@ function render(box, provider, data, ui) {
       <button class="gp-icon" data-a="refresh" title="Ask Glass to check usage now">${ICON.refresh}</button></div>
     <div class="gp-body">
       ${lite && data.mode.note ? `<p class="gp-note">${esc(data.mode.note)}</p>` : ''}
-      ${live ? `<div class="gp-sec"><span>Live on this PC</span></div>${row(provider, { ...live, active: true }, ui)}` : `<p class="gp-empty">No ${NAMES[provider]} account is live on this PC.</p>`}
+      ${live ? `<div class="gp-sec"><span>Live on this ${pc()}</span></div>${row(provider, { ...live, active: true }, ui)}` : `<p class="gp-empty">No ${NAMES[provider]} account is live on this ${pc()}.</p>`}
       ${sec('Subscriptions', subs)}
       ${provider === 'claude' ? sec('API keys · billed per token', keys) : ''}
       ${sec('Needs signing in', needs)}

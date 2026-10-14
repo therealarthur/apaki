@@ -71,6 +71,7 @@ import {
 } from './sessionlist.js';
 // Decorative motion rests while the window is hidden or unfocused (2026-10-12, input lag).
 import { initRest } from './rest.js';
+import { osName, pc } from './platform.js';
 
 initRest();
 
@@ -2708,7 +2709,7 @@ function renderSignIn(e) {
     card.setAttribute('role', 'status');
     document.querySelector('.main')?.prepend(card);
   }
-  card.innerHTML = `<div class="sc-t"><b>Sign in to Claude to start</b><span>Claude Code on this PC has no login yet. Sign in with your Claude account (or a Console account for API billing); Apaki picks it up as soon as you finish.</span>${e.note ? `<span class="sc-note${e.noteOk === false ? ' bad' : ''}">${esc(e.note)}</span>` : ''}</div>
+  card.innerHTML = `<div class="sc-t"><b>Sign in to Claude to start</b><span>Claude Code on this ${pc()} has no login yet. Sign in with your Claude account (or a Console account for API billing); Apaki picks it up as soon as you finish.</span>${e.note ? `<span class="sc-note${e.noteOk === false ? ' bad' : ''}">${esc(e.note)}</span>` : ''}</div>
     <div class="sc-act"><button class="primary" data-k="claude">Sign in</button><button data-k="console" title="Bill an Anthropic Console account (API credits) instead of a subscription">Console account</button></div>`;
   card.querySelector('[data-k=claude]').onclick = () => send('signIn', {});
   card.querySelector('[data-k=console]').onclick = () => send('signIn', { console: true });
@@ -3097,7 +3098,7 @@ $('ask').onclick = askClaude;
 function digDeeper(query) {
   const who = billingName();
   sheet(`<h2>Dig deeper</h2>
-    <p>This opens a <b>dedicated Claude Code session</b> in a new tab. Claude searches every transcript on this PC with its own tools (the index, grep, reading files), follows leads, and reports the sessions that match, with ids you can click to open.</p>
+    <p>This opens a <b>dedicated Claude Code session</b> in a new tab. Claude searches every transcript on this ${pc()} with its own tools (the index, grep, reading files), follows leads, and reports the sessions that match, with ids you can click to open.</p>
     <p class="note">It runs on Opus 5.5 billed to <b>${esc(who)}</b>, usually a few minutes and between ten cents and a couple of dollars. It is a normal session: keep it, or delete it when you are done. It changes no files.</p>
     <div class="q">Looking for</div><div class="from" style="white-space:normal">${esc(query)}</div>
     <div class="row"><button data-k="x">Cancel</button><button class="primary" data-k="go">Open search session</button></div>`, (root, close) => {
@@ -3178,7 +3179,7 @@ function renderTheme() {
   if (!t) { b.hidden = true; return; }
   const ui = THEME_UI[t.get()];
   b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${ui.icon}</svg>${ui.label}`;
-  b.title = t.get() === 'auto' ? `Theme follows Windows (now ${t.effective()}). Click for ${THEME_UI[ui.next].label.toLowerCase()}.` : `${ui.label} theme. Click for ${THEME_UI[ui.next].label.toLowerCase()}.`;
+  b.title = t.get() === 'auto' ? `Theme follows ${osName()} (now ${t.effective()}). Click for ${THEME_UI[ui.next].label.toLowerCase()}.` : `${ui.label} theme. Click for ${THEME_UI[ui.next].label.toLowerCase()}.`;
 }
 if ($('theme')) $('theme').onclick = () => window.apakiTheme.set(THEME_UI[window.apakiTheme.get()].next);
 

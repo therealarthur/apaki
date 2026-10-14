@@ -18,6 +18,7 @@
  */
 
 import { esc } from './markdown.js';
+import { pc } from './platform.js';
 import { glassPanelProvider, openGlassPanel } from './glasspanel.js';
 import { paintRings, ringPairHtml } from './usage-rings.js';
 
@@ -116,18 +117,18 @@ export function initGlassCard({ root, send, menu, note, readOnly = false }) {
     if (!last) return;
     if (!last.installed) {
       root.hidden = false;
-      root.innerHTML = '<div class="gc-head"><span class="gl">Myrlin Glass</span></div><div class="gc-off">Not installed on this PC, so Apaki bills the live login.</div>';
+      root.innerHTML = '<div class="gc-head"><span class="gl">Myrlin Glass</span></div><div class="gc-off">Not installed on this ' + pc() + ', so Apaki bills the live login.</div>';
       return;
     }
     root.hidden = false;
-    root.innerHTML = `<div class="gc-head"><span class="gl">Myrlin Glass</span><span class="gc-sub">live on this PC</span></div>${rowHtml('claude', last.claude, busy.has('claude'))}${rowHtml('codex', last.codex, busy.has('codex'))}`;
+    root.innerHTML = `<div class="gc-head"><span class="gl">Myrlin Glass</span><span class="gc-sub">live on this ${pc()}</span></div>${rowHtml('claude', last.claude, busy.has('claude'))}${rowHtml('codex', last.codex, busy.has('codex'))}`;
     // Fills from script, not style attributes in markup (the phone page's CSP refuses those).
     paintRings(root);
     for (const i of root.querySelectorAll('.gc-meter i[data-v]')) i.style.setProperty('--v', i.dataset.v);
     for (const b of root.querySelectorAll('.gc-row')) {
       const provider = b.dataset.p;
       if (flash.includes(provider)) b.classList.add('flash');
-      if (readOnly) { b.disabled = true; b.title = b.title.replace('Click to switch account', 'Switch accounts on the PC'); continue; }
+      if (readOnly) { b.disabled = true; b.title = b.title.replace('Click to switch account', `Switch accounts on the ${pc()}`); continue; }
       // The Glass panel (glasspanel.js, 2026-10-10): sections, usage, switch, rename, sign in, hide, add.
       b.onclick = () => { panel = openGlassPanel(root, provider, last, panelActions); };
     }

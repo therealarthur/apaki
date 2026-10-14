@@ -22,6 +22,7 @@
  */
 
 import os from 'node:os';
+import path from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { childEnv } from '../../src/auth.js';
 import { searchHybrid, indexBin } from '../../src/deepindex.js';
@@ -32,7 +33,7 @@ const ASK_MODEL_NAME = { 'claude-haiku-5-5': 'Haiku 5.5', 'claude-sonnet-5-5': '
 const POOL = 40;
 const RRF_K = 60;
 
-const SYSTEM = 'You help a developer find their own past AI coding sessions (Claude Code and Codex) on their PC. Reply with one JSON object only: no prose, no code fences.';
+const SYSTEM = 'You help a developer find their own past AI coding sessions (Claude Code and Codex) on their ' + (process.platform === 'darwin' ? 'Mac' : 'PC') + '. Reply with one JSON object only: no prose, no code fences.';
 
 /** Minimal async queue, the prompt stream of one Claude Code process. */
 class Inbox {
@@ -58,7 +59,8 @@ export function parseJsonReply(text) {
   try { return JSON.parse(t.slice(a, b + 1)); } catch { return null; }
 }
 
-const short = (p) => String(p || '').replace(/^C:\\Users\\[^\\]+/i, '~');
+/** A path with the home folder shortened to ~: C:\Users\x (Windows), /Users/x (macOS) and /home/x (Linux). */
+export const short = (p) => String(p || '').replace(/^C:\\Users\\[^\\]+/i, '~').replace(/^\/(?:Users|home)\/[^/]+/, '~');
 const ago = (ms) => {
   if (!ms) return '';
   const d = (Date.now() - ms) / 86400000;
@@ -167,20 +169,23 @@ export async function askSearch({ query: question, credential, items, progress =
 }
 
 /** The first message of a "Dig deeper" session: what to find, how, and where. */
-export function digPrompt(question, candidates = []) {
+export function digPrompt(question, candidates = [], env = {}) {
+  // env (home, sep, platform) is for tests; the defaults are this machine's.
+  const { home = os.homedir(), sep = path.sep, platform = process.platform } = env;
   const bin = indexBin();
-  const projects = `${os.homedir()}\\.claude\\projects`;
+  const projects = [home, '.claude', 'projects'].join(sep);
+  const codexSessions = [home, '.codex', 'sessions', 'YYYY', 'MM', 'DD', 'rollout-*.jsonl'].join(sep);
   const cands = candidates.length
     ? `\nThe quick search already ranked these (title · folder · id); start from them but do not trust them blindly:\n${candidates.map((c) => `- ${c.title} · ${short(c.cwd)} · ${c.id}`).join('\n')}\n`
     : '';
   return [
-    `Find the sessions on this PC that match this request: "${question}"`,
+    `Find the sessions on this ${platform === 'darwin' ? 'Mac' : 'PC'} that match this request: "${question}"`,
     '',
     'This is a search task. Do not change any files.',
     '',
     'Where the sessions are:',
-    `- Claude Code: ${projects}\\<project>\\<session-id>.jsonl (one JSON entry per line; "type":"user" and "type":"assistant" entries hold the conversation; subagent runs live under <project>\\<session-id>\\).`,
-    `- Codex: ${os.homedir()}\\.codex\\sessions\\YYYY\\MM\\DD\\rollout-*.jsonl.`,
+    `- Claude Code: ${projects}${sep}<project>${sep}<session-id>.jsonl (one JSON entry per line; "type":"user" and "type":"assistant" entries hold the conversation; subagent runs live under <project>${sep}<session-id>${sep}).`,
+    `- Codex: ${codexSessions}.`,
     bin ? `- A full-text index over all of them: \`"${bin}" search <words> --limit 40\` prints JSON (session, hits, snippet), and \`"${bin}" hybrid <words>\` searches by words and meaning.` : '',
     cands,
     'How: try several searches with different words, names and synonyms; open the promising transcripts and read enough of the conversation to judge (look at the user prompts first); follow leads such as repo names, domains and dates.',
