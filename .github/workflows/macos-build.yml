@@ -132,6 +132,11 @@ jobs:
             if codesign -d --entitlements :- "$f" 2>/dev/null | grep -q 'get-task-allow'; then echo "::error::requests get-task-allow (notarization refuses it): $f"; bad=1; fi
           done < <(find "$res" -type f \( -perm -u+x -o -name '*.node' -o -name '*.dylib' -o -name '*.so' \) -print0)
           [ "$bad" = 0 ]
+          # What the app itself asks for: the mic and Apple Events entitlements, and the usage texts in its Info.plist.
+          echo "entitlements of the app:"; codesign -d --entitlements :- "$app" 2>/dev/null | plutil -p - | sed 's/^/  /'
+          for k in NSMicrophoneUsageDescription NSAppleEventsUsageDescription NSAppTransportSecurity; do
+            plutil -extract "$k" raw -o - "$app/Contents/Info.plist" > /dev/null 2>&1 || plutil -extract "$k" json -o - "$app/Contents/Info.plist" > /dev/null || { echo "::error::Info.plist has no $k"; exit 1; }
+          done
           if [ "${{ steps.devid.outputs.notarization }}" = "true" ]; then
             xcrun stapler validate "$app"
             spctl --assess --type execute --verbose=2 "$app"
