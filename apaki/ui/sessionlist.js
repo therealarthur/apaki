@@ -29,6 +29,7 @@
  */
 
 import { esc } from './markdown.js';
+import { explorer } from './platform.js';
 
 const DAY = 86400000;
 
@@ -309,7 +310,7 @@ export function sessionMenuItems(s, ctx = {}) {
   items.push({ divider: true });
   items.push({ value: 'copy-id', label: 'Copy session id' });
   items.push({ value: 'copy-resume', label: 'Copy resume command', hint: codex ? 'codex resume' : 'claude --resume' });
-  if (s.cwd) items.push({ value: 'reveal', label: 'Show folder in Explorer', hint: ctx.shortCwd || '' });
+  if (s.cwd) items.push({ value: 'reveal', label: `Show folder in ${explorer()}`, hint: ctx.shortCwd || '' });
   items.push({ divider: true });
   items.push({ value: 'details', label: 'Details', hint: 'Alt+Enter' });
   return items;
@@ -449,7 +450,7 @@ export function detailsHtml(f, { web = false } = {}) {
   const sec = f.sections.filter((x) => x.rows.length).map((x) => `<section class="sd-sec"><div class="sd-h">${esc(x.title)}</div><dl class="sd-rows">${x.rows.map((r) => {
     const btns = [
       r.copy ? `<button class="sd-btn" data-copy="${esc(r.copy)}" title="Copy ${esc(r.k.toLowerCase())}">Copy</button>` : '',
-      r.act === 'reveal' ? '<button class="sd-btn" data-act="reveal" title="Show this folder in Explorer">Show</button>' : '',
+      r.act === 'reveal' ? '<button class="sd-btn" data-act="reveal" title="Show this folder in ' + explorer() + '">Show</button>' : '',
     ].join('');
     return `<dt>${esc(r.k)}</dt><dd class="${[r.mono ? 'mono' : '', r.long ? 'long' : '', r.pending ? 'pending' : ''].filter(Boolean).join(' ')}"><span class="sd-v">${esc(r.v)}</span>${btns ? `<span class="sd-acts">${btns}</span>` : ''}</dd>`;
   }).join('')}</dl></section>`).join('');

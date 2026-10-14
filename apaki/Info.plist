@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist: keys merged into the macOS app's Info.plist (Tauri merges the Info.plist that sits next to
+  tauri.conf.json; Windows ignores it). Added 2026-10-13 with the browser pane and voice on macOS:
+    NSAppTransportSecurity   a WKWebView refuses plain http:// addresses unless this allows them; the built-in browser
+                             opens whatever Claude or you ask for, including http://localhost dev servers and plain
+                             http sites, as the Windows browser does. Only web content is exempted, not the app's own requests.
+    NSMicrophoneUsageDescription   the mic button; macOS shows this when it asks for permission the first time.
+    NSAppleEventsUsageDescription  "Sign in" and "Open in terminal" open Terminal windows.
+-->
+<plist version="1.0">
+<dict>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoadsInWebContent</key>
+    <true/>
+  </dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Myrlin Apaki records your voice when you use the mic button. The recording is turned into text on this Mac and is not sent anywhere.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Myrlin Apaki opens a Terminal window to sign in to Claude Code and to run a conversation in a terminal.</string>
+</dict>
+</plist>

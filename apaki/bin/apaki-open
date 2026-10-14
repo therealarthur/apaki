@@ -1,0 +1,8 @@
+#!/bin/sh
+# apaki-open: the BROWSER Myrlin Apaki sets for Claude Code on macOS and Linux (the twin of apaki-open.cmd).
+# Tools that honour BROWSER (Python webbrowser, gh, jupyter, vite --open ...) call it with a URL; apaki-open.mjs hands
+# the URL to the running Apaki engine, which opens it inside Apaki, in the pane whose Claude Code asked. A POSIX shell
+# passes the URL whole (no cmd quoting trouble), so this only finds Node and the .mjs next to it. When Apaki cannot
+# be reached the .mjs opens the system browser. APAKI_NODE is the Node the engine runs on (set per pane by the engine).
+dir=$(cd "$(dirname "$0")" && pwd)
+exec "${APAKI_NODE:-node}" "$dir/apaki-open.mjs" "$@"

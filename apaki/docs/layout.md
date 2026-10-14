@@ -59,7 +59,7 @@ Every tab has its own side panel, docked to the right edge of the tab's content 
 - With the panel's focus (you clicked into a viewer), Ctrl+W closes the entry on screen, Ctrl+F searches the viewer, Ctrl+L goes to a browser's address.
 - Claude's browser tools (`browser_open`, `browser_read`, `browser_click`, `browser_type`, `browser_tabs`, `browser_screenshot`) act on the conversation's browser and its active page. A page already open in a tab is shown again, not opened twice. Picking a page in the panel tells the engine, so Claude acts on the page you see. Never a new Apaki tab for a page.
 
-The browser page is a native WebView2 window laid over the panel's content area: the window reports the content area's bounds to the shell (`place`), shows only the page on screen and hides the others (they stay alive). While a menu or a sheet covers it, a picture of the page stands in.
+The browser page is a native WebView2 window (a WKWebView on a Mac, `macos.md`) laid over the panel's content area: the window reports the content area's bounds to the shell (`place`), shows only the page on screen and hides the others (they stay alive). While a menu or a sheet covers it, a picture of the page stands in.
 
 ### Old saved workspaces
 

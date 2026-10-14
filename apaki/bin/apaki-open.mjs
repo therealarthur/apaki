@@ -23,6 +23,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const URL_START = /^(https?|file):\/\//i;
@@ -77,4 +78,9 @@ async function main() {
   done(0);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+// Run as a program, not when imported by a test. Compared by real path: Node resolves symlinks for the entry file, and
+// on a Mac /tmp, /var and /Users can sit behind one (2026-10-13: found on the Mac Mini, where /tmp is /private/tmp).
+const isMain = (() => {
+  try { return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href; } catch { return false; }
+})();
+if (isMain) main();

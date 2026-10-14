@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  entitlements.plist: what Myrlin Apaki's own program asks the hardened runtime for (macOS, 2026-10-13, signing phase).
+  The window needs almost nothing; the Node runtime, Claude Code and the other programs inside the app carry their own
+  entitlements (apaki/scripts/package-apaki-mac.sh signs each one). Wired in through bundle.macOS.entitlements in
+  tauri.macos.bundle.conf.json.
+    audio-input      the mic button records in the window (voice); without it the hardened runtime refuses the mic.
+    apple-events     "Sign in" and "Open in terminal" start a Terminal window through osascript; without it those
+                     Apple events are denied silently.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+</dict>
+</plist>

@@ -207,6 +207,7 @@ import { dropHeld, heldView, resetHeld, setHeld, takeForAutoSend } from './queue
 import { COMPACT_CHOICES, COMPACT_DEFAULT, RELEASE_CHOICES, RELEASE_DEFAULT, compactSettings, loadPrefs, normalizeCompact, normalizeRelease, prefsFile, savePrefs } from './prefs.js';
 // Ultracode and the other settings beside effort: the pane's tune, as Claude Code's flag settings (tune.js, 2026-10-13).
 import { claudeChange, claudeTune, liveSettings, startSettings } from './tune.js';
+import { MODEL_FILE, downloadModel } from './voice-model.js';
 // The context meter before a conversation runs: its last call's usage, from the transcript (2026-10-10 night).
 import { estimateEvent, lastUsage } from './context-estimate.js';
 // The session list's times: the last message, not the file's modified time (2026-10-11).
@@ -224,7 +225,7 @@ import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } 
 import { liveLogin } from '../../src/auth.js';
 import { claudeBinary } from '../../src/launch.js';
 // Where Windows, macOS and Linux differ (macOS port, 2026-10-12): voice folder, Glass, reveal, open, sign-in.
-import { glassCli, openCommand, openFolderCommand, revealCommand, signInCommand, voiceDir, whisperName } from '../../src/platform.js';
+import { bundledVoiceDir, glassCli, openCommand, openFolderCommand, openShimName, revealCommand, signInCommand, voiceDir, whisperName } from '../../src/platform.js';
 import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
 // Codex threads as panes, through one `codex app-server` process (2026-10-12).
 import { findCodex } from './codex-client.js';
@@ -336,7 +337,8 @@ let prefs = loadPrefs(PREFS_FILE);
 /* ---------- artifacts and "open this" (apaki-tools.js) ---------- */
 
 const ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const OPEN_SHIM = path.join(ENGINE_ROOT, 'apaki', 'bin', 'apaki-open.cmd');
+// The BROWSER shim: apaki-open.cmd on Windows, the shell script apaki-open on macOS and Linux (platform.js openShimName).
+const OPEN_SHIM = path.join(ENGINE_ROOT, 'apaki', 'bin', openShimName());
 const store = new ArtifactStore();
 
 /** A served address for one revision of an artifact, for the window's viewer. */
@@ -414,7 +416,7 @@ function sameAddress(a, b) {
 
 /** BROWSER and friends for a pane's Claude Code, so tools that open a browser open in Apaki. */
 function browserEnv(p) {
-  if (!openServer || process.platform !== 'win32' || !fs.existsSync(OPEN_SHIM)) return {};
+  if (!openServer || !fs.existsSync(OPEN_SHIM)) return {};
   return { BROWSER: OPEN_SHIM, APAKI_OPEN_URL: openServer.openUrl, APAKI_OPEN_TOKEN: openServer.paneToken(p.id), APAKI_NODE: process.execPath };
 }
 
@@ -464,7 +466,7 @@ const MCP_SCRIPT = path.join(ENGINE_ROOT, 'apaki', 'engine', 'apaki-mcp-stdio.mj
 const codex = createCodex({
   emit, asks: state.asks, panes, tools: (p) => toolsFor(p), openPage: (p, o) => { openPage(p, o); },
   shared: () => (openServer && fs.existsSync(MCP_SCRIPT)
-    ? { node: process.execPath, mcpScript: MCP_SCRIPT, openUrl: openServer.openUrl, token: openServer.paneToken(CODEX_SHARED), shim: process.platform === 'win32' && fs.existsSync(OPEN_SHIM) ? OPEN_SHIM : null }
+    ? { node: process.execPath, mcpScript: MCP_SCRIPT, openUrl: openServer.openUrl, token: openServer.paneToken(CODEX_SHARED), shim: fs.existsSync(OPEN_SHIM) ? OPEN_SHIM : null }
     : null),
   shapeRows: (rows) => { const folderOf = folders.folderOfSessions(); return rows.map((r) => compact(r, null, folderOf)); },
   phoneCap: (paneId) => (parsePhoneId(paneId) ? phoneCap(paneId) : null),
@@ -1636,22 +1638,31 @@ async function openTerminal(c) {
 // (Arthur, 2026-10-09: "local whisper model - something free"). Nothing leaves
 // the PC: the window records 16 kHz WAV, this transcribes it.
 // Per platform (src/platform.js voiceDir): %LOCALAPPDATA%\Programs\Myrlin Apaki\voice on Windows, ~/Library/Application
-// Support/Myrlin Apaki/voice on a Mac (macOS port, 2026-10-12; whisper.cpp for macOS is not bundled yet, so the mic stays off).
+// Support/Myrlin Apaki/voice on a Mac. The Mac app carries its own signed whisper.cpp (Metal) in Contents/Resources/voice
+// (macOS port phase 2, 2026-10-13; bundledVoiceDir), used when the per-user folder has none; the model is downloaded on
+// request into the per-user folder (voice-model.js, op voiceModel).
 const VOICE_DIR = voiceDir();
-const WHISPER = path.join(VOICE_DIR, 'bin', 'Release', whisperName());
-const WHISPER_MODEL = process.env.APAKI_WHISPER_MODEL || path.join(VOICE_DIR, 'models', 'ggml-base.en.bin');
-const voiceReady = () => fs.existsSync(WHISPER) && fs.existsSync(WHISPER_MODEL);
+const BUNDLED_VOICE = bundledVoiceDir(ENGINE_ROOT);
+/** The whisper-cli to run: the per-user voice folder's, else the app bundle's, else (not installed) the per-user path. */
+const whisperBin = () => {
+  const own = path.join(VOICE_DIR, 'bin', 'Release', whisperName());
+  if (fs.existsSync(own) || !BUNDLED_VOICE) return own;
+  const bundled = path.join(BUNDLED_VOICE, 'bin', 'Release', whisperName());
+  return fs.existsSync(bundled) ? bundled : own;
+};
+const WHISPER_MODEL = process.env.APAKI_WHISPER_MODEL || path.join(VOICE_DIR, 'models', MODEL_FILE);
+const voiceReady = () => fs.existsSync(whisperBin()) && fs.existsSync(WHISPER_MODEL);
 const VOICE_VOCAB = process.env.APAKI_VOICE_VOCAB || 'Myrlin, Myrlin Glass, Myrlin Apaki, Myrlin Forge, Myrlin Jobs, Claude, Claude Code, Codex, Opus, Sonnet, Haiku, Fable, SignalSentry, Pantex, Hytale, Tauri, latch.';
 
 function transcribe(reqId, wavBase64, paneId = null) {
-  if (!voiceReady()) { emit({ ev: 'error', reqId, paneId, message: `Voice is not installed (${WHISPER}).` }); return Promise.resolve(); }
+  if (!voiceReady()) { emit({ ev: 'error', reqId, paneId, message: `Voice is not installed (${whisperBin()}).` }); return Promise.resolve(); }
   const file = path.join(os.tmpdir(), `apaki-voice-${process.pid}-${Date.now()}.wav`);
   fs.writeFileSync(file, Buffer.from(String(wavBase64 || ''), 'base64'));
   const t0 = Date.now();
   return new Promise((resolve) => {
     let out = '';
     // The vocabulary prompt keeps names Whisper does not know spelled right.
-    const child = spawn(WHISPER, ['-m', WHISPER_MODEL, '-f', file, '-nt', '-np', '-l', 'en', '-t', String(Math.min(8, os.cpus().length)), '--prompt', VOICE_VOCAB], { windowsHide: true });
+    const child = spawn(whisperBin(), ['-m', WHISPER_MODEL, '-f', file, '-nt', '-np', '-l', 'en', '-t', String(Math.min(8, os.cpus().length)), '--prompt', VOICE_VOCAB], { windowsHide: true });
     child.stdout.on('data', (d) => { out += d; });
     child.on('error', (e) => { emit({ ev: 'error', reqId, paneId, message: `Whisper failed: ${e.message}` }); });
     child.on('close', () => {
@@ -1662,6 +1673,39 @@ function transcribe(reqId, wavBase64, paneId = null) {
       resolve();
     });
   });
+}
+
+/**
+ * op voiceModel { action: 'status' | 'download' } -> ev voiceModel { state: 'ready' | 'missing' | 'downloading' | 'error', percent?, text }.
+ * 'download' fetches the free English model into the voice folder (voice-model.js), one at a time, with a note in the
+ * window at the start and the end; when it lands the window gets a fresh ready event so the mic button turns on.
+ * The Mac app's menu item "Download Voice Model..." sends it; nothing downloads on its own.
+ */
+let voiceDownload = null;
+function voiceModelOp(c = {}) {
+  const status = (state, text, extra = {}) => emit({ ev: 'voiceModel', reqId: c.reqId ?? null, state, text, ...extra });
+  if (voiceReady()) { status('ready', 'Voice is ready.'); return Promise.resolve(); }
+  if (!fs.existsSync(whisperBin())) { status('error', `There is no speech program to run here (${whisperBin()}), so there is nothing to download a model for.`); return Promise.resolve(); }
+  if (c.action !== 'download') { status('missing', `The voice model is not installed (${WHISPER_MODEL}). Apaki menu, Download Voice Model.`); return Promise.resolve(); }
+  if (voiceDownload) { status('downloading', 'The voice model is already downloading.'); return voiceDownload; }
+  emit({ ev: 'note', tone: 'info', text: 'Downloading the voice model (about 141 MB). The mic button turns on when it is done.' });
+  let lastPct = -1;
+  voiceDownload = downloadModel({
+    file: WHISPER_MODEL,
+    onProgress: (got, total) => {
+      const pct = Math.floor((got / total) * 100);
+      if (pct !== lastPct && pct % 5 === 0) { lastPct = pct; status('downloading', `Downloading the voice model, ${pct}%`, { percent: pct }); }
+    },
+  }).then(() => {
+    emit({ ev: 'note', tone: 'info', text: 'The voice model is installed. The mic button is on.' });
+    status('ready', 'Voice is ready.');
+    // A fresh ready event: the window turns the mic on from it (and asks for the session list again, which is cheap).
+    emit({ ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND });
+  }).catch((e) => {
+    emit({ ev: 'note', tone: 'warn', text: e.message });
+    status('error', e.message);
+  }).finally(() => { voiceDownload = null; });
+  return voiceDownload;
 }
 
 /* ---------- git worktrees (worktrees.js; design apaki/remote/WORKTREES.md, 2026-10-12) ---------- */
@@ -1809,6 +1853,7 @@ const handlers = {
     if (p) await toolsFor(p).browser?.select(String(c.browserId || ''));
   },
   transcribe: (c) => transcribe(c.reqId, c.wav, c.paneId || null),
+  voiceModel: (c) => voiceModelOp(c),
   sessions: (c) => sessions(c.reqId),
   search: (c) => search(c.reqId, String(c.query || '')),
   askSearch: (c) => askSearchOp(c.reqId, String(c.query || ''), c.paneId || null),

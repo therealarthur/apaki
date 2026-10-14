@@ -32,6 +32,16 @@ sha2 = "0.10"
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
+# The built-in browser on macOS (src/browser_mac.rs, 2026-10-13): one WKWebView per tab, made here and driven by a small
+# injected JS bridge (WKWebView has no DevTools protocol). These are the crates and versions Tauri's own webview (wry)
+# already builds on macOS (Cargo.lock), so nothing new is downloaded.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-web-kit = "0.3"
+block2 = "0.6"
+
 [features]
 # Every plain `cargo build` is a production build that serves ui/ from the
 # embedded assets (same setup as Myrlin Glass).

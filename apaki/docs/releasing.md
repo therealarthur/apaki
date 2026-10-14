@@ -42,7 +42,7 @@ version lower than the 1.0 builds already in TestFlight, start the shared versio
 | meta | ubuntu | the tag must be `v<apaki/VERSION>` and `version.mjs check` must pass |
 | test | windows-latest | `npm test` (the suite is written for Windows: on Linux and macOS about twenty tests fail over paths and PowerShell behaviour they check on purpose; the runner's long temp folder is set because its default short name confuses the worktree tests) |
 | windows | windows-latest | `package-apaki-win.ps1 -Updater`: the NSIS installer and its signature; then `smoke-win-installer.ps1` installs it silently on the runner, looks inside (files, the engine's version, node-pty, Claude Code, the search binary, PATH, App Paths), starts the app and checks it reaches its engine, and uninstalls |
-| macos | macos-latest (Apple Silicon) | `package-apaki-mac.sh --updater`: the `.app` (ad-hoc signed), the `.dmg` and the update archive with its signature; the app's own engine reports the right version |
+| macos | macos-latest (Apple Silicon), `macos-build.yml` called from the release | `package-apaki-mac.sh --updater`: whisper.cpp (Metal), every Mach-O signed, the `.app`, the `.dmg` and the update archive with its signature. Ad-hoc signed until the Developer ID secrets exist, then Developer ID signed and notarized (`macos.md`). Then the finished app is opened on the runner and its browser driven (`mac-browser-smoke.mjs`, clicks as real mouse events and through the bridge script), and the bundled `whisper-cli` transcribes a spoken sentence |
 | release | ubuntu | `latest.json` from the two signatures, `SHA256SUMS.txt`, the draft release with all files |
 | phone-page | ubuntu | builds the phone page from the tagged sources (`build-web.mjs --release`) into **master's** copy of `relay/site` (which holds every earlier page), commits `relay/site/v/<version>/` to master with the workflow's own token, and deploys the relay (`npx wrangler deploy --env=""` from `relay/`). A PC checks the live page byte for byte, so a release whose page is not live would break pairing |
 | ios | macos (the existing workflow) | `ios-testflight.yml` called for the same commit; the build number it raises is committed to master (the tag's commit is on no branch) |
@@ -50,6 +50,11 @@ version lower than the 1.0 builds already in TestFlight, start the shared versio
 A tag with `-ci` in it (`v0.0.0-ci.1`) is a test of the pipeline: it builds, runs the smoke test and drafts a **prerelease** named
 as a test, and skips everything that changes something outside GitHub: no commit to master, no relay deploy, no TestFlight. Clean up
 with `gh release delete v0.0.0-ci.1 --cleanup-tag --yes`. The app version in a test build is still `apaki/VERSION`.
+
+The macOS build alone (no tag, no draft, nothing published) has two more ways in, because `macos-build.yml` is its own workflow:
+push a branch named `mac-ci/<anything>` and it builds and tests the Mac app on every push (`gh run list --branch mac-ci/<anything>`;
+download the result with `gh run download <id> -n macos`), or run it by hand from the Actions tab once the file is on master
+(GitHub lists a manual workflow only from the default branch). Delete the branch afterwards.
 
 ### Secrets
 
@@ -60,7 +65,8 @@ Settings, Secrets and variables, Actions (`gh secret list --repo therealarthur/a
 | - | - | - |
 | `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | the updater's minisign key. The public half is `plugins.updater.pubkey` in `apaki/tauri.conf.json` | windows, macos |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | a token scoped to this account's Workers deploys (Workers Scripts Write, Account Settings Read; Workers Routes Write and Zone Read on myrlin.io) | phone-page |
-| `APPLE_TEAM_ID`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | the App Store Connect API key for TestFlight | ios |
+| `APPLE_TEAM_ID`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | the App Store Connect API key for TestFlight, and the same key for notarizing the Mac app and its `.dmg` (`notarytool`) | ios, macos |
+| `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` | NOT SET YET. A "Developer ID Application" certificate exported as a `.p12` (the file in base64, and its password). Without them the Mac app is ad-hoc signed; with them it is signed and, given the `ASC_*` key, notarized. Exact steps: `macos.md`, "Signing and notarization" | macos |
 
 `GITHUB_TOKEN` (the workflow's own, `contents: write` only in the jobs that need it) makes the release and pushes to master.
 
@@ -96,8 +102,8 @@ and is never flagged.
 ## Decisions and things only Arthur can do
 
 - Publish the first draft (see above), after deciding the Agent SDK terms question.
-- Apple: a Developer ID Application certificate and notarization for the Mac app (`macos.md`), until then the first download needs
-  right-click, Open; later updates do not.
+- Apple: a Developer ID Application certificate for the Mac app and two repository secrets (`macos.md`, "Signing and notarization";
+  everything else is wired). Until then the first download needs right-click, Open; later updates do not.
 - Windows: a code signing certificate, until then SmartScreen warns on the first download.
 - iOS marketing version: see "The one version".
 - The release job pushes to master with the workflow's token; master has no branch protection today. If protection is added, allow

@@ -19,6 +19,7 @@
  */
 
 import { esc } from './markdown.js';
+import { osName } from './platform.js';
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -55,7 +56,7 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
     return `<div class="settings">
       <h2>Settings</h2>
       <section class="set-row">
-        <div class="set-t"><b>Theme</b><small>${t === 'auto' ? `Follows Windows, ${esc(theme?.effective?.() || 'light')} right now.` : 'Set here, whatever Windows uses.'}</small></div>
+        <div class="set-t"><b>Theme</b><small>${t === 'auto' ? `Follows ${osName()}, ${esc(theme?.effective?.() || 'light')} right now.` : `Set here, whatever ${osName()} uses.`}</small></div>
         ${seg('theme', themeOpts, t)}
       </section>
       <section class="set-row">

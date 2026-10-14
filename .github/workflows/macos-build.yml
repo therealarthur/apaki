@@ -1,0 +1,179 @@
+# Myrlin Apaki macOS build: the Mac app, its .dmg and its update archive, signed and notarized when the secrets exist (2026-10-13).
+#
+# One definition for three ways in:
+#   workflow_call      release.yml's macos job (a v* tag): the artifact "macos" is what the release job publishes.
+#   workflow_dispatch  Actions > macOS build > Run workflow, for a build of any branch (GitHub lists a manual workflow only when
+#                      its file is on the default branch, so until this is merged use the push path below).
+#   push to mac-ci/**  a branch named mac-ci/<anything> builds on every push (how the macOS port was developed).
+#
+# What it does: builds whisper.cpp (Metal) and everything the app carries, signs every Mach-O in it, makes the .app, the
+# .dmg and the update archive (apaki/scripts/package-apaki-mac.sh), then LOOKS at the result and RUNS it: the app is opened
+# on the runner and its built-in browser is driven the way Claude drives it (apaki/scripts/mac-browser-smoke.mjs, clicks as
+# real mouse events and through the bridge script), and the bundled whisper-cli transcribes a spoken sentence.
+#
+# Signing (apaki/docs/macos.md, "Signing and notarization"): with the repository secrets APPLE_CERTIFICATE (a Developer ID
+# Application certificate exported as .p12, in base64) and APPLE_CERTIFICATE_PASSWORD the nested programs, the app and the
+# .dmg are signed with that identity; with the App Store Connect API key secrets the TestFlight job already uses
+# (ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8) the app and the .dmg are also notarized with notarytool and stapled. Without the
+# certificate secrets the build is ad-hoc signed and says so in the log; nothing fails for want of them.
+
+name: macOS build
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      voice_check:
+        description: 'Also download the speech model (141 MB) and transcribe a sentence with the bundled whisper-cli'
+        type: boolean
+        default: true
+  push:
+    branches:
+      - 'mac-ci/**'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  build:
+    name: macOS app (Apple Silicon)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apaki -> target
+            index -> target
+          cache-on-failure: true
+
+      - name: Developer ID certificate (only when the secrets exist)
+        id: devid
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]; then
+            echo "::notice title=Ad-hoc signed::The repository secrets APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD (a Developer ID Application certificate as .p12) are not set, so this build is ad-hoc signed and not notarized. apaki/docs/macos.md says what to add."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/apaki-signing.keychain-db"
+          pw="$(openssl rand -hex 16)"
+          security create-keychain -p "$pw" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$pw" "$keychain"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/apaki-cert.p12"
+          security import "$RUNNER_TEMP/apaki-cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          rm -f "$RUNNER_TEMP/apaki-cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$keychain" > /dev/null
+          # codesign finds identities through the keychain search list.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -p codesigning "$keychain" | grep 'Developer ID Application' | head -1 | sed -E 's/^[^"]*"([^"]+)".*$/\1/')"
+          if [ -z "$identity" ]; then
+            echo "::error title=No Developer ID Application identity::the certificate in APPLE_CERTIFICATE has no 'Developer ID Application' identity (an Apple Development or Distribution certificate cannot sign an app for download)."
+            exit 1
+          fi
+          echo "APAKI_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "signing with: $identity"
+          if [ -n "${ASC_KEY_P8:-}" ] && [ -n "${ASC_KEY_ID:-}" ] && [ -n "${ASC_ISSUER_ID:-}" ]; then
+            # ASC_KEY_PATH goes to the next steps through GITHUB_ENV (the key itself is never printed).
+            bash apaki/mobile/scripts/ci-ios.sh write-key
+            echo "notarization=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Signed, not notarized::ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 are not all set, so the app is signed with the Developer ID but not notarized."
+            echo "notarization=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the app, the .dmg and the update archive
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: bash apaki/scripts/package-apaki-mac.sh --updater
+
+      - name: Name the files the way GitHub will serve them (no spaces)
+        run: |
+          cd apaki/dist
+          for f in *\ *; do [ -f "$f" ] && mv "$f" "${f// /-}"; done
+          ls -la
+
+      - name: Look inside the finished app
+        run: |
+          set -euo pipefail
+          app="apaki/dist/Myrlin Apaki.app"
+          codesign --verify --deep --strict "$app"
+          res="$app/Contents/Resources"
+          want="$(node apaki/scripts/version.mjs get)"
+          got="$("$res/node/node" -e "import(process.argv[1]).then((m) => process.stdout.write(m.APP_VERSION))" "file://$PWD/$res/engine/apaki/engine/app-version.js")"
+          echo "the app's engine reports version $got"
+          [ "$got" = "$want" ] || { echo "::error::the engine in the app says $got, apaki/VERSION says $want"; exit 1; }
+          # Every Mach-O inside carries a valid signature (the notary service refuses the app otherwise).
+          bad=0
+          while IFS= read -r -d '' f; do
+            file -b "$f" | grep -q 'Mach-O' || continue
+            codesign --verify --strict "$f" 2>/dev/null || { echo "::error::unsigned or broken signature: $f"; bad=1; }
+            if codesign -d --entitlements :- "$f" 2>/dev/null | grep -q 'get-task-allow'; then echo "::error::requests get-task-allow (notarization refuses it): $f"; bad=1; fi
+          done < <(find "$res" -type f \( -perm -u+x -o -name '*.node' -o -name '*.dylib' -o -name '*.so' \) -print0)
+          [ "$bad" = 0 ]
+          # What the app itself asks for: the mic and Apple Events entitlements, and the usage texts in its Info.plist.
+          echo "entitlements of the app:"; codesign -d --entitlements :- "$app" 2>/dev/null | plutil -p - | sed 's/^/  /'
+          for k in NSMicrophoneUsageDescription NSAppleEventsUsageDescription NSAppTransportSecurity; do
+            plutil -extract "$k" raw -o - "$app/Contents/Info.plist" > /dev/null 2>&1 || plutil -extract "$k" json -o - "$app/Contents/Info.plist" > /dev/null || { echo "::error::Info.plist has no $k"; exit 1; }
+          done
+          if [ "${{ steps.devid.outputs.notarization }}" = "true" ]; then
+            xcrun stapler validate "$app"
+            spctl --assess --type execute --verbose=2 "$app"
+            for d in apaki/dist/*.dmg; do xcrun stapler validate "$d"; done
+          fi
+          ls -la apaki/dist
+
+      # Kept before the tests below on purpose: when one fails, the finished app is still there to download and look at.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            apaki/dist/*.dmg
+            apaki/dist/*.app.tar.gz
+            apaki/dist/*.app.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Run the app and drive its browser
+        run: |
+          set -euo pipefail
+          res="apaki/dist/Myrlin Apaki.app/Contents/Resources"
+          "$res/node/node" apaki/scripts/mac-browser-smoke.mjs --app "$PWD/apaki/dist/Myrlin Apaki.app" --mouse both
+
+      - name: Speech to text with the bundled whisper-cli
+        if: github.event_name != 'workflow_dispatch' || inputs.voice_check
+        run: |
+          set -euo pipefail
+          # The model is the one the app downloads on request (apaki/engine/voice-model.js); checked against the same SHA-256.
+          mkdir -p "$RUNNER_TEMP/model"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/model/ggml-base.en.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+          echo "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002  $RUNNER_TEMP/model/ggml-base.en.bin" | shasum -a 256 -c -
+          res="apaki/dist/Myrlin Apaki.app/Contents/Resources"
+          "$res/node/node" apaki/scripts/mac-browser-smoke.mjs --app "$PWD/apaki/dist/Myrlin Apaki.app" --mouse none --voice --model "$RUNNER_TEMP/model/ggml-base.en.bin"
+
+      - name: Remove the signing keychain and the API key file
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ]; then security delete-keychain "$KEYCHAIN_PATH" || true; fi
+          if [ -n "${ASC_KEY_PATH:-}" ]; then rm -f "$ASC_KEY_PATH"; fi

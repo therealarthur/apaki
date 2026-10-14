@@ -50,6 +50,7 @@
 
 import qrcode from './vendor/qrcode.js';
 import { esc } from './markdown.js';
+import { pc } from './platform.js';
 
 const PAIR_HINT = 'Shows a code your phone\'s camera opens. It works once, for two minutes.';
 
@@ -57,9 +58,10 @@ const PAIR_HINT = 'Shows a code your phone\'s camera opens. It works once, for t
 const CAPS = ['full', 'noshell', 'chat'];
 const CAP_LABEL = { full: 'Full', noshell: 'No shell', chat: 'Chat only' };
 const CAP_TEXT = {
-  full: 'It can then run Claude Code on this PC, including commands and file edits, and read its conversations, billed to this PC\'s accounts.',
-  noshell: 'It can then use Claude Code on this PC to read its conversations, search and answer, but Claude cannot run commands, edit files or use the browser for it. Billed to this PC\'s accounts.',
-  chat: 'It can then read this PC\'s conversations and chat with Claude Code in plan mode only: nothing runs and nothing changes. Billed to this PC\'s accounts.',
+  // Getters, so the Mac / PC word is read when the text is shown, not when the module loads (platform.js).
+  get full() { return `It can then run Claude Code on this ${pc()}, including commands and file edits, and read its conversations, billed to this ${pc()}'s accounts.`; },
+  get noshell() { return `It can then use Claude Code on this ${pc()} to read its conversations, search and answer, but Claude cannot run commands, edit files or use the browser for it. Billed to this ${pc()}'s accounts.`; },
+  get chat() { return `It can then read this ${pc()}'s conversations and chat with Claude Code in plan mode only: nothing runs and nothing changes. Billed to this ${pc()}'s accounts.`; },
 };
 
 /** The access switch (Apaki's .seg): on is the chosen access. */
@@ -138,10 +140,10 @@ function fold(k, open, line, body, cls = '') {
 const PHONE_STATE = { enrolled: 'Added in person', allowed: 'Allowed', auto: 'Let in by itself', pending: 'Waiting for you', blocked: 'Blocked' };
 
 const STATE_TEXT = {
-  off: ['Off', 'Phones you paired cannot reach this PC until you turn this on.'],
-  unconfigured: ['Not set up', 'The Apaki relay is not deployed yet, so a phone has no way to reach this PC. Phone access starts working once it is (to try a local relay, start Apaki with APAKI_RELAY_URL set).'],
+  get off() { return ['Off', `Phones you paired cannot reach this ${pc()} until you turn this on.`]; },
+  get unconfigured() { return ['Not set up', `The Apaki relay is not deployed yet, so a phone has no way to reach this ${pc()}. Phone access starts working once it is (to try a local relay, start Apaki with APAKI_RELAY_URL set).`]; },
   connecting: ['Connecting', 'Reaching the relay…'],
-  online: ['On', 'Reachable through the relay. Nothing listens on this PC: Apaki keeps one outgoing connection.'],
+  get online() { return ['On', `Reachable through the relay. Nothing listens on this ${pc()}: Apaki keeps one outgoing connection.`]; },
   offline: ['Offline', 'The relay is not answering.'],
   replaced: ['Paused', ''],
   error: ['Problem', ''],
@@ -227,7 +229,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
         <div class="ph-qr">${qrSvg(p.url)}</div>
         <div class="ph-qr-side">
           <div class="ph-step">Scan with your phone's camera</div>
-          <p>It opens Apaki on the phone and asks this PC to connect. Then you check a code here and allow it.</p>
+          <p>It opens Apaki on the phone and asks this ${pc()} to connect. Then you check a code here and allow it.</p>
           <div class="ph-count"><span class="mono">${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</span> left · works once</div>
           ${p.unchecked ? '<p class="ph-warn">Not checked: you chose to pair without checking the phone page.</p>' : ''}
           <div class="ph-actions"><button data-k="cancelpair">Cancel</button><button data-k="newcode">New code</button></div>
@@ -239,13 +241,13 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
   }
 
   /**
-   * A phone whose Apaki app is older than this PC wants (status devices[].app, apaki/remote/compat.js, 2026-10-13): the
+   * A phone whose Apaki app is older than this ${pc()} wants (status devices[].app, apaki/remote/compat.js, 2026-10-13): the
    * phone itself says "Update the Apaki app"; this tells the person at the PC. Nothing for a phone that is up to date or
    * never said (the web page has no app version).
    */
   function appNote(app) {
     if (!app || app.state !== 'old') return '';
-    return `<div class="ph-dev-m ph-app-old">Its Apaki app (${esc(app.version)}) is older than this PC wants (${esc(app.min)}). The phone asks to update it${app.kind === 'ios' ? ' in TestFlight' : ''}.</div>`;
+    return `<div class="ph-dev-m ph-app-old">Its Apaki app (${esc(app.version)}) is older than this ${pc()} wants (${esc(app.min)}). The phone asks to update it${app.kind === 'ios' ? ' in TestFlight' : ''}.</div>`;
   }
 
   /** The phone keys behind an Apaki account (ENROLL.md): state, last seen, and Block, Allow and Forget for each. */
@@ -263,7 +265,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     return `<div class="ph-phones-h">Phones signed in to ${esc(d.account || 'this account')}</div><ul class="ph-phones" aria-label="Phones that connected through this account">${rows}</ul>`;
   }
 
-  /** Private: a phone behind an Apaki account waits for this PC's OK (status phoneRequest). */
+  /** Private: a phone behind an Apaki account waits for this ${pc()}'s OK (status phoneRequest). */
   function phoneAskBlock() {
     const r = st?.phoneRequest;
     if (!r) return '';
@@ -301,12 +303,12 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
       const capLink = ` · <button type="button" class="ph-life-btn" data-k="cap-edit" data-id="${esc(d.id)}" aria-expanded="${editCap === d.id}" title="Change what it may make Claude do">${esc(CAP_LABEL[dcap] || dcap)}</button>`;
       const capRow = editCap === d.id ? capSeg(dcap, 'cap-set', d.id, st?.caps || CAPS) : '';
       const sure = confirmRemove === d.id;
-      const title = acct ? `Removes the account from this PC: every phone signed in to ${d.account || 'it'} stops reaching it` : 'Removes this phone: it can never reconnect';
+      const title = acct ? `Removes the account from this ${pc()}: every phone signed in to ${d.account || 'it'} stops reaching it` : 'Removes this phone: it can never reconnect';
       return `<li class="ph-dev${d.connected ? ' live' : ''}${acct ? ' acct' : ''}">${phoneGlyph(d.connected)}<div class="ph-dev-t"><div class="ph-dev-n">${esc(d.name || 'Phone')}</div><div class="ph-dev-m">${meta}${d.app ? ` · app ${esc(d.app.version)}` : ''}${capLink}${lifeLink}</div>${appNote(d.app)}${capRow}${lifeRow}${acct ? phonesList(d) : ''}</div><button class="ph-remove${sure ? ' sure' : ''}" data-k="revoke" data-id="${esc(d.id)}" title="${esc(title)}">${sure ? 'Remove for good' : 'Remove'}</button></li>`;
     }).join('');
     const heading = list.some((d) => d.kind === 'account') ? 'Paired phones and accounts' : 'Paired phones';
-    // Connected and no account yet: how to reach this PC from any device (Arthur, 2026-10-10).
-    const hint = st?.mode === 'connected' && !list.some((d) => d.kind === 'account') ? `<p class="ph-hint">Sign in at ${esc(hostIn(st?.web))} on your phone to reach this PC from any device.</p>` : '';
+    // Connected and no account yet: how to reach this ${pc()} from any device (Arthur, 2026-10-10).
+    const hint = st?.mode === 'connected' && !list.some((d) => d.kind === 'account') ? `<p class="ph-hint">Sign in at ${esc(hostIn(st?.web))} on your phone to reach this ${pc()} from any device.</p>` : '';
     return `<div class="ph-devices"><div class="ph-sec"><span>${heading}</span><span class="ph-sec-n">${list.length || ''}</span></div>${list.length ? `<ul>${rows}</ul>` : '<p class="ph-empty">No phones yet.</p>'}${hint}</div>`;
   }
 
@@ -318,12 +320,12 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     const accounts = (s.devices || []).filter((d) => d.kind === 'account');
     const opt = (v, label) => `<button type="button" role="radio" aria-checked="${s.mode === v}" class="${s.mode === v ? 'on' : ''}" data-k="mode" data-mode="${v}">${label}</button>`;
     const line = s.mode === 'private'
-      ? `Private: every phone needs your OK here. A phone you scan a code with is added at once; any other phone, including one signed in to an Apaki account, waits until you allow it. An account is only added right after you pair a phone. Phones still run the page from ${esc(host)}, which this PC checks before each code.`
-      : `Connected: phones signed in to an Apaki account can reach this PC too, once you allow that account here. Accounts live on ${esc(host)}, encrypted with your passkey.`;
+      ? `Private: every phone needs your OK here. A phone you scan a code with is added at once; any other phone, including one signed in to an Apaki account, waits until you allow it. An account is only added right after you pair a phone. Phones still run the page from ${esc(host)}, which this ${pc()} checks before each code.`
+      : `Connected: phones signed in to an Apaki account can reach this ${pc()} too, once you allow that account here. Accounts live on ${esc(host)}, encrypted with your passkey.`;
     const n = accounts.length;
     const confirm = toPrivate ? `<div class="ph-sas ph-confirm">
         <div class="ph-step">Switch to Private</div>
-        <p>${n} Apaki account${n === 1 ? ' is' : 's are'} linked to this PC. In Private mode each phone behind ${n === 1 ? 'it' : 'them'} is asked here when it connects, and phones that connected by themselves are asked again. Keep ${n === 1 ? 'it' : 'them'}, or remove ${n === 1 ? 'it' : 'them'}.</p>
+        <p>${n} Apaki account${n === 1 ? ' is' : 's are'} linked to this ${pc()}. In Private mode each phone behind ${n === 1 ? 'it' : 'them'} is asked here when it connects, and phones that connected by themselves are asked again. Keep ${n === 1 ? 'it' : 'them'}, or remove ${n === 1 ? 'it' : 'them'}.</p>
         <div class="ph-actions"><button data-k="mode-cancel">Cancel</button><button data-k="mode-keep">Keep</button><button class="primary" data-k="mode-remove">Remove ${n === 1 ? 'it' : 'them'}</button></div>
       </div>` : '';
     return `<div class="ph-mode"><div class="seg" role="radiogroup" aria-label="Phone access mode">${opt('connected', 'Connected')}${opt('private', 'Private')}</div><p class="ph-mode-t">${line}</p></div>${confirm}`;
@@ -337,7 +339,7 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     const who = `${r.by || 'A phone'}${r.via ? ` (${r.via})` : ''}`;
     return `<div class="ph-sas ph-link">
         <div class="ph-step"><b>${esc(who)}</b> wants to add the Apaki account <b>${esc(r.account || 'Apaki account')}</b></div>
-        <p>Every phone signed in to that account could then reach this PC, without a code. ${CAP_TEXT[c] || CAP_TEXT.full} Allow it only if you asked for this.</p>
+        <p>Every phone signed in to that account could then reach this ${pc()}, without a code. ${CAP_TEXT[c] || CAP_TEXT.full} Allow it only if you asked for this.</p>
         ${fold('link', linkOptsOpen, esc(choiceLine(c, linkLife).replace('paired', 'linked')), `<div class="ph-life-row"><span>It may</span>${capSeg(c, 'linkcap-pick')}</div>
         <div class="ph-life-row"><span>Stays linked</span>${lifeSeg(linkLife, 'linklife-pick', '', days())}</div>`)}
         <div class="ph-actions"><button data-k="link-deny">Deny</button><button class="primary" data-k="link-allow">Allow</button></div>
@@ -349,24 +351,24 @@ export function initPhone({ send, sheet, ding = () => {}, button }) {
     const s = st || { state: 'off', enabled: false, devices: [] };
     const [label, line] = STATE_TEXT[s.state] || ['', ''];
     let detail = s.error || line;
-    if (s.state === 'online' && s.relay) detail = `Reachable through ${s.relay}. Nothing listens on this PC: Apaki keeps one outgoing connection.`;
+    if (s.state === 'online' && s.relay) detail = `Reachable through ${s.relay}. Nothing listens on this ${pc()}: Apaki keeps one outgoing connection.`;
     if (s.state === 'connecting' && s.relay) detail = `Reaching ${s.relay}…`;
     if (s.state === 'offline' && s.retryInMs != null) detail = `${s.error ? `${s.error} ` : `${s.relay || 'The relay'} is not answering. `}Trying again in ${Math.max(1, Math.round(s.retryInMs / 1000))} s.`;
     const toggle = s.relayConfigured === false && !s.enabled ? '' : `<button data-k="toggle"${s.enabled ? '' : ' class="primary"'}>${s.enabled ? 'Turn off' : 'Turn on'}</button>`;
-    const keys = s.protection === 'dpapi' ? 'Keys on this PC are sealed with Windows DPAPI for your account.' : s.protection === 'keychain' ? 'Keys on this Mac are sealed with a key in your login Keychain.' : s.protection === 'file' ? 'Keys on this PC are in a file only your account can read.' : '';
+    const keys = s.protection === 'dpapi' ? 'Keys on this PC are sealed with Windows DPAPI for your account.' : s.protection === 'keychain' ? 'Keys on this Mac are sealed with a key in your login Keychain.' : s.protection === 'file' ? `Keys on this ${pc()} are in a file only your account can read.` : '';
     // 2026-10-11 polish: the status shows on top only when something is not right (off, offline, a problem); while it
     // is on, it lives in the options line under the QR with the mode and the page check.
     const statusHtml = `<div class="ph-status" data-state="${esc(s.state)}"><div class="ph-status-t"><span class="ph-state">${esc(label)}</span><span class="ph-line">${esc(detail)}</span></div>${toggle}</div>`;
     const healthy = s.enabled && s.state === 'online' && !s.keysProblem;
     const pageHtml = s.page?.text ? `<div class="ph-page" data-state="${esc(s.page.state)}" title="${esc(s.page.url || '')}">${esc(s.page.text)}</div>` : '';
     const pageBad = s.page && s.page.state && s.page.state !== 'ok';
-    const skipHtml = s.page?.canSkip && s.enabled && !s.pairing && !s.request ? `<div class="ph-skip"><button data-k="pair-unchecked">Pair without checking the page</button><span>Your phone would run whatever ${esc(hostIn(s.page.url || s.web, 'the site'))} serves now, unverified. If that page was changed, it could use this pairing to do anything this phone is allowed to do on this PC.</span></div>` : '';
+    const skipHtml = s.page?.canSkip && s.enabled && !s.pairing && !s.request ? `<div class="ph-skip"><button data-k="pair-unchecked">Pair without checking the page</button><span>Your phone would run whatever ${esc(hostIn(s.page.url || s.web, 'the site'))} serves now, unverified. If that page was changed, it could use this pairing to do anything this phone is allowed to do on this ${pc()}.</span></div>` : '';
     const modeWord = s.mode === 'private' ? 'Private' : s.mode === 'connected' ? 'Connected' : '';
     const optsLine = [modeWord, 'new phones start with Full access, paired for good', healthy && s.relay ? `on through ${esc(s.relay)}` : ''].filter(Boolean).join(' · ');
     const optsBody = `${healthy ? statusHtml : ''}${modeBlock()}<p class="ph-opts-note">A phone at Allow starts with Full access and stays paired for good; change both in its card before you allow it, or later on its row below.</p>${pageBad ? '' : pageHtml}`;
     root.innerHTML = `<div class="phone-sheet">
       <div class="ph-head"><div class="ph-kicker">Phone</div><h2>Apaki on your phone</h2>
-        <p>Pair a phone once with a code. After that it reaches this PC from anywhere, end to end encrypted: the relay only forwards sealed frames, and your Claude logins never leave this PC.</p></div>
+        <p>Pair a phone once with a code. After that it reaches this ${pc()} from anywhere, end to end encrypted: the relay only forwards sealed frames, and your Claude logins never leave this ${pc()}.</p></div>
       ${healthy ? '' : statusHtml}
       ${s.opError ? `<div class="ph-err">${esc(s.opError)}</div>` : ''}
       ${s.keysProblem ? `<div class="ph-actions"><button data-k="reset" class="${confirmReset ? 'ph-remove sure' : ''}" title="Sets the saved keys aside (renamed, kept) and makes new ones: every phone pairs again">${confirmReset ? 'Start over: every phone pairs again' : 'Start over'}</button></div>` : ''}
