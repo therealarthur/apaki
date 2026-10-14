@@ -47,6 +47,8 @@ node apaki/demo/server.mjs port=8765
 
 then open `http://127.0.0.1:8765/desktop.html?ws=steer&theme=dark`. For the phone client at 390x844: `http://127.0.0.1:8765/phone.html?ws=phone&theme=light`; `ws=phone-browser` makes the first conversation play a visit to the demo shop as the real engine reports it (Browser tool lines and activity), so the phone's Browser button and view can be tried (the engine answers `browserView` with a drawn picture, and `forkSession` with a copy). Query string: `ws=<workspace>` (a name from `PRESETS` in `harness/data.mjs`), `theme=light|dark|auto`, `cursor=0` hides the pointer overlay, `seed=` and `now=` override the dice and the clock. It is a working window: type, send, steer, open the Glass panel.
 
+The viewers (2026-10-13): `desktop.html?ws=viewers&tab=<n>` opens one tab per kind of artifact, each a conversation with its viewer beside it: 0 code, 1 a 100,000 row CSV, 2 a line chart, 3 a spreadsheet with two sheets, 4 a Word document, 5 a JSON tree, 6 JSON records, 7 a Markdown note with a revision the user edited (Changes, Edit and Save work), 8 to 11 bar, stacked area, scatter and pie charts, 12 an SVG. The artifacts are invented in `harness/artifacts.mjs` (the spreadsheet and the document are built as real zip files in memory), and the pretend engine answers `artifactGet`, `artifactEdit` and `artifactSave` the way the real one does. On the phone page, open a conversation and call `__apaki.openViewer({ sessionId, id, title, kind, sourcePane })` with one of those ids.
+
 ## The scenes
 
 | Scene | What it shows | Stills |
@@ -103,7 +105,7 @@ ffmpeg needs libx264 and libwebp (the `ffmpeg-static` package has both). The sit
 
 - Native OS chrome. The window has no title bar frame here; the UI's own minimize, maximize and close buttons show, but nothing outside the window. Put the clips in a device frame on the page if you want one.
 - Real page content in the browser pane. It shows one fictional shop (cart, checkout) and a "nothing here" page for any other address.
-- Dictation, image paste and drag and drop between panes (a recording could drive these, but no scene does yet), the folder chooser sheet for a new conversation (the engine answers `places` and `listDir` with nothing), the sign-in card and billing sheet beyond the Glass panel, artifacts (`show`), shells and monitors.
+- Dictation, image paste and drag and drop between panes (a recording could drive these, but no scene does yet), the folder chooser sheet for a new conversation (the engine answers `places` and `listDir` with nothing), the sign-in card and billing sheet beyond the Glass panel, artifacts that a scripted turn shows live (the viewers preset opens them from a saved workspace instead), HTML and PDF artifacts (they need the engine's localhost server), shells and monitors.
 - Sound. The ding plays nothing in a recording.
 - Search is a small table of "meanings" for the demo sessions, not an index: only the example questions in `harness/engine.mjs` find things by meaning.
 - The recorder captures about 25 frames a second; clips are converted to 30 fps by repeating frames, so very fast motion is not smoother than the source.

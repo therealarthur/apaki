@@ -449,6 +449,23 @@ console writes (~/.claude/latch/console: settings for --settings, terminal
 specs, held records) hold no secrets: a terminal spec carries the environment's
 changes, never the environment.
 
+Update 2026-10-13 (the viewers, apaki/ui/artifacts.js and its modules): the
+viewer now draws code, CSV and JSON tables, charts, workbooks (xlsx, xls) and
+Word documents. Untrusted files are parsed in the window by vendored libraries
+(apaki/ui/vendor, loaded only when a viewer of that kind opens): SheetJS in a
+worker, mammoth with its HTML rebuilt from an allowlist (links http, https and
+mailto only, pictures only data images from the file, no styles or handlers),
+highlight.js on text. None of them evaluates strings on the paths used, and
+the window's CSP is unchanged (no 'unsafe-eval'). Sizes are capped in the
+store (text 4 MB, workbooks and documents 15 MB, chart specs 2 MB and 50,000
+points). The viewer's two writes are PC only (PC_ONLY_OPS): artifactSave (a
+file into the PC's Downloads) and artifactEdit (the user's edit of a Markdown
+or text artifact, which the session reads back with view_read); a phone reads
+every kind through artifactGet as before and says editing is on the PC.
+view_read reads only the calling conversation's own artifacts; a
+UserPromptSubmit hook adds one line of context to the user's own next message
+after an edit and sends nothing by itself.
+
 | Question | Answer | Where |
 |---|---|---|
 | Can a phone switch a conversation to bypassPermissions? | Yes, on open or with the mode op | remote-policy.js:45, 147, 201-204 |

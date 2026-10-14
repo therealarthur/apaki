@@ -101,7 +101,8 @@ export function stamp(at, now = new Date()) {
 /** The artifact kind a file's extension gives (for cards rebuilt from history). */
 const kindFromPath = (p) => {
   const e = (String(p).match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
-  return { html: 'html', htm: 'html', md: 'markdown', markdown: 'markdown', svg: 'svg', pdf: 'pdf' }[e] || (/^(png|jpe?g|gif|webp|bmp|ico|avif)$/.test(e) ? 'image' : 'text');
+  // xlsx, xls and docx since 2026-10-13 (the viewer draws workbooks and Word documents).
+  return { html: 'html', htm: 'html', md: 'markdown', markdown: 'markdown', svg: 'svg', pdf: 'pdf', xlsx: 'sheet', xlsm: 'sheet', xlsb: 'sheet', xls: 'sheet', docx: 'docx' }[e] || (/^(png|jpe?g|gif|webp|bmp|ico|avif)$/.test(e) ? 'image' : 'text');
 };
 
 function el(tag, cls, html) {
@@ -1268,7 +1269,7 @@ Click for changes, commit, push, pull request, merge`;
   addShowCard(block) {
     const input = block.input || {};
     const kind = String(input.kind || 'file').toLowerCase();
-    const card = artifactCard({ title: input.title || (input.path ? String(input.path).split(/[\\/]/).pop() : 'Artifact'), kind, state: 'pending' }, { onOpen: (c) => this.openCard(c) });
+    const card = artifactCard({ title: input.title || (input.path ? String(input.path).split(/[\\/]/).pop() : 'Artifact'), kind, lang: typeof input.language === 'string' ? input.language : undefined, state: 'pending' }, { onOpen: (c) => this.openCard(c) });
     card.dataset.tool = block.id;
     card.dataset.input = kind === 'url' ? JSON.stringify({ url: input.url || input.content || input.path || '', title: input.title || '' }) : '';
     this.clearEmpty();
@@ -1424,12 +1425,12 @@ Click for changes, commit, push, pull request, merge`;
   }
 
   /** A card for an artifact a caught "open" command or BROWSER showed. */
-  placeArtifact({ id, rev, title, kind, sub }, after = null) {
+  placeArtifact({ id, rev, title, kind, sub, ext, lang, by }, after = null) {
     const key = `a:${id}:${rev}`;
     if (this.cardKeys.has(key)) return;
     this.cardKeys.add(key);
     this.clearEmpty();
-    const card = artifactCard({ id, rev, title, kind, sub, state: 'ready' }, { onOpen: (c) => this.openCard(c) });
+    const card = artifactCard({ id, rev, title, kind, sub, ext, lang, by, state: 'ready' }, { onOpen: (c) => this.openCard(c) });
     if (after?.isConnected) {
       // After the tool line and any cards already placed after it.
       let at = after;
@@ -1442,17 +1443,25 @@ Click for changes, commit, push, pull request, merge`;
 
   /** The engine stored an artifact for this pane: fill its show card, or add a card. */
   onArtifact(e) {
+    // Your own edit in the viewer (2026-10-13, the canvas): the newest card of that artifact says "edited by you" and
+    // takes the new revision, rather than a new card; the session reads it with view_read.
+    if (e.via === 'user-edit') {
+      const mine = [...this.$.T.querySelectorAll('.art-card')].filter((c) => c.dataset.id === e.id).pop();
+      if (mine) { updateCard(mine, { rev: e.rev, by: 'user', sub: 'You edited it in the viewer. Claude reads your version with view_read.' }); this.renderArtifactsButton(); return; }
+      this.placeArtifact({ id: e.id, rev: e.rev, title: e.title, kind: e.kind, ext: e.ext, lang: e.lang, sub: 'You edited it in the viewer.', by: 'user' });
+      return;
+    }
     let card = e.toolUseId ? this.tools.get(e.toolUseId) : null;
     if (card && !card.classList.contains('art-card')) card = null; // a Bash line: the open was caught
     if (!card && e.via === 'show') card = [...this.$.T.querySelectorAll('.art-card[data-state=pending]')].pop() || null;
     if (card) {
       this.cardKeys.add(`a:${e.id}:${e.rev}`);
-      updateCard(card, { id: e.id, rev: e.rev, title: e.title, kind: e.kind, state: 'ready' });
+      updateCard(card, { id: e.id, rev: e.rev, title: e.title, kind: e.kind, ext: e.ext, lang: e.lang, by: e.by || 'session', state: 'ready' });
       this.renderArtifactsButton();
       return;
     }
     const via = e.sub || (e.via && e.via !== 'show' && !/^codex-/.test(e.via) ? `Opened by ${e.via}` : e.via === 'codex-diff' ? 'Changed in this turn' : '');
-    this.placeArtifact({ id: e.id, rev: e.rev, title: e.title, kind: e.kind, sub: via }, e.toolUseId ? this.tools.get(e.toolUseId) : null);
+    this.placeArtifact({ id: e.id, rev: e.rev, title: e.title, kind: e.kind, ext: e.ext, lang: e.lang, sub: via }, e.toolUseId ? this.tools.get(e.toolUseId) : null);
   }
 
   /** Marks that this conversation has a page in the PC's built-in browser (the phone's Browser button, 2026-10-12). Once. */

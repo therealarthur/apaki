@@ -45,8 +45,11 @@
 /** Tools with their own sheets (answered by the interactive-tool hook); allowed here as before. */
 export const PASS_THROUGH_TOOLS = Object.freeze(['AskUserQuestion', 'ExitPlanMode']);
 
-/** Apaki's own display tool: allowed without a prompt, and only from the in-process server this host registered. */
-export const OWN_TOOLS = Object.freeze(['mcp__apaki__show']);
+/**
+ * Apaki's own display tool, and (2026-10-13) its read-only view_read (what the user made of an artifact): allowed
+ * without a prompt, and only from the in-process server this host registered.
+ */
+export const OWN_TOOLS = Object.freeze(['mcp__apaki__show', 'mcp__apaki__view_read']);
 
 /** True for a tool of Apaki's own in-process "apaki" server that needs no prompt (the SDK says which server served it). */
 export function isOwnTool(toolName, opts) {

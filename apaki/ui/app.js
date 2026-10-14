@@ -392,7 +392,9 @@ function entryModel(e) {
   const kind = W.kindOf(v);
   const word = { diff: 'Changes', task: 'Task', artifact: 'Artifact' }[kind] || 'Viewer';
   const mark = kind === 'diff' ? GLYPH_WORKTREE : kind === 'task' ? taskGlyph(v.spec?.kind || 'task') : kindGlyph(v.art?.kind);
-  return { ...e, title: v.title || word, mark, tip: `${word}: ${v.title || ''}` };
+  // The viewer's own header (its file, size) gives way to its toolbar in the panel, so the tab's tooltip names the file.
+  const where = v.art?.source || v.art?.path || v.spec?.path || '';
+  return { ...e, title: v.title || word, mark, tip: `${word}: ${v.title || ''}${where ? `\n${String(where).replace(/^[A-Za-z]:\\Users\\[^\\]+/, '~')}` : ''}` };
 }
 
 /** A group's tooltip: whose it is and what it holds ("2 pages, 1 artifact"). */
@@ -4070,7 +4072,8 @@ function restore(saved = readLocal()) {
 /* ---------- engine events ---------- */
 
 // console, consoleData, consoleView, terminal (2026-10-12): the pane's console and Open in terminal (console.js).
-const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context', 'historyPage', 'historyBlock', 'historyPrompts', 'historyCount', 'followers', 'peerMessage', 'console', 'consoleData', 'consoleView', 'terminal']);
+// artifactSaved, artifactEdited (2026-10-13): a viewer's Download and Save of an edit (artifacts.js).
+const PANE_EVENTS = new Set(['steered', 'steer_missed', 'locked', 'taken_over', 'opened', 'history', 'session_id', 'sdk', 'result', 'billing', 'commands', 'note', 'error', 'transcript', 'settings', 'artifactContent', 'agentLines', 'outputText', 'taskOutput', 'context', 'historyPage', 'historyBlock', 'historyPrompts', 'historyCount', 'followers', 'peerMessage', 'console', 'consoleData', 'consoleView', 'terminal', 'artifactSaved', 'artifactEdited']);
 
 /** Phone access (phone.js), set up at start; null in the phone web client. */
 let phone = null;

@@ -153,8 +153,21 @@ export const PHONE_OPS = Object.freeze([
  * Ops only the PC's own window may send, never a phone, whatever its access (2026-10-12): the console runs a terminal
  * program on the PC's screen and takes its keyboard (like billing and the Phone sheet, it is the PC user's), and Open in
  * terminal opens a window on the PC. Not in PHONE_OPS, so checkPhoneCommand refuses them; listed so a test keeps it so.
+ *
+ * The viewer's own writes (2026-10-13, viewers like ChatGPT's side window), decided PC only:
+ *   artifactSave  writes a file into the PC's Downloads and opens Explorer on the PC's screen. A phone downloads to the
+ *                 phone instead, from the content artifactGet already gives it (artifacts.js saves a blob there).
+ *   artifactEdit  the canvas's "edit and send back". A phone reads every kind but does not edit, and its viewer says so
+ *                 ("Read only on the phone"). Why: an edit is not a note to the PC, it becomes what the session reads
+ *                 back through view_read and acts on, with the weight of the user's own words, and the UserPromptSubmit
+ *                 hook points the session at it. A Chat only phone is the read-only access level; letting it write
+ *                 artifacts would hand it a second way to steer a session that only a send gives it today, and the
+ *                 relay path would gain a write into the PC's artifact store for every access level at once. Editing
+ *                 long text on a phone keyboard is also not what the phone is for. If Arthur wants it later, the
+ *                 shape is: a phone op allowed for 'full' only (capAllowsOp), sessions this phone has open only (like
+ *                 artifactGet), Markdown and text kinds only, and the size cap of artifacts.js MAX_TEXT_BYTES.
  */
-export const PC_ONLY_OPS = Object.freeze(['consoleOpen', 'consoleInput', 'consoleResize', 'consoleClose', 'openTerminal']);
+export const PC_ONLY_OPS = Object.freeze(['consoleOpen', 'consoleInput', 'consoleResize', 'consoleClose', 'openTerminal', 'artifactSave', 'artifactEdit']);
 
 /** What worktreePlan and worktreeRun can be asked to do (worktrees.js KINDS; test/apaki-worktrees-engine.test.js keeps the lists equal). */
 export const WORKTREE_KINDS = Object.freeze(['create', 'remove', 'commit', 'push', 'pr', 'merge']);
@@ -252,8 +265,11 @@ export const APAKI_BROWSER_TOOLS = Object.freeze(['browser_open', 'browser_read'
 /** Tools a 'noshell' or 'chat' phone pane never gets: commands, file edits, Apaki's browser. */
 export const CAP_BLOCKED_TOOLS = Object.freeze(['Bash', 'PowerShell', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', ...APAKI_BROWSER_TOOLS]);
 
-/** The one MCP tool a restricted phone pane keeps: Apaki's show, which writes only Apaki's own store. */
-const CAP_KEPT_MCP = new Set(['mcp__apaki__show']);
+/**
+ * The MCP tools a restricted phone pane keeps: Apaki's show, which writes only Apaki's own store, and (2026-10-13)
+ * view_read, which only reads that store, and only this conversation's part of it.
+ */
+const CAP_KEPT_MCP = new Set(['mcp__apaki__show', 'mcp__apaki__view_read']);
 
 /**
  * Search tools a restricted pane is given by name: a native Claude Code build
@@ -265,8 +281,8 @@ export const CAP_SEARCH_TOOLS = Object.freeze(['Grep', 'Glob']);
 /**
  * True when a phone with this capability may not use the tool. For
  * 'noshell' and 'chat': the blocked list, and every MCP tool but Apaki's
- * show (an MCP server from the user's settings can do anything, a shell
- * included).
+ * show and view_read (an MCP server from the user's settings can do anything,
+ * a shell included).
  */
 export function capBlocksTool(cap, name) {
   if (cap === 'full') return false;

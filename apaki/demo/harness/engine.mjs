@@ -23,6 +23,8 @@ import { Turn, TurnAborted, SCRIPTS } from './turns.mjs';
 import { createCodexDemo } from './codex.mjs';
 // Git worktrees (2026-10-12): the pretend of the engine's worktree ops, on invented repositories.
 import { createWorktrees } from './worktrees.mjs';
+// The viewers (2026-10-13): invented artifacts of every kind, for the viewer panes of the "viewers" preset.
+import { createArtifactsDemo } from './artifacts.mjs';
 
 const MODEL = 'claude-opus-5-5';
 const PAIR_URL = 'https://apaki.myrlin.io/pair#v1.q7T2mK9xRw4LbN8cHf3Yp6Ds5GjV1eAu';
@@ -70,6 +72,7 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
   let browserDid = '';
   const emit = (ev) => { if (ev?.ev === 'browserActivity') browserDid += ` ${ev.text || ev.action || ''}`; send(ev); };
   const codexDemo = createCodexDemo({ emit, later, nextId, sessions, panes, now });
+  const artifactsDemo = createArtifactsDemo({ send, later, now });
 
   /* billing, Glass */
 
@@ -447,6 +450,9 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     // A Codex pane's ops (and the two only Codex has) are answered there; the workspace starts with Codex only in the codex preset.
     if (codexDemo.handle(c, pane)) return;
     if (worktrees.handle(c)) return;
+    // The side-panel preset's two artifacts (data.mjs ARTIFACTS) are answered here; every other id by the viewers' catalog.
+    if (c.op === 'artifactGet' && ARTIFACTS[c.id]) { artifactGet(c); return; }
+    if (artifactsDemo.handle(c)) return;
     switch (c.op) {
       case 'sessions': sendSessions(c.reqId); break;
       case 'loadState': later(10, { ev: 'state', state: { v: 1, savedAt: now() + 5000, active: start.active || 0, tabs: start.tabs, rail: start.rail, win: null } }); break;
@@ -506,8 +512,6 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
         later(80, { ev: 'billingOptions', paneId: c.paneId, options: [{ label: 'Follow Myrlin Glass', value: { follow: true } }, ...glass.claude.map((a) => ({ label: a.isKey ? `${a.name} (API key)` : `${a.name} (${a.plan})`, value: { account: a.id } }))] });
         break;
       case 'billing': later(40, { ev: 'billing', paneId: c.paneId, ...billing() }); break;
-      // An artifact viewer reads what was shown (2026-10-13, the side-panel preset): the demo's own invented artifacts.
-      case 'artifactGet': artifactGet(c); break;
       default: break;
     }
   }
@@ -521,7 +525,14 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     const a = ARTIFACTS[c.id];
     if (!a) { later(60, { ev: 'artifactContent', reqId: c.reqId, paneId: c.paneId, error: 'This artifact is not part of the demo.' }); return; }
     const src = a.kind === 'html' ? `data:text/html;charset=utf-8,${encodeURIComponent(a.content)}` : null;
-    later(140, { ev: 'artifactContent', reqId: c.reqId, paneId: c.paneId, id: c.id, sessionId: c.sessionId, rev: 1, latest: 1, revs: [{ rev: 1 }], kind: a.kind, title: a.title, size: a.content.length, content: a.content, src });
+    const ext = a.kind === 'html' ? 'html' : 'md';
+    const mime = a.kind === 'html' ? 'text/html' : 'text/markdown';
+    const at = NOW - 20 * MIN;
+    later(140, {
+      ev: 'artifactContent', reqId: c.reqId, paneId: c.paneId, id: c.id, sessionId: c.sessionId, rev: 1, latest: 1, kind: a.kind, title: a.title, ext, mime,
+      revs: [{ rev: 1, at, title: a.title, ext, kind: a.kind, by: 'session' }], by: 'session', size: a.content.length, source: null,
+      path: `C:\\Users\\dev\\.claude\\latch\\artifacts\\${c.sessionId}\\${c.id}.${ext}`, encoding: 'utf8', content: a.content, src,
+    });
   }
 
   function agentWatch(c) {
