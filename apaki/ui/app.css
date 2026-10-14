@@ -3551,7 +3551,11 @@ body.sp-dragging, body.sp-dragging * { cursor: col-resize !important; user-selec
 .sp-body > .pane.viewer.art-tooled:has(> .pane-bar .link-chip.gone:not([hidden]), > .pane-bar .link-chip.away:not([hidden])) > .pane-bar { display: flex; min-height: 40px; }
 .sp-body > .pane.viewer.art-tooled > .find-bar { margin-top: 48px; }
 .sp-body .pane.web.tabbed .pane-bar { flex-wrap: nowrap; padding-bottom: 6px; }
-.sp-body .pane.web.tabbed .web-head .title { display: block; }
+/* A browser there: the panel's tab names the page, so its title line carries what Claude just did ("Claude · type [3]"),
+   whatever the panel's width. */
+.sp-body .pane.web .web-head .title { display: none; }
+.sp-body .pane.web .web-act { display: block; }
+.sp-body .pane.web .web-head { min-height: 14px; }
 
 /* Collapsed: the open button, then each conversation's count in its accent (new ones tinted until you look). */
 .sp-rail { display: none; flex-direction: column; align-items: center; gap: 6px; width: 100%; padding: 6px 0; background: hsla(var(--w), .8); }

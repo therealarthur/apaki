@@ -558,7 +558,9 @@ export function migrateViewers(savedTabs, active = 0) {
     const preset = typeof t?.arrange === 'string' && ARRANGEMENTS.includes(t.arrange) ? t.arrange : null;
     if (root && preset && root !== t.root) {
       const tall = t.shape === 'tall';
-      root = arrange(ids, () => ({ viewer: false, source: null }), { preset, w: tall ? 900 : 1600, h: tall ? 1600 : 900 });
+      // The arrangement makes bare leaves: each takes back its saved leaf (the session, title, model, draft...).
+      const saved = new Map(leavesOf(root).map((lf) => [lf.pane, lf]));
+      root = L.mapLeaves(arrange(ids, () => ({ viewer: false, source: null }), { preset, w: tall ? 900 : 1600, h: tall ? 1600 : 900 }), (lf) => saved.get(lf.pane) || lf);
     }
     const ownerOfId = (id) => leafOwner(leavesOf(t?.root).find((lf) => lf.pane === id));
     const onConv = (id) => (ids.includes(id) ? id : ids.includes(ownerOfId(id)) ? ownerOfId(id) : null);

@@ -543,8 +543,8 @@ PRESETS['layout-old'] = () => {
 };
 
 /**
- * The side panel (2026-10-13): a tab saved the way the window saved it before the panel, shaped like the one Arthur
- * found "incredibly hectic": three conversations in a row on top (the left one with a markdown viewer squeezed below
+ * The side panel (2026-10-13): a tab saved the way the window saved it before the panel, shaped like the busy tab that
+ * was called "incredibly hectic": three conversations in a row on top (the left one with a markdown viewer squeezed below
  * it), and under them the middle conversation's browser (two pages) beside an HTML viewer of the same conversation.
  * On restore every viewer moves into the tab's side panel under its conversation, and the tree keeps the three
  * conversations. A second tab has two conversations and nothing open. Use with desktop.html?ws=side-panel.

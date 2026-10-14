@@ -325,6 +325,7 @@ test('side panel: an old workspace\'s viewer leaves move into their conversation
   assert.deepEqual(W.panelGroups([], [{ id: 'v9', kind: 'artifact', source: W.leafOwner(tabs[2].items[0]) }]).map((g) => g.key), [W.OTHER]);
   // An arranged tab is laid out again for what is left; a diff follows its conversation.
   assert.equal(shape(tabs[3].root), 'q2');
+  assert.deepEqual(tabs[3].root, saved[3].root.children[0], 'the conversation keeps its saved leaf: session, title, draft');
   assert.deepEqual(tabs[3].items.map((x) => x.pane), ['d1']);
   assert.equal(tabs[0].root.pane, 'q1');
   assert.deepEqual(tabs[0].items.map((x) => x.pane), ['b9']);
@@ -345,6 +346,10 @@ test('side panel: a tab that held only viewers of conversations elsewhere goes, 
   assert.equal(active, 0);
   assert.deepEqual(tabs[0].items.map((x) => x.pane), ['b2']);
   assert.equal(tabs[0].focused, 'p1');
+  // An arranged tab of two conversations and a viewer: laid out again, every conversation's saved leaf kept.
+  const arranged = W.migrateViewers([{ focused: 'a', arrange: 'auto', shape: 'wide', root: { type: 'split', dir: 'row', sizes: [0.6, 0.4], children: [conv('a'), { type: 'split', dir: 'col', sizes: [0.6, 0.4], children: [{ type: 'leaf', pane: 'v', view: { id: 'x', sourcePane: 'a' } }, conv('b')] }] } }], 0);
+  assert.deepEqual(shape(arranged.tabs[0].root), ['row', 'a', 'b']);
+  assert.deepEqual(L.mapLeaves(arranged.tabs[0].root, (lf) => lf).children.map((lf) => [lf.pane, lf.s, lf.title]), [['a', 'a', 'a'], ['b', 'b', 'b']]);
   // A focus on a viewer goes to its conversation.
   const one = W.migrateViewers([{ focused: 'a', root: { type: 'split', dir: 'row', sizes: [0.5, 0.5], children: [conv('a'), conv('b')] } }, { focused: 'v', root: { type: 'split', dir: 'row', sizes: [0.5, 0.5], children: [conv('c'), { type: 'leaf', pane: 'v', view: { id: 'x', sourcePane: 'c' } }] } }], 0);
   assert.equal(one.tabs[1].focused, 'c');
