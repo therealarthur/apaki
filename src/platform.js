@@ -41,6 +41,23 @@ export function voiceDir(opts = {}) {
 export const whisperName = (platform = process.platform) => (platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli');
 
 /**
+ * The voice folder that ships inside a macOS app (macOS port phase 2, 2026-10-13): the packaged engine is
+ * <app>/Contents/Resources/engine, and the signed whisper.cpp (Metal) sits beside it in <app>/Contents/Resources/voice
+ * with the same bin/Release/whisper-cli layout the per-user voice folder has. null for anything that is not a packaged
+ * app (a source checkout, the Windows package), so those keep looking only at voiceDir().
+ */
+export function bundledVoiceDir(engineRoot, { platform = process.platform } = {}) {
+  if (platform !== 'darwin') return null;
+  const P = path.posix;
+  const resources = P.dirname(P.resolve(engineRoot));
+  if (P.basename(resources) !== 'Resources' || P.basename(P.dirname(resources)) !== 'Contents') return null;
+  return P.join(resources, 'voice');
+}
+
+/** The BROWSER shim in apaki/bin: a batch file on Windows, a shell script on macOS and Linux. */
+export const openShimName = (platform = process.platform) => (platform === 'win32' ? 'apaki-open.cmd' : 'apaki-open');
+
+/**
  * Where Myrlin Glass's command line is. LATCH_GLASS_CLI overrides. Windows has one place; on a Mac Glass is not a
  * Windows widget, so the usual app and command-line places are tried and the first that exists wins (none exists:
  * the first one, so a message can name it and "not installed" is the honest answer).

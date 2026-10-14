@@ -84,8 +84,12 @@ mod imp {
     pub fn install_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         let quit = MenuItemBuilder::new("Quit Myrlin Apaki").id("quit").accelerator("CmdOrCtrl+Q").build(app)?;
         let close = MenuItemBuilder::new("Close Window").id("close-window").accelerator("CmdOrCtrl+Shift+W").build(app)?;
+        // Voice (2026-10-13): the app carries whisper.cpp; the speech model (about 141 MB) is fetched when asked, here.
+        let voice = MenuItemBuilder::new("Download Voice Model...").id("voice-model").build(app)?;
         let app_menu = SubmenuBuilder::new(app, "Myrlin Apaki")
             .about(None)
+            .separator()
+            .item(&voice)
             .separator()
             .services()
             .separator()
@@ -104,8 +108,10 @@ mod imp {
     }
 
     /// Quit and Close Window close the window (so main.rs flushes the workspace and the app ends with its last window).
-    pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEvent) {
+    pub fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
         match event.id().as_ref() {
+            // The engine downloads the model (voice-model.js) and says how it went in the window.
+            "voice-model" => crate::engine_write(app, &serde_json::json!({ "op": "voiceModel", "action": "download" })),
             "quit" | "close-window" => {
                 let windows = app.webview_windows();
                 if windows.is_empty() {

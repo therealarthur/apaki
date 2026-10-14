@@ -11,8 +11,9 @@
 #   test        npm test
 #   windows     package-apaki-win.ps1 -Updater: the NSIS installer and its update signature; installed, looked at and
 #               uninstalled on the runner (apaki/scripts/smoke-win-installer.ps1)
-#   macos       package-apaki-mac.sh --updater: the .app (ad-hoc signed until a Developer ID certificate exists,
-#               apaki/docs/macos.md), the .dmg and the update archive with its signature
+#   macos       macos-build.yml (called from here): package-apaki-mac.sh --updater makes the .app, the .dmg and the update
+#               archive with its signature; ad-hoc signed until the Developer ID secrets exist, then signed and notarized
+#               (apaki/docs/macos.md); the finished app is run on the runner and its browser driven (mac-browser-smoke.mjs)
 #   release     latest.json (the feed the updater reads) and a DRAFT GitHub Release holding the installers. It stays a
 #               draft until Arthur publishes it (the Agent SDK terms question about distributing builds that offer Claude
 #               subscription login is his call); the updater reads releases/latest/download/latest.json, which GitHub
@@ -27,7 +28,8 @@
 #
 # Secrets used (Settings > Secrets and variables > Actions): TAURI_SIGNING_PRIVATE_KEY and _PASSWORD (the updater key),
 # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (the relay deploy), APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8
-# (TestFlight). Where each came from: apaki/docs/releasing.md.
+# (TestFlight, and notarization of the Mac app), APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD (a Developer ID Application
+# certificate as base64 .p12; optional: without them the Mac app is ad-hoc signed). Where each came from: apaki/docs/releasing.md.
 
 name: Release
 
@@ -152,50 +154,10 @@ jobs:
   macos:
     name: macOS app (Apple Silicon)
     needs: meta
-    runs-on: macos-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            apaki -> target
-            index -> target
-          cache-on-failure: true
-      - name: Build the app (ad-hoc signed), the .dmg and the update archive with its signature
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: bash apaki/scripts/package-apaki-mac.sh --updater
-      - name: Name the files the way GitHub will serve them (no spaces)
-        run: |
-          cd apaki/dist
-          for f in *\ *; do [ -f "$f" ] && mv "$f" "${f// /-}"; done
-          ls -la
-      - name: Look inside the finished app
-        run: |
-          set -euo pipefail
-          app="apaki/dist/Myrlin Apaki.app"
-          codesign --verify --deep --strict "$app"
-          res="$app/Contents/Resources"
-          want="$(node apaki/scripts/version.mjs get)"
-          got="$("$res/node/node" -e "import(process.argv[1]).then((m) => process.stdout.write(m.APP_VERSION))" "file://$PWD/$res/engine/apaki/engine/app-version.js")"
-          echo "the app's engine reports version $got"
-          [ "$got" = "$want" ] || { echo "::error::the engine in the app says $got, apaki/VERSION says $want"; exit 1; }
-          ls -la apaki/dist
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos
-          path: |
-            apaki/dist/*.dmg
-            apaki/dist/*.app.tar.gz
-            apaki/dist/*.app.tar.gz.sig
-          if-no-files-found: error
-          retention-days: 7
+    # The macOS build lives in macos-build.yml so a branch can run it on its own (build, sign, notarize, run the app and
+    # drive its browser, transcribe a sentence). It uploads the artifact "macos" the release job below publishes.
+    uses: ./.github/workflows/macos-build.yml
+    secrets: inherit
 
   release:
     name: Draft GitHub Release and update feed

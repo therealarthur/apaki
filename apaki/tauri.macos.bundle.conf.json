@@ -8,11 +8,13 @@
     "icon": ["build-mac/icons/icon.icns"],
     "resources": {
       "build-mac/engine": "engine",
-      "build-mac/node": "node"
+      "build-mac/node": "node",
+      "build-mac/voice": "voice"
     },
     "macOS": {
       "minimumSystemVersion": "12.0",
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "entitlements": "entitlements.plist"
     }
   }
 }

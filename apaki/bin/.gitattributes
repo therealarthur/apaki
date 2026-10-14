@@ -1,2 +1,5 @@
 # Batch files need CRLF line endings on every checkout.
 *.cmd text eol=crlf
+
+# The BROWSER shim for macOS and Linux is a shell script: LF only, whatever the checkout does.
+apaki-open text eol=lf

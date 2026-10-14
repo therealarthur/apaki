@@ -117,6 +117,8 @@ thread_local! {
     /// JavaScript calls waiting for WebKit (so a timeout can answer for one that never returns).
     static JS_WAITING: RefCell<HashMap<u64, JsDone>> = RefCell::new(HashMap::new());
     static JS_SEQ: Cell<u64> = const { Cell::new(0) };
+    /// Clicks sent as real mouse events and through the bridge script (shown by "debug", checked by the smoke test).
+    static CLICKS: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
 }
 
 /* ---------- entry points (the same three as the Windows module) ---------- */
@@ -970,6 +972,7 @@ fn debug_json() -> Value {
         "parent": main.as_ref().and_then(|v| unsafe { v.superview() }).map(|p| json!({ "frame": rect(p.frame()), "flipped": p.isFlipped() })),
         "window": main.as_ref().and_then(|v| v.window()).map(|w| json!({ "frame": rect(w.frame()), "key": w.isKeyWindow() })),
         "browsers": frames,
+        "mouse": { "native": CLICKS.with(Cell::get).0, "js": CLICKS.with(Cell::get).1 },
     })
 }
 
@@ -1239,11 +1242,18 @@ fn mouse(id: &str, p: &Value, reply: Reply) {
     let button = p.get("button").and_then(Value::as_str).unwrap_or("left");
     let on_screen = BROWSERS.with(|m| m.borrow().get(id).map(|b| b.shown).unwrap_or(false));
     let forced_js = std::env::var("APAKI_BROWSER_MOUSE").map(|v| v == "js").unwrap_or(false);
+    let pressed = kind == "mousePressed";
     if on_screen && !forced_js && button != "right" {
         if native_mouse(id, &kind, x, y, clicks) {
+            if pressed {
+                CLICKS.with(|c| c.set((c.get().0 + 1, c.get().1)));
+            }
             reply(Ok(json!({ "id": id, "result": {} })));
             return;
         }
+    }
+    if pressed {
+        CLICKS.with(|c| c.set((c.get().0, c.get().1 + 1)));
     }
     bridge_call(id, &format!("mouse({}, {x}, {y}, {}, {clicks})", Value::from(kind), Value::from(button)), reply);
 }
