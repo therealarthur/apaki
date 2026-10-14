@@ -19,6 +19,22 @@
  *   toggleMax              maximize and restore without touching the tree
  *   foldBrowsers           old saved workspaces with several browser panes per
  *                          conversation become one browser pane with tabs
+ *
+ * The side panel (2026-10-13, Arthur: "the current way we display the browser
+ * is incredibly hectic ... i dont know what browser is connected to what
+ * session ... have a dedicated pane that comes out from the right side of the
+ * app"): viewers no longer take cells in the pane grid. Each tab has a panel on
+ * its right with what its conversations opened, grouped by conversation:
+ *
+ *   panelGroups            the groups (a conversation's items, then Other) and
+ *                          their entries (each browser page its own entry)
+ *   followFocus / shownGroup   the group the panel shows follows the focused
+ *                          conversation, and never goes blank
+ *   currentEntry           the entry a group shows
+ *   panelWidth             the panel's width in a given main area
+ *   stepMax                maximized: the previous or next conversation
+ *   migrateViewers         old saved workspaces: viewer leaves move out of the
+ *                          trees into their conversation's tab's panel
  */
 
 import * as L from './layout-tree.js';
@@ -373,4 +389,183 @@ export function foldBrowsers(savedTabs, active = 0) {
     out.push({ ...t, root, focused: L.has(root, t.focused) ? t.focused : L.ids(root)[0] });
   }
   return { tabs: out, active: Math.min(nowActive, Math.max(0, out.length - 1)) };
+}
+
+/* ---------- the side panel (2026-10-13) ---------- */
+
+/** The panel's width limits, in CSS pixels, and its share of the main area until you drag it (at most PANEL_DEFAULT_MAX). */
+export const PANEL_MIN = 320;
+export const PANEL_MAX = 1100;
+export const PANEL_DEFAULT_SHARE = 0.4;
+export const PANEL_DEFAULT_MAX = 640;
+/** The conversations keep at least this much of the main area beside the panel. */
+export const PANEL_MAIN_MIN = 360;
+/** Collapsed, the panel is a rail this wide. */
+export const PANEL_RAIL = 44;
+/** The group of items whose conversation is not in this tab (closed, or there never was one). */
+export const OTHER = 'other';
+/** The order kinds take inside a group (Arthur: "browser pages first, then artifacts, diffs and task/subagent viewers"). */
+const KIND_RANK = { browser: 0, artifact: 1, diff: 2, task: 3 };
+
+/** An entry's key: a viewer's id, or for a browser page its browser's id and the page's. */
+export const entryKey = (item, page = null) => (page ? `${item}#${page}` : item);
+
+/**
+ * The panel's groups for a tab. convs: the tab's conversation ids in layout order. items: the viewers in its panel in the
+ * order they were opened, as { id, kind, source, pages? } (pages: a browser's page ids in its own order). A conversation
+ * with items is a group, in layout order; items whose conversation is not in this tab form the group OTHER, last. Inside
+ * a group, browser pages come first (each page its own entry), then artifacts, changes and tasks, each kind in the order
+ * opened. Returns [{ key, conv, entries: [{ key, item, page, kind }] }].
+ */
+export function panelGroups(convs = [], items = []) {
+  const present = new Set(convs);
+  const by = new Map();
+  for (const it of items) {
+    if (!it || typeof it.id !== 'string') continue;
+    const key = it.source && present.has(it.source) ? it.source : OTHER;
+    if (!by.has(key)) by.set(key, []);
+    by.get(key).push(it);
+  }
+  const entriesOf = (list) => list
+    .map((it, i) => ({ it, i, rank: KIND_RANK[it.kind] ?? 9 }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .flatMap(({ it }) => (it.kind === 'browser' && Array.isArray(it.pages) && it.pages.length
+      ? it.pages.map((p) => ({ key: entryKey(it.id, p), item: it.id, page: p, kind: 'browser' }))
+      : [{ key: entryKey(it.id), item: it.id, page: null, kind: KIND_RANK[it.kind] === undefined ? 'artifact' : it.kind }]));
+  const out = [];
+  for (const c of convs) if (by.has(c)) out.push({ key: c, conv: c, entries: entriesOf(by.get(c)) });
+  if (by.has(OTHER)) out.push({ key: OTHER, conv: null, entries: entriesOf(by.get(OTHER)) });
+  return out;
+}
+
+/**
+ * The group the panel moves to when conversation `focus` takes the focus (Arthur: "when clicking on a session, it
+ * switches the tab in the browser pane to the browser(s) specific to that session"): its own group when it has items,
+ * else the group shown until now (the panel never goes blank because you clicked a conversation with nothing open).
+ */
+export function followFocus(groups, focus, shown) {
+  if (focus && groups.some((g) => g.key === focus)) return focus;
+  return shown;
+}
+
+/**
+ * What the panel shows now: the group wanted (followFocus, or one picked in its switcher) while it still exists, else the
+ * focused conversation's, else the first. note: the focused conversation has nothing open, so another conversation's
+ * items show (the panel says so, quietly). Returns { group: key | null, note: bool }.
+ */
+export function shownGroup(groups, { focus = null, want = null } = {}) {
+  if (!groups.length) return { group: null, note: false };
+  const has = (k) => Boolean(k) && groups.some((g) => g.key === k);
+  const group = has(want) ? want : has(focus) ? focus : groups[0].key;
+  return { group, note: Boolean(focus) && !has(focus) };
+}
+
+/**
+ * The entry a group shows: the item picked there last (for a browser, the page it shows: activePage(itemId)), else the
+ * group's first entry. Null for an empty group.
+ */
+export function currentEntry(group, picked, activePage = () => null) {
+  if (!group?.entries?.length) return null;
+  const mine = group.entries.filter((e) => e.item === picked);
+  if (mine.length) {
+    const a = activePage(picked);
+    return mine.find((e) => e.page === a) || mine[0];
+  }
+  return group.entries[0];
+}
+
+/**
+ * The entry to show after the item of entry `key` closes: the next entry of another item in its group, else the one
+ * before, else null. (A page closed in a browser with other pages is the browser's own business: browser.js shows its
+ * neighbour.)
+ */
+export function neighbourEntry(group, key) {
+  const list = group?.entries || [];
+  const i = list.findIndex((e) => e.key === key);
+  if (i < 0) return list[0] || null;
+  const item = list[i].item;
+  return list.slice(i + 1).find((e) => e.item !== item) || list.slice(0, i).reverse().find((e) => e.item !== item) || null;
+}
+
+/**
+ * The panel's width in a main area `box` px wide: the width you dragged it to, else PANEL_DEFAULT_SHARE of the area (at
+ * most PANEL_DEFAULT_MAX, so a wide screen gives its room to the conversations), held between PANEL_MIN and PANEL_MAX
+ * and never leaving the conversations less than PANEL_MAIN_MIN.
+ */
+export function panelWidth(want, box) {
+  const room = Number.isFinite(box) && box > 0 ? box : 1400;
+  const max = Math.max(PANEL_MIN, Math.min(PANEL_MAX, room - PANEL_MAIN_MIN));
+  const w = Number.isFinite(want) && want > 0 ? want : Math.min(PANEL_DEFAULT_MAX, Math.round(room * PANEL_DEFAULT_SHARE));
+  return Math.round(Math.max(PANEL_MIN, Math.min(max, w)));
+}
+
+/** Maximized, the conversation the previous (d = -1) or next (d = 1) control goes to: layout order, wrapping. */
+export function stepMax(ids, max, d) {
+  if (!Array.isArray(ids) || !ids.length) return null;
+  const i = ids.indexOf(max);
+  if (i < 0) return ids[0];
+  return ids[(i + (d < 0 ? -1 : 1) + ids.length) % ids.length];
+}
+
+/** A saved leaf that is a viewer (a browser, an artifact, changes, a task), in any shape a window saved. */
+export const isViewerLeaf = (lf) => Boolean(lf && lf.type === 'leaf' && ((lf.web && typeof lf.web === 'object') || (lf.view && typeof lf.view === 'object') || (lf.task && typeof lf.task === 'object') || (lf.artifact && typeof lf.artifact === 'object')));
+
+/** The conversation pane a saved viewer leaf belongs to: a browser's owner, a viewer's sourcePane, a task's or a diff's ownerPane. */
+export function leafOwner(lf) {
+  const v = lf?.view && typeof lf.view === 'object' ? lf.view : null;
+  const id = lf?.web?.owner || v?.sourcePane || v?.ownerPane || v?.diff?.ownerPane || lf?.task?.ownerPane || lf?.artifact?.sourcePane || null;
+  return typeof id === 'string' && id ? id : null;
+}
+
+/**
+ * Saved workspaces from before the side panel keep viewers as leaves of the layout tree. Each viewer leaf moves into the
+ * panel items of the tab that holds its conversation; one whose conversation is in no tab stays in the tab it was in
+ * (its panel's Other group, with the quiet chip that reopens the session). The trees keep only conversations: a tab
+ * laid out by an arrangement is laid out again for them, a tree made by hand (or saved before arrangements) gives each
+ * viewer's space to its neighbours. A tab left with nothing goes. A focus or maximized pane on a viewer goes to its
+ * conversation, else the tab's first. The panel of a tab that received viewers starts open on the focused conversation.
+ * Nothing to move: the same tabs back. Returns { tabs, active, moved }.
+ */
+export function migrateViewers(savedTabs, active = 0) {
+  if (!Array.isArray(savedTabs)) return { tabs: [], active: 0, moved: 0 };
+  const leavesOf = (n, out = []) => { if (!n || typeof n !== 'object') return out; if (n.type === 'leaf') out.push(n); else (n.children || []).forEach((c) => leavesOf(c, out)); return out; };
+  const convTab = new Map();
+  savedTabs.forEach((t, i) => leavesOf(t?.root).forEach((lf) => { if (!isViewerLeaf(lf) && typeof lf.pane === 'string') convTab.set(lf.pane, i); }));
+  const items = savedTabs.map((t) => (Array.isArray(t?.items) ? [...t.items] : []));
+  const got = savedTabs.map(() => false);
+  let moved = 0;
+  const roots = savedTabs.map((t, i) => {
+    let root = t?.root || null;
+    for (const lf of leavesOf(root)) {
+      if (!isViewerLeaf(lf)) continue;
+      const owner = leafOwner(lf);
+      const to = owner && convTab.has(owner) ? convTab.get(owner) : i;
+      items[to].push(lf);
+      got[to] = true;
+      root = L.remove(root, lf.pane);
+      moved += 1;
+    }
+    return root;
+  });
+  if (!moved) return { tabs: savedTabs, active, moved: 0 };
+  const out = [];
+  let nowActive = 0;
+  savedTabs.forEach((t, i) => {
+    if (i === active) nowActive = out.length;
+    let root = roots[i];
+    if (!root && !items[i].length) return;
+    const ids = L.ids(root);
+    const preset = typeof t?.arrange === 'string' && ARRANGEMENTS.includes(t.arrange) ? t.arrange : null;
+    if (root && preset && root !== t.root) {
+      const tall = t.shape === 'tall';
+      root = arrange(ids, () => ({ viewer: false, source: null }), { preset, w: tall ? 900 : 1600, h: tall ? 1600 : 900 });
+    }
+    const ownerOfId = (id) => leafOwner(leavesOf(t?.root).find((lf) => lf.pane === id));
+    const onConv = (id) => (ids.includes(id) ? id : ids.includes(ownerOfId(id)) ? ownerOfId(id) : null);
+    const focused = onConv(t?.focused) || ids[0] || null;
+    const max = typeof t?.max === 'string' && ids.includes(t.max) ? t.max : null;
+    const side = t?.side && typeof t.side === 'object' ? t.side : got[i] ? { open: true, group: focused, width: null, pick: {} } : undefined;
+    out.push({ ...t, root, focused, max, items: items[i], ...(side ? { side } : {}) });
+  });
+  return { tabs: out, active: Math.min(nowActive, Math.max(0, out.length - 1)), moved };
 }

@@ -540,6 +540,47 @@ PRESETS['layout-old'] = () => {
 };
 
 /**
+ * The side panel (2026-10-13): a tab saved the way the window saved it before the panel, shaped like the one Arthur
+ * found "incredibly hectic": three conversations in a row on top (the left one with a markdown viewer squeezed below
+ * it), and under them the middle conversation's browser (two pages) beside an HTML viewer of the same conversation.
+ * On restore every viewer moves into the tab's side panel under its conversation, and the tree keeps the three
+ * conversations. A second tab has two conversations and nothing open. Use with desktop.html?ws=side-panel.
+ */
+PRESETS['side-panel'] = () => ({
+  active: 0,
+  tabs: [
+    { focused: 'sp1', name: '', arrange: 'custom', max: null, root: split('col', [0.57, 0.43],
+      split('row', [0.39, 0.33, 0.28],
+        split('col', [0.74, 0.26], conv('sp1', 'flaky', CWD.web), { type: 'leaf', pane: 'sv1', view: { sessionId: ID.flaky, id: 'art-flaky-notes', title: 'Flaky checkout: findings', kind: 'markdown', sourcePane: 'sp1' } }),
+        conv('sp2', 'dashboard', CWD.web),
+        conv('sp3', 'uploads', CWD.web)),
+      split('row', [0.5, 0.5],
+        { type: 'leaf', pane: 'sb1', web: { url: 'http://localhost:3000/cart', title: 'Cart · Acme Store', owner: 'sp2', active: 'sb1', tabs: [{ id: 'sb1', url: 'http://localhost:3000/cart', title: 'Cart · Acme Store' }, { id: 'sb2', url: 'http://localhost:3000/checkout', title: 'Checkout · Acme Store' }] } },
+        { type: 'leaf', pane: 'sv2', view: { sessionId: ID.dashboard, id: 'art-receipt', title: 'Receipt preview', kind: 'html', sourcePane: 'sp2' } })) },
+    { focused: 'sq1', name: '', arrange: 'auto', max: null, root: split('row', [0.5, 0.5], conv('sq1', 'invoices', CWD.billing), conv('sq2', 'backfill', CWD.billing)) },
+  ],
+  scripts: { [ID.dashboard]: ['browse-checkout'] },
+  rail: { view: 'all', expanded: [], scroll: 0, width: 312, collapsed: false },
+});
+
+/**
+ * What the demo's conversations "showed" with Apaki's show tool (2026-10-13, the side-panel preset): the engine answers
+ * artifactGet with these. Invented, like everything here.
+ */
+export const ARTIFACTS = {
+  'art-flaky-notes': {
+    kind: 'markdown',
+    title: 'Flaky checkout: findings',
+    content: '# Flaky checkout test\n\nThe test clicks **Pay now**, then asserts on the confirmation before the order id exists.\n\n## What fails\n\n- About one run in five on a slow runner\n- Only in `checkout.spec.ts`, never locally\n\n## The fix\n\n1. Wait for the order id to appear\n2. Assert on the confirmation after that\n3. Run the test ten times in CI\n\n| Run | Before | After |\n| - | - | - |\n| 10 on CI | 8 passed | 10 passed |\n',
+  },
+  'art-receipt': {
+    kind: 'html',
+    title: 'Receipt preview',
+    content: '<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;font:15px/1.5 system-ui,sans-serif;background:#f6f7fb;color:#1d1d2b;display:grid;place-items:center;min-height:100vh}.r{width:min(92%,380px);background:#fff;border-radius:14px;box-shadow:0 12px 40px -24px #2c3578;padding:26px 28px}h1{font-size:18px;margin:0 0 4px}.m{color:#63647d;font-size:13px;margin:0 0 18px}.l{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #eceef8}.t{font-weight:700;border:0;padding-top:12px}.ok{margin-top:18px;padding:10px 12px;border-radius:9px;background:#e2f4ea;color:#2e6b47;font-size:13px}</style></head><body><div class="r"><h1>Acme Store</h1><p class="m">Order 10482 · paid with card ending 4242</p><div class="l"><span>Trail runner, size 42</span><span>$118.00</span></div><div class="l"><span>Wool socks, 2 pairs</span><span>$24.00</span></div><div class="l"><span>Shipping</span><span>$0.00</span></div><div class="l t"><span>Total</span><span>$142.00</span></div><div class="ok">Confirmation shown after the order id exists.</div></div></body></html>',
+  },
+};
+
+/**
  * The handoff (2026-10-12): the desktop has one tab of three sessions, the sidebar folded away. "Fix flaky
  * checkout test" (the left column, focused) is the one you were in; it is idle, the two on the right work.
  */
