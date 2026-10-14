@@ -1,0 +1,107 @@
+/**
+ * shim.js: the part of window.__TAURI__ that Apaki's window code uses
+ * (apaki/ui/app.js and pane.js), provided over the relay instead of by the
+ * Tauri shell, so the phone runs Apaki's own UI unchanged (Track B part 2,
+ * 2026-10-09).
+ *
+ *   core.invoke('engine_send', { msg })  -> one engine command to the PC
+ *   event.listen('engine', cb)           -> every engine event from the PC
+ *   window.getCurrentWindow()            -> minimize, maximize and close do
+ *                                           nothing (a browser tab has none)
+ *
+ * It also remembers which panes this phone has open, so after a reconnect
+ * it re-attaches each one (engine op attach: same pane, same Claude Code
+ * process, history sent again) instead of restarting it.
+ *
+ * 2026-10-11: it keeps the last desktopTabs event (the desktop window's tabs
+ * and the panes in each, apaki/engine/desktop-tabs.js) for the phone's "On
+ * your desktop" list (desktop.js): onDesktopTabs(cb) hands it the last one at
+ * once and every later one. app.js still gets the event and ignores it.
+ */
+
+let desk = null;
+const deskListeners = new Set();
+
+/** Calls cb with the last desktopTabs event (if one came) and each new one; returns a function that stops it. */
+export function onDesktopTabs(cb) {
+  deskListeners.add(cb);
+  if (desk) cb(desk);
+  return () => deskListeners.delete(cb);
+}
+
+function gotDesktopTabs(ev) {
+  if (!Array.isArray(ev?.tabs)) return;
+  desk = ev;
+  for (const cb of deskListeners) { try { cb(ev); } catch (e) { console.warn('apaki desktop tabs:', e); } }
+}
+
+export function installShim(link) {
+  const listeners = new Set();
+  const early = [];
+  /** paneId -> { sessionId, cwd } for the panes this phone has open. */
+  const panes = new Map();
+  let seq = 0;
+
+  const deliver = (ev) => {
+    if (!listeners.size) { early.push(ev); return; }
+    for (const cb of listeners) cb({ event: 'engine', id: 0, payload: ev });
+  };
+
+  const sent = (msg) => {
+    if (!msg?.paneId) return;
+    // rid: the request that made it, so a closed that answers it (a follow of a pane that is gone) can tell itself from the closed that answers a later unfollow or close.
+    if (msg.op === 'open' || msg.op === 'attach') panes.set(msg.paneId, { sessionId: msg.sessionId || null, cwd: msg.cwd || null, rid: msg.reqId || null });
+    // 2026-10-11: a pane that follows a desktop pane (op follow) follows it again after a reconnect.
+    if (msg.op === 'follow') panes.set(msg.paneId, { follow: msg.desktopPaneId, rid: msg.reqId || null });
+    if (msg.op === 'close' || msg.op === 'unfollow') panes.delete(msg.paneId);
+  };
+
+  const seen = (ev) => {
+    const p = ev.paneId && panes.get(ev.paneId);
+    if (!p) return;
+    if (ev.ev === 'opened' || ev.ev === 'session_id') p.sessionId = ev.sessionId || null;
+    if (ev.ev === 'opened' && ev.cwd) p.cwd = ev.cwd;
+    // Only a closed the PC raised by itself (no request id: the desktop pane went away) or the answer to this pane's own opening ends it. The answer to an unfollow or close sent earlier can arrive after the pane was opened again (Take over).
+    if (ev.ev === 'closed' && (!ev.reqId || ev.reqId === p.rid)) panes.delete(ev.paneId);
+  };
+
+  link.onEvent = (ev) => { seen(ev); if (ev?.ev === 'desktopTabs') gotDesktopTabs(ev); deliver(ev); };
+  link.onReopen = () => {
+    for (const [paneId, p] of panes) {
+      p.rid = `re${++seq}`;
+      if (p.follow) link.send({ op: 'follow', reqId: p.rid, paneId, desktopPaneId: p.follow }).catch(() => {});
+      else link.send({ op: 'attach', reqId: p.rid, paneId, sessionId: p.sessionId, cwd: p.cwd }).catch(() => {});
+    }
+    link.send({ op: 'sessions', reqId: `re${++seq}` }).catch(() => {});
+  };
+
+  async function invoke(cmd, args = {}) {
+    if (cmd !== 'engine_send') throw new Error(`${cmd} is not available on the phone`);
+    const msg = args.msg || {};
+    sent(msg);
+    try {
+      await link.send(msg);
+    } catch (e) {
+      // Not connected: answer like the engine would, so a pane does not stay
+      // "working" on a message that never left. The periodic list refresh
+      // just waits for the next one.
+      if (msg.op !== 'sessions') deliver({ ev: 'error', reqId: msg.reqId, paneId: msg.paneId || null, message: e.message });
+    }
+  }
+
+  async function listen(name, cb) {
+    if (name !== 'engine') return () => {};
+    listeners.add(cb);
+    for (const ev of early.splice(0)) cb({ event: 'engine', id: 0, payload: ev });
+    return () => listeners.delete(cb);
+  }
+
+  const noop = async () => {};
+  const win = { minimize: noop, toggleMaximize: noop, close: noop, isMaximized: async () => false, onResized: async () => () => {} };
+
+  window.__TAURI__ = Object.freeze({
+    core: Object.freeze({ invoke }),
+    event: Object.freeze({ listen }),
+    window: Object.freeze({ getCurrentWindow: () => win }),
+  });
+}
