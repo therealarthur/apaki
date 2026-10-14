@@ -257,7 +257,8 @@ test('gate: tools with their own sheets are allowed here as before; a long input
   for (const name of PASS_THROUGH_TOOLS) assert.deepEqual(await gate(name, { x: 1 }, {}), { behavior: 'allow', updatedInput: { x: 1 } });
   assert.equal(events.length, 0);
   // Apaki's own show tool, from its own in-process server only (a user's MCP server named apaki is asked about like any other).
-  assert.deepEqual(OWN_TOOLS, ['mcp__apaki__show']);
+  // view_read (2026-10-13) only reads Apaki's own store: no prompt either.
+  assert.deepEqual(OWN_TOOLS, ['mcp__apaki__show', 'mcp__apaki__view_read']);
   assert.deepEqual(await gate('mcp__apaki__show', { kind: 'html' }, { mcpServer: { name: 'apaki', source: 'sdk' } }), { behavior: 'allow', updatedInput: { kind: 'html' } });
   assert.equal(events.length, 0);
   const spoof = gate('mcp__apaki__show', { kind: 'html' }, { mcpServer: { name: 'apaki', source: 'user' } });
