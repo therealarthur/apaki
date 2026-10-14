@@ -102,19 +102,11 @@ struct Browser {
     waiters: Vec<Reply>,
     /// Counts committed documents (the "loader id" of the protocol).
     doc: u64,
-    /// The address and title the page had when the navigation in progress began (a page restored from the back-forward
-    /// cache can end its load while the view still reports the old title).
-    start_url: String,
-    start_title: String,
 }
 
 impl Browser {
-    /// A navigation toward `url` begins (nothing is remembered again for a redirect inside one).
+    /// A navigation toward `url` begins: the address shown is the one being loaded until the page commits.
     fn begin_navigation(&mut self, url: &str) {
-        if !self.provisional {
-            self.start_url = self.url.clone();
-            self.start_title = self.title.clone();
-        }
         self.provisional = true;
         self.url = url.to_string();
     }
@@ -379,26 +371,6 @@ fn refresh(id: &str) {
     });
 }
 
-/// After a load ends: waits (at most about 0.6 s) until the view has the new page's title, then tells the window and
-/// answers whoever waits for the load. A title is missing for a moment after the load, and a page restored by going
-/// back keeps the old title for a moment: both are told apart by the title being empty, or equal to the one the
-/// page had when the navigation began although the address changed.
-fn settle_when_titled(id: String, tries: u32) {
-    later(if tries == 0 { 120 } else { 100 }, move || {
-        refresh(&id);
-        // A page that has no title at all waits two rounds only; one that kept the old page's title, up to five.
-        let stale = BROWSERS.with(|m| {
-            m.borrow().get(&id).map(|b| (b.title.is_empty() && tries < 2) || (b.url != b.start_url && b.title == b.start_title && !b.title.is_empty())).unwrap_or(false)
-        });
-        if stale && tries < 5 {
-            settle_when_titled(id, tries + 1);
-            return;
-        }
-        emit_state(&id);
-        settle(&id);
-    });
-}
-
 /// Answers once the navigation in progress has finished.
 fn wait_for_load(id: &str, reply: Reply) {
     let mut reply = Some(reply);
@@ -434,7 +406,34 @@ fn poll_settle(id: String, n: u32) {
     });
 }
 
+/// Answers whoever waits for the load, with the page's own title: the view's `title` lags behind for a moment after a
+/// load, and after going back to a page the browser kept (it can still be the title of the page that was left), so the
+/// answer asks the page (document.title, one round trip) before it goes out.
 fn settle(id: &str) {
+    let waiting = BROWSERS.with(|m| m.borrow().get(id).map(|b| !b.waiters.is_empty()).unwrap_or(false));
+    if !waiting {
+        return;
+    }
+    let id2 = id.to_string();
+    run_js(id, "return document.title;".to_string(), 1500, Box::new(move |r| {
+        if let Ok(Some(title)) = r {
+            let title = title.trim().to_string();
+            if !title.is_empty() {
+                BROWSERS.with(|m| {
+                    if let Ok(mut m) = m.try_borrow_mut() {
+                        if let Some(b) = m.get_mut(&id2) {
+                            b.title = title;
+                        }
+                    }
+                });
+            }
+        }
+        emit_state(&id2);
+        settle_now(&id2);
+    }));
+}
+
+fn settle_now(id: &str) {
     let waiters = BROWSERS.with(|m| m.borrow_mut().get_mut(id).map(|b| std::mem::take(&mut b.waiters)).unwrap_or_default());
     if waiters.is_empty() {
         return;
@@ -673,8 +672,7 @@ define_class!(
                 }
             });
             emit_state(&id);
-            // The title can arrive a moment after the load ends; the answers waiting for the load carry it.
-            settle_when_titled(id.clone(), 0);
+            settle(&id);
         }
 
         #[unsafe(method(webView:didFailNavigation:withError:))]
@@ -963,8 +961,6 @@ fn create(id: &str, owner: Option<String>) -> Result<(), String> {
                 used: tick(),
                 waiters: Vec::new(),
                 doc: 0,
-                start_url: String::new(),
-                start_title: String::new(),
             },
         );
     });
