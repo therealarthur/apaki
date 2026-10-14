@@ -42,7 +42,7 @@ use objc2::runtime::{AnyObject, Bool, NSObject, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
     NSAlert, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSBitmapImageFileType, NSBitmapImageRep, NSEvent,
-    NSEventModifierFlags, NSEventType, NSImage, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSTextField, NSView, NSWindow,
+    NSEventModifierFlags, NSEventType, NSImage, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSTextField, NSView,
     NSWindowOrderingMode,
 };
 use objc2_foundation::{
@@ -915,8 +915,9 @@ fn create(id: &str, owner: Option<String>) -> Result<(), String> {
         let view: Retained<ApakiWebView> = msg_send![super(this), initWithFrame: frame, configuration: &*config];
         view.setHidden(true);
         view.setAllowsBackForwardNavigationGestures(true);
-        if os_major() >= 13 {
-            // Safari's Web Inspector can attach (Develop menu), as the DevTools can on Windows.
+        // Safari's Web Inspector can attach (Develop menu), as the DevTools can on Windows. The property exists from
+        // macOS 13.3 only, so ask the view instead of comparing versions.
+        if view.respondsToSelector(objc2::sel!(setInspectable:)) {
             view.setInspectable(true);
         }
         view.setAppearance(NSAppearance::appearanceNamed(if DARK.with(Cell::get) { NSAppearanceNameDarkAqua } else { NSAppearanceNameAqua }).as_deref());
@@ -1499,6 +1500,3 @@ unsafe fn encode(image: &NSImage, png: bool, quality: f64) -> Result<(String, f6
         .ok_or("the picture could not be encoded")?;
     Ok((data.base64EncodedStringWithOptions(NSDataBase64EncodingOptions::empty()).to_string(), px))
 }
-
-#[allow(dead_code)]
-fn _types_used(_: &NSWindow) {}

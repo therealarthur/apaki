@@ -9,7 +9,7 @@
 // library (browser-page.js, window.__apaki) lives in, so the page's own scripts can neither see nor change it. DOM
 // events it dispatches still reach the page's listeners, as any script's events do.
 //
-// browser_mac.rs prefixes a call: `return (<this file>)().<function>(...)`. Safe to run again: it keeps one object on
+// browser_mac.rs runs `const m = (<this file>)(); return JSON.stringify(m.<function>(...))`. Safe to run again: it keeps one object on
 // window.__apakiMac, versioned, and reuses it.
 (function () {
   const VERSION = 1;

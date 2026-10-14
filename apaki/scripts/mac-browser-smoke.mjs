@@ -270,6 +270,15 @@ async function run(mouse) {
       const topY = d2.parent?.flipped ? f2.y - m2.frame.y : m2.frame.y + m2.frame.h - (f2.y + f2.h);
       check('place() puts a pane at the point given in physical pixels', Math.abs(topLeftX - 200) < 1.5 && Math.abs(topY - 120) < 1.5 && Math.abs(f2.w - 500) < 1.5 && Math.abs(f2.h - 300) < 1.5, JSON.stringify({ topLeftX, topY, w: f2.w, h: f2.h }));
     } else check('place() puts a pane at the point given in physical pixels', false, 'no frame');
+    // The picture the window shows in the pane's place while a menu covers it, and a browser that is not on screen at all
+    // (another Apaki tab is showing) still being drawn for a screenshot.
+    const snap = await shell.request('browser.snapshot', { id: b?.id });
+    check('the stand-in picture for the window (snapshot) is a JPEG of the page', /^data:image\/jpeg;base64,/.test(snap.dataUrl || '') && (snap.dataUrl || '').length > 3000, `${(snap.dataUrl || '').length} characters`);
+    await shell.request('browser.place', { id: b?.id, x: 0, y: 0, w: 500 * scale, h: 300 * scale, visible: false });
+    await call('open', { url: `${base}/` });
+    const hiddenShot = await call('screenshot');
+    const hiddenSize = hiddenShot.image ? pngSize(Buffer.from(hiddenShot.image, 'base64')) : null;
+    check('a browser that is not on screen is still drawn for a screenshot', hiddenShot.ok && hiddenSize && hiddenSize.w >= 200 && hiddenShot.image.length > 12000, hiddenSize ? `${hiddenSize.w}x${hiddenSize.h}, ${Math.round((hiddenShot.image.length * 3) / 4 / 1024)} KB` : hiddenShot.text);
     const counters = d2.mouse || {};
     console.log(`  clicks sent: ${counters.native || 0} as real mouse events, ${counters.js || 0} through the bridge`);
     check(`clicks used the ${mouse} path`, mouse === 'js' ? (counters.native || 0) === 0 && (counters.js || 0) > 0 : (counters.native || 0) > 0, JSON.stringify(counters));
