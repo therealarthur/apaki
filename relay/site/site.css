@@ -14,6 +14,9 @@
  *
  * Motion: entrances ease out over about a second, hovers take 150 ms, the pearl drifts over 48 s, and
  * prefers-reduced-motion stops all of it. No status pill with a dot; no stripe down the left of a card.
+ *
+ * Round 3 (2026-10-12): close-ups instead of whole windows, 3D pieces, freer layouts, the pearl circles and
+ * one horizon into a dark chapter; see the block after the phone frame.
  */
 
 /* ---------- fonts (the app's own files, apaki/ui/fonts) ---------- */
@@ -33,44 +36,49 @@
 /* ---------- tokens ---------- */
 :root {
   color-scheme: light;
-  --ink: #171717; --soft: #4F5066; --faint: #5E5F78; --ink-deep: #1E1B33;
-  --ground: #FDFDFF; --card: #FFFFFF; --hairline: #E3E5F6; --hairline-strong: #D5D8EF; --tint: #F1F2FB;
-  --brand: #6572D4; --brand-strong: #5361C9; --brand-deep: #2C3578; --brand-wash: #EDEEFB;
+  /* Round 3 palette (2026-10-12, Arthur: "the purple ... is a bit AI'ish ... our buttons become like a peachish
+     color"): warm neutrals (pearl, ink, off-white), peach for the actions with ink on it, terracotta for links and
+     marks, and one cool accent used sparingly, the cyan to blue of the M's flare. The M keeps its own colours. */
+  --ink: #1D1915; --soft: #554D46; --faint: #6B6259; --ink-deep: #2A221C;
+  --ground: #F9F7F7; --card: #FFFFFF; --hairline: #ECE5DC; --hairline-strong: #DDD3C7; --tint: #F4EEE7;
+  --brand: #C2603A; --brand-strong: #A9481F; --brand-deep: #7A3214; --brand-wash: #FBEDE4;
   --action-strong: #A9481F; --good: #2E6B47;
   --peach: 246, 200, 174; --peach-glow: #F2A57E;
-  --fill: #5361C9; --fill-hover: #2C3578; --on-fill: #FFFFFF;
-  --code-bg: #1E1B33; --code-ink: #E4E6F8; --code-faint: #9C9FC4;
-  --w: 0, 0%, 100%; --shadow-rgb: 20, 18, 40;
+  --fill: #F4A57E; --fill-2: #EF9468; --fill-hover: #F7B591; --on-fill: #1D1915;
+  --flare-a: #07B6D5; --flare-b: #3C83F6;
+  --code-bg: #1F1B17; --code-ink: #F1EAE2; --code-faint: #A99D91;
+  --w: 0, 20%, 99%; --shadow-rgb: 46, 30, 18;
   --font: 'Archivo', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --mono: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
   --ease-out: cubic-bezier(.22, 1, .36, 1); --ease-hover: cubic-bezier(.4, 0, .2, 1);
   --dur-fast: 150ms;
   --radius: 10px; --radius-lg: 16px;
-  --pearl-stop-blue: 217, 91%, 60%; --pearl-stop-purple: 277, 87%, 63%; --pearl-stop-cyan: 189, 94%, 43%; --pearl-stop-peach: 22, 92%, 72%;
-  --pearl-gradient: linear-gradient(90deg, hsla(var(--pearl-stop-blue), .35), hsla(var(--pearl-stop-purple), .35), hsla(var(--pearl-stop-peach), .42), hsla(var(--pearl-stop-cyan), .35), hsla(var(--pearl-stop-blue), .35));
-  --pearl-overlay: linear-gradient(180deg, hsla(var(--w), .9) 38%, hsla(var(--w), .62));
+  /* The pearl, warm: apricot, a sand rose, peach, and a thread of the flare's cyan. */
+  --pearl-stop-apricot: 32, 92%, 70%; --pearl-stop-rose: 14, 62%, 76%; --pearl-stop-cyan: 189, 94%, 43%; --pearl-stop-peach: 22, 92%, 72%;
+  --pearl-gradient: linear-gradient(90deg, hsla(var(--pearl-stop-apricot), .34), hsla(var(--pearl-stop-rose), .3), hsla(var(--pearl-stop-peach), .42), hsla(var(--pearl-stop-cyan), .18), hsla(var(--pearl-stop-apricot), .34));
+  --pearl-overlay: linear-gradient(180deg, hsla(var(--w), .9) 38%, hsla(var(--w), .64));
   --halftone: radial-gradient(circle, hsl(var(--w)) 1.4px, transparent 1.5px) 0 0 / 8px 8px, radial-gradient(circle, hsl(var(--w)) 1.4px, transparent 1.5px) 4px 4px / 8px 8px;
-  --frost: hsla(var(--w), .74);
-  --frost-strong: hsla(var(--w), .9);
+  --frost: hsla(var(--w), .76);
+  --frost-strong: hsla(var(--w), .92);
   /* One elevation per surface: a hairline ring as its edge, and a shadow that falls close under it. */
-  --window-shadow: 0 0 0 1px rgba(var(--shadow-rgb), .14), 0 28px 56px -30px rgba(var(--shadow-rgb), .5), 0 10px 20px -12px rgba(var(--shadow-rgb), .18);
-  --float-shadow: 0 0 0 1px rgba(var(--shadow-rgb), .14), 0 22px 40px -22px rgba(var(--shadow-rgb), .5), 0 8px 16px -10px rgba(var(--shadow-rgb), .2);
+  --window-shadow: 0 0 0 1px rgba(var(--shadow-rgb), .13), 0 28px 56px -30px rgba(var(--shadow-rgb), .45), 0 10px 20px -12px rgba(var(--shadow-rgb), .16);
+  --float-shadow: 0 0 0 1px rgba(var(--shadow-rgb), .13), 0 22px 40px -22px rgba(var(--shadow-rgb), .45), 0 8px 16px -10px rgba(var(--shadow-rgb), .18);
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --ink: #ECEDF8; --soft: #BFC1D9; --faint: #9A9CB9; --ink-deep: #F2F3FB;
-  --ground: #121120; --card: #1A1928; --hairline: #2A2940; --hairline-strong: #3A3956; --tint: #232236;
-  --brand: #8E96DC; --brand-strong: #A3ABF2; --brand-deep: #C9CDF2; --brand-wash: #262849;
+  --ink: #F3EEE8; --soft: #CFC6BC; --faint: #A99F94; --ink-deep: #FBF7F2;
+  --ground: #15120F; --card: #1E1A16; --hairline: #2C2621; --hairline-strong: #3B332C; --tint: #241F1A;
+  --brand: #EE9A72; --brand-strong: #F4A383; --brand-deep: #F8C9AE; --brand-wash: #2E211A;
   --action-strong: #F4A383; --good: #74D3A0;
   --peach-glow: #F6B895;
-  --fill: #5361C9; --fill-hover: #4552BC; --on-fill: #FFFFFF;
-  --code-bg: #0C0B16; --code-ink: #DADCF4; --code-faint: #8D8FAD;
-  --w: 246, 20%, 12%; --shadow-rgb: 0, 0, 0;
-  --pearl-overlay: linear-gradient(180deg, hsla(248, 32%, 7%, .86) 40%, hsla(248, 32%, 7%, .62));
-  --frost: hsla(246, 22%, 13%, .72);
-  --frost-strong: hsla(246, 22%, 13%, .9);
-  --window-shadow: 0 0 0 1px hsla(244, 30%, 60%, .22), 0 28px 56px -30px rgba(0, 0, 0, .85), 0 10px 20px -12px rgba(0, 0, 0, .5);
-  --float-shadow: 0 0 0 1px hsla(244, 30%, 60%, .22), 0 22px 40px -22px rgba(0, 0, 0, .85), 0 8px 16px -10px rgba(0, 0, 0, .5);
+  --fill: #F4A57E; --fill-2: #EF9468; --fill-hover: #F7B591; --on-fill: #1D1915;
+  --code-bg: #0E0C0A; --code-ink: #EDE5DC; --code-faint: #9C9085;
+  --w: 28, 16%, 9%; --shadow-rgb: 0, 0, 0;
+  --pearl-overlay: linear-gradient(180deg, hsla(28, 18%, 6%, .86) 40%, hsla(28, 18%, 6%, .64));
+  --frost: hsla(28, 14%, 10%, .74);
+  --frost-strong: hsla(28, 14%, 10%, .92);
+  --window-shadow: 0 0 0 1px hsla(30, 30%, 72%, .16), 0 28px 56px -30px rgba(0, 0, 0, .85), 0 10px 20px -12px rgba(0, 0, 0, .5);
+  --float-shadow: 0 0 0 1px hsla(30, 30%, 72%, .16), 0 22px 40px -22px rgba(0, 0, 0, .85), 0 8px 16px -10px rgba(0, 0, 0, .5);
 }
 
 /* ---------- base ---------- */
@@ -108,8 +116,9 @@ code, pre { font-family: var(--mono); }
 /* The Myrlin M, coloured by theme (app.css .m-mark). */
 .m-mark { overflow: visible; }
 .m-mark .m-stroke { fill: var(--ink); }
-.m-mark .m-fold { fill: var(--brand); }
-:root[data-theme="dark"] .m-mark .m-fold { fill: var(--brand-strong); }
+/* The M keeps its own colours whatever the page's palette (round 3): periwinkle fold, ink stroke, the cyan flare. */
+.m-mark .m-fold { fill: #6572D4; }
+:root[data-theme="dark"] .m-mark .m-fold, .on-dark .m-mark .m-fold { fill: #A3ABF2; }
 
 /* ---------- type ---------- */
 h2 { font-weight: 860; font-stretch: 118%; font-size: 52px; line-height: 1.04; letter-spacing: -.022em; }
@@ -123,13 +132,13 @@ h3 { font-weight: 820; font-stretch: 112%; font-size: 20px; line-height: 1.25; l
   transition: background var(--dur-fast) var(--ease-hover), border-color var(--dur-fast) var(--ease-hover), color var(--dur-fast) var(--ease-hover), transform var(--dur-fast) var(--ease-hover);
 }
 .btn:active { transform: scale(.985); }
-.btn-primary { background: var(--fill); color: var(--on-fill); box-shadow: 0 12px 24px -16px rgba(20, 18, 40, .55); }
+.btn-primary { background: linear-gradient(180deg, var(--fill), var(--fill-2)); color: var(--on-fill); box-shadow: 0 0 0 1px rgba(var(--shadow-rgb), .1) inset, 0 12px 24px -16px rgba(var(--shadow-rgb), .5); }
 .btn-primary:hover { background: var(--fill-hover); color: var(--on-fill); }
 /* On the dark ground a coloured shadow reads as a glow; the button stands on its fill alone. */
 :root[data-theme="dark"] .btn-primary { box-shadow: none; }
 .btn-secondary { background: var(--frost-strong); color: var(--ink); border-color: var(--hairline-strong); }
 .btn-secondary:hover { border-color: var(--brand); color: var(--ink); }
-.btn-small { min-height: 38px; padding: 8px 14px; font-size: 14px; background: var(--fill); color: var(--on-fill); }
+.btn-small { min-height: 38px; padding: 8px 14px; font-size: 14px; background: linear-gradient(180deg, var(--fill), var(--fill-2)); color: var(--on-fill); }
 .btn-small:hover { background: var(--fill-hover); color: var(--on-fill); }
 .links { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 22px; font-weight: 700; font-size: 16px; }
 
@@ -154,6 +163,10 @@ h3 { font-weight: 820; font-stretch: 112%; font-size: 20px; line-height: 1.25; l
 .head-link { color: var(--soft); text-decoration: none; font-size: 14px; font-weight: 600; }
 .head-link:hover { color: var(--ink); }
 
+/* Over the night (site.js .is-night): the header takes the light-on-dark tokens and a dark frost. */
+.site-head.is-night { --ink: #F3EEE8; --soft: #D2C9BF; --hairline: hsla(30, 30%, 90%, .12); --brand: #F4A383; --frost: hsla(26, 18%, 9%, .78); }
+.site-head.is-night .m-mark .m-fold { fill: #A3ABF2; }
+
 /* ---------- hero ---------- */
 .hero { padding: clamp(28px, 4.5vw, 56px) 0 clamp(40px, 6vw, 80px); }
 .wordmark {
@@ -171,14 +184,18 @@ h3 { font-weight: 820; font-stretch: 112%; font-size: 20px; line-height: 1.25; l
 .hero-fine a { font-weight: 700; }
 
 .hero-kicker { margin: 0 0 14px; font-weight: 760; font-stretch: 112%; font-size: 16px; letter-spacing: .005em; color: var(--action-strong); }
-.hero-stage { position: relative; margin-top: clamp(40px, 5vw, 64px); padding-bottom: clamp(40px, 6vw, 72px); }
-/* A warm glow under the window, the app's peach in the pearl (soft by its gradients alone; no blur filter to repaint). */
-.hero-stage::before {
-  content: ""; position: absolute; inset: 2% -2% -6%; z-index: -1; pointer-events: none;
-  background: radial-gradient(48% 46% at 42% 52%, rgba(var(--peach), .5), rgba(var(--peach), 0) 100%), radial-gradient(40% 44% at 72% 62%, hsla(var(--pearl-stop-blue), .22), hsla(var(--pearl-stop-blue), 0) 100%);
-}
-.window-hero { width: min(100%, 1160px); }
-.stage-note { margin-top: 14px; font-size: 13px; color: var(--faint); }
+/* The stage (round 3): the pane the phone takes over, close up at 2x, the phone standing over its right edge, and the
+   note beside them. No longer the whole window: the one full view became the part that matters. */
+.hero-stage { position: relative; display: grid; grid-template-columns: minmax(0, 600px) minmax(0, 270px) minmax(0, 1fr); align-items: end; margin-top: clamp(48px, 6vw, 80px); padding-bottom: 24px; }
+.hero-pane { grid-column: 1; aspect-ratio: 1200 / 1430; }
+.hero-phone { grid-column: 2; position: relative; z-index: 2; margin: 0 0 -24px -64px; }
+.hero-phone .phone { transform: rotate(3deg); transition: box-shadow .6s var(--ease-out); }
+.stage-note { grid-column: 3; align-self: end; max-width: 17em; margin: 0 0 40px 48px; font-size: 14px; line-height: 1.55; color: var(--faint); }
+.hero-pane { transition: box-shadow .6s var(--ease-out); }
+/* The phone stands over the pane's bottom right, so the pane's button moves to its bottom left. */
+.hero-pane .clip-toggle { right: auto; left: 12px; }
+.is-linked .hero-pane { box-shadow: var(--window-shadow), 0 0 0 2px rgba(var(--peach-ring), .95), 0 0 0 8px rgba(var(--peach-ring), .2); }
+.is-linked .hero-phone .phone { box-shadow: var(--float-shadow), 0 0 0 2px rgba(var(--peach-ring), .95), 0 0 0 8px rgba(var(--peach-ring), .2); }
 
 .float { position: absolute; z-index: 2; }
 .float img { width: 100%; height: auto; border-radius: 14px; box-shadow: var(--float-shadow); }
@@ -199,12 +216,12 @@ h3 { font-weight: 820; font-stretch: 112%; font-size: 20px; line-height: 1.25; l
 .clip-toggle {
   position: absolute; right: 12px; bottom: 12px; z-index: 3; display: grid; place-items: center;
   width: 38px; height: 38px; padding: 0; border-radius: 50%; border: 1px solid hsla(0, 0%, 100%, .22); cursor: pointer;
-  background: rgba(20, 18, 31, .58); color: #FFFFFF;
+  background: rgba(29, 25, 21, .6); color: #FFFFFF;
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   opacity: 0; transition: opacity var(--dur-fast) var(--ease-hover), background var(--dur-fast) var(--ease-hover);
 }
 .clip-toggle svg { width: 16px; height: 16px; fill: currentColor; }
-.clip-toggle:hover { background: rgba(20, 18, 31, .78); }
+.clip-toggle:hover { background: rgba(29, 25, 21, .8); }
 .player:hover .clip-toggle, .clip-toggle:focus-visible, .player.is-paused .clip-toggle { opacity: 1; }
 @media (hover: none) { .clip-toggle { opacity: .9; } }
 
@@ -226,97 +243,536 @@ html:not(.js) .reel-tabs { display: none; }
 /* The phone: a plain dark frame around the screen recording, no notch. */
 .phone {
   position: relative; padding: 7px; border-radius: 40px;
-  background: linear-gradient(160deg, #3A3656, #14121F 60%); box-shadow: var(--float-shadow), 0 0 0 1px hsla(0, 0%, 100%, .06) inset;
+  background: linear-gradient(160deg, #3D3630, #141210 60%); box-shadow: var(--float-shadow), 0 0 0 1px hsla(0, 0%, 100%, .06) inset;
 }
 .phone-screen { position: relative; overflow: hidden; aspect-ratio: 390 / 844; border-radius: 33px; background: var(--card); }
 .phone-screen > picture img { width: 100%; height: 100%; object-fit: cover; }
 .phone .clip-toggle { right: 16px; bottom: 18px; width: 34px; height: 34px; }
 
-/* ---------- the open source band ---------- */
-.band { padding: clamp(40px, 6vw, 72px) 0 clamp(56px, 8vw, 110px); }
-.band-grid { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
-.band-copy p { margin-top: 16px; max-width: 36em; font-size: 18px; color: var(--soft); }
-.band-copy h2 { margin-bottom: 4px; }
-.band-copy h2 + p { margin-top: 20px; }
-.code-card { margin: 0; border-radius: var(--radius-lg); background: var(--code-bg); color: var(--code-ink); box-shadow: var(--window-shadow); overflow: hidden; }
-.code-card figcaption { padding: 14px 20px; font: 900 11.5px/1 var(--font); font-stretch: 125%; letter-spacing: .14em; text-transform: uppercase; color: var(--code-faint); border-bottom: 1px solid hsla(0, 0%, 100%, .08); }
-.code-card pre { margin: 0; padding: 18px 20px 22px; overflow-x: auto; font-size: 13px; line-height: 1.75; }
-.code-card .c { color: var(--code-faint); }
+/* ==========================================================================
+   Round 3 (2026-10-12, Arthur's review of the live page): "too much full
+   screen UI ... should have zoomed in pictures and recordings", "3d
+   animations related to what our elements do", "every section the text is
+   left hand side formatted", "the circles", and section breaks that "flow
+   more naturally".
 
-/* ---------- feature sections ---------- */
-.feature { padding: clamp(56px, 7.5vw, 104px) 0; }
-/* A feature: the title and its paragraph side by side, the recording at full width, the details under it. */
-.feature-head { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 20px clamp(32px, 5vw, 72px); align-items: end; margin-bottom: clamp(32px, 4vw, 48px); }
-.feature-head > p { font-size: 18px; color: var(--soft); max-width: 34em; }
-.feature-head h2 { max-width: 13em; }
-.points-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px clamp(24px, 3vw, 40px); margin-top: clamp(40px, 5vw, 64px); border-top: 0; }
-.points-grid li { border-bottom: 0; border-top: 1px solid var(--hairline-strong); padding: 16px 0 0; }
-.feature-media { position: relative; }
+   Layout: every section composes its own way (media left, centred head and
+   a scatter, a display head over a fan, a right-aligned head with a note
+   over its recording, a head across the page, copy beside a stage). The
+   recordings are close-ups of the part that matters, recorded at 2x
+   (apaki/demo: capture.mjs crop scenes); the hero keeps the one full view.
+
+   Flow: the light sections share the pearl and paint their own ground as a
+   feathered field (masked to nothing at its edges), so there is no cut
+   between them. One horizon, a very large circle, leads into a single dark
+   chapter (security, self-hosting, what comes next, downloads, questions,
+   the footer), with Apaki's rings running across the edge.
+
+   3D (CSS transforms only, so the compositor runs them): Glass accounts as
+   rings turning in depth with a peach light moving between them, panes
+   fanning out like tabs, worktree branches leaving a trunk on a tilted plane,
+   and sealed frames travelling a tunnel through the relay. site.js marks each
+   [data-motion] block .is-live while it is on screen; off screen, in a hidden
+   tab and under prefers-reduced-motion nothing moves (reduced motion shows
+   the resting frame).
+   ========================================================================== */
+
+main { overflow-x: clip; }
+.sec { position: relative; isolation: isolate; --pad-y: 120px; --pad-x: 40px; padding: var(--pad-y) var(--pad-x); }
+.sec > .wrap { padding-left: 0; padding-right: 0; max-width: 1160px; }
+.lede { font-size: 18px; color: var(--soft); max-width: 34em; }
+h2 + .lede { margin-top: 22px; }
+.h-display { font-size: 80px; line-height: .98; letter-spacing: -.032em; }
+.h-center { text-align: center; margin-left: auto; margin-right: auto; max-width: 13.5em; }
+.head-center { text-align: center; max-width: 820px; margin: 0 auto; }
+.head-center .lede { margin-left: auto; margin-right: auto; }
 .points { list-style: none; margin: 28px 0 0; padding: 0; border-top: 1px solid var(--hairline-strong); }
 .points li { padding: 14px 0; border-bottom: 1px solid var(--hairline); font-size: 16px; line-height: 1.55; color: var(--soft); }
 .soon { margin-right: 8px; font: 900 11.5px/1 var(--font); font-stretch: 125%; letter-spacing: .14em; text-transform: uppercase; color: var(--action-strong); }
-
-/* Crisp crops of the UI, at 2x, floating over a recording's corner so the part that matters reads at any size. */
-.float-detail { width: clamp(220px, 27%, 330px); bottom: -6%; }
-.float-left { left: clamp(-56px, -3.5vw, -16px); }
-.float-right { right: clamp(-56px, -3.5vw, -16px); }
-
-/* Phone section: the desktop's Phone sheet and the phone side by side. */
-.phone-head { max-width: 760px; }
-.phone-head p { margin-top: 18px; font-size: 18px; color: var(--soft); }
-.phone-grid { display: grid; grid-template-columns: minmax(0, 1fr) clamp(200px, 22vw, 290px); gap: clamp(28px, 4vw, 56px); align-items: center; margin-top: clamp(36px, 5vw, 56px); }
-
-/* Security. */
-.security-head { max-width: 780px; }
-.security-head p { margin-top: 18px; font-size: 18px; color: var(--soft); }
-.flow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(48px, .8fr) minmax(0, 1fr) minmax(48px, .8fr) minmax(0, 1fr); align-items: stretch; margin: clamp(40px, 6vw, 64px) 0 clamp(36px, 5vw, 56px); }
-.flow-node {
-  display: grid; justify-items: center; align-content: center; gap: 6px; padding: 22px 16px; text-align: center;
-  border-radius: var(--radius-lg); background: var(--frost); border: 1px solid var(--hairline-strong);
-  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+figure { margin: 0; }
+figure > figcaption {
+  margin-top: 14px; font: 600 12.5px/1.2 var(--mono); letter-spacing: .02em; color: var(--faint);
 }
-.flow-node b { font-weight: 820; font-stretch: 112%; font-size: 17px; }
-.flow-node span { font-size: 14px; line-height: 1.4; color: var(--soft); }
-.flow-relay { border-style: dashed; }
+
+/* A close-up: one recording (or still) cropped to the part of the window that matters, in a plain frame. Each is
+   recorded at 2x (apaki/demo capture.mjs crop scenes) and never shown wider than half its pixels, so text stays sharp. */
+.shot {
+  position: relative; overflow: hidden; border-radius: 14px; background: var(--card);
+  box-shadow: var(--window-shadow);
+}
+.shot > picture img { width: 100%; height: 100%; object-fit: cover; }
+.shot-glass { aspect-ratio: 784 / 1214; }
+.shot-sessions { aspect-ratio: 704 / 792; }
+.shot-search { aspect-ratio: 704 / 1268; }
+.shot-steer { aspect-ratio: 1520 / 420; max-width: 760px; }
+.shot-wt { aspect-ratio: 1530 / 686; max-width: 765px; }
+.shot-browser { aspect-ratio: 840 / 1100; }
+.shot-pair { aspect-ratio: 1120 / 514; max-width: 560px; }
+
+/* Each light section's ground covers the whole section and runs --overlap past its bottom, under the next one.
+   The next section's ground fades in over it across its first --feather, so every boundary is one ground
+   melting into the other; the page's own background never shows between two sections (Arthur, round 3:
+   "i can see the background in between sections"). Later sections paint over earlier ones (each .sec is
+   its own stacking context, in document order). */
+.sec-glass, .sec-sessions, .sec-codex, .sec-panes, .sec-worktrees, .sec-browser, .sec-phone { --overlap: 360px; --feather: 240px; }
+.sec-glass::before, .sec-sessions::before, .sec-codex::before, .sec-panes::before, .sec-worktrees::before, .sec-browser::before, .sec-phone::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; bottom: calc(-1 * var(--overlap)); z-index: -1; pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 var(--feather));
+  mask-image: linear-gradient(180deg, transparent, #000 var(--feather));
+}
+
+/* ---------- the hero's ground ----------
+   The pearl, as the app paints it (the pearl under its white wash and the halftone), as the hero's own opaque
+   ground: from behind the header down past the hero's bottom, under Glass, so the first boundary is one ground
+   fading into the next like all the others. It holds still: on this page the drifting body layer is covered. */
+.hero { position: relative; isolation: isolate; }
+.hero::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -120px; bottom: -360px; z-index: -2; pointer-events: none;
+  background: var(--halftone), var(--pearl-overlay), var(--pearl-gradient), var(--ground);
+}
+body:has(.hero)::before { animation: none; }
+
+/* ---------- the hero's splash (round 3, assets/splash.js) ----------
+   A band of slow mesh gradient behind the words, full bleed, cut on a slant at the bottom (Arthur pointed at
+   Stripe's): drawn by a small WebGL shader at half resolution. Under the canvas, a CSS poster of the same
+   colours in long slanted bands, for browsers without WebGL and the moment before the first frame. The stage
+   below stands across the slant. */
+.hero-top { position: relative; }
+.splash {
+  position: absolute; z-index: -1; pointer-events: none; --slant: 150px;
+  left: calc(50% - 50vw); width: 100vw; top: -220px; bottom: -150px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--slant)), 0 100%);
+  background: linear-gradient(112deg, #FBF1E7 0%, #F7C3A3 26%, #FBE0C8 46%, #F2CEC1 64%, #E3EFEE 84%, #FBF1E7 100%);
+}
+:root[data-theme="dark"] .splash { background: linear-gradient(112deg, #17120E 0%, #5E3221 26%, #2B1D15 46%, #47291E 64%, #10292D 84%, #17120E 100%); }
+.splash-gl { position: absolute; inset: 0; display: block; width: 100%; height: 100%; opacity: 0; transition: opacity 1.2s var(--ease-out); }
+.splash.is-gl .splash-gl { opacity: 1; }
+/* On the splash: the small type in --soft (it holds AA on every colour the band can show), links in ink. */
+.hero-kicker { color: var(--brand-deep); }
+:root[data-theme="dark"] .hero-kicker { color: var(--action-strong); }
+.hero-fine { color: var(--soft); }
+.hero-fine a { color: var(--ink); }
+/* On the dark band the rust ribbons get bright enough (about #9D5231 at their peak) that --soft would fall under
+   4.5:1, so the small type there is ink (4.9:1 at the brightest point; checked 2026-10-13). */
+:root[data-theme="dark"] .hero-top .hero-sub, :root[data-theme="dark"] .hero-top .hero-fine { color: var(--ink); }
+.hero-top .btn-primary { box-shadow: 0 0 0 1px rgba(var(--shadow-rgb), .2) inset, 0 14px 28px -16px rgba(var(--shadow-rgb), .55); }
+
+/* ---------- Apaki's pearl circles (site.js draws them into .circles) ----------
+   Concentric bands in the brand's periwinkle ramp, anchored just off the frame, with the pearl's colours
+   sweeping along them, fine hairlines and a dotted orbit that never move, a peach arc cut into one ring and
+   a short cyan-to-blue arc (the colours of the M's flare). The band layer turns a few degrees and back; the
+   arcs travel a little along their rings. Each placement has its own anchor, ramp and arcs. */
+.circles { position: absolute; z-index: -1; pointer-events: none; opacity: 0; transition: opacity 1.2s var(--ease-out); }
+.circles.is-drawn { opacity: 1; }
+.circles > * { position: absolute; }
+.circles svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.pc-bands, .pc-arcs { left: 14%; top: 14%; width: 72%; height: 72%; transform-origin: 50% 50%; }
+.pc-hair { inset: 0; }
+.pc-band { fill: none; stroke: var(--pc-c, var(--pc-b2)); opacity: var(--pc-a, .8); }
+.pc-pearl { fill: none; opacity: var(--pc-pearl, .45); }
+.pc-hair circle { fill: none; stroke: var(--pc-line); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: var(--pc-line-a, .14); }
+.pc-hair .pc-orbit { stroke: var(--pc-orbit); stroke-width: 2; stroke-linecap: round; opacity: var(--pc-orbit-a, .32); vector-effect: none; }
+.pc-acc { fill: none; stroke: var(--pc-accent); stroke-linecap: butt; }
+.pc-flare { fill: none; stroke-linecap: round; }
+.pc-b1 { --pc-c: var(--pc-b1); } .pc-b2 { --pc-c: var(--pc-b2); } .pc-b3 { --pc-c: var(--pc-b3); } .pc-b4 { --pc-c: var(--pc-b4); } .pc-b5 { --pc-c: var(--pc-b5); }
+.pc-s1 { stop-color: var(--pc-p1); } .pc-s2 { stop-color: var(--pc-p2); } .pc-s3 { stop-color: var(--pc-p3); } .pc-s4 { stop-color: var(--pc-p4); }
+.pc-f1 { stop-color: #07B6D5; } .pc-f2 { stop-color: #3C83F6; }
+.pc-bands { animation: pc-turn 46s var(--ease-hover) infinite alternate; }
+.pc-arcs { animation: pc-travel 34s var(--ease-hover) infinite alternate; }
+@keyframes pc-turn { from { transform: rotate(-5deg) scale(1); } to { transform: rotate(5deg) scale(1.018); } }
+@keyframes pc-travel { from { transform: rotate(-7deg); } to { transform: rotate(6deg); } }
+
+/* Dawn: from the hero's bottom left into Glass. The light ramp; the pearl reads through. */
+.circles-dawn {
+  width: 1240px; height: 1240px; left: -680px; top: calc(100% - 560px);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 34%, rgba(0, 0, 0, .55) 42%, transparent 50%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 34%, rgba(0, 0, 0, .55) 42%, transparent 50%);
+  --pc-b1: #E07F55; --pc-b2: #EE9C74; --pc-b3: #F4B796; --pc-b4: #F8D2BD; --pc-b5: #FBE7DB;
+  --pc-p1: hsl(32, 92%, 76%); --pc-p2: hsl(14, 70%, 82%); --pc-p3: hsl(189, 70%, 70%); --pc-p4: hsl(36, 60%, 94%);
+  --pc-line: #A9481F; --pc-orbit: #A9481F; --pc-accent: #B4532A; --pc-pearl: .42; --pc-a: .62;
+}
+:root[data-theme="dark"] .circles-dawn {
+  --pc-b1: #5A2E1E; --pc-b2: #74402A; --pc-b3: #8E5536; --pc-b4: #A86E4C; --pc-b5: #C08A68;
+  --pc-p1: hsl(28, 70%, 52%); --pc-p2: hsl(14, 50%, 48%); --pc-p3: hsl(189, 60%, 40%); --pc-p4: hsl(36, 40%, 60%);
+  --pc-line: #F1D9C8; --pc-orbit: #F1D9C8; --pc-accent: #F6B895; --pc-pearl: .26; --pc-line-a: .08; --pc-orbit-a: .2;
+}
+
+/* Dusk: low on the right under the downloads, on the night ground. Deeper and more violet; the flare arc leads. */
+.circles-dusk {
+  width: 1120px; height: 1120px; right: -640px; top: calc(50% - 500px);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 30%, transparent 50%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 30%, transparent 50%);
+  --pc-b1: #3A2419; --pc-b2: #4E3021; --pc-b3: #663E2A; --pc-b4: #81503A; --pc-b5: #9C6A50;
+  --pc-p1: hsl(28, 70%, 50%); --pc-p2: hsl(14, 50%, 46%); --pc-p3: hsl(189, 60%, 38%); --pc-p4: hsl(36, 40%, 56%);
+  --pc-line: #F1D9C8; --pc-orbit: #F6E4D6; --pc-accent: #F6B895; --pc-pearl: .2; --pc-line-a: .07; --pc-orbit-a: .2; --pc-a: .42;
+}
+:root[data-theme="dark"] .circles-dusk { --pc-b1: #261810; --pc-b2: #342016; --pc-b3: #452B1E; --pc-b4: #5A3828; --pc-b5: #714935; }
+
+/* ---------- Glass: the card and its switch close up, inside account rings ---------- */
+.glass-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 40px 88px; align-items: center; }
+.glass-stage { position: relative; display: grid; justify-items: center; padding: 56px 0 72px; }
+.shot-glass { position: relative; z-index: 1; width: min(100%, 392px); }
+.glass-copy h2 { max-width: 11em; }
+
+/* Glass's ground: lilac under the app's white halftone. */
+.sec-glass::before { background: radial-gradient(circle, hsla(0, 0%, 100%, .92) 1.2px, transparent 1.4px) 0 0 / 10px 10px, linear-gradient(180deg, #F3EEE7, #EFE8DF 70%, #F1EBE3); }
+:root[data-theme="dark"] .sec-glass::before { background: radial-gradient(circle, hsla(30, 40%, 90%, .06) 1.2px, transparent 1.4px) 0 0 / 10px 10px, linear-gradient(180deg, #1C1814, #191511 70%, #1A1612); }
+
+/* The rings: four accounts, each a gauge seen in depth on one tilted plane; the peach light visits each in turn. */
+.gauges { position: absolute; left: -24%; right: -24%; top: 0; bottom: 0; perspective: 1200px; perspective-origin: 50% 0; pointer-events: none; }
+.g-plane { position: absolute; left: 50%; top: 72%; width: 0; height: 0; transform-style: preserve-3d; transform: rotateX(63deg) rotateZ(-22deg); }
+.g-axis { position: absolute; left: -1px; top: 0; width: 2px; height: 300px; transform-origin: 50% 0; transform: rotateX(-90deg); background: linear-gradient(180deg, hsla(24, 30%, 40%, .45), hsla(24, 30%, 40%, 0)); }
+.g-ring { position: absolute; transform-style: preserve-3d; }
+.g-r1 { --d: 500px; --z: 0px; --fill: 64%; --t: 9px; --k: 0; }
+.g-r2 { --d: 412px; --z: 56px; --fill: 82%; --t: 8px; --k: 1; }
+.g-r3 { --d: 324px; --z: 112px; --fill: 23%; --t: 8px; --k: 2; }
+.g-r4 { --d: 236px; --z: 168px; --fill: 71%; --t: 7px; --k: 3; }
+.g-ring { left: calc(var(--d) / -2); top: calc(var(--d) / -2); width: var(--d); height: var(--d); transform: translateZ(var(--z)); }
+.g-spin { position: absolute; inset: 0; display: block; border-radius: 50%; }
+.g-arc, .g-live {
+  position: absolute; inset: 0; border-radius: 50%;
+  -webkit-mask-image: radial-gradient(farthest-side, transparent calc(100% - var(--t) - .5px), #000 calc(100% - var(--t) + .5px));
+  mask-image: radial-gradient(farthest-side, transparent calc(100% - var(--t) - .5px), #000 calc(100% - var(--t) + .5px));
+}
+.g-arc { background: conic-gradient(from 200deg, hsla(24, 22%, 26%, .9), hsla(24, 18%, 44%, .7) var(--fill), hsla(24, 20%, 40%, .14) var(--fill), hsla(24, 20%, 40%, .14)); }
+.g-live { opacity: 0; background: conic-gradient(from 200deg, rgba(var(--peach-ring), 1), rgba(var(--peach-ring), .55) var(--fill), rgba(var(--peach-ring), .2) var(--fill), rgba(var(--peach-ring), .2)); }
+.g-r1 .g-live { opacity: 1; }
+:root[data-theme="dark"] .g-arc { background: conic-gradient(from 200deg, hsla(30, 30%, 86%, .85), hsla(30, 22%, 70%, .6) var(--fill), hsla(30, 20%, 70%, .14) var(--fill), hsla(30, 20%, 70%, .14)); }
+.g-spin { animation: g-spin calc(38s + var(--k) * 11s) linear infinite; }
+.g-r2 .g-spin, .g-r4 .g-spin { animation-direction: reverse; }
+.g-live { animation: g-live 14s var(--ease-hover) infinite; animation-delay: calc(var(--k) * 3.5s - 1s); }
+@keyframes g-spin { to { transform: rotate(360deg); } }
+@keyframes g-live { 0% { opacity: 0; } 5%, 22% { opacity: 1; } 28%, 100% { opacity: 0; } }
+
+/* ---------- Sessions: a centred head, then the list and the search scattered round the details ---------- */
+.scatter { display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr) minmax(0, 330px); gap: 0 64px; align-items: start; margin-top: 72px; }
+.scatter-list { margin-top: 0; transform: rotate(-1.4deg); transform-origin: 70% 0; }
+.scatter-points { margin-top: 120px; }
+.scatter-search { margin-top: 56px; }
+.scatter-list figcaption { text-align: right; }
+.sec-sessions::before {
+  --ring: 24, 30%, 46%;
+  background-color: #F7F5F6;
+  background-image:
+    radial-gradient(circle at 92% 12%, transparent 119px, hsla(var(--ring), .2) 120px 121.5px, transparent 122.5px),
+    radial-gradient(circle at 92% 12%, transparent 199px, hsla(var(--ring), .17) 200px 201.5px, transparent 202.5px),
+    radial-gradient(circle at 92% 12%, transparent 289px, hsla(var(--ring), .14) 290px 291.5px, transparent 292.5px),
+    radial-gradient(circle at 92% 12%, transparent 389px, hsla(var(--ring), .1) 390px 391.5px, transparent 392.5px),
+    radial-gradient(circle at 92% 12%, transparent 499px, hsla(var(--ring), .07) 500px 501.5px, transparent 502.5px);
+}
+:root[data-theme="dark"] .sec-sessions::before { --ring: 28, 40%, 78%; background-color: #15120F; }
+
+/* ---------- Claude Code and Codex (round 3 finish, 2026-10-13) ----------
+   A display head and the lede on one line, the recording of the two panes stepping in under them from the second
+   column, and a note under each half saying whose pane it is (the Codex pane is the left one). It tips up from a
+   slight lean as it comes in (600 ms). The ground is the page's warm white, a breath of sage on the Codex side and of
+   peach on the Claude side, the two agents' own colours in the app turned down to a tint. */
+.cx-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 24px; align-items: end; }
+.cx-title { grid-column: 1 / 8; grid-row: 1; font-size: 72px; max-width: 9.4em; }
+.cx-lede { grid-column: 8 / 13; grid-row: 1; padding-bottom: 6px; }
+.cx-media { grid-column: 2 / 13; grid-row: 2; margin-top: 64px; }
+.shot-codex { aspect-ratio: 2000 / 642; }
+.cx-notes { display: grid; grid-template-columns: minmax(0, 532fr) minmax(0, 540fr); gap: 0 32px; margin-top: 18px; font: 460 15px/1.5 var(--font); letter-spacing: 0; color: var(--soft); }
+.cx-note { max-width: 30em; }
+.cx-note:last-child { padding-left: 6px; }
+.cx-note b { display: block; margin-bottom: 4px; font: 650 12px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink); }
+.cx-points { grid-column: 2 / 9; grid-row: 3; margin-top: 44px; }
+.reveal-on .cx-media[data-reveal]:not(.is-in) { transform: perspective(1400px) translate3d(0, 24px, 0) rotateX(9deg); }
+.cx-media[data-reveal] { transform-origin: 50% 100%; }
+.sec-codex::before { background: linear-gradient(90deg, #EFF1EA, #F5F1EC 46%, #F6EFE9 54%, #FAEAE0); }
+:root[data-theme="dark"] .sec-codex::before { background: linear-gradient(90deg, #141814, #17140F 46%, #18140F 54%, #1E1610); }
+
+/* ---------- Tabs and panes: a head beside real panes tiling into a layout on a tilted plane ---------- */
+.panes-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 64px 24px; align-items: center; }
+.panes-copy { grid-column: 1 / 7; grid-row: 1; position: relative; z-index: 2; }
+.panes-copy h2 { max-width: 8.6em; }
+/* "conversations" is one long word: the head is sized so it stays inside its six columns. */
+.h-panes { font-size: 60px; line-height: 1; }
+.panes-copy .lede { max-width: 26em; }
+/* Round 3 finish (2026-10-13; before, a fan of cards that ran under the head): four panes of one tab (pane-a to
+   pane-d) on a plane tilted back. The first fills the tab, then gives up three quarters of it as the other three come
+   down onto the plane, and the grid holds, the way Apaki lays a tab out by how many panes it has; then they lift away
+   and it starts again. Each move takes 600 ms of a 9 s loop. The resting frame (and the reduced-motion still) is the
+   grid. A cell is 236 by 140 (the panes' own 708:419) with an 8 px gap. */
+.fan { grid-column: 7 / 13; grid-row: 1; position: relative; height: 440px; perspective: 1600px; perspective-origin: 30% 10%; }
+.fan-plane { position: absolute; left: 50%; top: 50%; width: 480px; height: 288px; margin: -144px 0 0 -240px; transform-style: preserve-3d; transform: rotateX(28deg) rotateY(-18deg) rotateZ(4deg); }
+.fan-card { position: absolute; left: 0; top: 0; width: 236px; height: 140px; display: block; border-radius: 8px; overflow: hidden; background: var(--card); box-shadow: var(--float-shadow); transform-origin: 0 0; backface-visibility: hidden; }
+.fan-card img { width: 100%; height: 100%; object-fit: cover; object-position: 0 0; }
+.fan-a { transform: translate3d(0, 0, 0); }
+.fan-b { transform: translate3d(244px, 0, 0); }
+.fan-c { transform: translate3d(0, 148px, 0); }
+.fan-d { transform: translate3d(244px, 148px, 0); }
+.fan-card { animation-duration: 9s; animation-timing-function: var(--ease-out); animation-iteration-count: infinite; }
+.fan-a { animation-name: tile-a; } .fan-b { animation-name: tile-b; } .fan-c { animation-name: tile-c; } .fan-d { animation-name: tile-d; }
+@keyframes tile-a {
+  0%, 10% { transform: translate3d(0, 0, 0) scale(2.034, 2.057); }
+  16.7%, 84% { transform: translate3d(0, 0, 0) scale(1); }
+  90.7%, 100% { transform: translate3d(0, 0, 0) scale(2.034, 2.057); }
+}
+@keyframes tile-b {
+  0%, 13% { transform: translate3d(244px, -36px, 120px); opacity: 0; }
+  19.7%, 80% { transform: translate3d(244px, 0, 0); opacity: 1; }
+  86.7%, 100% { transform: translate3d(244px, -36px, 120px); opacity: 0; }
+}
+@keyframes tile-c {
+  0%, 16% { transform: translate3d(0, 112px, 120px); opacity: 0; }
+  22.7%, 78% { transform: translate3d(0, 148px, 0); opacity: 1; }
+  84.7%, 100% { transform: translate3d(0, 112px, 120px); opacity: 0; }
+}
+@keyframes tile-d {
+  0%, 19% { transform: translate3d(244px, 112px, 120px); opacity: 0; }
+  25.7%, 76% { transform: translate3d(244px, 148px, 0); opacity: 1; }
+  82.7%, 100% { transform: translate3d(244px, 112px, 120px); opacity: 0; }
+}
+.panes-steer { grid-column: 1 / 9; grid-row: 2; }
+.panes-points { grid-column: 9 / 13; grid-row: 2; margin-top: 0; align-self: start; }
+
+.sec-panes::before { background: linear-gradient(115deg, #FCE8DB, #F9E3D8 48%, #F4EAE3); }
+:root[data-theme="dark"] .sec-panes::before { background: linear-gradient(115deg, #241914, #211813 48%, #1B1612); }
+
+/* ---------- Worktrees: branches leaving a trunk, a right-aligned head, the label and its diff with a note over it ---------- */
+.wt-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 48px 24px; align-items: center; }
+.branches { grid-column: 1 / 7; grid-row: 1; position: relative; height: 400px; perspective: 1100px; perspective-origin: 50% 10%; }
+.wt-copy { grid-column: 8 / 13; grid-row: 1; text-align: right; position: relative; z-index: 2; }
+.wt-copy h2 { margin-left: auto; max-width: 10.5em; }
+.wt-copy .lede { margin-left: auto; }
+.wt-media { grid-column: 1 / 10; grid-row: 2; }
+.wt-note {
+  grid-column: 8 / 13; grid-row: 2; align-self: end; position: relative; z-index: 2; margin-bottom: -72px;
+  padding: 6px 24px 10px; border-radius: var(--radius-lg); background: var(--frost-strong); box-shadow: var(--float-shadow);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.wt-note .points { margin: 0; border-top: 0; }
+.wt-note .points li:last-child { border-bottom: 0; }
+
+.br-plane { position: absolute; left: 38%; top: 50%; width: 640px; height: 400px; margin: -200px 0 0 -320px; transform-style: preserve-3d; transform: rotateX(54deg) rotateZ(-12deg) scale(.88); }
+.br-plane { animation: br-sway 18s var(--ease-hover) infinite alternate; }
+@keyframes br-sway { from { transform: rotateX(56deg) rotateZ(-16deg) scale(.88); } to { transform: rotateX(50deg) rotateZ(-6deg) scale(.88); } }
+.br-lines { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.br-lines path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.br-trunk { stroke: var(--ink); stroke-width: 7; opacity: .78; }
+.br-path { stroke-width: 5; stroke-dasharray: 620; stroke-dashoffset: 0; }
+.br-p1 { stroke: var(--brand); } .br-p2 { stroke: var(--flare-a); } .br-p3 { stroke: var(--peach-glow); }
+.br-dot { fill: var(--ground); stroke: var(--ink); stroke-width: 3; }
+.br-commit { stroke: var(--soft); stroke-width: 2.5; }
+.br-tip { stroke: var(--ground); stroke-width: 3; }
+.br-t1 { fill: var(--brand); } .br-t2 { fill: var(--flare-a); } .br-t3 { fill: var(--peach-glow); }
+/* Flags stand up from the plane at each branch's tip. */
+.br-flag {
+  position: absolute; display: inline-flex; gap: 6px; align-items: baseline; white-space: nowrap;
+  padding: 9px 13px; border-radius: 10px; background: var(--card); box-shadow: 0 0 0 1px var(--hairline-strong), 0 12px 24px -16px rgba(var(--shadow-rgb), .5);
+  font: 600 15px/1 var(--mono); color: var(--ink);
+  transform-origin: 0 100%; transform: rotateZ(12deg) rotateX(-90deg);
+}
+.br-flag b { font-weight: 650; }
+.br-flag em { font-style: normal; font-weight: 650; }
+.br-flag .add { color: var(--good); } .br-flag .del { color: var(--action-strong); }
+.br-f0 { left: 552px; top: 268px; }
+.br-f1 { left: 456px; top: 158px; }
+.br-f2 { left: 526px; top: 60px; }
+.br-f3 { left: 506px; top: 338px; }
+/* Drawn once as the section comes in (site.js .was-seen); the reduced-motion still is the drawn graph. */
+.motion-on .branches:not(.was-seen) .br-path { stroke-dashoffset: 620; }
+.motion-on .branches:not(.was-seen) .br-flag { transform: rotateZ(12deg) rotateX(0deg); opacity: 0; }
+.motion-on .br-path { transition: stroke-dashoffset .6s var(--ease-out); }
+.motion-on .br-flag { transition: transform .5s var(--ease-out), opacity .4s var(--ease-out); }
+.motion-on .br-p2 { transition-delay: .15s; } .motion-on .br-p3 { transition-delay: .3s; }
+.motion-on .br-f0 { transition-delay: .1s; } .motion-on .br-f1 { transition-delay: .5s; } .motion-on .br-f2 { transition-delay: .65s; } .motion-on .br-f3 { transition-delay: .8s; }
+
+.sec-worktrees::before { background: linear-gradient(160deg, #EEE9E1, #EBE6DE 45%, #EFEAE3); }
+:root[data-theme="dark"] .sec-worktrees::before { background: linear-gradient(160deg, #1A1714, #181512 45%, #1A1613); }
+
+/* ---------- Browser: a display head across the page, the pane between the words and the details ---------- */
+.trio { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px) minmax(0, 1fr); gap: 56px; align-items: center; margin-top: 72px; }
+.trio-lede { text-align: right; justify-self: end; max-width: 22em; }
+.trio-points { margin: 0; max-width: 24em; }
+
+.sec-browser::before {
+  background:
+    radial-gradient(circle, hsla(189, 70%, 40%, .2) 1.1px, transparent 1.3px) 0 0 / 22px 22px,
+    radial-gradient(circle, hsla(189, 70%, 40%, .2) 1.1px, transparent 1.3px) 11px 11px / 22px 22px,
+    linear-gradient(180deg, #F8F5EF, #F7F3EC);
+}
+:root[data-theme="dark"] .sec-browser::before {
+  background:
+    radial-gradient(circle, hsla(189, 70%, 62%, .1) 1.1px, transparent 1.3px) 0 0 / 22px 22px,
+    radial-gradient(circle, hsla(189, 70%, 62%, .1) 1.1px, transparent 1.3px) 11px 11px / 22px 22px,
+    linear-gradient(180deg, #161411, #15120F);
+}
+
+/* ---------- Phone: the copy beside a stage where the phone stands over the PC's sheet ---------- */
+.phone-layout { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 24px; align-items: start; }
+.phone-copy { grid-column: 1 / 6; grid-row: 1; padding-top: 24px; }
+.phone-points { grid-column: 3 / 13; grid-row: 2; margin-top: 56px; columns: 2; column-gap: 48px; border-top: 0; }
+.phone-points li { break-inside: avoid; border-top: 1px solid var(--hairline-strong); border-bottom: 0; }
+.pair-stage { grid-column: 6 / 13; grid-row: 1; position: relative; padding: 0 15% 120px 0; }
+.shot-pair { width: 100%; }
+.pair-stage .shot-pair .clip-toggle { right: 12px; bottom: 12px; }
+.pair-phone { position: absolute; right: 0; bottom: 0; z-index: 2; width: 31%; max-width: 236px; }
+.pair-phone .phone { transform: rotate(2.5deg); }
+.sec-phone::before { background: linear-gradient(180deg, #F7EDE6, #F1E6DD 62%, #EDE2D8); }
+:root[data-theme="dark"] .sec-phone::before { background: linear-gradient(180deg, #1B1612, #19140F 62%, #17120E); }
+/* Room above the horizon for its rings. */
+.sec-phone { padding-bottom: calc(var(--pad-y) + var(--cap) + 140px); }
+
+/* ==========================================================================
+   The night: one dark chapter from the horizon to the end of the page.
+   The horizon is the top of a very large circle (--hz); .night::before
+   paints the cap above the chapter's box, and .horizon draws rings at the
+   same centre across the edge: periwinkle above it on the pearl, lilac
+   below it on the ink, a pearl band hugging it, and one
+   short arc in the M's cyan-to-blue that travels along its ring.
+   ========================================================================== */
+:root { --hz: 3280px; --cap: 110px; --night: #1B1714; }
+:root[data-theme="dark"] { --night: #0D0B09; }
+.night { position: relative; isolation: isolate; background-color: var(--night); color: var(--ink); }
+.night::before { content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: var(--cap); z-index: -1; background: var(--night); clip-path: circle(var(--hz) at 50% var(--hz)); }
+.horizon { position: absolute; left: 0; right: 0; top: calc(-1 * var(--cap) - 230px); height: calc(var(--cap) + 230px + 620px); z-index: 0; pointer-events: none; --cy: calc(230px + var(--hz)); }
+.horizon > i { position: absolute; inset: 0; display: block; }
+.hz-rings {
+  background: radial-gradient(circle at 50% var(--cy),
+    transparent calc(var(--hz) - 452px), hsla(30, 40%, 86%, .07) calc(var(--hz) - 451px) calc(var(--hz) - 450px), transparent calc(var(--hz) - 449px),
+    transparent calc(var(--hz) - 302px), hsla(30, 40%, 86%, .1) calc(var(--hz) - 301px) calc(var(--hz) - 300px), transparent calc(var(--hz) - 299px),
+    transparent calc(var(--hz) - 182px), hsla(30, 40%, 84%, .1) calc(var(--hz) - 181px) calc(var(--hz) - 166px), transparent calc(var(--hz) - 165px),
+    transparent calc(var(--hz) - 92px), hsla(30, 40%, 86%, .16) calc(var(--hz) - 91px) calc(var(--hz) - 90px), transparent calc(var(--hz) - 89px),
+    transparent calc(var(--hz) - 40px), hsla(30, 40%, 88%, .22) calc(var(--hz) - 39px) calc(var(--hz) - 38px), transparent calc(var(--hz) - 37px),
+    transparent calc(var(--hz) + 40px), hsla(24, 30%, 42%, .32) calc(var(--hz) + 41px) calc(var(--hz) + 42.5px), transparent calc(var(--hz) + 43.5px),
+    transparent calc(var(--hz) + 74px), hsla(24, 30%, 42%, .14) calc(var(--hz) + 75px) calc(var(--hz) + 96px), transparent calc(var(--hz) + 97px),
+    transparent calc(var(--hz) + 150px), hsla(24, 30%, 42%, .2) calc(var(--hz) + 151px) calc(var(--hz) + 152px), transparent calc(var(--hz) + 153px),
+    transparent calc(var(--hz) + 214px), hsla(24, 30%, 42%, .12) calc(var(--hz) + 215px) calc(var(--hz) + 216px), transparent calc(var(--hz) + 217px));
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 22%, #000 58%, transparent 96%);
+  mask-image: linear-gradient(180deg, transparent, #000 22%, #000 58%, transparent 96%);
+}
+:root[data-theme="dark"] .hz-rings { opacity: .8; }
+/* The pearl band that rims the horizon: the pearl's colours along the curve, cut to one ring that starts on the
+   edge itself, so no sliver of the section above shows between the band and the dark. */
+.horizon::before {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, hsla(var(--pearl-stop-apricot), .7), hsla(var(--pearl-stop-rose), .62) 30%, hsla(var(--pearl-stop-peach), .75) 56%, hsla(var(--pearl-stop-cyan), .5) 80%, hsla(var(--pearl-stop-apricot), .7));
+  -webkit-mask-image: radial-gradient(circle at 50% var(--cy), transparent calc(var(--hz) - 1px), #000 calc(var(--hz) - .5px) calc(var(--hz) + 11px), transparent calc(var(--hz) + 12.5px));
+  mask-image: radial-gradient(circle at 50% var(--cy), transparent calc(var(--hz) - 1px), #000 calc(var(--hz) - .5px) calc(var(--hz) + 11px), transparent calc(var(--hz) + 12.5px));
+}
+.hz-arc {
+  background: linear-gradient(90deg, var(--flare-a), var(--flare-b));
+  transform-origin: 50% var(--cy);
+  -webkit-mask-image: radial-gradient(circle at 50% var(--cy), transparent calc(var(--hz) + 39px), #000 calc(var(--hz) + 40px) calc(var(--hz) + 45px), transparent calc(var(--hz) + 46px)), linear-gradient(90deg, transparent 61%, #000 63%, #000 73%, transparent 75%);
+  -webkit-mask-composite: source-in;
+  mask-image: radial-gradient(circle at 50% var(--cy), transparent calc(var(--hz) + 39px), #000 calc(var(--hz) + 40px) calc(var(--hz) + 45px), transparent calc(var(--hz) + 46px)), linear-gradient(90deg, transparent 61%, #000 63%, #000 73%, transparent 75%);
+  mask-composite: intersect;
+}
+.hz-arc { animation: hz-travel 30s var(--ease-hover) infinite alternate; }
+@keyframes hz-travel { from { transform: rotate(-1.6deg); } to { transform: rotate(.9deg); } }
+
+.sec-security { padding-top: calc(var(--cap) + 48px); }
+.sec-security::before, .sec-selfhost::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+/* Security: the app's effort-grid dots, a brighter one every fifth, fading in under the horizon and out below. */
+.sec-security::before {
+  background:
+    radial-gradient(circle, hsla(30, 60%, 82%, .26) 1.6px, transparent 1.9px) -40px -40px / 100px 100px,
+    radial-gradient(circle, hsla(30, 60%, 82%, .09) 1px, transparent 1.2px) 0 0 / 20px 20px;
+  -webkit-mask-image: linear-gradient(180deg, transparent 6%, #000 24%, #000 70%, transparent);
+  mask-image: linear-gradient(180deg, transparent 6%, #000 24%, #000 70%, transparent);
+}
+/* Self-host: a peach dot lattice in offset rows, gathered on the copy's side. */
+.sec-selfhost::before {
+  background:
+    radial-gradient(circle, rgba(var(--peach), .2) 1.3px, transparent 1.5px) 0 0 / 18px 18px,
+    radial-gradient(circle, rgba(var(--peach), .2) 1.3px, transparent 1.5px) 9px 9px / 18px 18px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 30%, #000 70%), linear-gradient(180deg, transparent, #000 25%, #000 75%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(90deg, transparent 30%, #000 70%), linear-gradient(180deg, transparent, #000 25%, #000 75%, transparent);
+  mask-composite: intersect;
+}
+:root[data-theme="dark"] .sec-security::before, :root[data-theme="dark"] .sec-selfhost::before { opacity: .7; }
+
+/* Security: the tunnel. Rings face along the line between the PC and the phone; with the eye in the middle,
+   the near rings are edge on and the far ones open up, so it reads as a tube. The relay is a gate facing you. */
+.tunnel { position: relative; margin: 72px 0 64px; }
+.tn-stage { position: relative; height: 230px; perspective: 820px; perspective-origin: 50% 24%; }
+.tn-tube, .tn-run { position: absolute; left: 7%; right: 7%; top: 50%; height: 0; transform-style: preserve-3d; }
+.tn-ring { position: absolute; top: -72px; width: 144px; height: 144px; margin-left: -72px; border-radius: 50%; border: 1.5px solid hsla(30, 60%, 84%, .3); transform: rotateY(90deg); }
+.tn-ring:nth-child(1) { left: 0; } .tn-ring:nth-child(2) { left: 7.1428%; } .tn-ring:nth-child(3) { left: 14.2857%; } .tn-ring:nth-child(4) { left: 21.4285%; }
+.tn-ring:nth-child(5) { left: 28.5714%; } .tn-ring:nth-child(6) { left: 35.7142%; } .tn-ring:nth-child(7) { left: 42.8571%; } .tn-ring:nth-child(8) { left: 50%; }
+.tn-ring:nth-child(9) { left: 57.1428%; } .tn-ring:nth-child(10) { left: 64.2857%; } .tn-ring:nth-child(11) { left: 71.4285%; } .tn-ring:nth-child(12) { left: 78.5714%; }
+.tn-ring:nth-child(13) { left: 85.7142%; } .tn-ring:nth-child(14) { left: 92.8571%; } .tn-ring:nth-child(15) { left: 100%; }
+.tn-ring:nth-child(1), .tn-ring:nth-child(15) { border-color: hsla(30, 60%, 84%, .5); }
+.tn-gate { top: -96px; width: 192px; height: 192px; margin-left: -96px; transform: none; border: 1.5px dashed hsla(22, 92%, 80%, .55); background: hsla(30, 40%, 70%, .05); }
+.tn-rail { position: absolute; left: 0; right: 0; top: -.75px; height: 1.5px; background: linear-gradient(90deg, hsla(30, 60%, 84%, .1), hsla(30, 60%, 84%, .45) 50%, hsla(30, 60%, 84%, .1)); }
+.tn-run { transform: translate3d(28%, -14px, 0); }
+.tn-back { transform: translate3d(68%, 14px, 0); }
+.tn-late { transform: translate3d(48%, -14px, 0); }
+.tn-pk { position: absolute; left: -11px; top: -11px; width: 22px; height: 22px; transform-style: preserve-3d; transform: rotateX(-24deg) rotateY(36deg); }
+.tn-pk b { position: absolute; inset: 0; border-radius: 4px; background: linear-gradient(135deg, #F4A57E, #F9CDB2); box-shadow: 0 0 0 1px hsla(0, 0%, 100%, .45) inset; }
+.tn-pk b:nth-child(1) { transform: translateZ(11px); }
+.tn-pk b:nth-child(2) { transform: rotateY(180deg) translateZ(11px); }
+.tn-pk b:nth-child(3) { transform: rotateY(90deg) translateZ(11px); background: linear-gradient(135deg, #E08A60, #F6B895); }
+.tn-pk b:nth-child(4) { transform: rotateY(-90deg) translateZ(11px); background: linear-gradient(135deg, #E08A60, #F6B895); }
+.tn-pk b:nth-child(5) { transform: rotateX(90deg) translateZ(11px); background: linear-gradient(135deg, #F6B895, #FBE3D5); }
+.tn-pk b:nth-child(6) { transform: rotateX(-90deg) translateZ(11px); background: linear-gradient(135deg, var(--flare-a), var(--flare-b)); }
+.tn-out { animation: tn-out 7s linear infinite; }
+.tn-back { animation: tn-back 7s linear infinite; animation-delay: -2.6s; }
+.tn-late { animation-delay: -3.5s; }
+.tn-pk { animation: tn-turn 7s linear infinite; }
+.tn-back .tn-pk { animation-delay: -2.6s; }
+.tn-late .tn-pk { animation-delay: -3.5s; }
+@keyframes tn-out { from { transform: translate3d(0, -14px, 0); } to { transform: translate3d(100%, -14px, 0); } }
+@keyframes tn-back { from { transform: translate3d(100%, 14px, 0); } to { transform: translate3d(0, 14px, 0); } }
+@keyframes tn-turn {
+  0% { transform: scale(0) rotateX(-24deg) rotateY(0deg); }
+  8% { transform: scale(1) rotateX(-24deg) rotateY(40deg); }
+  92% { transform: scale(1) rotateX(-24deg) rotateY(320deg); }
+  100% { transform: scale(0) rotateX(-24deg) rotateY(360deg); }
+}
+.tn-ends { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-top: 8px; text-align: center; }
+.tn-end { display: grid; justify-items: center; align-content: start; gap: 6px; }
+.tn-end:first-child { justify-items: start; text-align: left; }
+.tn-end:last-child { justify-items: end; text-align: right; }
+.tn-end b { font-weight: 820; font-stretch: 112%; font-size: 17px; }
+.tn-end span { font-size: 14px; line-height: 1.4; color: var(--soft); max-width: 16em; }
 .flow-icon { width: 32px; height: 32px; fill: none; stroke: var(--brand-strong); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.flow-line { position: relative; height: 34px; align-self: center; }
-.flow-line::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1.5px dashed var(--hairline-strong); }
-.flow-lane { position: absolute; left: 0; right: 0; height: 12px; overflow: hidden; }
-.flow-lane:first-child { top: 0; }
-.flow-lane.flow-back { bottom: 0; }
-.flow-lane em {
-  position: absolute; left: 0; top: 1px; width: 16px; height: 10px; border-radius: 3px;
-  background: linear-gradient(135deg, var(--brand), var(--peach-glow));
-  animation: packet 5.6s var(--ease-hover) infinite;
-}
-.flow-back em { animation-name: packet-back; animation-delay: -2.4s; }
-@keyframes packet { 0% { left: 0; opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { left: calc(100% - 16px); opacity: 0; } }
-@keyframes packet-back { 0% { left: calc(100% - 16px); opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { left: 0; opacity: 0; } }
 
 .ledger { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(28px, 4vw, 56px); }
 .ledger h3 { margin-bottom: 10px; }
 .ledger ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hairline-strong); }
 .ledger li { padding: 12px 0; border-bottom: 1px solid var(--hairline); font-size: 16px; color: var(--soft); }
-.trust { margin-top: clamp(36px, 5vw, 56px); max-width: 860px; }
+.trust { margin: clamp(48px, 6vw, 72px) auto 0; max-width: 820px; text-align: center; }
 .trust p { font-size: 17px; color: var(--soft); }
 .trust strong { color: var(--ink); font-weight: 760; }
 .trust .fine { margin-top: 14px; font-size: 14px; color: var(--faint); }
+.trust .links { justify-content: center; }
 
-/* Cards: coming next and downloads. Plain frosted panels; no texture, so none repeats. */
+/* Self-host: the command card leans back a little in depth; the copy sits to its right. */
+.band-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(32px, 6vw, 88px); align-items: center; }
+.band-copy p { margin-top: 16px; max-width: 36em; font-size: 18px; color: var(--soft); }
+.band-copy h2 + p { margin-top: 22px; }
+.sec-selfhost .code-card { transform: perspective(1400px) rotateY(9deg) rotateX(3deg); transform-origin: 100% 50%; }
+.code-card { margin: 0; border-radius: var(--radius-lg); background: var(--code-bg); color: var(--code-ink); box-shadow: var(--window-shadow); overflow: hidden; }
+.code-card figcaption { margin: 0; padding: 14px 20px; font: 900 11.5px/1 var(--font); font-stretch: 125%; letter-spacing: .14em; text-transform: uppercase; color: var(--code-faint); border-bottom: 1px solid hsla(0, 0%, 100%, .08); }
+.code-card pre { margin: 0; padding: 18px 20px 22px; overflow-x: auto; font-size: 13px; line-height: 1.75; }
+.code-card .c { color: var(--code-faint); }
+
+/* Coming next: a display head on the left, the two cards stepping down to the right. */
+.next-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 24px; align-items: start; }
+.next-grid h2 { grid-column: 1 / 6; grid-row: 1 / 3; max-width: 5em; }
+.next-a { grid-column: 6 / 10; grid-row: 1; }
+.next-b { grid-column: 9 / 13; grid-row: 2; margin-top: -48px; position: relative; z-index: 1; }
+.sec-next { padding-bottom: 24px; }
+
+/* Cards (coming next, downloads): frosted panels, no texture, so none repeats. */
 .section-head { max-width: 760px; margin-bottom: clamp(32px, 4vw, 48px); }
 .section-head p { margin-top: 14px; font-weight: 700; }
+#download-title { margin-bottom: 56px; }
 .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(16px, 2vw, 24px); }
-.cards-two { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 900px; }
 .card {
   display: flex; flex-direction: column; gap: 12px; padding: 28px 26px;
   border-radius: var(--radius-lg); background: var(--frost); border: 1px solid var(--hairline-strong);
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 }
 .card p { font-size: 16px; color: var(--soft); }
 .card-icon { width: 30px; height: 30px; fill: none; stroke: var(--brand-strong); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .card-get .btn { margin-top: auto; align-self: flex-start; }
 .card-get p { margin-bottom: 10px; }
 .card-get .fine { margin-top: auto; margin-bottom: 0; font-size: 14px; color: var(--faint); }
+.cards .card-get:nth-child(2) { transform: translateY(28px); }
 
 /* FAQ. */
 .faq-grid { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: clamp(28px, 5vw, 72px); align-items: start; }
@@ -335,8 +791,10 @@ html:not(.js) .reel-tabs { display: none; }
 .faq details[open] summary::after { transform: rotate(225deg); margin-top: -2px; }
 .faq details p { padding: 0 0 20px; font-size: 16px; color: var(--soft); max-width: 40em; }
 
-/* Footer. */
+/* Footer: the privacy page's plain one, and on the home page the end of the night. */
 .site-foot { margin-top: clamp(40px, 6vw, 80px); padding: 40px 0 56px; border-top: 1px solid var(--hairline-strong); background: var(--frost); }
+.site-foot-night { margin-top: 0; border-top: 0; background: var(--night); padding: 0 0 56px; }
+.site-foot-night .foot-grid { padding-top: 40px; border-top: 1px solid var(--hairline-strong); }
 .foot-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px 40px; align-items: start; }
 .foot-brand { display: flex; align-items: center; gap: 12px; font-size: 16px; color: var(--soft); }
 .foot-brand .m-mark { width: 38px; height: 18px; flex: none; }
@@ -346,17 +804,34 @@ html:not(.js) .reel-tabs { display: none; }
 .foot-links a:hover { color: var(--ink); text-decoration: underline; }
 .foot-fine { grid-column: 1 / -1; font-size: 13px; color: var(--faint); max-width: 70em; }
 
+/* Text on the night: the light-on-dark tokens, in both themes. */
+.on-dark {
+  --ink: #F3EEE8; --soft: #D2C9BF; --faint: #B3A89C; --ink-deep: #FBF7F2;
+  --hairline: hsla(30, 30%, 90%, .1); --hairline-strong: hsla(30, 30%, 90%, .18);
+  --brand: #F4A383; --brand-strong: #F6B895; --brand-deep: #FAD3BD; --action-strong: #F6B895;
+  --frost: #25201C; --frost-strong: #2D2722;
+  --code-faint: #B3A89C;
+  color: var(--ink);
+}
+:root[data-theme="dark"] .on-dark { --frost: #191613; --frost-strong: #211D19; }
+.on-dark .code-card { background: #0C0A08; box-shadow: 0 0 0 1px hsla(30, 30%, 90%, .12), 0 24px 48px -28px rgba(0, 0, 0, .7); }
+.on-dark .btn-secondary { background: var(--frost-strong); color: var(--ink); border-color: var(--hairline-strong); }
+.on-dark .btn-primary { box-shadow: none; }
+
 /* ---------- reveal (site.js adds .reveal-on to <html>, then .is-in as each block enters) ---------- */
 .reveal-on [data-reveal]:not(.is-in) { opacity: 0; transform: translate3d(0, 24px, 0); }
-.reveal-on [data-reveal] { transition: opacity 1s var(--ease-out), transform 1.2s var(--ease-out); }
+.reveal-on [data-reveal] { transition: opacity .6s var(--ease-out), transform .6s var(--ease-out); }
 .reveal-on [data-reveal="2"] { transition-delay: 90ms; }
 .reveal-on [data-reveal="3"] { transition-delay: 180ms; }
+/* Blocks that keep a transform of their own rise from it rather than from flat. */
+.reveal-on .scatter-list[data-reveal]:not(.is-in) { transform: translate3d(0, 24px, 0) rotate(-1.4deg); }
+.reveal-on .sec-selfhost .code-card[data-reveal]:not(.is-in) { transform: perspective(1400px) translate3d(0, 24px, 0) rotateY(9deg) rotateX(3deg); }
+.reveal-on .cards .card-get:nth-child(2)[data-reveal]:not(.is-in) { transform: translate3d(0, 52px, 0); }
 
 /* ==========================================================================
-   The PC and the phone in step (2026-10-12, Arthur: the recordings should
-   read as the same thing). The hero and the pairing section play a desktop
-   recording and a phone recording made at the same moment (site.js
-   data-together). From the moment the phone takes the session over
+   The PC and the phone in step (2026-10-12). The hero and the pairing stage
+   play a desktop recording and a phone recording made at the same moment
+   (site.js data-together). From the moment the phone takes the session over
    (data-link-at), a peach ring marks that pane on the PC and the phone's
    frame: the same colour, the same session.
    ========================================================================== */
@@ -365,261 +840,146 @@ html:not(.js) .reel-tabs { display: none; }
   box-shadow: 0 0 0 2px rgba(var(--peach-ring), .95), 0 0 0 7px rgba(var(--peach-ring), .22);
   transition: opacity .6s var(--ease-out);
 }
-/* The left pane of the handoff recording: under the tab strip, left of the split. */
-.link-ring-left { left: .6%; top: 5.1%; width: 49.4%; bottom: 1.1%; }
 .is-linked .link-ring { opacity: 1; }
-.float-phone .phone { transition: box-shadow .6s var(--ease-out); }
-.is-linked .float-phone .phone { box-shadow: var(--float-shadow), 0 0 0 2px rgba(var(--peach-ring), .95), 0 0 0 8px rgba(var(--peach-ring), .2); }
-/* The phone sits over the hero window's bottom right, so its button moves to the bottom left. */
-.window-hero .clip-toggle { right: auto; left: 12px; }
 :root { --peach-ring: 236, 146, 102; }
 :root[data-theme="dark"] { --peach-ring: 246, 184, 149; }
 
-/* ==========================================================================
-   Section grounds (2026-10-12, Arthur: "different sections with different
-   backgrounds that are not straight lines ... angular or circular ... it
-   should feel artistic"). Each band paints its own ground and is cut by a
-   shape: a slant, a dome, a bowl, a notch. Where a band is cut away, the
-   pearl shows through. No two grounds share a texture: a peach dot lattice
-   fading from a corner, the app's white halftone, rings, a warm colour
-   field, two orbs, a sky with a low sun, the app's effort-grid dots lit
-   violet, two blobs, a glow. All static (no filters; nothing fixed but the
-   pearl), so scrolling stays cheap. The ground is painted on the section
-   itself, so a contrast check sees the colour the text sits on.
-   ========================================================================== */
-.sec > .wrap { padding-left: 0; padding-right: 0; max-width: 1160px; }
-/* Insets and cuts step with the width, in plain pixels: the band's own inset, plus the depth of its cut where it has one. */
-.sec { position: relative; --cut: 80px; padding: 104px 40px; }
-.sec-cut-y { padding-top: 184px; padding-bottom: 184px; }
-.sec-cut-top { padding-top: 184px; }
-@media (max-width: 1200px) {
-  .sec { --cut: 64px; padding-top: 88px; padding-bottom: 88px; }
-  .sec-cut-y { padding-top: 152px; padding-bottom: 152px; }
-  .sec-cut-top { padding-top: 152px; }
-  .sec-cut-bottom { padding-bottom: 152px; }
-}
-@media (max-width: 960px) {
-  .sec { --cut: 48px; padding-top: 72px; padding-bottom: 72px; }
-  .sec-cut-y { padding-top: 120px; padding-bottom: 120px; }
-  .sec-cut-top { padding-top: 120px; }
-  .sec-cut-bottom { padding-bottom: 120px; }
-}
-@media (max-width: 720px) {
-  .sec { --cut: 28px; padding: 56px 20px; }
-  .sec-cut-y { padding-top: 84px; padding-bottom: 84px; }
-  .sec-cut-top { padding-top: 84px; }
-  .sec-cut-bottom { padding-bottom: 84px; }
-}
-
-/* Sections on a dark ground: the light-on-dark tokens, in both themes. */
-.on-dark {
-  --ink: #F2F3FB; --soft: #C9CBE2; --faint: #AEB0CC; --ink-deep: #F2F3FB;
-  --hairline: hsla(240, 40%, 90%, .11); --hairline-strong: hsla(240, 40%, 90%, .2);
-  --brand: #A3ABF2; --brand-strong: #BCC2F8; --brand-deep: #DCDFFA; --action-strong: #F6B895;
-  --frost: #24213F; --frost-strong: #2B2848;
-  --code-faint: #B0B3D6;
-  color: var(--ink);
-}
-.on-dark .code-card { background: #0B0A16; box-shadow: 0 0 0 1px hsla(240, 40%, 90%, .12), 0 24px 48px -28px rgba(0, 0, 0, .7); }
-.on-dark .btn-secondary { background: #2B2848; color: var(--ink); border-color: var(--hairline-strong); }
-.on-dark .flow-node { -webkit-backdrop-filter: none; backdrop-filter: none; }
-
-/* Open source: ink, a peach-tinted dot lattice (offset rows), a warm glow in the top right. */
-.g-ink-lattice {
-  background-color: #1B1834;
-  background-image:
-    radial-gradient(38% 60% at 88% 18%, rgba(var(--peach), .24), rgba(var(--peach), 0) 100%),
-    radial-gradient(circle, rgba(var(--peach), .2) 1.3px, transparent 1.5px),
-    radial-gradient(circle, rgba(var(--peach), .2) 1.3px, transparent 1.5px),
-    linear-gradient(160deg, #231F42, #15132A 72%);
-  background-size: auto, 18px 18px, 18px 18px, auto;
-  background-position: 0 0, 0 0, 9px 9px, 0 0;
-  clip-path: polygon(0 var(--cut), 100% 0, 100% calc(100% - var(--cut)), 0 100%);
-}
-:root[data-theme="dark"] .g-ink-lattice {
-  background-color: #0B0A16;
-  background-image:
-    radial-gradient(38% 60% at 88% 18%, rgba(var(--peach), .13), rgba(var(--peach), 0) 100%),
-    radial-gradient(circle, rgba(var(--peach), .12) 1.3px, transparent 1.5px),
-    radial-gradient(circle, rgba(var(--peach), .12) 1.3px, transparent 1.5px),
-    linear-gradient(160deg, #0F0D1F, #08070F 72%);
-}
-
-/* Glass: lilac with the app's white halftone, under a wide dome. */
-.g-lilac-dome {
-  background-color: #EAE8FB;
-  background-image: radial-gradient(circle, hsla(0, 0%, 100%, .9) 1.2px, transparent 1.4px), linear-gradient(180deg, #EEEFFC, #E5E2FA);
-  background-size: 10px 10px, auto;
-  clip-path: ellipse(150% 100% at 50% 100%);
-}
-:root[data-theme="dark"] .g-lilac-dome {
-  background-color: #19182F;
-  background-image: radial-gradient(circle, hsla(240, 60%, 90%, .06) 1.2px, transparent 1.4px), linear-gradient(180deg, #1C1B35, #16152B);
-}
-
-/* Sessions: the pearl, with concentric rings spreading from its top right and fading out. */
-.g-rings { isolation: isolate; }
-.g-rings::before {
-  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-  --ring: 232, 55%, 62%;
-  background:
-    radial-gradient(circle at 90% 16%, transparent 119px, hsla(var(--ring), .2) 120px 121.5px, transparent 122.5px),
-    radial-gradient(circle at 90% 16%, transparent 199px, hsla(var(--ring), .17) 200px 201.5px, transparent 202.5px),
-    radial-gradient(circle at 90% 16%, transparent 289px, hsla(var(--ring), .14) 290px 291.5px, transparent 292.5px),
-    radial-gradient(circle at 90% 16%, transparent 389px, hsla(var(--ring), .1) 390px 391.5px, transparent 392.5px),
-    radial-gradient(circle at 90% 16%, transparent 499px, hsla(var(--ring), .07) 500px 501.5px, transparent 502.5px);
-}
-:root[data-theme="dark"] .g-rings::before { --ring: 232, 70%, 78%; }
-
-/* Tabs and panes: a warm colour field, peach into lilac, slanted the other way. */
-.g-warm-field {
-  background-color: #F8EAEE;
-  background-image: radial-gradient(60% 80% at 12% 30%, rgba(var(--peach), .45), rgba(var(--peach), 0) 100%), linear-gradient(115deg, #FCEEE5, #F8E7F0 55%, #ECEAFB);
-  clip-path: polygon(0 0, 100% var(--cut), 100% 100%, 0 calc(100% - var(--cut)));
-}
-:root[data-theme="dark"] .g-warm-field {
-  background-color: #221A27;
-  background-image: radial-gradient(60% 80% at 12% 30%, rgba(var(--peach), .1), rgba(var(--peach), 0) 100%), linear-gradient(115deg, #2A1D22, #241B2A 55%, #191830);
-}
-
-/* Worktrees: a cool teal field, the pearl's cyan into periwinkle, closing in an arch at the bottom. */
-.sec-cut-bottom { padding-bottom: 184px; }
-.g-teal-arch {
-  background-color: #E3F2F4;
-  background-image: radial-gradient(46% 60% at 86% 22%, hsla(0, 0%, 100%, .7), hsla(0, 0%, 100%, 0) 100%), linear-gradient(160deg, #DDF2F3, #E6EAFB 75%);
-  clip-path: ellipse(140% 100% at 50% 0);
-}
-:root[data-theme="dark"] .g-teal-arch {
-  background-color: #0F1F25;
-  background-image: radial-gradient(46% 60% at 86% 22%, hsla(189, 60%, 50%, .1), hsla(189, 60%, 50%, 0) 100%), linear-gradient(160deg, #0E2228, #15182C 75%);
-}
-
-/* Browser: the pearl, with a large cool orb low on the left and a small warm one high on the right. */
-.g-orbs {
-  background-image:
-    radial-gradient(30% 42% at 6% 82%, hsla(189, 94%, 43%, .16), hsla(189, 94%, 43%, 0) 100%),
-    radial-gradient(16% 22% at 94% 12%, rgba(var(--peach), .32), rgba(var(--peach), 0) 100%);
-}
-
-/* Phone: a pale sky with a low sun, its top scooped out in a bowl. */
-.g-sky-bowl {
-  background-color: #E8EEFB;
-  background-image: radial-gradient(24% 34% at 78% 74%, hsla(0, 0%, 100%, .85), hsla(0, 0%, 100%, 0) 100%), linear-gradient(200deg, #E2F1FB, #E9E6FC 70%);
-  -webkit-mask-image: radial-gradient(64% var(--cut) at 50% 0, transparent 98%, #000 100%); mask-image: radial-gradient(64% var(--cut) at 50% 0, transparent 98%, #000 100%);
-}
-:root[data-theme="dark"] .g-sky-bowl {
-  background-color: #131B2A;
-  background-image: radial-gradient(24% 34% at 78% 74%, hsla(232, 60%, 70%, .12), hsla(232, 60%, 70%, 0) 100%), linear-gradient(200deg, #10202B, #16152C 70%);
-}
-
-/* Security: the app's effort-grid dots, fine with a brighter one every fifth, lit violet from the top left; slanted top. */
-.g-violet-dots {
-  background-color: #12102A;
-  background-image:
-    radial-gradient(50% 55% at 12% 4%, hsla(277, 80%, 62%, .26), hsla(277, 80%, 62%, 0) 100%),
-    radial-gradient(circle, hsla(217, 90%, 78%, .34) 1.6px, transparent 1.9px),
-    radial-gradient(circle, hsla(217, 90%, 78%, .12) 1px, transparent 1.2px);
-  background-size: auto, 100px 100px, 20px 20px;
-  background-position: 0 0, -40px -40px, 0 0;
-  clip-path: polygon(0 0, 100% var(--cut), 100% 100%, 0 100%);
-}
-:root[data-theme="dark"] .g-violet-dots {
-  background-color: #0A0918;
-  background-image:
-    radial-gradient(50% 55% at 12% 4%, hsla(277, 80%, 62%, .15), hsla(277, 80%, 62%, 0) 100%),
-    radial-gradient(circle, hsla(217, 90%, 78%, .24) 1.6px, transparent 1.9px),
-    radial-gradient(circle, hsla(217, 90%, 78%, .08) 1px, transparent 1.2px);
-}
-
-/* Coming next: the pearl, with a warm blob top right and a periwinkle one bottom left (not the browser's orbs). */
-.g-blobs {
-  background-image:
-    radial-gradient(34% 48% at 96% 6%, rgba(var(--peach), .38), rgba(var(--peach), 0) 100%),
-    radial-gradient(40% 50% at 2% 96%, hsla(232, 60%, 64%, .2), hsla(232, 60%, 64%, 0) 100%);
-}
-
-/* Get Apaki: a glow rising from below, under a top with a notch in it. */
-.g-glow-notch {
-  background-color: #F4F1FC;
-  background-image:
-    radial-gradient(60% 70% at 50% 108%, rgba(var(--peach), .5), rgba(var(--peach), 0) 100%),
-    radial-gradient(80% 90% at 50% 120%, hsla(277, 87%, 63%, .2), hsla(277, 87%, 63%, 0) 100%),
-    linear-gradient(180deg, #F5F3FD, #F1EEFC);
-  clip-path: polygon(0 0, 36% var(--cut), 100% 0, 100% 100%, 0 100%);
-}
-:root[data-theme="dark"] .g-glow-notch {
-  background-color: #17152C;
-  background-image:
-    radial-gradient(60% 70% at 50% 108%, rgba(var(--peach), .16), rgba(var(--peach), 0) 100%),
-    radial-gradient(80% 90% at 50% 120%, hsla(277, 87%, 63%, .14), hsla(277, 87%, 63%, 0) 100%),
-    linear-gradient(180deg, #1A1830, #15142A);
-}
-
-/* The footer: plain ink under a slanted top. */
-.site-foot.sec { border-top: 0; background: #171530; clip-path: polygon(0 var(--cut), 100% 0, 100% 100%, 0 100%); padding-top: 120px; padding-bottom: 56px; }
-@media (max-width: 720px) { .site-foot.sec { padding-top: 68px; } }
-:root[data-theme="dark"] .site-foot.sec { background: #07060E; }
-
-/* ---------- smaller screens: the display type steps down ---------- */
+/* ---------- smaller screens ---------- */
+@media (min-width: 1700px) { :root { --cap: 240px; } }
 @media (max-width: 1200px) {
   .wordmark { font-size: 140px; }
   .hero-lead { font-size: 34px; }
   h2 { font-size: 46px; }
+  .h-display { font-size: 64px; }
+  .sec { --pad-y: 104px; }
+  :root { --hz: 2400px; }
+  .fan-plane { left: 56%; transform: rotateX(28deg) rotateY(-18deg) rotateZ(4deg) scale(.86); }
+  .h-panes { font-size: 52px; }
+  .cx-title { font-size: 60px; }
+  .panes-copy .lede { max-width: 22em; }
+  .next-grid h2 { grid-column: 1 / -1; grid-row: 1; max-width: none; }
+  .next-a { grid-column: 1 / 7; grid-row: 2; }
+  .next-b { grid-column: 7 / 13; grid-row: 2; margin-top: 72px; }
+  .hero-stage { grid-template-columns: minmax(0, 560px) minmax(0, 250px); justify-content: center; }
+  .stage-note { grid-column: 1 / -1; grid-row: 2; margin: 48px 0 0; max-width: 40em; }
 }
 @media (max-width: 1080px) {
   .head-nav { display: none; }
+  .foot-grid { grid-template-columns: minmax(0, 1fr); }
+  .foot-links { justify-content: flex-start; }
 }
 @media (max-width: 960px) {
   .wordmark { font-size: 112px; }
   h2 { font-size: 40px; }
-}
-@media (max-width: 960px) {
-  .band-grid, .faq-grid, .hero-grid, .feature-head { grid-template-columns: minmax(0, 1fr); }
+  .h-display { font-size: 52px; }
+  .sec { --pad-y: 88px; --pad-x: 32px; }
+  :root { --hz: 1700px; }
+  .band-grid, .faq-grid, .hero-grid, .glass-grid { grid-template-columns: minmax(0, 1fr); }
+  .glass-stage { order: 2; }
   .cards { grid-template-columns: minmax(0, 1fr); }
+  .cards .card-get:nth-child(2) { transform: none; }
+  .reveal-on .cards .card-get:nth-child(2)[data-reveal]:not(.is-in) { transform: translate3d(0, 24px, 0); }
   .ledger { grid-template-columns: minmax(0, 1fr); }
-  .float-detail { width: 40%; bottom: -8%; }
-  .float-left { left: -2%; }
-  .float-right { right: -2%; }
+  .scatter { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px 32px; }
+  .scatter-points { grid-column: 1 / -1; grid-row: 2; margin-top: 0; }
+  .scatter-list, .scatter-search { margin-top: 0; }
+  .panes-copy, .fan, .panes-steer, .panes-points, .branches, .wt-copy, .wt-media, .wt-note, .phone-copy, .phone-points, .pair-stage { grid-column: 1 / -1; grid-row: auto; }
+  .cx-title, .cx-lede, .cx-media, .cx-points { grid-column: 1 / -1; grid-row: auto; }
+  .cx-lede { margin-top: 22px; padding-bottom: 0; }
+  .cx-media { margin-top: 48px; }
+  .h-panes { font-size: 46px; }
+  .fan { height: 380px; margin-top: -24px; }
+  .fan-plane { left: 50%; }
+  .branches { height: 320px; order: 2; }
+  .wt-copy { order: 1; }
+  .wt-media { order: 3; }
+  .wt-note { order: 4; margin: -40px 0 0 auto; max-width: 560px; }
+  .pair-stage { margin-top: 40px; }
+  .phone-points { order: 3; columns: 1; }
+  .trio { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px 40px; }
+  .trio-lede { grid-column: 1 / -1; text-align: center; justify-self: center; max-width: 34em; }
+  .trio-media { grid-row: 2; }
+  .next-a { grid-column: 1 / 8; grid-row: auto; }
+  .next-b { grid-column: 6 / 13; grid-row: auto; margin-top: 0; }
+  .sec-selfhost .code-card { transform: none; }
+  .reveal-on .sec-selfhost .code-card[data-reveal]:not(.is-in) { transform: translate3d(0, 24px, 0); }
 }
 @media (max-width: 720px) {
   body { font-size: 16px; }
-  .wordmark { font-size: 72px; }
+  .wordmark { font-size: 72px; gap: .1em; }
   .hero-lead { font-size: 26px; }
   h2 { font-size: 32px; }
+  .h-display { font-size: 38px; }
+  .lede { font-size: 17px; }
   .head-link { display: none; }
   .head-row { gap: 12px; height: 60px; }
-  .wordmark { gap: .1em; }
   .hero-actions .btn { flex: 1 1 100%; }
-  .float-phone { position: relative; right: auto; bottom: auto; width: 56%; max-width: 250px; margin: -18% 4% 0 auto; }
-  .hero-stage { padding-bottom: 0; }
-  .phone-grid { grid-template-columns: minmax(0, 1fr); }
-  .phone-side { width: 62%; max-width: 280px; margin: 0 auto; }
-  .flow { grid-template-columns: minmax(0, 1fr); justify-items: stretch; }
-  .flow-line { height: 44px; width: 34px; justify-self: center; }
-  .flow-line::before { left: 50%; right: auto; top: 0; bottom: 0; border-top: 0; border-left: 1.5px dashed var(--hairline-strong); }
-  .flow-lane { top: 0; bottom: 0; width: 12px; height: auto; }
-  .flow-lane:first-child { left: 0; right: auto; }
-  .flow-lane.flow-back { left: auto; right: 0; }
-  .flow-lane em { width: 10px; height: 14px; left: 1px; top: 0; animation-name: packet-down; }
-  .flow-back em { animation-name: packet-up; }
+  .splash { --slant: 56px; top: -200px; bottom: -96px; }
+  .hero-stage { grid-template-columns: minmax(0, 1fr) minmax(0, 40%); }
+  .hero-pane { grid-column: 1 / -1; grid-row: 1; width: 86%; }
+  .hero-phone { grid-column: 2; grid-row: 1; align-self: end; margin: 0 -4px -40px 0; }
+  .stage-note { grid-column: 1 / -1; grid-row: 2; margin: 56px 0 0; max-width: none; }
+  .sec { --pad-y: 72px; --pad-x: 20px; }
+  :root { --hz: 760px; --cap: 64px; }
+  /* On a phone the hero's circles would sit under the note; the night keeps its own. */
+  .circles-dawn { display: none; }
+  .trust { text-align: left; }
+  .trust .links { justify-content: flex-start; }
+  .circles-dusk { width: 900px; height: 900px; right: -560px; top: calc(50% - 400px); }
+  .shot-glass { width: min(100%, 320px); }
+  .glass-stage { padding: 32px 0 48px; }
+  .gauges { left: -20%; right: -20%; }
+  .g-plane { transform: rotateX(68deg) rotateZ(-22deg) scale(.66); }
+  .scatter { grid-template-columns: minmax(0, 1fr); }
+  .scatter-list { width: 82%; justify-self: start; }
+  .scatter-search { width: 82%; justify-self: end; }
+  .scatter-points { grid-row: auto; }
+  .fan { height: 300px; }
+  .fan-plane { transform: rotateX(28deg) rotateY(-18deg) rotateZ(4deg) scale(.66); }
+  .h-panes { font-size: 34px; }
+  .cx-title { font-size: 38px; }
+  .cx-notes { grid-template-columns: minmax(0, 1fr); gap: 14px; font-size: 14px; }
+  .cx-note:last-child { padding-left: 0; }
+  .branches { height: 250px; }
+  .br-plane { left: 46%; transform: rotateX(54deg) rotateZ(-12deg) scale(.5); }
+  @keyframes br-sway { from { transform: rotateX(56deg) rotateZ(-16deg) scale(.5); } to { transform: rotateX(50deg) rotateZ(-6deg) scale(.5); } }
+  .wt-copy { text-align: left; }
+  .wt-copy h2, .wt-copy .lede { margin-left: 0; }
+  .wt-note { margin: -28px 12px 0; padding: 4px 18px 8px; }
+  /* The two wide close-ups would shrink their text past reading on a phone: show the part that matters, larger. */
+  .shot-steer { aspect-ratio: 760 / 420; }
+  .shot-steer img, .shot-steer video { object-position: 62% 50%; }
+  .shot-wt { aspect-ratio: 860 / 686; }
+  .shot-wt img, .shot-wt video { object-position: 100% 0; }
+  .trio { grid-template-columns: minmax(0, 1fr); }
+  .trio-lede { text-align: left; justify-self: start; }
+  .trio-media { width: 86%; justify-self: center; grid-row: auto; }
+  .pair-stage { padding: 0 12% 96px 0; }
+  .pair-phone { width: 36%; }
+  .tunnel { margin: 48px 0; }
+  .tn-stage { height: 160px; perspective: 560px; }
+  .tn-ring { top: -48px; width: 96px; height: 96px; margin-left: -48px; }
+  .tn-ring:nth-child(even):not(.tn-gate) { display: none; }
+  .tn-gate { top: -64px; width: 128px; height: 128px; margin-left: -64px; }
+  .tn-ends { gap: 12px; }
+  .tn-end b { font-size: 15px; }
+  .tn-end span { font-size: 13px; }
+  .next-a, .next-b { grid-column: 1 / -1; }
   .foot-grid { grid-template-columns: minmax(0, 1fr); }
   .foot-links { justify-content: flex-start; }
   .code-card pre { font-size: 12px; padding: 16px; }
-  /* On a phone the recordings are narrow; a crop over them would hide more than it shows. */
-  .float-detail { display: none; }
-  .points-grid { grid-template-columns: minmax(0, 1fr); }
 }
-@keyframes packet-down { 0% { top: 0; opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { top: calc(100% - 14px); opacity: 0; } }
-@keyframes packet-up { 0% { top: calc(100% - 14px); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { top: 0; opacity: 0; } }
 
-/* ---------- reduced motion: the pearl holds still, nothing travels, nothing rises ---------- */
+/* ---------- reduced motion: the pearl holds still, nothing travels, nothing rises; the 3D pieces show their resting frame ---------- */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   body::before { animation: none; transform: none; }
-  .flow-lane em { animation: none; opacity: 1; left: calc(50% - 8px); }
   .reveal-on [data-reveal]:not(.is-in) { opacity: 1; transform: none; }
-  .clip, .clip video, .reveal-on [data-reveal] { transition: none; }
+  .clip, .clip video, .reveal-on [data-reveal], .circles { transition: none; }
+  [data-motion] *, [data-motion]::before, [data-motion]::after { animation: none !important; transition: none !important; }
 }
+/* Off screen and in a hidden tab, every loop holds where it is (site.js toggles these). */
+[data-motion]:not(.is-live) *, .tab-hidden [data-motion] * { animation-play-state: paused !important; }
 
 /* ==========================================================================
    /app/: the web app's entry (apaki/scripts/build-web.mjs writeLanding).
@@ -644,10 +1004,11 @@ html:not(.js) .reel-tabs { display: none; }
 .app-page .small { margin-top: 32px; font-size: 13px; color: var(--faint); }
 /* "Open Apaki" (2026-10-10): the way in, to sign in or pair; the app's brand gradient. */
 .app-page .cta { margin: 28px 0 10px; }
-.app-page .btn { display: inline-block; min-height: 0; padding: 14px 26px; border-radius: 14px; color: #FFFFFF; text-decoration: none; font-weight: 800; font-size: 17px; letter-spacing: .01em;
-  background: linear-gradient(135deg, #2C3578, #5A3FB0); box-shadow: 0 10px 24px -14px rgba(20, 18, 40, .5); }
-.app-page .btn:hover { filter: brightness(1.08); }
-:root[data-theme="dark"] .app-page .btn { background: linear-gradient(135deg, #3E48A0, #5B40AA); box-shadow: none; }
+.app-page .btn { display: inline-block; min-height: 0; padding: 14px 26px; border-radius: 14px; color: var(--on-fill); text-decoration: none; font-weight: 800; font-size: 17px; letter-spacing: .01em;
+  background: linear-gradient(180deg, var(--fill), var(--fill-2)); box-shadow: 0 0 0 1px rgba(var(--shadow-rgb), .1) inset, 0 10px 24px -14px rgba(var(--shadow-rgb), .45); }
+/* Round 3 (2026-10-12): the site's peach action, ink on it, in place of the blue-violet gradient. */
+.app-page .btn:hover { background: var(--fill-hover); color: var(--on-fill); }
+:root[data-theme="dark"] .app-page .btn { box-shadow: none; }
 .app-page .cta-note { margin: 0; font-size: 14px; color: var(--faint); }
 
 /* The privacy page (privacy/index.html, 2026-10-12): one readable column of prose. */
