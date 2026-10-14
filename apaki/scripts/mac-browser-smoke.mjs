@@ -305,7 +305,7 @@ async function run(mouse) {
 
 /* ---------- voice ---------- */
 
-function voice() {
+async function voice() {
   console.log('\n=== voice ===');
   const cli = path.join(resources, 'voice', 'bin', 'Release', 'whisper-cli');
   check('whisper-cli is in the app and signed', fs.existsSync(cli) && spawnSync('codesign', ['--verify', '--strict', cli]).status === 0);
@@ -316,19 +316,26 @@ function voice() {
     const wav = path.join(tmp, 'a.wav');
     const t1 = Date.now();
     const go = (extra = []) => { const r = spawnSync(cli, ['-m', model, '-f', wav, '-nt', '-np', '-l', 'en', ...extra], { encoding: 'utf8' }); return { r, text: String(r.stdout || '').replace(/\s+/g, ' ').trim() }; };
-    const good = (t) => /hello/i.test(t) && /(one|1).*(two|2)/i.test(t);
-    // A runner's speech synthesizer or virtual GPU now and then hands over silence or nothing (seen once in six runs): up to
-    // three tries with a fresh recording each time, so a stray miss does not stop a release; three misses in a row do.
-    let r; let text = ''; let note = ''; let tries = 0;
-    while (tries < 3 && !good(text)) {
-      tries += 1;
-      execFileSync('say', ['-o', path.join(tmp, 'a.aiff'), 'Hello from the Apaki voice check, one two three.']);
-      execFileSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', path.join(tmp, 'a.aiff'), wav]);
-      ({ r, text } = go());
-      // Say whether the CPU hears it when the GPU did not (the program is the same without -ng).
-      if (!good(text)) note += `; try ${tries}: the sentence file is ${fs.statSync(wav).size} bytes, the GPU read "${text}", the CPU (-ng) reads "${go(['-ng']).text}", stderr tail: ${String(r.stderr || '').trim().split(/\r?\n/).slice(-3).join(' | ')}`;
+    // The sentence is spoken by the Mac itself (say). A machine whose synthesizer has no voice ready (some CI runners hand
+    // over a fraction of a second of silence) falls back to the recording whisper.cpp ships for exactly this, from the same
+    // pinned release the program was built from.
+    let good = (t) => /hello/i.test(t) && /(one|1).*(two|2)/i.test(t);
+    let source = 'a sentence spoken by say';
+    execFileSync('say', ['-o', path.join(tmp, 'a.aiff'), 'Hello from the Apaki voice check, one two three.']);
+    execFileSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', path.join(tmp, 'a.aiff'), wav]);
+    if (fs.statSync(wav).size < 20000) {
+      const res = await fetch('https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.9.5/samples/jfk.wav');
+      if (res.ok) {
+        fs.writeFileSync(wav, Buffer.from(await res.arrayBuffer()));
+        good = (t) => /ask not what your country can do for you/i.test(t);
+        source = 'whisper.cpp\'s jfk.wav (say gave almost no audio on this machine)';
+      }
     }
-    check('whisper-cli transcribes a spoken sentence on this Mac', r.status === 0 && good(text), `"${text}" in ${Date.now() - t1} ms${/metal|GPU/i.test(r.stderr || '') ? ', Metal in use' : ''}${note}`);
+    const { r, text } = go();
+    let note = '';
+    // Say whether the CPU hears it when the GPU did not (the program is the same without -ng).
+    if (!good(text)) note = `; the file is ${fs.statSync(wav).size} bytes, the CPU (-ng) reads "${go(['-ng']).text}", stderr tail: ${String(r.stderr || '').trim().split(/\r?\n/).slice(-3).join(' | ')}`;
+    check('whisper-cli transcribes speech on this Mac', r.status === 0 && good(text), `${source}: "${text}" in ${Date.now() - t1} ms${/metal|GPU/i.test(r.stderr || '') ? ', Metal in use' : ''}${note}`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
@@ -359,7 +366,7 @@ async function shim() {
 
 try {
   await shim();
-  if (process.argv.includes('--voice')) voice();
+  if (process.argv.includes('--voice')) await voice();
   for (const m of mouseArg === 'both' ? ['native', 'js'] : mouseArg === 'none' ? [] : [mouseArg]) await run(m);
 } finally {
   site.close();

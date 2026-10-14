@@ -213,7 +213,7 @@ The mic button records 16 kHz audio in the window and the engine runs whisper.cp
 
 - **CI, `macos-build.yml`, every push of the branch `mac-ci/phase2`** on GitHub's `macos-latest` (Apple Silicon, macOS 15): builds everything, signs it, then opens the
   finished app and runs `mac-browser-smoke.mjs` (57 checks: 3 for `BROWSER`, 27 for each of the two click modes) and the voice check (model downloaded and checked, a
-  sentence made with `say`, transcribed). The runner's display is 1x and 1024 x 674.
+  sentence made with `say` and transcribed; a runner whose `say` gives almost no audio, which happens, uses whisper.cpp's own `jfk.wav` instead). The runner's display is 1x and 1024 x 674.
 - **The Mac Mini** (macOS 26.2, M4, the display at 1x, 1320 x 860 window): the CI dmg was copied there, opened from a scratch folder, and the same smoke test ran against
   it: both click modes, the browser feature, the pane placed 112 pt below the top of the page, native clicks counted. The voice check ran there too, with the model
   downloaded by the app's own downloader. Scratch files were removed afterwards.
