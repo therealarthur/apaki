@@ -172,6 +172,8 @@ export function openGlassPanel(anchor, provider, data, actions) {
   const box = again ? open.el : document.createElement('div');
   const keep = again ? box.querySelector('.gp-body')?.scrollTop || 0 : 0;
   if (!again) box.className = 'glass-panel';
+  // Which provider it lists: its name and its rings take that provider's colour (app.css, Glass style).
+  box.dataset.p = provider;
   const find = (id) => (data?.lists?.[provider] || []).find((a) => a.id === id) || (data?.[provider]?.id === id ? data[provider] : null);
   const paint = () => {
     render(box, provider, data, ui);

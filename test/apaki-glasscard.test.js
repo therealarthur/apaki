@@ -42,3 +42,25 @@ test('Codex menu and an empty list', () => {
   assert.equal(empty[0].disabled, true);
   assert.equal(empty.at(-1).value, '__refresh');
 });
+
+test('the card row in Glass\'s manner: provider, name, the line that matters; a key says so in words', async () => {
+  const { heroRowHtml } = await import('../apaki/ui/glasscard.js');
+  const H = 3600 * 1000;
+  const live = sub('s1', 'Work', 59, 'ok', { windows: [{ label: 'Session', percent: 36, resetsAt: Date.now() + 2 * H, seconds: 18000 }, { label: 'Weekly', percent: 41, resetsAt: Date.now() + 77 * H, seconds: 604800 }] });
+  const row = heroRowHtml('claude', live);
+  assert.match(row, /^<button class="gc-row hero" data-p="claude"/, 'the demo and the scenes find rows by data-p');
+  assert.match(row, /<span class="gc-prov">Claude<\/span>/);
+  assert.match(row, /<span class="gc-n">Work<\/span><span class="gc-plan">Max 20x<\/span>/);
+  assert.match(row, /<b>41<\/b>/, 'the weekly window matters most here');
+  assert.match(row, /<span class="lbl">Weekly<\/span>/);
+  assert.doesNotMatch(row, /style=/);
+  const k = heroRowHtml('claude', key('k', 'Acme <Console>', 150));
+  assert.match(k, /class="gc-row hero is-key"/);
+  assert.match(k, /<span class="gc-prov">Claude · API key<\/span>/);
+  assert.match(k, /Acme &lt;Console&gt;/);
+  assert.match(k, /\$150 left/);
+  assert.match(k, /<b>25<\/b>/, 'a quarter of the credit spent');
+  assert.match(heroRowHtml('codex', live, true), /class="g-line">Switching…</);
+  assert.match(heroRowHtml('claude', sub('d', 'Dead', 10, 'needsLogin')), /class="g-line is-bad">sign in again in Glass</);
+  assert.match(heroRowHtml('codex', null), /Not signed in/);
+});

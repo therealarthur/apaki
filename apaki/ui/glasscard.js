@@ -19,7 +19,7 @@
 
 import { esc } from './markdown.js';
 import { glassPanelProvider, openGlassPanel } from './glasspanel.js';
-import { paintRings, ringPairHtml } from './usage-rings.js';
+import { heroFor, heroRingHtml, paintRings, ringPairHtml, sevOf } from './usage-rings.js';
 
 const PROVIDERS = { claude: 'Claude', codex: 'Codex' };
 // At or under this share left the meter turns peach.
@@ -73,6 +73,38 @@ function rowHtml(provider, a, busy) {
     ${rings || `<span class="gc-meter" aria-hidden="true"><i data-v="${share == null ? 0 : (share / 100).toFixed(3)}"></i></span>`}</button>`;
 }
 
+/**
+ * The row in Glass's own manner (2026-10-13, apaki/docs/style.md; Arthur: borrow Glass's clearer UI "as much as
+ * possible"): one hero ring per provider with the share used large in its centre (the outer ring the short window, the
+ * inner the weekly one), the provider in its colour (Claude clay, Codex green, a key in Apaki's periwinkle), the
+ * account's name, and one line: the window that matters with the time to its reset, amber from 75% and red from 90%.
+ * Every window, the exact times and the switch stay in the panel a click opens ("show additional details when the
+ * user clicks in"). A key's ring is the share of its credit spent, its line the dollars left.
+ */
+export function heroRowHtml(provider, a, busy = false) {
+  const key = Boolean(a?.isKey);
+  const prov = `${PROVIDERS[provider]}${key ? ' · API key' : ''}`;
+  let hero;
+  if (!a) hero = { ring: heroRingHtml({ outer: null }), line: '<span class="g-faint">Click to choose an account</span>', sev: '' };
+  else if (key) {
+    const share = leftShare(a);
+    const spent = share == null ? null : 100 - Math.round(share);
+    hero = { ring: heroRingHtml({ outer: spent, center: spent == null ? '$' : String(spent), dim: !usable(a) }), line: esc(leftText(a)), sev: spent == null ? '' : sevOf(spent) };
+  } else hero = heroFor(a.windows || [], { headroom: a.headroom, dim: !usable(a) });
+  // An account Glass cannot use says why instead of its usage.
+  const why = a && !usable(a) ? (STATE_HINT[a.state] || a.detail || a.state) : '';
+  const line = busy ? 'Switching…' : why ? esc(why) : hero.line;
+  const lineCls = busy ? '' : why ? (a.state === 'stale' ? ' is-warn' : ' is-bad') : hero.sev ? ` sev-${hero.sev}` : '';
+  const plan = a && !key && a.plan ? `<span class="gc-plan">${esc(a.plan)}</span>` : '';
+  const name = a ? `<span class="gc-n">${esc(a.name)}</span>${plan}` : '<span class="gc-n gc-none">Not signed in</span>';
+  return `<button class="gc-row hero${key ? ' is-key' : ''}${busy ? ' busy' : ''}${a && !usable(a) ? ' warn' : ''}" data-p="${provider}" title="${esc(rowTitle(provider, a))}">`
+    + `${hero.ring}<span class="g-txt"><span class="gc-prov">${esc(prov)}</span><span class="gc-name">${name}</span>`
+    + `<span class="g-line${lineCls}">${line}</span></span></button>`;
+}
+
+/** Glass's mark: two nested arcs in the providers' colours (the widget's own brand mark), drawn small. */
+const GLASS_MARK = '<svg class="gc-mark" viewBox="0 0 16 16" aria-hidden="true"><circle class="t" cx="8" cy="8" r="6.4"/><circle class="t" cx="8" cy="8" r="3.4"/><circle class="c" cx="8" cy="8" r="6.4" pathLength="100"/><circle class="x" cx="8" cy="8" r="3.4" pathLength="100"/></svg>';
+
 /** The menu of one provider's accounts: subscriptions, then API keys; ones Glass cannot use are dimmed. */
 export function accountItems(provider, list = []) {
   const item = (a) => ({
@@ -120,7 +152,8 @@ export function initGlassCard({ root, send, menu, note, readOnly = false }) {
       return;
     }
     root.hidden = false;
-    root.innerHTML = `<div class="gc-head"><span class="gl">Myrlin Glass</span><span class="gc-sub">live on this PC</span></div>${rowHtml('claude', last.claude, busy.has('claude'))}${rowHtml('codex', last.codex, busy.has('codex'))}`;
+    // Glass's hero rows (heroRowHtml, 2026-10-13); rowHtml above is the earlier two-ring row, kept for reference.
+    root.innerHTML = `<div class="gc-head"><span class="gl">${GLASS_MARK}<b>Myrlin</b> Glass</span><span class="gc-sub">live on this PC</span></div>${heroRowHtml('claude', last.claude, busy.has('claude'))}${heroRowHtml('codex', last.codex, busy.has('codex'))}`;
     // Fills from script, not style attributes in markup (the phone page's CSP refuses those).
     paintRings(root);
     for (const i of root.querySelectorAll('.gc-meter i[data-v]')) i.style.setProperty('--v', i.dataset.v);
