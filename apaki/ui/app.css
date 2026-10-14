@@ -4147,7 +4147,10 @@ body.sp-dragging, body.sp-dragging * { cursor: col-resize !important; user-selec
 .at-filter { transition: border-color var(--dur-fast) var(--ease-hover); }
 
 /* Sheets and dialogs. */
-.sheet { border-color: var(--hairline-strong); box-shadow: 0 30px 70px -36px rgba(var(--shadow-rgb), .55); }
+/* One separation per theme, not both: a soft elevation in light, where a shadow reads; a defined hairline edge in
+   dark, where a shadow on a dark ground does not. */
+.sheet { border-color: transparent; box-shadow: 0 30px 70px -36px rgba(var(--shadow-rgb), .55); }
+:root[data-theme="dark"] .sheet { border-color: var(--hairline-strong); box-shadow: none; }
 .sheet .opt { border-color: var(--hairline); border-radius: 9px; background: none; }
 .sheet .opt:hover:not(.on) { background: var(--g-raise-1); border-color: var(--hairline-strong); }
 .sheet .opt.on { background: var(--brand-wash); border-color: var(--brand-soft); }
