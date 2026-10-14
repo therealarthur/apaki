@@ -315,10 +315,18 @@ function voice() {
   try {
     execFileSync('say', ['-o', path.join(tmp, 'a.aiff'), 'Hello from the Apaki voice check, one two three.']);
     execFileSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', path.join(tmp, 'a.aiff'), path.join(tmp, 'a.wav')]);
+    const wav = path.join(tmp, 'a.wav');
     const t1 = Date.now();
-    const r = spawnSync(cli, ['-m', model, '-f', path.join(tmp, 'a.wav'), '-nt', '-np', '-l', 'en'], { encoding: 'utf8' });
-    const text = String(r.stdout || '').replace(/\s+/g, ' ').trim();
-    check('whisper-cli transcribes a spoken sentence on this Mac', r.status === 0 && /hello/i.test(text) && /(one|1).*(two|2)/i.test(text), `"${text}" in ${Date.now() - t1} ms${/metal|GPU/i.test(r.stderr || '') ? ', Metal in use' : ''}`);
+    const go = (extra = []) => { const r = spawnSync(cli, ['-m', model, '-f', wav, '-nt', '-np', '-l', 'en', ...extra], { encoding: 'utf8' }); return { r, text: String(r.stdout || '').replace(/\s+/g, ' ').trim() }; };
+    const good = (t) => /hello/i.test(t) && /(one|1).*(two|2)/i.test(t);
+    let { r, text } = go();
+    let note = '';
+    // A virtual machine's GPU can answer with nothing; say whether the CPU does (the program is the same without -ng).
+    if (!good(text)) {
+      const cpu = go(['-ng']);
+      note = `; the sentence file is ${fs.statSync(wav).size} bytes; on the CPU (-ng) it reads "${cpu.text}"; stderr tail: ${String(r.stderr || '').trim().split(/\r?\n/).slice(-4).join(' | ')}`;
+    }
+    check('whisper-cli transcribes a spoken sentence on this Mac', r.status === 0 && good(text), `"${text}" in ${Date.now() - t1} ms${/metal|GPU/i.test(r.stderr || '') ? ', Metal in use' : ''}${note}`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
