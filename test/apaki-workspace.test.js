@@ -208,3 +208,151 @@ test('an old workspace: several browsers of one conversation fold into its brows
   const same = W.foldBrowsers([saved[2]], 0);
   assert.equal(same.tabs[0], saved[2]);
 });
+
+/* ---------- the side panel (2026-10-13) ---------- */
+
+test('side panel: items group under their conversation in layout order, Other last, browser pages first', () => {
+  const items = [
+    { id: 'v1', kind: 'artifact', source: 'b' },
+    { id: 'w1', kind: 'browser', source: 'b', pages: ['w1', 'w1x'] },
+    { id: 'k1', kind: 'task', source: 'b' },
+    { id: 'd1', kind: 'diff', source: 'b' },
+    { id: 'v2', kind: 'artifact', source: 'a' },
+    { id: 'v3', kind: 'artifact', source: 'gone' },
+    { id: 'w2', kind: 'browser', source: null, pages: [] },
+    { id: 'v4', kind: 'artifact', source: 'b' },
+  ];
+  const g = W.panelGroups(['a', 'b', 'c'], items);
+  assert.deepEqual(g.map((x) => x.key), ['a', 'b', W.OTHER], 'a and b in layout order; c has nothing; Other last');
+  assert.deepEqual(g[1].entries.map((e) => e.key), ['w1#w1', 'w1#w1x', 'v1', 'v4', 'd1', 'k1'], 'each browser page its own entry, then artifacts, changes, tasks');
+  assert.deepEqual(g[1].entries.slice(0, 2).map((e) => [e.item, e.page, e.kind]), [['w1', 'w1', 'browser'], ['w1', 'w1x', 'browser']]);
+  assert.deepEqual(g[2].entries.map((e) => e.key), ['w2', 'v3'], 'a browser without pages is one entry; orphans stay in opened order by kind');
+  assert.equal(g[2].conv, null);
+  assert.deepEqual(W.panelGroups(['a'], []), []);
+  assert.deepEqual(W.panelGroups([], [{ id: 'x', kind: 'weird', source: 'a' }])[0].entries[0].kind, 'artifact', 'an unknown kind is drawn as an artifact');
+});
+
+test('side panel: it follows focus, keeps showing something with a quiet note, and a pick in the switcher holds', () => {
+  const groups = W.panelGroups(['a', 'b', 'c'], [{ id: 'v1', kind: 'artifact', source: 'a' }, { id: 'v2', kind: 'artifact', source: 'b' }, { id: 'v3', kind: 'artifact', source: 'gone' }]);
+  // Focusing b shows b's items; focusing c (nothing open) keeps showing what was there.
+  assert.equal(W.followFocus(groups, 'b', 'a'), 'b');
+  assert.equal(W.followFocus(groups, 'c', 'a'), 'a');
+  assert.deepEqual(W.shownGroup(groups, { focus: 'c', want: 'a' }), { group: 'a', note: true }, 'c has nothing: a stays, and the panel says so');
+  assert.deepEqual(W.shownGroup(groups, { focus: 'b', want: 'b' }), { group: 'b', note: false });
+  // Other picked in the switcher while b has the focus: it holds, without the note (b has items of its own).
+  assert.deepEqual(W.shownGroup(groups, { focus: 'b', want: W.OTHER }), { group: W.OTHER, note: false });
+  // The wanted group closed: the focused conversation's, else the first.
+  assert.deepEqual(W.shownGroup(groups, { focus: 'b', want: 'zz' }), { group: 'b', note: false });
+  assert.deepEqual(W.shownGroup(groups, { focus: null, want: null }), { group: 'a', note: false });
+  assert.deepEqual(W.shownGroup([], { focus: 'a', want: 'a' }), { group: null, note: false }, 'nothing open: nothing shown');
+});
+
+test('side panel: the entry a group shows, the one after a close, and the panel width', () => {
+  const [g] = W.panelGroups(['a'], [{ id: 'w', kind: 'browser', source: 'a', pages: ['p1', 'p2', 'p3'] }, { id: 'v', kind: 'artifact', source: 'a' }]);
+  assert.equal(W.currentEntry(g, 'w', () => 'p2').key, 'w#p2', 'a browser shows the page it has on screen');
+  assert.equal(W.currentEntry(g, 'v').key, 'v');
+  assert.equal(W.currentEntry(g, 'closed').key, 'w#p1', 'a picked item that is gone: the first entry');
+  assert.equal(W.currentEntry({ entries: [] }, 'v'), null);
+  assert.equal(W.neighbourEntry(g, 'w#p2').key, 'v', 'the browser closes: the next thing that is not one of its pages');
+  assert.equal(W.neighbourEntry(g, 'v').key, 'w#p3', 'the last one closes: the one before');
+  assert.equal(W.neighbourEntry({ entries: [{ key: 'x', item: 'x' }] }, 'x'), null);
+  // Width: the default share, yours held between the limits, and the conversations keep room.
+  assert.equal(W.panelWidth(null, 1000), 400);
+  assert.equal(W.panelWidth(null, 2400), W.PANEL_DEFAULT_MAX, 'a wide screen gives its room to the conversations');
+  assert.equal(W.panelWidth(900, 2400), 900, 'a width you dragged to is kept');
+  assert.equal(W.panelWidth(200, 1000), W.PANEL_MIN);
+  assert.equal(W.panelWidth(900, 1000), 1000 - W.PANEL_MAIN_MIN);
+  assert.equal(W.panelWidth(5000, 4000), W.PANEL_MAX);
+  assert.equal(W.panelWidth(500, 500), W.PANEL_MIN, 'a tiny window still gets a usable panel');
+});
+
+test('side panel: maximized, previous and next go through the tab\'s conversations, wrapping', () => {
+  assert.equal(W.stepMax(['a', 'b', 'c'], 'b', 1), 'c');
+  assert.equal(W.stepMax(['a', 'b', 'c'], 'c', 1), 'a');
+  assert.equal(W.stepMax(['a', 'b', 'c'], 'a', -1), 'c');
+  assert.equal(W.stepMax(['a', 'b', 'c'], 'zz', 1), 'a');
+  assert.equal(W.stepMax([], 'a', 1), null);
+  // Maximize with the panel: the tab's tree, its items and its panel are untouched by toggling.
+  const root = { type: 'split', dir: 'row', sizes: [0.5, 0.5], children: [L.leaf('a'), L.leaf('b')] };
+  let tab = { id: 't', root, max: null, items: ['v1'], side: { open: true, group: 'a' } };
+  tab = W.toggleMax(tab, 'a');
+  assert.equal(tab.max, 'a');
+  assert.deepEqual([tab.items, tab.side], [['v1'], { open: true, group: 'a' }]);
+  tab = W.toggleMax({ ...tab, max: W.stepMax(L.ids(tab.root), tab.max, 1) }, 'b');
+  assert.equal(tab.max, null, 'moved to b, then restored from b');
+});
+
+test('side panel: an old workspace\'s viewer leaves move into their conversation\'s panel; orphans stay under Other', () => {
+  // Arthur's messy tab, as saved before the panel: three conversations in a row on top (the left one with a markdown
+  // viewer below it), and below them the middle conversation's browser beside an HTML viewer of the same one.
+  const conv = (pane, s) => ({ type: 'leaf', pane, s, cwd: '', title: s, draft: '' });
+  const web = (pane, owner) => ({ type: 'leaf', pane, web: { url: 'https://forge.example/', title: 'Forge', owner, tabs: [{ id: pane, url: 'https://forge.example/', title: 'Forge' }], active: pane } });
+  const view = (pane, sourcePane, kind = 'html') => ({ type: 'leaf', pane, view: { sessionId: 's', id: `art-${pane}`, title: pane, kind, sourcePane } });
+  const split = (dir, sizes, ...children) => ({ type: 'split', dir, sizes, children });
+  const messy = {
+    focused: 'p1', name: '', arrange: 'custom', max: 'p1',
+    root: split('col', [0.57, 0.43],
+      split('row', [0.39, 0.33, 0.28], split('col', [0.74, 0.26], conv('p1', 'audi'), view('v1', 'p1', 'markdown')), conv('p2', 'forge'), conv('p3', 'studio')),
+      split('row', [0.5, 0.5], web('b1', 'p2'), view('v2', 'p2'))),
+  };
+  const saved = [
+    { focused: 'q1', root: split('row', [0.83, 0.17], conv('q1', 'home'), web('b9', 'q1')) },
+    messy,
+    // A tab that held only p3's subagent viewer (opened in a new tab when the old tab was full) and a viewer whose
+    // conversation was closed long ago.
+    { focused: 'k1', arrange: 'auto', root: split('row', [0.5, 0.5], { type: 'leaf', pane: 'k1', view: { task: true, kind: 'agent', sessionId: 's3', ownerPane: 'p3', title: 'Explore' } }, view('v9', 'closed-long-ago')) },
+    { focused: 'q2', arrange: 'auto', shape: 'wide', root: split('row', [0.6, 0.4], conv('q2', 'jobs'), { type: 'leaf', pane: 'd1', view: { diff: { path: 'C:/r', ownerPane: 'q2' } } }) },
+  ];
+  const { tabs, active, moved } = W.migrateViewers(saved, 1);
+  assert.equal(moved, 7);
+  assert.equal(tabs.length, 4, 'the third tab keeps its orphan, so it stays');
+  assert.equal(active, 1);
+  // The messy tab: only its three conversations in the tree, as you sized them (the bottom row's space goes to them).
+  const t = tabs[1];
+  assert.deepEqual(shape(t.root), ['row', 'p1', 'p2', 'p3']);
+  assert.ok(L.valid(t.root));
+  assert.deepEqual(t.root.sizes.map((x) => Math.round(x * 100)), [39, 33, 28]);
+  assert.deepEqual(t.items.map((x) => x.pane), ['v1', 'b1', 'v2', 'k1'], 'p1\'s markdown, p2\'s browser and HTML, and p3\'s subagent from the other tab');
+  assert.deepEqual(t.side, { open: true, group: 'p1', width: null, pick: {} }, 'the panel starts open on the focused conversation');
+  assert.equal(t.max, 'p1', 'a maximized conversation stays maximized');
+  // The panel groups that come out of it.
+  const groups = W.panelGroups(L.ids(t.root), t.items.map((lf) => ({ id: lf.pane, kind: lf.web ? 'browser' : lf.view.task ? 'task' : 'artifact', source: W.leafOwner(lf), pages: lf.web?.tabs?.map((x) => x.id) })));
+  assert.deepEqual(groups.map((g) => [g.key, g.entries.map((e) => e.key)]), [['p1', ['v1']], ['p2', ['b1#b1', 'v2']], ['p3', ['k1']]]);
+  // The orphan stays where it was, under Other, its tab empty of conversations.
+  assert.equal(tabs[2].root, null);
+  assert.deepEqual(tabs[2].items.map((x) => x.pane), ['v9']);
+  assert.equal(tabs[2].focused, null);
+  assert.deepEqual(W.panelGroups([], [{ id: 'v9', kind: 'artifact', source: W.leafOwner(tabs[2].items[0]) }]).map((g) => g.key), [W.OTHER]);
+  // An arranged tab is laid out again for what is left; a diff follows its conversation.
+  assert.equal(shape(tabs[3].root), 'q2');
+  assert.deepEqual(tabs[3].root, saved[3].root.children[0], 'the conversation keeps its saved leaf: session, title, draft');
+  assert.deepEqual(tabs[3].items.map((x) => x.pane), ['d1']);
+  assert.equal(tabs[0].root.pane, 'q1');
+  assert.deepEqual(tabs[0].items.map((x) => x.pane), ['b9']);
+  // Nothing to move: the same tabs back, and a second pass changes nothing.
+  assert.equal(W.migrateViewers(tabs, active).tabs, tabs);
+  assert.equal(W.migrateViewers(tabs, active).moved, 0);
+  assert.deepEqual(W.migrateViewers(null), { tabs: [], active: 0, moved: 0 });
+});
+
+test('side panel: a tab that held only viewers of conversations elsewhere goes, and the active tab follows', () => {
+  const conv = (pane) => ({ type: 'leaf', pane, s: pane, title: pane, draft: '' });
+  const saved = [
+    { focused: 'b2', root: { type: 'leaf', pane: 'b2', web: { url: 'https://x.example/', owner: 'p1' } } },
+    { focused: 'p1', root: conv('p1') },
+  ];
+  const { tabs, active } = W.migrateViewers(saved, 1);
+  assert.equal(tabs.length, 1);
+  assert.equal(active, 0);
+  assert.deepEqual(tabs[0].items.map((x) => x.pane), ['b2']);
+  assert.equal(tabs[0].focused, 'p1');
+  // An arranged tab of two conversations and a viewer: laid out again, every conversation's saved leaf kept.
+  const arranged = W.migrateViewers([{ focused: 'a', arrange: 'auto', shape: 'wide', root: { type: 'split', dir: 'row', sizes: [0.6, 0.4], children: [conv('a'), { type: 'split', dir: 'col', sizes: [0.6, 0.4], children: [{ type: 'leaf', pane: 'v', view: { id: 'x', sourcePane: 'a' } }, conv('b')] }] } }], 0);
+  assert.deepEqual(shape(arranged.tabs[0].root), ['row', 'a', 'b']);
+  assert.deepEqual(L.mapLeaves(arranged.tabs[0].root, (lf) => lf).children.map((lf) => [lf.pane, lf.s, lf.title]), [['a', 'a', 'a'], ['b', 'b', 'b']]);
+  // A focus on a viewer goes to its conversation.
+  const one = W.migrateViewers([{ focused: 'a', root: { type: 'split', dir: 'row', sizes: [0.5, 0.5], children: [conv('a'), conv('b')] } }, { focused: 'v', root: { type: 'split', dir: 'row', sizes: [0.5, 0.5], children: [conv('c'), { type: 'leaf', pane: 'v', view: { id: 'x', sourcePane: 'c' } }] } }], 0);
+  assert.equal(one.tabs[1].focused, 'c');
+  assert.equal(W.isViewerLeaf(conv('a')), false);
+  assert.equal(W.leafOwner({ type: 'leaf', pane: 'k', task: { ownerPane: 'p9' } }), 'p9');
+});

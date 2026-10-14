@@ -837,6 +837,9 @@ mod imp {
                         0x4C => "l".to_string(),
                         0x09 => "Tab".to_string(),
                         0x31..=0x36 => char::from_u32(vk).map(String::from).unwrap_or_default(),
+                        // Ctrl+Shift+B (2026-10-13): the side panel this page sits in collapses to its rail. Plain
+                        // Ctrl+B stays with the page (bold in an editor).
+                        0x42 if shift => "b".to_string(),
                         _ => return Ok(()),
                     };
                     unsafe { args.SetHandled(true)? };

@@ -14,6 +14,9 @@
  *
  * A ring's fill is drawn from its data-left attribute by paintRings (a style attribute in markup is refused by the
  * phone page's CSP).
+ *
+ * 2026-10-13 (apaki/docs/style.md, Glass style): the card shows Glass's hero ring instead of the pair (heroFor below),
+ * and every ring fills with the share used, as Glass draws it, in the provider's colour, amber from 75% and red from 90%.
  */
 
 const SHORT_MAX_S = 6 * 3600;      // a window this long or shorter is the "5h" ring
@@ -79,8 +82,10 @@ export const leftOf = (w) => Math.max(0, Math.min(100, 100 - Math.round(Number(w
 /** One ring: the share left as an arc, a short label inside ("5h", "7d"). */
 export function ringHtml(w, label, { size = 'sm' } = {}) {
   const left = leftOf(w);
+  // Since 2026-10-13 the arc is drawn as the share used, as Glass draws it (app.css); its severity rides on the arc.
+  const sev = sevOf(100 - left);
   return `<span class="u-ring ${size}${left <= LOW_LEFT ? ' low' : ''}" data-left="${left}" aria-hidden="true">`
-    + '<svg viewBox="0 0 36 36"><circle class="u-t" cx="18" cy="18" r="15"/><circle class="u-a" cx="18" cy="18" r="15" pathLength="100"/></svg>'
+    + `<svg viewBox="0 0 36 36"><circle class="u-t" cx="18" cy="18" r="15"/><circle class="u-a${sev ? ` sev-${sev}` : ''}" cx="18" cy="18" r="15" pathLength="100"/></svg>`
     + `<b>${esc(label)}</b></span>`;
 }
 
@@ -106,7 +111,89 @@ export function windowsDetailHtml(windows = [], now = Date.now()) {
   }).join('')}</div>`;
 }
 
+/* The hero ring (2026-10-13, apaki/docs/style.md).
+   Arthur: "myrlin glass ui/ux is much clearer, we want to borrow from it as much as possible". Glass draws each provider's
+   live account as one ring with the share used large in its centre: the outer ring the short window (Claude's Session,
+   Codex's 5-hour), a thinner inner ring the weekly one, both filling with what is used, in the provider's colour, amber
+   from 75% and red from 90%. The Glass card in the sidebar draws the same, so an account reads the same in both apps;
+   every other window and the exact reset times stay in the panel a click opens. */
+
+const WARN_AT = 75; // Glass's severity steps: amber from here,
+const CRIT_AT = 90; // red from here.
+
+/** Glass's severity for a share used: '' (normal), 'warn' or 'crit'. */
+export function sevOf(pct) {
+  const p = Number(pct) || 0;
+  return p >= CRIT_AT ? 'crit' : p >= WARN_AT ? 'warn' : '';
+}
+
+/** A per-model weekly window ("Weekly Fable"): listed in the panel, never a ring (as in Glass). */
+const scopedWeekly = (w) => /^weekly\s+\S/i.test(String(w?.label || '').trim());
+
+/**
+ * The hero's two windows, as Glass picks them: outer the shortest window, inner the longest (null with only one).
+ * Per-model weekly windows are left out while a plain one exists.
+ */
+export function heroWindows(windows = []) {
+  const list = windows.filter((w) => w && Number.isFinite(Number(w.percent)));
+  if (!list.length) return { outer: null, inner: null };
+  const base = list.filter((w) => !scopedWeekly(w));
+  const secs = (w) => windowSeconds(w) ?? Number.MAX_SAFE_INTEGER;
+  const pool = (base.length ? base : list).slice().sort((x, y) => secs(x) - secs(y));
+  return { outer: pool[0], inner: pool.length > 1 ? pool[pool.length - 1] : null };
+}
+
+/** The ring window that matters most: the worse severity, then the larger share used. */
+export function worstWindow({ outer, inner } = {}) {
+  const rank = (w) => ({ '': 0, warn: 1, crit: 2 }[sevOf(w.percent)]);
+  const list = [outer, inner].filter(Boolean);
+  return list.reduce((best, w) => (!best || rank(w) > rank(best) || (rank(w) === rank(best) && Number(w.percent) > Number(best.percent)) ? w : best), null);
+}
+
+const usedOf = (w) => Math.max(0, Math.min(100, Math.round(Number(w?.percent) || 0)));
+
+/**
+ * One hero ring: arcs for { outer, inner } shares used (0 to 100, or null for a track only), and the number in its
+ * centre ('' for none). The arcs are filled by paintRings from data-p (no style attribute: the phone page's CSP).
+ */
+export function heroRingHtml({ outer = null, inner = null, center = '', dim = false } = {}) {
+  const arc = (p, cls) => (p == null ? '' : `<circle class="g-a${cls}${sevOf(p) ? ` sev-${sevOf(p)}` : ''}${p <= 0 ? ' is-zero' : ''}" cx="23" cy="23" r="${cls ? 15.5 : 20.75}" pathLength="100" data-p="${Math.max(0, Math.min(100, Math.round(p)))}"/>`);
+  const n = String(center);
+  const num = n === '' ? '' : /^\d+$/.test(n) ? `<span class="g-pct${n.length > 2 ? ' is-full' : ''}"><b>${esc(n)}</b>${n.length > 2 ? '' : '<i>%</i>'}</span>` : `<span class="g-pct"><b>${esc(n)}</b></span>`;
+  return `<span class="g-ring${dim ? ' dim' : ''}${inner == null ? ' single' : ''}">`
+    + '<svg viewBox="0 0 46 46" aria-hidden="true">'
+    + '<circle class="g-t" cx="23" cy="23" r="20.75"/>' + arc(outer, '')
+    + (inner == null ? '' : `<circle class="g-t in" cx="23" cy="23" r="15.5"/>${arc(inner, ' in')}`)
+    + `</svg>${num}</span>`;
+}
+
+/**
+ * A subscription's hero: its ring, and the line under its name (the window that matters and the time to its reset).
+ * Returns { ring, line, sev } with line as escaped HTML; an account with no windows keeps its share left in words.
+ */
+export function heroFor(windows = [], { headroom = null, dim = false, now = Date.now() } = {}) {
+  const pick = heroWindows(windows);
+  const worst = worstWindow(pick);
+  if (!worst) {
+    const used = headroom == null ? null : 100 - Math.max(0, Math.min(100, Math.round(headroom)));
+    return {
+      ring: heroRingHtml({ outer: used, center: used == null ? '' : String(used), dim }),
+      line: headroom == null ? '' : `<span class="num">${esc(String(Math.round(headroom)))}%</span> left`,
+      sev: used == null ? '' : sevOf(used),
+    };
+  }
+  const until = untilText(worst.resetsAt, now);
+  const label = String(worst.label || 'Usage');
+  return {
+    ring: heroRingHtml({ outer: usedOf(pick.outer), inner: pick.inner ? usedOf(pick.inner) : null, center: String(usedOf(worst)), dim }),
+    line: `<span class="lbl">${esc(label)}</span>${until ? `<span class="sep"> · </span><span class="num">${esc(until === 'now' ? 'resets now' : until)}</span>` : ''}`,
+    sev: sevOf(worst.percent),
+  };
+}
+
 /** Draws every ring's fill under root (after its HTML is in place). */
 export function paintRings(root) {
   for (const r of root.querySelectorAll('.u-ring[data-left]')) r.style.setProperty('--left', r.dataset.left);
+  // The hero rings' arcs (heroRingHtml): the share used of each window.
+  for (const a of root.querySelectorAll('.g-ring .g-a[data-p]')) a.style.setProperty('--p', a.dataset.p);
 }

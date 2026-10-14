@@ -504,6 +504,9 @@ define_class!(
                         "w" | "t" | "l" => Some(chars.clone()),
                         "\t" => Some("Tab".to_string()),
                         "1" | "2" | "3" | "4" | "5" | "6" => Some(chars.clone()),
+                        // Shift with B (2026-10-13, as on Windows): the side panel this page sits in folds to its rail.
+                        // Plain Cmd+B stays with the page (bold in an editor).
+                        "b" if shift => Some(chars.clone()),
                         _ => None,
                     };
                     // Cmd+Shift+W stays the menu's Close Window.

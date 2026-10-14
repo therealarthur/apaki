@@ -7,7 +7,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { leftOf, pickWindows, resetMs, ringPairHtml, untilText, windowSeconds, windowsDetailHtml } from '../apaki/ui/usage-rings.js';
+import { heroFor, heroRingHtml, heroWindows, leftOf, pickWindows, resetMs, ringPairHtml, sevOf, untilText, windowSeconds, windowsDetailHtml, worstWindow } from '../apaki/ui/usage-rings.js';
 
 const H = 3600 * 1000;
 const NOW = Date.UTC(2026, 9, 12, 12, 0, 0);
@@ -58,4 +58,59 @@ test('rings: the card pair and the panel details are escaped and carry no style 
   assert.doesNotMatch(detail, /style=/);
   assert.equal(ringPairHtml([], NOW), '');
   assert.equal(windowsDetailHtml([], NOW), '');
+});
+
+/* Glass's hero ring (2026-10-13, apaki/docs/style.md): the Glass card draws each live account the way the Glass widget
+   does, so an account reads the same in both apps. */
+
+test('hero: outer the short window, inner the plain weekly one; a per-model weekly gets no ring', () => {
+  const glass = [
+    { label: 'Weekly Fable', percent: 88, resetsAt: NOW + 100 * H, seconds: 604800 },
+    { label: 'Session', percent: 36, resetsAt: NOW + 2 * H, seconds: 18000 },
+    { label: 'Weekly', percent: 41, resetsAt: NOW + 77 * H, seconds: 604800 },
+  ];
+  const { outer, inner } = heroWindows(glass);
+  assert.equal(outer.label, 'Session');
+  assert.equal(inner.label, 'Weekly');
+  const codex = heroWindows([{ label: 'Weekly', percent: 33, resetsAt: 0 }, { label: '5-hour', percent: 29, resetsAt: 0 }]);
+  assert.equal(codex.outer.label, '5-hour', 'Codex gives no lengths: the label decides');
+  assert.equal(codex.inner.label, 'Weekly');
+  assert.deepEqual(heroWindows([{ label: 'Session', percent: 5 }]), { outer: { label: 'Session', percent: 5 }, inner: null });
+  assert.deepEqual(heroWindows([]), { outer: null, inner: null });
+});
+
+test('hero: Glass\'s severity steps, and the window that matters is the worse one', () => {
+  assert.equal(sevOf(74), '');
+  assert.equal(sevOf(75), 'warn');
+  assert.equal(sevOf(89.9), 'warn');
+  assert.equal(sevOf(90), 'crit');
+  const a = { label: 'Session', percent: 80 };
+  const b = { label: 'Weekly', percent: 92 };
+  assert.equal(worstWindow({ outer: a, inner: b }), b);
+  assert.equal(worstWindow({ outer: { label: 'Session', percent: 20 }, inner: { label: 'Weekly', percent: 41 } }).label, 'Weekly');
+  assert.equal(worstWindow({ outer: null, inner: null }), null);
+});
+
+test('hero: the ring, its centre and the line under the name; escaped, and no style attribute', () => {
+  const w = [{ label: '<b>Session</b>', percent: 91, resetsAt: NOW + H, seconds: 18000 }, { label: 'Weekly', percent: 20, resetsAt: NOW + 50 * H, seconds: 604800 }];
+  const h = heroFor(w, { now: NOW });
+  assert.equal(h.sev, 'crit');
+  assert.match(h.ring, /class="g-a sev-crit" cx="23" cy="23" r="20\.75" pathLength="100" data-p="91"/, 'the outer arc is the session, red');
+  assert.match(h.ring, /class="g-a in" cx="23" cy="23" r="15\.5" pathLength="100" data-p="20"/, 'the inner arc is the week');
+  assert.match(h.ring, /<span class="g-pct"><b>91<\/b><i>%<\/i><\/span>/, 'the centre is the window that matters');
+  assert.match(h.line, /&lt;b&gt;Session&lt;\/b&gt;<\/span><span class="sep"> · <\/span><span class="num">1h<\/span>/);
+  assert.doesNotMatch(h.ring + h.line, /style=/);
+  // An account without windows keeps its share left in words; a full ring drops its per cent sign to fit.
+  assert.match(heroFor([], { headroom: 62 }).line, /62%<\/span> left/);
+  assert.equal(heroFor([], {}).line, '');
+  assert.match(heroRingHtml({ outer: 100, center: '100' }), /class="g-pct is-full"><b>100<\/b><\/span>/);
+  assert.match(heroRingHtml({ outer: 0 }), /class="g-a is-zero"/, 'an empty arc is hidden, not drawn as a speck');
+  assert.match(heroRingHtml({ outer: 40 }), /class="g-ring single"/);
+});
+
+test('rings: the small rings carry Glass\'s severity on their arc, the markup is otherwise unchanged', () => {
+  const pair = ringPairHtml([{ label: 'Session', percent: 90, resetsAt: NOW + H, seconds: 18000 }, { label: 'Weekly', percent: 76, resetsAt: NOW + 50 * H, seconds: 604800 }], NOW);
+  assert.match(pair, /class="u-ring sm low" data-left="10"/);
+  assert.match(pair, /<circle class="u-a sev-crit"/);
+  assert.match(pair, /<circle class="u-a sev-warn"/);
 });
