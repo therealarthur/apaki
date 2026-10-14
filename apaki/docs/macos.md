@@ -128,10 +128,10 @@ Status: done = changed and tested; ok = already portable; degrades = says so in 
 
 | Feature | Message or behaviour on a Mac |
 | - | - |
-| built-in browser pane | "Apaki's built-in browser needs Windows for now." (WKWebView has no DevTools protocol channel; browser.rs drives WebView2) |
-| voice | the mic stays off; "Voice is not installed (<path>)" if asked |
+| built-in browser pane | works (phase 2). Only a platform with neither WebView2 nor WKWebView says "Apaki's built-in browser needs Windows or macOS for now." |
+| voice | works once the speech model is on the Mac: the mic stays off until then; Apaki menu, "Download Voice Model..." fetches it (about 141 MB). "Voice is not installed (<path>)" if asked without |
 | Myrlin Glass | "Myrlin Glass is not installed on this Mac (Glass is a Windows app for now). Apaki works without it; sign in with Claude Code instead." |
-| BROWSER shim | tools open the system browser |
+| BROWSER shim | works (phase 2): `apaki-open`. A tool that does not honour `BROWSER` (the macOS `open` command itself, npm's `open` package) still opens the system browser; Apaki's hooks turn the `open <url>` commands Claude runs into the browser pane |
 | sign-in | a Terminal window runs `claude auth login` |
 | Windows-only shell actions | Explorer, rundll32, `wt.exe` and `cmd.exe` calls are replaced as in the tables above; nothing Windows-only is left on the paths the window uses |
 

@@ -102,6 +102,22 @@ struct Browser {
     waiters: Vec<Reply>,
     /// Counts committed documents (the "loader id" of the protocol).
     doc: u64,
+    /// The address and title the page had when the navigation in progress began (a page restored from the back-forward
+    /// cache can end its load while the view still reports the old title).
+    start_url: String,
+    start_title: String,
+}
+
+impl Browser {
+    /// A navigation toward `url` begins (nothing is remembered again for a redirect inside one).
+    fn begin_navigation(&mut self, url: &str) {
+        if !self.provisional {
+            self.start_url = self.url.clone();
+            self.start_title = self.title.clone();
+        }
+        self.provisional = true;
+        self.url = url.to_string();
+    }
 }
 
 type JsDone = Box<dyn FnOnce(Result<Option<String>, String>)>;
@@ -363,6 +379,26 @@ fn refresh(id: &str) {
     });
 }
 
+/// After a load ends: waits (at most about 0.6 s) until the view has the new page's title, then tells the window and
+/// answers whoever waits for the load. A title is missing for a moment after the load, and a page restored by going
+/// back keeps the old title for a moment: both are told apart by the title being empty, or equal to the one the
+/// page had when the navigation began although the address changed.
+fn settle_when_titled(id: String, tries: u32) {
+    later(if tries == 0 { 120 } else { 100 }, move || {
+        refresh(&id);
+        // A page that has no title at all waits two rounds only; one that kept the old page's title, up to five.
+        let stale = BROWSERS.with(|m| {
+            m.borrow().get(&id).map(|b| (b.title.is_empty() && tries < 2) || (b.url != b.start_url && b.title == b.start_title && !b.title.is_empty())).unwrap_or(false)
+        });
+        if stale && tries < 5 {
+            settle_when_titled(id, tries + 1);
+            return;
+        }
+        emit_state(&id);
+        settle(&id);
+    });
+}
+
 /// Answers once the navigation in progress has finished.
 fn wait_for_load(id: &str, reply: Reply) {
     let mut reply = Some(reply);
@@ -534,8 +570,7 @@ define_class!(
                 BROWSERS.with(|m| {
                     if let Ok(mut m) = m.try_borrow_mut() {
                         if let Some(b) = m.get_mut(&id) {
-                            b.url = url.clone();
-                            b.provisional = true;
+                            b.begin_navigation(&url);
                         }
                     }
                 });
@@ -636,12 +671,7 @@ define_class!(
             });
             emit_state(&id);
             // The title can arrive a moment after the load ends; the answers waiting for the load carry it.
-            let later_id = id.clone();
-            later(120, move || {
-                refresh(&later_id);
-                emit_state(&later_id);
-                settle(&later_id);
-            });
+            settle_when_titled(id.clone(), 0);
         }
 
         #[unsafe(method(webView:didFailNavigation:withError:))]
@@ -929,6 +959,8 @@ fn create(id: &str, owner: Option<String>) -> Result<(), String> {
                 used: tick(),
                 waiters: Vec::new(),
                 doc: 0,
+                start_url: String::new(),
+                start_title: String::new(),
             },
         );
     });
@@ -1085,8 +1117,7 @@ fn open(a: Value, reply: Reply) {
         BROWSERS.with(|m| {
             if let Some(b) = m.borrow_mut().get_mut(&id) {
                 b.loading = true;
-                b.provisional = true;
-                b.url = url.clone();
+                b.begin_navigation(&url);
                 b.error = None;
                 b.status = None;
             }
@@ -1119,8 +1150,7 @@ fn go(a: Value, reply: Reply) {
     BROWSERS.with(|m| {
         if let Some(b) = m.borrow_mut().get_mut(&id) {
             b.loading = true;
-            b.provisional = true;
-            b.url = url.clone();
+            b.begin_navigation(&url);
             b.error = None;
         }
     });
