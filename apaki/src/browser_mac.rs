@@ -111,6 +111,11 @@ thread_local! {
     /// The window's own page: the browsers are placed relative to it and added next to it.
     static MAIN: RefCell<Option<Retained<NSView>>> = const { RefCell::new(None) };
     static STORE: RefCell<Option<Retained<WKWebsiteDataStore>>> = const { RefCell::new(None) };
+    /// The isolated world the page library and the bridge live in. WebKit drops a named world (and everything the scripts
+    /// kept in it: window.__apaki, the refs) when nothing holds the world object, so this one is kept for good.
+    static WORLD_OBJ: RefCell<Option<Retained<WKContentWorld>>> = const { RefCell::new(None) };
+    /// "native", "js" or None (the default: native when the page is on screen); set by the "mouseMode" command.
+    static MOUSE_MODE: RefCell<Option<String>> = const { RefCell::new(None) };
     static DARK: Cell<bool> = const { Cell::new(false) };
     static CLOCK: Cell<u64> = const { Cell::new(0) };
     static SEQ: Cell<u32> = const { Cell::new(0) };
@@ -210,6 +215,13 @@ fn handle(cmd: &str, a: Value, reply: Reply) {
             reply(Ok(json!({ "ok": true })));
         }
         "debug" => reply(Ok(debug_json())),
+        // For the smoke test: which way clicks go ("native", "js", or "auto" for the default), and the click counters back to zero.
+        "mouseMode" => {
+            let mode = a.get("mode").and_then(Value::as_str).unwrap_or("auto");
+            MOUSE_MODE.with(|m| *m.borrow_mut() = if mode == "auto" { None } else { Some(mode.to_string()) });
+            CLICKS.with(|c| c.set((0, 0)));
+            reply(Ok(json!({ "ok": true, "mode": mode })));
+        }
         _ => reply(Err(format!("Apaki's browser has no command \"{cmd}\"."))),
     }
 }
@@ -1226,7 +1238,14 @@ fn run_js(id: &str, body: String, timeout_ms: u64, done: JsDone) {
     });
     // SAFETY: the call is made on the main thread with live objects; WebKit copies the block.
     unsafe {
-        let world = WKContentWorld::worldWithName(&NSString::from_str(WORLD), mtm);
+        let world = match WORLD_OBJ.with(|w| w.borrow().clone()) {
+            Some(w) => w,
+            None => {
+                let w = WKContentWorld::worldWithName(&NSString::from_str(WORLD), mtm);
+                WORLD_OBJ.with(|slot| *slot.borrow_mut() = Some(w.clone()));
+                w
+            }
+        };
         view.callAsyncJavaScript_arguments_inFrame_inContentWorld_completionHandler(&NSString::from_str(&body), None, None, &world, Some(&block));
     }
     later(timeout_ms, move || {
@@ -1284,7 +1303,7 @@ fn mouse(id: &str, p: &Value, reply: Reply) {
     let clicks = p.get("clickCount").and_then(Value::as_i64).unwrap_or(1).max(1);
     let button = p.get("button").and_then(Value::as_str).unwrap_or("left");
     let on_screen = BROWSERS.with(|m| m.borrow().get(id).map(|b| b.shown).unwrap_or(false));
-    let forced_js = std::env::var("APAKI_BROWSER_MOUSE").map(|v| v == "js").unwrap_or(false);
+    let forced_js = MOUSE_MODE.with(|m| m.borrow().clone()).map(|v| v == "js").unwrap_or_else(|| std::env::var("APAKI_BROWSER_MOUSE").map(|v| v == "js").unwrap_or(false));
     let pressed = kind == "mousePressed";
     if on_screen && !forced_js && button != "right" {
         if native_mouse(id, &kind, x, y, clicks) {

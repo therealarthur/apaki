@@ -131,17 +131,12 @@ async function run(mouse) {
       try { m = JSON.parse(line); } catch { return; }
       if (m.op === 'shellHello') shell?.hello(m);
       else if (m.op === 'shellReply') shell?.reply(m);
-      // The window asks for its saved workspace; an empty one that is newer than anything it kept itself starts every run
-      // from a clean window (the page keeps its own copy in the app's web storage and would restore the last run's panes).
-      else if (m.op === 'loadState') conn?.send({ ev: 'state', reqId: m.reqId, state: { v: 1, savedAt: Date.now() + 3600 * 1000, tabs: [], active: 0 } });
     },
     onGone: () => { conn = null; },
   });
   await server.start();
 
-  const args = ['-n', '--env', `CLAUDE_CONFIG_DIR=${env.CLAUDE_CONFIG_DIR}`];
-  if (mouse === 'js') args.push('--env', 'APAKI_BROWSER_MOUSE=js');
-  execFileSync('/usr/bin/open', [...args, app]);
+  execFileSync('/usr/bin/open', ['-n', '--env', `CLAUDE_CONFIG_DIR=${env.CLAUDE_CONFIG_DIR}`, app]);
 
   let pids = new Set();
   try {
@@ -156,6 +151,7 @@ async function run(mouse) {
     check('the window said hello with the browser feature', shell.has('browser'), JSON.stringify(shell.info));
     if (!shell.has('browser')) return;
 
+    await shell.request('browser.mouseMode', { mode: mouse });
     const owner = 'smoke-pane';
     const tools = createBrowserTools({ shell, owner: () => owner });
     const call = (name, input = {}) => tools.call(name, input);
@@ -269,8 +265,10 @@ async function run(mouse) {
     console.log(`  clicks sent: ${counters.native || 0} as real mouse events, ${counters.js || 0} through the bridge`);
     check(`clicks used the ${mouse} path`, mouse === 'js' ? (counters.native || 0) === 0 && (counters.js || 0) > 0 : (counters.native || 0) > 0, JSON.stringify(counters));
 
-    // everything closes
+    // Everything closes, and the window gets a moment to save its workspace without these panes (it keeps its own copy,
+    // and the next run must not start with this run's leftovers).
     for (const t of (await call('tabs')).tabs || []) await shell.request('browser.close', { id: t.id }).catch(() => {});
+    await sleep(1500);
   } catch (e) {
     check('the run finished without an error', false, e.stack || e);
   } finally {
