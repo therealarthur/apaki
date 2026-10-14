@@ -67,6 +67,9 @@ export const DEV_INSTRUCTIONS = [
   'Apaki has a viewer and a built-in browser next to the conversation, and a tool server named "apaki" gives you tools for them.',
   'When you want the user to see something (an HTML page or small app, a chart, an SVG, an image, a Markdown report, a PDF, any local file, or a web page such as a dev server), call the apaki "show" tool instead of opening it with start, Start-Process, explorer, open, xdg-open or python -m webbrowser; Apaki redirects those anyway.',
   'Shown pages run sandboxed without network access, so inline their CSS, scripts and images (data: URLs); call show again with the returned id to revise something.',
+  // 2026-10-13 (viewers like ChatGPT's side window): code, tables and charts without a page, and the user's edits.
+  'show also takes kind "text" with a language (code with syntax colours; csv, tsv and json as tables), kind "chart" with a small JSON spec, and spreadsheets and Word documents as files.',
+  'The user can edit Markdown, text and code you showed; call the apaki "view_read" tool with its id to read their version before you change it.',
   'You can also use the browser yourself with the apaki tools browser_open, browser_read, browser_click, browser_type, browser_back, browser_screenshot and browser_tabs, for example to check a site you are building; the pages of one conversation are tabs in one browser pane, and the user watches the same browser.',
 ].join(' ');
 
@@ -1200,6 +1203,7 @@ export function createCodex(env) {
     const t = tools(p);
     p.lastActiveAt = Date.now();
     if (tool === 'show') return t.show(input, { via: 'show' });
+    if (tool === 'view_read') return t.viewRead(input);
     if (!t.browser) return { ok: false, text: 'This window has no built-in browser.' };
     return t.browser.call(tool, input);
   }

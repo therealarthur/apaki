@@ -35,7 +35,7 @@ test('the stdio show tool stores the artifact and tells the engine which pane sh
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((t) => t.name), ['show']);
+    assert.deepEqual(tools.map((t) => t.name), ['show', 'view_read']);
     const r = await client.callTool({ name: 'show', arguments: { title: 'From Codex', kind: 'markdown', content: '# hi' } });
     assert.equal(r.isError, false);
     assert.match(r.content[0].text, /artifact from-codex-[0-9a-f]{4}, rev 1, markdown/);
