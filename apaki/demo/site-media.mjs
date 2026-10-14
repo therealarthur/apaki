@@ -18,6 +18,8 @@
  *
  * Usage (key=value, all optional):
  *   node apaki/demo/site-media.mjs ffmpeg=<exe> [in=D:\apaki-media] [site=1] [docs=1] [legacy=0]
+ * only=glass-card,codex-pair (2026-10-13) limits the close-ups to the names given (clips and still crops), so one
+ * re-recorded scene does not rewrite every other file on the site.
  * ffmpeg: as capture.mjs finds it ($FFMPEG, ffmpeg on the PATH, or the ffmpeg-static package); it
  * needs libwebp and libx264. Nothing here reads anything but the folder the harness wrote, which holds
  * only invented demo data.
@@ -42,7 +44,7 @@ const THEMES = ['light', 'dark'];
  * poster's still, cropped the same way). The clip is copied as it is; the poster becomes <name>-<theme>.webp at the
  * clip's own pixel size. hero-phone is the phone half of hero-pane, pair-phone of pair-sheet.
  */
-const CROP_CLIPS = ['hero-pane', 'hero-phone', 'glass-card', 'steer-line', 'worktree-diff', 'search-meaning', 'browser-pane', 'pair-sheet', 'pair-phone'];
+const CROP_CLIPS = ['hero-pane', 'hero-phone', 'glass-card', 'steer-line', 'worktree-diff', 'search-meaning', 'browser-pane', 'pair-sheet', 'pair-phone', 'codex-pair'];
 
 /** Still crops with no clip: [name, width to scale to (null: its own 2x pixels)]. */
 const CROP_STILLS = [['sessions-list', 704], ['pane-a', null], ['pane-b', null], ['pane-c', null], ['pane-d', null]];
@@ -133,14 +135,16 @@ function webp(src, out, width, q = 80, crop = null) {
 function closeUps() {
   fs.mkdirSync(SITE, { recursive: true });
   const crop = (name, theme, ext) => need(path.join(IN, 'crops', `${name}-${theme}.${ext}`));
+  const only = args.only ? new Set(args.only.split(',').map((n) => n.trim()).filter(Boolean)) : null;
+  const wanted = (name) => !only || only.has(name);
   for (const theme of THEMES) {
-    for (const name of CROP_CLIPS) {
+    for (const name of CROP_CLIPS.filter(wanted)) {
       const mp4 = path.join(SITE, `${name}-${theme}.mp4`);
       fs.copyFileSync(crop(name, theme, 'mp4'), mp4);
       note(mp4);
       poster(crop(name, theme, 'png'), mp4, path.join(SITE, `${name}-${theme}.webp`));
     }
-    for (const [name, width] of CROP_STILLS) {
+    for (const [name, width] of CROP_STILLS.filter(([n]) => wanted(n))) {
       const out = path.join(SITE, `${name}-${theme}.webp`);
       ff(['-i', crop(name, theme, 'png'), ...(width ? ['-vf', `scale=${width}:-2:flags=lanczos`] : []), '-c:v', 'libwebp', '-quality', String(CROP_QUALITY), '-compression_level', '6', '-preset', 'text', out]);
       note(out);

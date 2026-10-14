@@ -228,7 +228,7 @@ const replyDone = (text) => ({ text, fn: (t) => [...document.querySelectorAll('.
 export const SCENES = {
   sessions: {
     title: 'Sessions overview',
-    shows: 'The sidebar: folders, sessions working in terminals, Codex sessions marked read-only, a right-click menu, a session opening in a new tab.',
+    shows: 'The sidebar: folders, sessions working in terminals, Codex sessions with their own mark, a right-click menu, a session opening in a new tab.',
     ws: 'sessions',
     hero: 'overview',
     async run(s) {
@@ -634,11 +634,52 @@ Object.assign(SCENES, {
     title: 'Close-up: the Glass panel and card',
     shows: 'The Glass panel over the sidebar and the Glass card under it, as the account is switched.',
     hero: 'team',
-    // 470 wide (from x 4) so the hover tooltip beside the Use button (it reaches x 470) is whole; from y 262 so the panel,
-    // which grows taller once an account is live (its top is at y 268), is never cut; down to the Glass card's bottom edge.
-    crop: { x: 4, y: 262, w: 470, h: 598 },
+    // 470 wide (from x 4) so the hover tooltip beside the Use button (it reaches x 470) is whole. Since the live account
+    // shows its 5-hour and weekly rings (2026-10-12) the panel is taller: its top is at y 181 when it opens and y 142 while
+    // "Claude switched." shows (measured 2026-10-13), so the crop starts at y 132; down to the Glass card's bottom (y 854).
+    crop: { x: 4, y: 132, w: 470, h: 728 },
     maxWidth: 784,
   }),
+
+  /**
+   * Claude Code and Codex side by side (2026-10-13, home page round 3): the codex preset's tab, a Codex pane next to a
+   * Claude pane. A prompt goes to each; Codex asks before it edits (the Codex app's approval, as a card with its diff)
+   * while Claude reads and writes in the other pane; Approve once, and Codex answers. The crop is the bottom of both
+   * panes: the approval card's choices and both composers, each with its own model, effort, mode and account.
+   */
+  'codex-pair': {
+    title: 'Close-up: a Codex pane and a Claude pane working at once',
+    shows: 'Both composers (GPT-6.1-Sol, low, Auto, ChatGPT Plus beside Opus 5.5, high, Accept edits, Work), a prompt to each, Codex asking to apply its patch while Claude writes, Approve once, and Codex\'s answer.',
+    ws: 'codex',
+    hero: 'asks',
+    // The panes are x 361 to 893 and 899 to 1431, their bottoms at y 891. From y 548 the Codex card's first choice
+    // (Approve once, y 561) is whole and the diff above it is left out.
+    crop: { x: 361, y: 548, w: 1072, h: 344 },
+    maxWidth: 2000,
+    async run(s) {
+      const codexBox = '.stage.on .pane.codex textarea';
+      const claudeBox = '.stage.on .pane:not(.codex) textarea';
+      await s.waitFor(() => document.querySelector('.stage.on .pane.codex textarea') && document.querySelector('.stage.on .pane:not(.codex) textarea'));
+      await s.pause(400);
+      await s.begin();
+      await s.pause(300);
+      await s.click(codexBox, { ms: 800 });
+      await s.type('Add a per seat column too', { ms: 50 });
+      await s.press('Enter');
+      await s.pause(250);
+      await s.click(claudeBox, { ms: 800 });
+      await s.type('Yes, fix the hook', { ms: 50 });
+      await s.press('Enter');
+      await s.waitFor(() => document.querySelector('.stage.on .pane.codex .ask-choice'), null, 12000);
+      await s.pause(900);
+      await s.still('asks');
+      await s.click('.stage.on .pane.codex .ask-choice', { ms: 900 });
+      await s.waitFor(() => [...document.querySelectorAll('.stage.on .pane.codex .turn-assistant:not(.streaming)')].some((n) => n.textContent.includes('The per seat column is in')), null, 12000);
+      await s.pause(1200);
+      await s.still('answered');
+      await s.pause(600);
+    },
+  },
 
   /**
    * The steer scene with a shorter middle and a new ending: the pointer glides to the context meter at the end of the
@@ -781,13 +822,14 @@ Object.assign(SCENES, {
     hero: 'overview',
     stillsOnly: true,
     heroOnly: true,
-    crop: { x: 0, y: 300, w: 352, h: 440 },
+    // Since the list's one-line rows (2026-10-12) the SESSIONS header (y 320) and the rows down to the Glass card (it starts
+    // at y 724) hold a working, a waiting and a Codex row without scrolling (measured 2026-10-13).
+    crop: { x: 0, y: 318, w: 352, h: 396 },
     maxWidth: 704,
-    // The list is scrolled by one row first (64 px), so a working, a waiting and a Codex row all show.
     async run(s) {
       await s.waitFor(() => document.querySelectorAll('.sessions li').length > 8);
       await s.begin();
-      await s.evaluate(() => { document.querySelector('#sessions').scrollTop = 64; });
+      await s.evaluate(() => { document.querySelector('#sessions').scrollTop = 0; });
       await s.pause(400);
       await s.still('overview');
     },

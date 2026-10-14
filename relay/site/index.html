@@ -12,6 +12,9 @@
     Round 3 (2026-10-12, Arthur's review): close-ups of the real UI instead of whole windows (one full view, in the
     hero), light 3D pieces that act out what each part does (assets/site.js and site.css), freer layouts, Apaki's own
     pearl circles, and one curved horizon into a single dark chapter instead of a cut between every section.
+    Round 3 finished 2026-10-13 (Claude Code, Opus 5.5): Codex has shipped in panes, so the page says so and shows it
+    (the codex-pair close-up, its own section); the pane fan became panes tiling into a layout; overlaps fixed; the
+    Glass close-up re-recorded with the taller panel; motion moments kept between 150 and 600 ms.
   -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -19,10 +22,10 @@
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#F9F7F7" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#15120F" media="(prefers-color-scheme: dark)">
-  <title>Myrlin Apaki: every Claude Code session on your PC, in one window</title>
-  <meta name="description" content="Apaki is a free, open source desktop app for Claude Code on Windows. It lists every session on your PC, switches accounts with Myrlin Glass, gives Claude a browser pane, and puts your sessions on your phone through an end to end encrypted relay you can host yourself.">
+  <title>Myrlin Apaki: every Claude Code and Codex session on your PC, in one window</title>
+  <meta name="description" content="Apaki is a free, open source desktop app for Claude Code and Codex on Windows. It lists every session on your PC, opens Claude and Codex conversations side by side, switches accounts with Myrlin Glass, gives Claude a browser pane, and puts your sessions on your phone through an end to end encrypted relay you can host yourself.">
   <meta property="og:title" content="Myrlin Apaki">
-  <meta property="og:description" content="Every Claude Code session on your PC, in one window. Free, open source, and yours to run.">
+  <meta property="og:description" content="Every Claude Code and Codex session on your PC, in one window. Free, open source, and yours to run.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://apaki.myrlin.io/">
   <meta property="og:image" content="https://apaki.myrlin.io/assets/og.jpg">
@@ -50,6 +53,7 @@
       <nav class="head-nav" aria-label="On this page">
         <a href="#glass">Glass</a>
         <a href="#sessions">Sessions</a>
+        <a href="#codex">Codex</a>
         <a href="#worktrees">Worktrees</a>
         <a href="#browser">Browser</a>
         <a href="#phone">Phone</a>
@@ -80,14 +84,14 @@
           <span class="sr-only">Myrlin </span><span class="wordmark-word">Apaki</span>
         </h1>
         <div class="hero-grid">
-          <p class="hero-lead">Every Claude Code session on your PC, in one window.</p>
+          <p class="hero-lead">Every Claude Code and Codex session on your PC, in one window.</p>
           <div class="hero-right">
-            <p class="hero-sub">Apaki finds your sessions, switches accounts with Myrlin Glass, gives Claude a browser pane of its own, and puts your sessions on your phone through an encrypted relay. It is free and open source, and you can run the relay yourself.</p>
+            <p class="hero-sub">Apaki finds your sessions and opens Claude Code and Codex in the same panes, side by side. Myrlin Glass switches accounts, Claude gets a browser pane of its own, and your phone picks up any session through an encrypted relay. It is free and open source, and you can run the relay yourself.</p>
             <div class="hero-actions">
               <a class="btn btn-primary" href="https://github.com/therealarthur/apaki/releases">Download for Windows</a>
               <a class="btn btn-secondary" href="app/">Open the web app</a>
             </div>
-            <p class="hero-fine">For Claude Code on Windows. iPhone app in TestFlight. Codex sessions are listed today; Codex panes are coming. <a href="https://github.com/therealarthur/apaki">Read the source</a>.</p>
+            <p class="hero-fine">For Windows, with a Mac build in testing. iPhone app in TestFlight. <a href="https://github.com/therealarthur/apaki">Read the source</a>.</p>
           </div>
         </div>
         </div>
@@ -141,9 +145,9 @@
             <div class="clip is-current">
               <picture>
                 <source media="(prefers-color-scheme: dark)" srcset="assets/media/glass-card-dark.webp">
-                <img src="assets/media/glass-card-light.webp" width="784" height="998" alt="The Myrlin Glass panel over Apaki's sidebar: the live Claude account, two more subscriptions and an API key, each with what it has left" loading="lazy" decoding="async">
+                <img src="assets/media/glass-card-light.webp" width="784" height="1214" alt="The Myrlin Glass panel over Apaki's sidebar: the live Claude account, two more subscriptions and an API key, each with what it has left" loading="lazy" decoding="async">
               </picture>
-              <video muted playsinline preload="none" width="784" height="998" aria-hidden="true" data-light="assets/media/glass-card-light.mp4" data-dark="assets/media/glass-card-dark.mp4"></video>
+              <video muted playsinline preload="none" width="784" height="1214" aria-hidden="true" data-light="assets/media/glass-card-light.mp4" data-dark="assets/media/glass-card-dark.mp4"></video>
             </div>
             <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
           </div>
@@ -172,7 +176,7 @@
             <div class="shot shot-sessions">
               <picture>
                 <source media="(prefers-color-scheme: dark)" srcset="assets/media/sessions-list-dark.webp">
-                <img src="assets/media/sessions-list-light.webp" width="704" height="880" alt="Apaki's session list: sessions working and waiting in terminal windows, and a Codex session marked read-only" loading="lazy" decoding="async">
+                <img src="assets/media/sessions-list-light.webp" width="704" height="792" alt="Apaki's session list: sessions working and waiting in terminal windows, and a Codex session among them" loading="lazy" decoding="async">
               </picture>
             </div>
             <figcaption>The list</figcaption>
@@ -181,7 +185,7 @@
             <li>Search finds sessions by words and by meaning. The index and the embedding model run on your PC, and nothing is uploaded to search.</li>
             <li>Not sure which one it was? Ask Claude: it reads the best matches and says why each one fits.</li>
             <li>Sessions stay in Claude Code's files. Continue one in a terminal with /resume, then come back to it here.</li>
-            <li>Codex sessions are listed and searchable today, read-only. Opening them in panes is coming.</li>
+            <li>Codex threads are in the list too, with a view of their own, and the same search finds them.</li>
           </ul>
           <figure class="scatter-search" data-reveal="3">
             <div class="player shot shot-search" role="group" aria-label="Recording, close up: a vague search finds sessions by meaning, then Ask Claude picks the ones that fit and says why">
@@ -200,14 +204,45 @@
       </div>
     </section>
 
+    <!-- ===== Claude Code and Codex (round 3 finish, 2026-10-13): one tab of the demo (harness/data.mjs preset "codex"),
+         a Codex pane beside a Claude pane, close up at 2x (scenes.mjs "codex-pair"). The display head and the lede sit
+         on one line, the recording steps in under them, and a note under each half says whose pane it is. ===== -->
+    <section class="sec sec-codex" id="codex" aria-labelledby="codex-title">
+      <div class="wrap cx-grid">
+        <h2 id="codex-title" class="h-display cx-title" data-reveal>Claude Code and Codex, side by side</h2>
+        <p class="lede cx-lede" data-reveal="2">Codex threads on your PC are listed too, the Codex app's included, and the same search finds them. Open one and it runs as a pane next to Claude's, in any tab, with the Codex app's own choices and approvals.</p>
+        <figure class="cx-media" data-reveal>
+          <div class="player shot shot-codex" role="group" aria-label="Recording, close up: a Codex pane and a Claude pane in one tab. A message goes to each; Codex asks before it applies its patch while Claude reads and writes beside it; Approve once, and Codex answers.">
+            <div class="clip is-current">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="assets/media/codex-pair-dark.webp">
+                <img src="assets/media/codex-pair-light.webp" width="2000" height="642" alt="A Codex pane asking to apply its changes, with Approve once, Approve for this session and Deny, beside a Claude pane that is writing; under each, its composer with its own model, effort, mode and account" loading="lazy" decoding="async">
+              </picture>
+              <video muted playsinline preload="none" width="2000" height="642" aria-hidden="true" data-light="assets/media/codex-pair-light.mp4" data-dark="assets/media/codex-pair-dark.mp4"></video>
+            </div>
+            <button class="clip-toggle" type="button" hidden aria-label="Pause the recording"></button>
+          </div>
+          <figcaption class="cx-notes">
+            <span class="cx-note"><b>Codex</b> GPT models with their own efforts, the Codex app's Read only, Auto and Full access, and approvals that show the command or the diff.</span>
+            <span class="cx-note"><b>Claude Code</b> Its models, effort and permission modes, on the account Myrlin Glass has live.</span>
+          </figcaption>
+        </figure>
+        <ul class="points cx-points" data-reveal="2">
+          <li>Enter queues and Ctrl+Enter steers in a Codex pane as in a Claude one, and Codex's slash commands, /review, /diff and /compact among them, are in the same menu.</li>
+          <li>Glass shows the Codex account's 5-hour and weekly limits beside Claude's. Apaki never writes Codex's config file; its settings go to each thread.</li>
+        </ul>
+      </div>
+    </section>
+
     <!-- ===== Tabs and panes: real panes fanning out in depth, then the steer line close up ===== -->
     <section class="sec sec-panes" id="panes" aria-labelledby="panes-title">
       <div class="wrap panes-grid">
         <div class="panes-copy" data-reveal>
-          <h2 id="panes-title" class="h-display">Up to six conversations in every tab</h2>
-          <p class="lede">Shift-click a session to open it beside the others, or drag it onto the edge of a pane to split. Each pane is a full Claude Code conversation with its own model, effort and permission mode, and each one streams on its own.</p>
+          <h2 id="panes-title" class="h-display h-panes">Up to six conversations in every tab</h2>
+          <p class="lede">Shift-click a session to open it beside the others, or drag it onto the edge of a pane to split. Each pane is a full Claude Code or Codex conversation with its own model, effort and permission mode, and each one streams on its own.</p>
         </div>
-        <!-- Four panes from one tab of the demo (scenes.mjs "split"), stacked like tabs, then fanned out in depth. -->
+        <!-- Four panes from one tab of the demo (scenes.mjs "split") on a tilted plane: the first fills the tab, then the
+             others arrive and the four tile into a grid, as Apaki lays a tab out by how many panes it holds. -->
         <div class="fan" data-motion aria-hidden="true">
           <div class="fan-plane">
             <picture class="fan-card fan-d"><source media="(prefers-color-scheme: dark)" srcset="assets/media/pane-d-dark.webp"><img src="assets/media/pane-d-light.webp" width="1416" height="838" alt="" loading="lazy" decoding="async"></picture>
@@ -463,10 +498,12 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
       <section class="sec sec-next" id="next" aria-labelledby="next-title">
         <div class="wrap next-grid">
           <h2 id="next-title" class="h-display" data-reveal>Coming next</h2>
+          <!-- Codex in panes shipped (2026-10-12) and moved up to its own section; the Mac build (apaki/docs/macos.md,
+               phase 1) is what comes next beside Cloud. -->
           <article class="card next-a" data-reveal>
-            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="3.5" y="6" width="25" height="20" rx="3"/><path d="M8.5 13l4 3-4 3M15 19.5h7"/></svg>
-            <h3>Codex, side by side</h3>
-            <p>Codex threads open as panes next to Claude's, with Codex's own model, effort and approval choices, its questions and approvals as sheets, and the same browser pane and viewer.</p>
+            <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><rect x="5" y="6" width="22" height="15" rx="2.5"/><path d="M3 25.5h26"/></svg>
+            <h3>Apaki on a Mac</h3>
+            <p>Apaki builds and runs on Apple Silicon Macs, with sessions, panes, search and phone access. The Mac download comes with a later release.</p>
           </article>
           <article class="card next-b" data-reveal="2">
             <svg viewBox="0 0 32 32" class="card-icon" aria-hidden="true"><path d="M9.5 24.5h13.5a5.5 5.5 0 0 0 .6-11A7.5 7.5 0 0 0 9.2 12a6.3 6.3 0 0 0 .3 12.5z"/></svg>
@@ -515,11 +552,15 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
           <div class="faq" data-reveal="2">
             <details>
               <summary>Is Apaki made by Anthropic?</summary>
-              <p>No. Apaki is a Myrlin Labs project and is not affiliated with or endorsed by Anthropic or OpenAI. It runs the Claude Code you sign in to with your own account.</p>
+              <p>No. Apaki is a Myrlin Labs project and is not affiliated with or endorsed by Anthropic or OpenAI. It runs the Claude Code and Codex you sign in to with your own accounts.</p>
             </details>
             <details>
               <summary>Does it change Claude Code?</summary>
               <p>No. Apaki runs Claude Code unmodified through Anthropic's Agent SDK, with Claude Code's own system prompt and every settings source, so your CLAUDE.md, skills, plugins, hooks, MCP servers and slash commands work as they do in a terminal.</p>
+            </details>
+            <details>
+              <summary>Does it change Codex?</summary>
+              <p>No. Apaki talks to Codex through its app-server, the protocol OpenAI's Codex app uses, and never writes Codex's config file. Model, effort and approvals are set for each thread.</p>
             </details>
             <details>
               <summary>What does it cost?</summary>
@@ -531,7 +572,7 @@ APAKI_WEB_URL=https://relay.example.com/</code></pre>
             </details>
             <details>
               <summary>Which platforms?</summary>
-              <p>The desktop app is for Windows. The phone side is the iPhone app (TestFlight for now) or the web app in any phone browser.</p>
+              <p>The desktop app is for Windows, and a Mac build for Apple Silicon is in testing. The phone side is the iPhone app (TestFlight for now) or the web app in any phone browser.</p>
             </details>
           </div>
         </div>

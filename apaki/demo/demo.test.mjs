@@ -247,7 +247,7 @@ test('close-up scenes: crops sit inside the window, are never encoded wider than
     }
   }
   // The names the home page is coded against (site-media.mjs CROP_CLIPS and CROP_STILLS).
-  for (const want of ['hero-pane', 'hero-phone', 'glass-card', 'steer-line', 'worktree-diff', 'search-meaning', 'browser-pane', 'pair-sheet', 'pair-phone', 'sessions-list', 'pane-a', 'pane-b', 'pane-c', 'pane-d']) {
+  for (const want of ['hero-pane', 'hero-phone', 'glass-card', 'steer-line', 'worktree-diff', 'search-meaning', 'browser-pane', 'pair-sheet', 'pair-phone', 'codex-pair', 'sessions-list', 'pane-a', 'pane-b', 'pane-c', 'pane-d']) {
     assert.ok(outputs.has(want), `no close-up scene makes ${want}`);
   }
 });

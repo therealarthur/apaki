@@ -533,10 +533,19 @@ async function main() {
   if (DO_VIDEO && !ffmpeg) console.warn('No ffmpeg found (set ffmpeg=<exe> or $FFMPEG): videos are skipped; stills are still made.');
   ensureNotes();
 
-  const browser = await launchBrowser(chromium);
-  // The close-up clips (2026-10-12) are screencast in a browser of their own, started with the 2x switch, the first time one is needed.
+  // One browser at a time (2026-10-13, round 3: the PC that runs this is short on memory). The stills and the full-window
+  // clips use a plain headless Chromium; the close-up clips (2026-10-12) are screencast in a browser of their own,
+  // started with the 2x switch. Each is started the first time it is needed and the other is closed first.
+  let mainBrowser = null;
   let cropBrowser = null;
-  const getCropBrowser = async () => cropBrowser || (cropBrowser = await launchBrowser(chromium, CROP_BROWSER_ARGS));
+  const getBrowser = async () => {
+    if (cropBrowser) { await cropBrowser.close().catch(() => {}); cropBrowser = null; }
+    return mainBrowser || (mainBrowser = await launchBrowser(chromium));
+  };
+  const getCropBrowser = async () => {
+    if (mainBrowser) { await mainBrowser.close().catch(() => {}); mainBrowser = null; }
+    return cropBrowser || (cropBrowser = await launchBrowser(chromium, CROP_BROWSER_ARGS));
+  };
 
   const server = await startServer();
   console.log(`Harness at ${server.url} (stops when this run ends). Output: ${OUT}`);
@@ -556,6 +565,7 @@ async function main() {
         const stillDir = crop ? 'crops' : 'stills';
         if (DO_STILLS) {
           const t0 = Date.now();
+          const browser = await getBrowser();
           const { ctx, page, problems: probs } = await openScene(browser, { scene: name, theme, baseUrl: server.url });
           const side = pair ? await openPair(browser, { scene: name, theme, baseUrl: server.url }) : null;
           const saved = [];
@@ -590,6 +600,7 @@ async function main() {
         } else if (wantClip) {
           const t0 = Date.now();
           const dir = fs.mkdtempSync(path.join(rawDir, `${name}-${theme}-`));
+          const browser = await getBrowser();
           const { ctx, page, problems: probs, startedAt } = await openScene(browser, { scene: name, theme, baseUrl: server.url, recordDir: dir });
           const side = pair ? await openPair(browser, { scene: name, theme, baseUrl: server.url, recordDir: fs.mkdtempSync(path.join(rawDir, `${name}-phone-${theme}-`)) }) : null;
           const result = await runScene(page, name, { stills: false, ...(side ? { pairPage: side.page } : {}) });
@@ -622,7 +633,7 @@ async function main() {
       }
     }
   } finally {
-    await browser.close().catch(() => {});
+    if (mainBrowser) await mainBrowser.close().catch(() => {});
     if (cropBrowser) await cropBrowser.close().catch(() => {});
     await server.close();
     fs.rmSync(rawDir, { recursive: true, force: true });

@@ -373,11 +373,17 @@
   if (head) {
     // Over the dark chapter (round 3) the header takes the night's colours, so it never sits light on dark.
     var night = document.querySelector('.night');
+    // The dark starts above the chapter's box: its cap (site.css --cap, the top of the horizon's circle) rises that far
+    // over the section before it, so the header turns once the middle of the cap is under it (2026-10-13).
+    var cap = 0;
+    var readCap = function () { cap = parseFloat(window.getComputedStyle(root).getPropertyValue('--cap')) || 0; };
     var mark = function () {
       head.classList.toggle('is-scrolled', window.scrollY > 8);
-      if (night) head.classList.toggle('is-night', night.getBoundingClientRect().top < head.offsetHeight * 0.6);
+      if (night) head.classList.toggle('is-night', night.getBoundingClientRect().top - cap * 0.5 < head.offsetHeight * 0.6);
     };
+    readCap();
     mark();
     window.addEventListener('scroll', mark, { passive: true });
+    window.addEventListener('resize', function () { readCap(); mark(); }, { passive: true });
   }
 })();
