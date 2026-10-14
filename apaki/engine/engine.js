@@ -56,6 +56,13 @@
  *                content: utf8 for html/markdown/svg/text, base64 for image/pdf)
  *   op artifactList { sessionId } -> ev artifacts { sessionId, items }
  *   op openExternal { url } or { id, sessionId?, rev? } -> the system browser / default app
+ * Viewers like ChatGPT's side window (2026-10-13): artifact events and artifactContent also carry lang (a language
+ * hint) and by ('session' or 'user'), and every revision its kind and by; workbooks and Word documents come as base64.
+ *   op artifactSave { id, sessionId?, rev?, name? } or { data, encoding?, name } -> ev artifactSaved { ok, name, path }
+ *                (a revision's file, or a table or chart the viewer exported, into Downloads, shown in Explorer)
+ *   op artifactEdit { id, sessionId, sourcePane?, baseRev, content, force? } -> ev artifactEdited { ok, rev | message,
+ *                stale } and an artifact event (via 'user-edit') for the conversation: the user's own revision
+ *   Both are PC only (remote-policy.js PC_ONLY_OPS).
  *
  * The built-in browser (2026-10-09, Arthur: "a built-in browser like
  * Codex's, driven by Claude, light and fast"): the shell owns the browser
@@ -183,7 +190,9 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { forkSession, getSessionInfo, getSessionMessages, renameSession } from '@anthropic-ai/claude-agent-sdk';
 import * as archive from './archive.js';
-import { ArtifactStore, kindOfExt } from './artifacts.js';
+import { ArtifactStore, MAX_BYTES as ARTIFACT_MAX_BYTES, kindOfExt, revKind } from './artifacts.js';
+// A download's file name from an artifact's title and extension (2026-10-13; shared with the window, pure).
+import { fileNameFor } from '../ui/viewkind.js';
 import { createApakiTools } from './apaki-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createShell } from './shell-channel.js';
@@ -332,13 +341,17 @@ const store = new ArtifactStore();
 
 /** A served address for one revision of an artifact, for the window's viewer. */
 const srcOf = (rec, rev) => (openServer ? openServer.artifactUrl(rec, rev) : null);
+/** A record's revisions as the window gets them: number, time, title, extension, and (2026-10-13) kind and who made it. */
+const revsOut = (rec) => rec.revs.map((r) => ({ rev: r.rev, at: r.at, title: r.title, ext: r.ext, kind: revKind(rec, r), by: r.by || 'session' }));
 
 function artifactEvent(p, rec, meta = {}) {
   return {
     // A Codex pane's id is codex:<thread>; the store keeps it as codex-<thread>, and the window asks for it by the pane's own id (artifactGet).
     ev: 'artifact', paneId: p.id, sessionId: isCodexPane(p) && p.sessionId ? p.sessionId : rec.sessionId, id: rec.id, title: rec.title, kind: rec.kind, rev: rec.rev,
     path: store.fileOf(rec).file, src: srcOf(rec), ext: rec.ext, mime: rec.mime, size: rec.size, source: rec.source,
-    revs: rec.revs.map((r) => ({ rev: r.rev, at: r.at, title: r.title, ext: r.ext })), via: meta.via || 'show', toolUseId: meta.toolUseId || null,
+    revs: revsOut(rec), via: meta.via || 'show', toolUseId: meta.toolUseId || null,
+    // 2026-10-13 (viewers like ChatGPT's side window): the language hint, and who made this revision ('user': an edit in the viewer).
+    lang: rec.lang || null, by: rec.revs[rec.revs.length - 1]?.by || 'session',
     // A turn's changes or a picture Codex looked at (2026-10-12): a card with a line under the title; the viewer opens when asked.
     ...(meta.sub ? { sub: meta.sub } : {}), ...(meta.open ? { open: true } : {}),
   };
@@ -436,6 +449,7 @@ async function toolFromStdio(paneId, tool, input, meta) {
   if (!p) return { ok: false, text: 'That conversation is not open in Apaki.' };
   const t = toolsFor(p);
   if (tool === 'show') return t.show(input, { via: 'show' });
+  if (tool === 'view_read') return t.viewRead(input);
   return t.browser ? t.browser.call(tool, input) : { ok: false, text: 'This window has no built-in browser.' };
 }
 
@@ -824,6 +838,18 @@ function exportDir() {
   const dl = path.join(os.homedir(), 'Downloads');
   try { if (fs.statSync(dl).isDirectory()) return dl; } catch { /* no Downloads folder */ }
   return os.homedir();
+}
+
+/**
+ * A file name an artifact download may use (op artifactSave): no folders, no characters Windows refuses, not a
+ * reserved device name (CON, NUL, COM1...), at most 120 characters, always with an extension.
+ */
+function saveName(name) {
+  let n = String(name || '').split(/[\\/]/).pop().replace(/[<>:"|?*\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').replace(/^[. ]+|[. ]+$/g, '').trim();
+  if (!n) n = 'artifact.txt';
+  if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(n)) n = `artifact ${n}`;
+  if (n.length > 120) { const ext = path.extname(n).slice(0, 12); n = `${n.slice(0, 120 - ext.length)}${ext}`; }
+  return path.extname(n) ? n : `${n}.txt`;
 }
 
 /** Shows a file selected in Explorer (or Finder, or its folder on Linux). */
@@ -2108,16 +2134,63 @@ const handlers = {
     const got = store.get(c.id, { sessionId: c.sessionId || null, rev: c.rev ?? null });
     if (!got) { emit({ ev: 'artifactContent', reqId: c.reqId, paneId: c.paneId || null, id: c.id, sessionId: c.sessionId || null, error: 'This artifact is no longer on this PC.' }); return; }
     const rec = got.record;
-    const kind = got.rev === rec.rev ? rec.kind : kindOfExt(got.ext);
-    const binary = kind === 'image' || kind === 'pdf';
-    // content: 'text' = only when it is text (the viewer); false = never; default = always (the phone).
-    const want = c.content === 'text' ? !binary : c.content !== false;
+    // The revision's own kind (2026-10-13: each revision records it; older records fall back to the extension).
+    const kind = got.kind || (got.rev === rec.rev ? rec.kind : kindOfExt(got.ext));
+    // Workbooks and Word documents are bytes too (2026-10-13), drawn in the window from base64 (SheetJS, mammoth).
+    const binary = kind === 'image' || kind === 'pdf' || kind === 'sheet' || kind === 'docx';
+    // content: 'text' = only what the viewer draws itself (text, and since 2026-10-13 workbooks and Word documents);
+    // false = never; default = always (the phone). Images and PDFs load from src on the desktop.
+    const want = c.content === 'text' ? (kind !== 'image' && kind !== 'pdf') : c.content !== false;
     emit({
       ev: 'artifactContent', reqId: c.reqId, paneId: c.paneId || null, id: rec.id, sessionId: rec.sessionId, title: (rec.revs.find((r) => r.rev === got.rev) || rec).title,
       kind, ext: got.ext, mime: got.mime, rev: got.rev, latest: rec.rev, size: got.buf.length, src: srcOf(rec, got.rev), path: got.file, source: rec.source,
-      revs: rec.revs.map((r) => ({ rev: r.rev, at: r.at, title: r.title, ext: r.ext })),
+      revs: revsOut(rec), lang: got.lang || null, by: got.by || 'session',
       ...(want ? { encoding: binary ? 'base64' : 'utf8', content: binary ? got.buf.toString('base64') : got.buf.toString('utf8') } : {}),
     });
+  },
+  // Download (2026-10-13, the viewer's toolbar): one revision's file, or what the viewer made of it (a filtered table as
+  // CSV, a chart as PNG or SVG: data + encoding + name), saved in Downloads under a free name and shown in Explorer, like
+  // Export as Markdown. PC only (remote-policy.js PC_ONLY_OPS): a phone saves on the phone, never a file on the PC.
+  artifactSave: async (c) => {
+    const base = { ev: 'artifactSaved', reqId: c.reqId || null, paneId: c.paneId || null };
+    try {
+      let buf;
+      let name;
+      if (typeof c.data === 'string') {
+        buf = c.encoding === 'base64' ? Buffer.from(c.data, 'base64') : Buffer.from(c.data, 'utf8');
+        name = String(c.name || 'artifact.txt');
+      } else {
+        const got = store.get(c.id, { sessionId: c.sessionId || null, rev: c.rev ?? null });
+        if (!got) throw new Error('This artifact is no longer on this PC.');
+        buf = got.buf;
+        name = c.name ? String(c.name) : fileNameFor({ title: (got.record.revs.find((r) => r.rev === got.rev) || got.record).title, ext: got.ext });
+      }
+      if (buf.length > ARTIFACT_MAX_BYTES) throw new Error('It is too big to save from here.');
+      const file = freePath(exportDir(), saveName(name));
+      await fs.promises.writeFile(file, buf);
+      emit({ ...base, ok: true, name: path.basename(file), path: file });
+      revealFile(file);
+    } catch (e) {
+      emit({ ...base, ok: false, message: `Could not save it: ${e.message || e}` });
+    }
+  },
+  // Edit and send back (2026-10-13, the canvas): the user's version of a Markdown or text artifact becomes a new revision
+  // marked as theirs (store.edit). The conversation that showed it gets the artifact event (its card says "Edited by
+  // you"); the session reads it with view_read and hears about it with the user's next message (apaki-tools.js). Nothing
+  // is sent to the session by itself. PC only (remote-policy.js PC_ONLY_OPS says why a phone may not).
+  artifactEdit: (c) => {
+    const base = { ev: 'artifactEdited', reqId: c.reqId || null, paneId: c.paneId || null, id: c.id || null };
+    try {
+      const sid = String(c.sessionId || '');
+      if (!sid) throw new Error('This artifact has no conversation.');
+      const rec = store.edit(sid, c.id, { content: c.content, baseRev: Number.isInteger(c.baseRev) ? c.baseRev : null, force: c.force === true });
+      emit({ ...base, ok: true, rev: rec.rev, sessionId: rec.sessionId });
+      // The conversation's pane draws the card (pane.js onArtifact); the viewer shows the new revision.
+      const owner = panes.get(String(c.sourcePane || '')) || { id: String(c.sourcePane || c.paneId || '') };
+      emit(artifactEvent(owner, rec, { via: 'user-edit' }));
+    } catch (e) {
+      emit({ ...base, ok: false, message: e.message || String(e), stale: e.code === 'stale', rev: e.rev ?? null });
+    }
   },
   artifactList: (c) => emit({
     ev: 'artifacts', reqId: c.reqId, sessionId: c.sessionId || null,

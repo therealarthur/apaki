@@ -23,6 +23,19 @@
  * same artifact. HTML files get their local images, stylesheets and scripts
  * inlined, because the viewer blocks every load from outside the page.
  *
+ * Viewers like ChatGPT's side window (2026-10-13, Arthur: "literally exactly
+ * everything chatgpt's window could display and allow the session to do"):
+ *   - more stored kinds: sheet (xlsx, xlsm, xlsb, xls), docx (Word) and chart
+ *     (a JSON chart spec, apaki/ui/chartspec.js, checked here so Claude hears
+ *     what is wrong with it); the show tool takes kind "text" with an optional
+ *     `language` hint (stored as the extension: "python" is saved as .py) and
+ *     kind "chart". Which viewer draws what is apaki/ui/viewkind.js viewOf.
+ *   - each revision says who made it and what it is: revs[].by is 'session'
+ *     (a show call) or 'user' (an edit in the viewer, edit() below), revs[].kind
+ *     its kind; the record keeps lang, sessionRev (the newest revision the
+ *     session made) and readRev (the newest the session read with view_read),
+ *     so the session can be told the user edited what it showed.
+ *
  * Plain synchronous fs, no dependencies; tests point it at a temp folder.
  */
 
@@ -30,28 +43,46 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+// Shared with the window (pure, no DOM). apaki/ui ships beside the engine in every package (viewkind.js says why).
+import { normalizeChart } from '../ui/chartspec.js';
+import { EDITABLE_KINDS, extOfLang, normLang } from '../ui/viewkind.js';
 
 export const MAX_BYTES = 25 * 1024 * 1024;
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
+/** Workbooks and Word documents are parsed in the window (SheetJS, mammoth): kept smaller than other files. */
+export const MAX_OFFICE_BYTES = 15 * 1024 * 1024;
+/** A chart spec is a few lines of JSON; this is far more than any chart needs. */
+export const MAX_CHART_BYTES = 2 * 1024 * 1024;
 export const MAX_REVS = 20;
 const MAX_INLINE_ASSET = 6 * 1024 * 1024;
 
-export const SHOW_KINDS = ['html', 'markdown', 'svg', 'image', 'file', 'url'];
+// text and chart since 2026-10-13 (viewers like ChatGPT's side window); the first six are as they were.
+export const SHOW_KINDS = ['html', 'markdown', 'svg', 'image', 'file', 'url', 'text', 'chart'];
+/** The kinds a revision can be stored as. */
+export const STORED_KINDS = ['html', 'markdown', 'svg', 'image', 'pdf', 'text', 'sheet', 'docx', 'chart'];
 
 const MIME = {
   html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8', xhtml: 'text/html; charset=utf-8',
   md: 'text/markdown; charset=utf-8', markdown: 'text/markdown; charset=utf-8',
   svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
   bmp: 'image/bmp', ico: 'image/x-icon', avif: 'image/avif', pdf: 'application/pdf',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
+  xlsb: 'application/vnd.ms-excel.sheet.binary.macroEnabled.12', xls: 'application/vnd.ms-excel',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  csv: 'text/csv; charset=utf-8', tsv: 'text/tab-separated-values; charset=utf-8',
   css: 'text/css', js: 'text/javascript', mjs: 'text/javascript', json: 'application/json',
   woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf', mp3: 'audio/mpeg', wav: 'audio/wav', mp4: 'video/mp4', webm: 'video/webm',
 };
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
 const KIND_OF_EXT = { html: 'html', htm: 'html', xhtml: 'html', md: 'markdown', markdown: 'markdown', svg: 'svg', pdf: 'pdf' };
+/** Office files the viewer draws (2026-10-13): workbooks as tables, Word documents read only. */
+const OFFICE_KIND = { xlsx: 'sheet', xlsm: 'sheet', xlsb: 'sheet', xls: 'sheet', docx: 'docx' };
 
 export const mimeOf = (ext) => MIME[String(ext || '').toLowerCase()] || 'text/plain; charset=utf-8';
-/** The stored kind of a file extension: html, markdown, svg, pdf, image or text. */
-export const kindOfExt = (ext) => KIND_OF_EXT[String(ext || '').toLowerCase()] || (IMAGE_EXT.has(String(ext || '').toLowerCase()) ? 'image' : 'text');
+/** The stored kind of a file extension: html, markdown, svg, pdf, image, sheet, docx or text. */
+export const kindOfExt = (ext) => KIND_OF_EXT[String(ext || '').toLowerCase()] || OFFICE_KIND[String(ext || '').toLowerCase()] || (IMAGE_EXT.has(String(ext || '').toLowerCase()) ? 'image' : 'text');
+/** The kind of one revision of a record (older records have no kind per revision: the latest is the record's, earlier ones go by extension). */
+export const revKind = (rec, r) => (r?.kind && STORED_KINDS.includes(r.kind) ? r.kind : r && r.rev === rec.rev ? rec.kind : kindOfExt(r?.ext));
 const extOf = (p) => { const m = String(p || '').match(/\.([A-Za-z0-9]{1,10})$/); return m ? m[1].toLowerCase() : ''; };
 const safeExt = (e) => (/^[a-z0-9]{1,10}$/.test(e) ? e : 'txt');
 
@@ -91,6 +122,34 @@ export function sniffImage(buf) {
 
 /** True when the bytes look like text (no NUL in the first 8 KB). */
 const looksText = (buf) => !buf.subarray(0, 8192).includes(0);
+
+/** The office format the bytes are, by their first bytes: 'zip' (xlsx, xlsm, xlsb, docx), 'cfb' (an old xls) or null. */
+export function sniffOffice(buf) {
+  if (!buf || buf.length < 8) return null;
+  if (buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04) return 'zip';
+  if (buf[0] === 0xd0 && buf[1] === 0xcf && buf[2] === 0x11 && buf[3] === 0xe0) return 'cfb';
+  return null;
+}
+
+/**
+ * Checks an office file before it is stored: the right container for its extension and not too big. Excel can also
+ * save a sheet as HTML or XML with an .xls name; SheetJS reads those too, so an .xls only needs to be one or the other.
+ */
+function checkOffice(kind, ext, buf, name) {
+  if (buf.length > MAX_OFFICE_BYTES) throw new Error(`${name} is ${(buf.length / 1048576).toFixed(1)} MB; Apaki shows ${kind === 'docx' ? 'Word documents' : 'workbooks'} up to ${MAX_OFFICE_BYTES / 1048576} MB.`);
+  const box = sniffOffice(buf);
+  if (ext === 'xls' ? !(box || looksText(buf)) : box !== 'zip') throw new Error(`${name} is not a ${kind === 'docx' ? 'Word document (.docx)' : `${ext.toUpperCase()} workbook`}.`);
+}
+
+/** A chart spec as stored: checked (chartspec.js), then as indented JSON. Throws with what to fix, for Claude. */
+function chartBytes(text) {
+  if (Buffer.byteLength(text, 'utf8') > MAX_CHART_BYTES) throw new Error(`The chart spec is over ${MAX_CHART_BYTES / 1048576} MB; send fewer points (at most 50,000).`);
+  let raw;
+  try { raw = JSON.parse(text); } catch (e) { throw new Error(`The chart spec is not valid JSON: ${String(e.message || e).slice(0, 160)}`); }
+  const r = normalizeChart(raw);
+  if (!r.ok) throw new Error(`The chart spec has problems: ${r.errors.join(' ')} A chart is { "type": "line" | "bar" | "area" | "scatter" | "pie", "title", "labels": [...], "series": [{ "name", "data": [numbers] }] }.`);
+  return Buffer.from(JSON.stringify(raw, null, 1), 'utf8');
+}
 
 /**
  * Inlines the local files an HTML page loads (img/source/video/audio src as
@@ -138,8 +197,10 @@ export function inlineLocalAssets(html, baseDir) {
 const README = `# artifacts
 
 **What:** things Claude showed you inside Myrlin Apaki (HTML pages, Markdown, SVG, images,
-copies of local files), one folder per Claude Code session, each with an index.json and
-every revision (\`<id>.<ext>\` is the current one, \`<id>.r<N>.<ext>\` the earlier ones).
+code, tables, charts, copies of local files such as spreadsheets and Word documents), one
+folder per Claude Code session, each with an index.json and every revision (\`<id>.<ext>\`
+is the current one, \`<id>.r<N>.<ext>\` the earlier ones, including the ones you edited in
+the viewer).
 
 **Who / when:** written by Myrlin Apaki's engine (apaki/engine/artifacts.js in the
 claude-latch repo) whenever Claude calls its \`show\` tool or Apaki catches an "open this"
@@ -189,8 +250,10 @@ export class ArtifactStore {
   }
 
   /**
-   * Turns the tool's input into bytes to store: { kind, ext, buf, source }.
+   * Turns the tool's input into bytes to store: { kind, ext, buf, source, lang }.
    * Throws an Error with a message meant for Claude when the input cannot be shown.
+   * input.language (2026-10-13) is a hint for text: a language Apaki knows becomes the extension ("python" -> .py,
+   * "csv" -> .csv, so a table); any other short name is kept as lang for the viewer's label.
    */
   resolve(input, { cwd = process.cwd() } = {}) {
     let kind = String(input.kind || '').toLowerCase();
@@ -198,6 +261,9 @@ export class ArtifactStore {
     let source = null;
     let buf = null;
     let ext = '';
+    const hint = String(input.language ?? '').trim().toLowerCase();
+    const known = normLang(hint);
+    const lang = known || (/^[a-z0-9][a-z0-9+#._-]{0,23}$/.test(hint) ? hint : null);
     let p = input.path ? String(input.path) : '';
     if (p && /^file:\/\//i.test(p)) { p = decodeURIComponent(p.replace(/^file:\/\/\/?/i, process.platform === 'win32' ? '' : '/')); }
     if (!kind) kind = p ? 'file' : /^\s*<svg[\s>]/i.test(String(content || '')) ? 'svg' : /^\s*(<!doctype|<html|<)/i.test(String(content || '')) ? 'html' : 'markdown';
@@ -215,10 +281,15 @@ export class ArtifactStore {
       if (kind === 'file') {
         const img = sniffImage(buf);
         if (KIND_OF_EXT[ext]) kind = KIND_OF_EXT[ext];
+        else if (OFFICE_KIND[ext]) kind = OFFICE_KIND[ext];
         else if (IMAGE_EXT.has(ext) || img) { kind = 'image'; ext = img || ext; }
         else if (looksText(buf) && buf.length <= MAX_TEXT_BYTES) kind = 'text';
-        else throw new Error(`${path.basename(full)} is not something Apaki can show (HTML, Markdown, SVG, images, PDF and text files are).`);
+        else throw new Error(`${path.basename(full)} is not something Apaki can show (HTML, Markdown, SVG, images, PDF, spreadsheets (xlsx, xls), Word documents (docx) and text files are).`);
       }
+      // kind "text" with a path (2026-10-13): any text file, drawn as code, a table or JSON by its extension or language.
+      if (kind === 'text' && (!looksText(buf) || buf.length > MAX_TEXT_BYTES)) throw new Error(`${path.basename(full)} is not a text file Apaki can show (text up to ${MAX_TEXT_BYTES / 1048576} MB). Use kind "file" for images, PDFs, spreadsheets and Word documents.`);
+      if (kind === 'chart') buf = chartBytes(buf.toString('utf8'));
+      if (kind === 'sheet' || kind === 'docx') checkOffice(kind, ext, buf, path.basename(full));
       if (kind === 'html') buf = Buffer.from(inlineLocalAssets(buf.toString('utf8'), path.dirname(full)), 'utf8');
     } else {
       if (content === undefined || content === null || content === '') throw new Error('Give either content (the page, Markdown, SVG or image data) or path (a local file).');
@@ -233,17 +304,22 @@ export class ArtifactStore {
           if (!img) throw new Error('The image content is not PNG, JPEG, GIF, WebP, BMP, ICO or AVIF data (base64 or a data: URL).');
           ext = img;
         }
+      } else if (kind === 'chart') {
+        buf = chartBytes(text);
       } else {
         buf = Buffer.from(text, 'utf8');
       }
+      if (kind === 'text' && buf.length > MAX_TEXT_BYTES) throw new Error(`The text is ${(buf.length / 1048576).toFixed(1)} MB; Apaki shows text up to ${MAX_TEXT_BYTES / 1048576} MB.`);
       if (buf.length > MAX_BYTES) throw new Error(`The content is ${(buf.length / 1048576).toFixed(1)} MB; the most is ${MAX_BYTES / 1048576} MB.`);
     }
     if (kind === 'html') ext = 'html';
     if (kind === 'markdown') ext = 'md';
     if (kind === 'svg') ext = 'svg';
     if (kind === 'pdf') ext = 'pdf';
-    if (kind === 'text') ext = safeExt(ext || 'txt');
-    return { kind, ext, buf, source };
+    if (kind === 'chart') ext = 'json';
+    // A language hint Apaki knows names the file ("python" is stored as .py); otherwise the file's own extension.
+    if (kind === 'text') ext = safeExt((known && extOfLang(known)) || ext || 'txt');
+    return { kind, ext, buf, source, lang: kind === 'text' ? lang : null };
   }
 
   /**
@@ -251,12 +327,12 @@ export class ArtifactStore {
    * artifact already made from the same file in this session). Returns the record.
    */
   show(sessionId, input = {}, { cwd = process.cwd(), now = Date.now() } = {}) {
-    const { kind, ext, buf, source } = this.resolve(input, { cwd });
+    const { kind, ext, buf, source, lang } = this.resolve(input, { cwd });
     this.ensureRoot();
     const sid = safeSession(sessionId);
     fs.mkdirSync(this.dir(sid), { recursive: true });
     const idx = this.readIndex(sid);
-    const title = String(input.title || '').trim().slice(0, 200) || (source ? path.basename(source) : kind === 'markdown' ? 'Notes' : 'Artifact');
+    const title = String(input.title || '').trim().slice(0, 200) || (source ? path.basename(source) : kind === 'markdown' ? 'Notes' : kind === 'chart' ? 'Chart' : 'Artifact');
     let id = safeId(input.id);
     // "index" would put a .json artifact on top of index.json.
     if (id === 'index') id = 'index-page';
@@ -265,6 +341,18 @@ export class ArtifactStore {
       do id = `${slug(title)}-${crypto.randomBytes(2).toString('hex')}`; while (idx.artifacts[id]);
     }
     const prev = idx.artifacts[id];
+    const rec = this.writeRevision(sid, idx, id, prev, { kind, ext, buf, title, by: 'session', lang, source, now });
+    // The newest revision the session itself made: an edit of the user's after it is news to the session (view_read).
+    rec.sessionRev = rec.rev;
+    this.writeIndex(sid, idx);
+    return rec;
+  }
+
+  /**
+   * Writes revision prev.rev + 1 (or 1) of artifact `id` into the session folder and the index object (not yet
+   * saved): the current file becomes an earlier revision, the oldest beyond maxRevs go. Returns the new record.
+   */
+  writeRevision(sid, idx, id, prev, { kind, ext, buf, title, by, lang = null, source = null, now = Date.now() }) {
     const rev = prev ? prev.rev + 1 : 1;
     if (prev) {
       // The current file becomes an earlier revision; the oldest beyond MAX_REVS go.
@@ -272,7 +360,7 @@ export class ArtifactStore {
       try { fs.renameSync(cur.file, path.join(this.dir(sid), `${id}.r${prev.rev}.${cur.ext}`)); } catch { /* missing: keep going */ }
     }
     fs.writeFileSync(path.join(this.dir(sid), `${id}.${ext}`), buf);
-    const revs = [...(prev?.revs || []), { rev, ext, size: buf.length, at: now, title }];
+    const revs = [...(prev?.revs || []), { rev, ext, size: buf.length, at: now, title, kind, by, ...(lang ? { lang } : {}) }];
     while (revs.length > this.maxRevs) {
       const old = revs.shift();
       fs.rmSync(path.join(this.dir(sid), `${id}.r${old.rev}.${old.ext}`), { force: true });
@@ -280,8 +368,57 @@ export class ArtifactStore {
     const rec = {
       id, sessionId: sid, title, kind, ext, mime: mimeOf(ext), rev, size: buf.length,
       source: source || prev?.source || null, createdAt: prev?.createdAt || now, updatedAt: now, revs,
+      lang: lang || null, sessionRev: prev?.sessionRev ?? (prev ? prev.rev : 0), readRev: prev?.readRev ?? 0, noticedRev: prev?.noticedRev ?? 0,
     };
     idx.artifacts[id] = rec;
+    return rec;
+  }
+
+  /**
+   * The user's edit of a text artifact in the viewer (2026-10-13, canvas): a new revision marked by: 'user'. Only
+   * markdown and text (code, CSV, JSON...) are editable. baseRev is the revision the edit started from: when the
+   * session has made a newer one since, the edit is refused with code 'stale' unless `force` (the viewer asks first).
+   * Returns the record. Throws an Error with a message for the person.
+   */
+  edit(sessionId, id, { content, baseRev = null, force = false, title = null, now = Date.now() } = {}) {
+    const sid = safeSession(sessionId);
+    const idx = this.readIndex(sid);
+    const prev = idx.artifacts[safeId(id)];
+    if (!prev) throw new Error('This artifact is no longer on this PC.');
+    if (!EDITABLE_KINDS.includes(prev.kind)) throw new Error(`A ${prev.kind} artifact cannot be edited here; Markdown and text can.`);
+    if (typeof content !== 'string') throw new Error('Nothing to save.');
+    const buf = Buffer.from(content, 'utf8');
+    if (buf.length > MAX_TEXT_BYTES) throw new Error(`The text is ${(buf.length / 1048576).toFixed(1)} MB; the most is ${MAX_TEXT_BYTES / 1048576} MB.`);
+    if (!force && baseRev !== null && Number(baseRev) !== prev.rev) {
+      throw Object.assign(new Error(`It changed while you were editing: rev ${prev.rev} is newer than the rev ${baseRev} you started from.`), { code: 'stale', rev: prev.rev });
+    }
+    const cur = this.fileOf(prev);
+    let same = false;
+    try { same = fs.readFileSync(cur.file).equals(buf); } catch { /* the file is gone: write it */ }
+    if (same) return prev;
+    const rec = this.writeRevision(sid, idx, prev.id, prev, { kind: prev.kind, ext: prev.ext, buf, title: String(title || '').trim().slice(0, 200) || prev.title, by: 'user', lang: prev.lang || null, now });
+    this.writeIndex(sid, idx);
+    return rec;
+  }
+
+  /**
+   * The user's revisions the session has not seen yet: newer than both the last one it showed and the last one it
+   * read with view_read. [{ rev, at }] oldest first.
+   */
+  userEdits(rec) {
+    if (!rec) return [];
+    const seen = Math.max(rec.sessionRev ?? 0, rec.readRev ?? 0);
+    return (rec.revs || []).filter((r) => r.by === 'user' && r.rev > seen).map((r) => ({ rev: r.rev, at: r.at }));
+  }
+
+  /** Remembers that the session read revision `rev` (view_read) or was told about edits up to it (noticedRev). */
+  mark(sessionId, id, { readRev = null, noticedRev = null } = {}) {
+    const sid = safeSession(sessionId);
+    const idx = this.readIndex(sid);
+    const rec = idx.artifacts[safeId(id)];
+    if (!rec) return null;
+    if (readRev !== null) rec.readRev = Math.max(rec.readRev ?? 0, Number(readRev) || 0);
+    if (noticedRev !== null) rec.noticedRev = Math.max(rec.noticedRev ?? 0, Number(noticedRev) || 0);
     this.writeIndex(sid, idx);
     return rec;
   }
@@ -305,8 +442,8 @@ export class ArtifactStore {
   }
 
   /**
-   * One revision of an artifact with its bytes: { record, rev, ext, mime, file, buf }.
-   * rev defaults to the latest. Null when it does not exist.
+   * One revision of an artifact with its bytes: { record, rev, ext, mime, file, buf, kind, by, lang }.
+   * rev defaults to the latest. Null when it does not exist. by is 'session' or 'user' (an edit in the viewer).
    */
   get(id, { sessionId = null, rev = null } = {}) {
     const rec = this.record(id, sessionId);
@@ -314,7 +451,8 @@ export class ArtifactStore {
     const f = this.fileOf(rec, rev ?? rec.rev);
     let buf;
     try { buf = fs.readFileSync(f.file); } catch { return null; }
-    return { record: rec, rev: f.rev, ext: f.ext, mime: mimeOf(f.ext), file: f.file, name: f.name, buf };
+    const r = rec.revs.find((x) => x.rev === f.rev) || null;
+    return { record: rec, rev: f.rev, ext: f.ext, mime: mimeOf(f.ext), file: f.file, name: f.name, buf, kind: revKind(rec, r), by: r?.by || 'session', lang: r?.lang || (f.rev === rec.rev ? rec.lang || null : null) };
   }
 
   /** Every artifact of a session, newest first. */
