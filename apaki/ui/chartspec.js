@@ -36,6 +36,8 @@ const MAX_TEXT = 200;
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const text = (v, n = MAX_TEXT) => (v === undefined || v === null ? '' : String(v).replace(/[\u0000-\u001f]+/g, ' ').trim().slice(0, n));
+// A unit before or after a number keeps its spaces (" ms"), unlike other text.
+const affix = (v, n) => (v === undefined || v === null ? '' : String(v).replace(/[\u0000-\u001f]+/g, '').slice(0, n));
 const num = (v) => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v)) ? Number(v) : NaN);
 
 /** A date the time axis takes: a number of milliseconds, or an ISO-like date string. NaN otherwise. */
@@ -153,8 +155,8 @@ export function normalizeChart(input) {
     label: text(yIn.label ?? yIn.title, 80),
     min: Number.isFinite(num(yIn.min)) ? num(yIn.min) : null,
     max: Number.isFinite(num(yIn.max)) ? num(yIn.max) : null,
-    prefix: text(yIn.prefix, 6),
-    suffix: text(yIn.suffix ?? yIn.unit, 10),
+    prefix: affix(yIn.prefix, 6),
+    suffix: affix(yIn.suffix ?? yIn.unit, 10),
     decimals: Number.isInteger(yIn.decimals) && yIn.decimals >= 0 && yIn.decimals <= 6 ? yIn.decimals : null,
   };
   if (ySpec.min !== null && ySpec.max !== null && ySpec.min >= ySpec.max) { errors.push('"y.min" must be below "y.max".'); ySpec.min = null; ySpec.max = null; }
@@ -204,7 +206,7 @@ function pie(raw, seriesIn, cats, errors, warnings, xIn, yIn) {
   const spec = {
     type: 'pie', title: text(raw.title), subtitle: text(raw.subtitle ?? raw.description),
     x: { label: text(xIn.label, 80), type: 'category', utc: false },
-    y: { label: text(yIn.label, 80), min: null, max: null, prefix: text(yIn.prefix, 6), suffix: text(yIn.suffix ?? yIn.unit, 10), decimals: Number.isInteger(yIn.decimals) && yIn.decimals >= 0 && yIn.decimals <= 6 ? yIn.decimals : null },
+    y: { label: text(yIn.label, 80), min: null, max: null, prefix: affix(yIn.prefix, 6), suffix: affix(yIn.suffix ?? yIn.unit, 10), decimals: Number.isInteger(yIn.decimals) && yIn.decimals >= 0 && yIn.decimals <= 6 ? yIn.decimals : null },
     categories: slices.map((x) => x.label),
     series: [{ name: text(isObj(s) ? s.name : '', 80) || text(raw.title, 80) || 'Share', points: slices.map((x, i) => ({ x: i, y: x.value })) }],
     stacked: false, horizontal: false,

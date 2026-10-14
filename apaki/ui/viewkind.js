@@ -119,8 +119,11 @@ export function viewOf(art = {}) {
   const ext = String(art.ext || '').toLowerCase();
   const out = (view, extra = {}) => ({ view, lang: null, grammar: null, label: '', wrap: false, ...extra });
   if (['html', 'markdown', 'svg', 'image', 'pdf', 'sheet', 'docx', 'chart'].includes(kind)) return out(kind, kind === 'markdown' ? { wrap: true } : {});
-  // text (and anything older or unknown): the hint first, then the extension, then the title's name.
-  const lang = normLang(art.lang) || langOfExt(ext) || langOfName(art.title) || null;
+  // text (and anything older or unknown): the hint first, then the extension, then the title's name. A file without an
+  // extension is stored as .txt, so a title such as "Dockerfile" or "build.gradle.kts" says more than that .txt does.
+  const generic = !ext || ext === 'txt';
+  // A hint Apaki has no grammar for ("haskell") keeps its own name below rather than becoming plain text.
+  const lang = normLang(art.lang) || (generic ? langOfName(art.title) || (art.lang ? null : langOfExt(ext)) : langOfExt(ext) || langOfName(art.title)) || null;
   if (lang === 'csv') return out('table', { lang, label: 'CSV', delim: ',' });
   if (lang === 'tsv') return out('table', { lang, label: 'TSV', delim: '\t' });
   if (lang === 'json' || lang === 'jsonl') return out('json', { lang, grammar: 'json', label: LANGS[lang].label, lines: lang === 'jsonl' });

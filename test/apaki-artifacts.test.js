@@ -184,7 +184,8 @@ test('the show tool works through a real MCP client: html, update by id, url, er
   await client.connect(ct);
   try {
     const list = await client.listTools();
-    assert.deepEqual(list.tools.map((t) => t.name), ['show']);
+    // view_read (2026-10-13): the user's edits of what was shown, read back.
+    assert.deepEqual(list.tools.map((t) => t.name), ['show', 'view_read']);
     assert.equal(list.tools[0]._meta?.['anthropic/alwaysLoad'], true, 'never deferred behind tool search');
     assert.deepEqual(list.tools[0].inputSchema.required.sort(), ['kind', 'title']);
 

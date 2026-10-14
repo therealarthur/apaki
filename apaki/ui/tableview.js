@@ -188,7 +188,7 @@ export class TableView {
   tsv() { return toTSV(this.columns, this.rows, this.order); }
   csv() { return toCSV(this.columns, this.rows, this.order); }
 
-  /* ---------- Ctrl+F (find.js findAdapter) ---------- */
+  /* Ctrl+F (find.js findAdapter). */
 
   runFind(q, matchCase) {
     const hits = findCells(this.columns, this.rows, this.order, q, { matchCase });

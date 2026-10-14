@@ -842,6 +842,127 @@
       "notes": "An in-process MCP server \"apaki\" with the tool show (mcp__apaki__show) and one appended system prompt paragraph, passed per pane through SDK options only (nothing written to the user's settings). Every revision is kept; HTML runs sandboxed with no network. A closed viewer is remembered by its conversation and reopened from an icon beside the grip (dd070bf). Claude Code has its own Artifact tool (tool-input:Artifact in sdk-tools.d.ts); Apaki does not use it."
     },
     {
+      "id": "viewer-code",
+      "title": "Viewer: code with syntax colours, line numbers, wrap, copy and download (show kind text with a language)",
+      "product": "chatgpt-desktop",
+      "upstream": ["chatgpt-desktop:feature:side-panel"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": [
+        "apaki/ui/codeview.js",
+        "apaki/ui/lazy.js",
+        "apaki/ui/viewkind.js",
+        "apaki/ui/vendor/highlight",
+        "apaki/engine/artifacts.js",
+        "apaki/engine/apaki-tools.js",
+        "test/apaki-viewers.test.js"
+      ],
+      "commits": [],
+      "sessions": [],
+      "verifiedAgainst": { "chatgpt-desktop": "26.1002.7124.0" },
+      "notes": "2026-10-13, Arthur: the viewer should show \"literally exactly everything chatgpt's window could display and allow the session to do\". highlight.js 11.12.0 (BSD-3-Clause, vendored: core plus 28 grammars) loads the first time a code viewer opens; the text shows at once and gets its colours a moment later; past 300 KB it stays plain. Line numbers are drawn by CSS (never copied or found by Ctrl+F); lines are grouped in blocks the browser skips while off screen, so a 100,000 line log stays fast. show takes kind \"text\" with an optional language (python, ts, rust, sql...), stored as the file's extension, so Download saves report.py. Phone: the same viewer from content; colours load there too."
+    },
+    {
+      "id": "viewer-data-tables",
+      "title": "Viewer: CSV, TSV, JSON and spreadsheets (xlsx, xls) as sortable, filterable tables; JSON trees",
+      "product": "chatgpt-desktop",
+      "upstream": ["chatgpt-desktop:feature:side-panel"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": [
+        "apaki/ui/tabular.js",
+        "apaki/ui/tableview.js",
+        "apaki/ui/jsontree.js",
+        "apaki/ui/sheets.js",
+        "apaki/ui/sheetworker.js",
+        "apaki/ui/vendor/sheetjs",
+        "test/apaki-viewers.test.js"
+      ],
+      "commits": [],
+      "sessions": [],
+      "verifiedAgainst": { "chatgpt-desktop": "26.1002.7124.0" },
+      "notes": "Sticky header, click to sort (up, down, as it was; numbers by value, empty cells last), a filter box (every word, any cell), widths fitted to the contents and draggable, numbers right aligned, a row number column that stays put, row and column counts, Copy as TSV of the rows shown, Download the file or the rows shown as CSV. Rows are drawn a screenful at a time: 100,000 rows sort in about a third of a second and scroll freely. Ctrl+F searches the data (find.js findAdapter), scrolls to each match and marks it. JSON: an array of records is a table (Table and Tree switch), anything else a collapsible tree with Expand all. Workbooks: SheetJS CE 0.20.3 (Apache-2.0, vendored) reads xlsx, xlsm, xlsb and xls in a worker, one table per sheet with sheet tabs under it. Phone: the same viewer from content."
+    },
+    {
+      "id": "viewer-charts",
+      "title": "Charts from a small JSON spec (show kind chart): line, bar, area, scatter, pie, in the app's theme",
+      "product": "chatgpt-desktop",
+      "upstream": ["chatgpt-desktop:feature:side-panel"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": [
+        "apaki/ui/chartspec.js",
+        "apaki/ui/chart.js",
+        "apaki/engine/artifacts.js",
+        "apaki/engine/apaki-tools.js",
+        "test/apaki-viewers.test.js"
+      ],
+      "commits": [],
+      "sessions": [],
+      "verifiedAgainst": { "chatgpt-desktop": "26.1002.7124.0" },
+      "notes": "Apaki's own SVG renderer, no library. Series, labels, [x, y] pairs or ISO dates (a time axis), stacked and horizontal bars, stacked areas, a donut for pie (more than 8 slices fold into Other), axis labels, prefix and suffix. The engine checks a spec at show time and tells Claude what is wrong. Eight categorical colours in a fixed order, checked for colour vision deficiencies against both themes' surfaces; thin marks, 4 px rounded bar ends, 2 px surface gaps; a legend for two or more series and labels at line ends when they fit; crosshair and tooltip on hover; Data shows the numbers as a table, Spec the JSON; zoom; Copy as a picture; Download as PNG (2x) or SVG with the theme's colours written in. Redraws on resize and theme change. Phone: the same chart, sized to the screen."
+    },
+    {
+      "id": "viewer-word-documents",
+      "title": "Viewer: Word documents (.docx) read only",
+      "product": "chatgpt-desktop",
+      "upstream": ["chatgpt-desktop:feature:side-panel"],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": [
+        "apaki/ui/docview.js",
+        "apaki/ui/vendor/mammoth",
+        "apaki/engine/artifacts.js",
+        "test/apaki-viewers.test.js"
+      ],
+      "commits": [],
+      "sessions": [],
+      "verifiedAgainst": { "chatgpt-desktop": "26.1002.7124.0" },
+      "notes": "mammoth 1.13.0 (BSD-2-Clause, vendored with a NOTICE of what it bundles) turns the file into HTML, which is rebuilt from an allowlist of elements: links keep http, https, mailto and in-document anchors (opened in Apaki's browser), pictures only data images from the file itself, no styles, no handlers. Headings, lists, tables, bold and italic, pictures. Up to 15 MB. PDF stays as it was (the browser's own viewer on the desktop, the phone's viewer from Open)."
+    },
+    {
+      "id": "viewer-toolbar",
+      "title": "One toolbar in every viewer: revisions and Changes, Find, Copy, Download, Open outside, Reload, Zoom",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": { "desktop": "supported", "phone": "supported" },
+      "where": [
+        "apaki/ui/artifacts.js",
+        "apaki/ui/textdiff.js",
+        "apaki/ui/find.js",
+        "apaki/ui/app.css",
+        "apaki/engine/engine.js",
+        "test/apaki-viewers.test.js"
+      ],
+      "commits": [],
+      "sessions": [],
+      "verifiedAgainst": {},
+      "notes": "Inside the viewer's own content, never the pane header, so a viewer can be mounted anywhere (the side panel work moves viewers out of the pane grid). Revisions step back and forward with who made each (the session, or you); Changes shows what changed from the revision before as a diff in the worktree diff's look (Myers on lines). Find opens Ctrl+F for the viewer; Copy copies text, the rows shown, or a picture; Download saves the file (desktop: op artifactSave into Downloads, shown in Explorer; phone: a download on the phone); Open outside and Reload as before; Zoom (buttons and Ctrl+wheel) for pictures, SVG and charts; Preview and Source for Markdown, HTML and SVG. Phone: everything but Open outside, which acts on the PC's screen."
+    },
+    {
+      "id": "viewer-canvas-edit-view-read",
+      "title": "Edit and send back (canvas): edit Markdown, text and code in the viewer; the session reads it with view_read",
+      "product": "claude-sdk",
+      "upstream": ["claude-sdk:hook-event:UserPromptSubmit", "claude-sdk:export:tool"],
+      "status": "partial",
+      "surfaces": { "desktop": "supported", "phone": "partial" },
+      "where": [
+        "apaki/ui/artifacts.js",
+        "apaki/ui/pane.js",
+        "apaki/engine/artifacts.js",
+        "apaki/engine/apaki-tools.js",
+        "apaki/engine/apaki-mcp-stdio.mjs",
+        "apaki/engine/remote-policy.js",
+        "apaki/engine/permissions.js",
+        "test/apaki-viewers.test.js"
+      ],
+      "commits": [],
+      "sessions": [],
+      "verifiedAgainst": { "claude-sdk": "0.3.295" },
+      "notes": "Edit (Ctrl+S saves, Esc cancels) makes a new revision marked as yours (op artifactEdit; a newer revision of the session's asks first, Save anyway). The conversation's card says \"edited by you\". The apaki MCP server gains view_read (read only, no prompt, kept for restricted phones): an artifact's current content and whether the user edited it since the session last showed or read it; no id lists this conversation's artifacts. A show that replaces an edit the session never read says so in its result. A UserPromptSubmit hook adds one line of context to the user's own next message when they edited something (nothing is sent by itself). Codex panes get view_read through the stdio tool server. Phone partial by decision: it reads every kind and says \"Read only on the phone\"; artifactEdit and artifactSave are PC_ONLY_OPS (remote-policy.js says why)."
+    },
+    {
       "id": "open-this-catcher",
       "title": "Catch \"open this\" commands and BROWSER and show them in Apaki",
       "product": "claude-sdk",

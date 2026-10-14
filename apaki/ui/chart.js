@@ -142,7 +142,7 @@ export function drawChart(spec, width, height, theme) {
       model.slices.push({ i, label, value: p.y, frac, a0: a, a1, color: colorOf(i, label) });
       a = a1;
     });
-    parts.push(`<text x="${cx}" y="${r1(cy + 2)}" text-anchor="middle" fill="${theme.ink}" font-size="${R > 90 ? 22 : 16}" font-weight="760">${escX(fmtY(total, true))}</text>`);
+    parts.push(`<text x="${cx}" y="${r1(cy + 2)}" text-anchor="middle" fill="${theme.ink}" font-size="${R > 90 ? 22 : 16}" font-weight="760">${escX(fmtY(total, Math.abs(total) >= 100000))}</text>`);
     parts.push(`<text x="${cx}" y="${r1(cy + (R > 90 ? 20 : 16))}" text-anchor="middle" fill="${theme.muted}" font-size="11" font-weight="560">total</text>`);
     Object.assign(model, { cx, cy, r0, R, total });
     return { svg: parts.join(''), model };
@@ -197,7 +197,9 @@ export function drawChart(spec, width, height, theme) {
   const xTickText = (v) => (spec.x.type === 'time' ? fmtTime(v, xUnit, spec.x.utc) : fmtNum(v, { compact: true }));
 
   // Margins: value tick labels on the value axis, category or x labels on the other, the axis titles, end labels.
-  const valueLabels = ticksV.map((t) => fmtY(t, true));
+  // Compact (12K) only when the axis reaches ten thousand, so one axis never mixes 8,000 and 10K.
+  const compactAxis = Math.max(...ticksV.map((t) => Math.abs(t))) >= 10000;
+  const valueLabels = ticksV.map((t) => fmtY(t, compactAxis));
   const valueLabelW = Math.max(...valueLabels.map((t) => textWidth(t, 11, 500, F)), 10);
   const yTitle = horiz ? spec.x.label : spec.y.label;
   const xTitle = horiz ? spec.y.label : spec.x.label;
@@ -328,7 +330,7 @@ export function drawChart(spec, width, height, theme) {
       if (spec.type === 'line' || spec.type === 'area') {
         for (const rn of runs) parts.push(`<path d="${rn.map((q, i) => `${i ? 'L' : 'M'}${r1(q.px)} ${r1(q.py)}`).join('')}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`);
         const real = pts.filter(Boolean);
-        if (real.length <= 30) for (const q of real) parts.push(`<circle cx="${r1(q.px)}" cy="${r1(q.py)}" r="4" fill="${color}" stroke="${theme.surface}" stroke-width="2"/>`);
+        if (real.length <= 16) for (const q of real) parts.push(`<circle cx="${r1(q.px)}" cy="${r1(q.py)}" r="4" fill="${color}" stroke="${theme.surface}" stroke-width="2"/>`);
         else if (real.length) { const q = real[real.length - 1]; parts.push(`<circle cx="${r1(q.px)}" cy="${r1(q.py)}" r="4" fill="${color}" stroke="${theme.surface}" stroke-width="2"/>`); }
       }
       if (spec.type === 'scatter') for (const q of pts) if (q) parts.push(`<circle cx="${r1(q.px)}" cy="${r1(q.py)}" r="4" fill="${color}" fill-opacity=".85" stroke="${theme.surface}" stroke-width="2"/>`);
@@ -380,10 +382,13 @@ export class ChartView {
     this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); });
   }
 
-  /** The size a chart is drawn at: the box's, at least 320 by 220, at most 1600 by 1000. */
+  /**
+   * The size a chart is drawn at: the box's, at least 300 by 220, at most 1600 by 1000, and never much taller than
+   * wide (a phone's tall screen would stretch a line chart into a ladder).
+   */
   size() {
-    const w = Math.min(1600, Math.max(320, this.el.clientWidth - 24));
-    const h = Math.min(1000, Math.max(220, this.el.clientHeight - 24));
+    const w = Math.min(1600, Math.max(300, this.el.clientWidth - 24));
+    const h = Math.min(1000, Math.max(220, this.el.clientHeight - 24), Math.max(260, Math.round(w * 0.9)));
     return [w, h];
   }
 

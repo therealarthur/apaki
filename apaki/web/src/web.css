@@ -507,6 +507,9 @@ body.web.native .pane:has(> .prompt-pin:not([hidden])) > .ground {
   -webkit-mask-image: linear-gradient(to bottom, transparent var(--pin-h, 0px), #000 calc(var(--pin-h, 0px) + 20px), #000 calc(100% - var(--composer-h, 120px) - 16px), transparent calc(100% - var(--composer-h, 120px) + 24px));
   mask-image: linear-gradient(to bottom, transparent var(--pin-h, 0px), #000 calc(var(--pin-h, 0px) + 20px), #000 calc(100% - var(--composer-h, 120px) - 16px), transparent calc(100% - var(--composer-h, 120px) + 24px));
 }
+/* A viewer has no prompt card under it (2026-10-13): its content (a chart, a table's last rows, a sheet's tabs) runs to
+   the bottom instead of fading out where a conversation's message box would be. */
+body.web.native .pane.viewer > .ground { -webkit-mask-image: none; mask-image: none; padding-bottom: env(safe-area-inset-bottom); }
 /* The todo checklist reads with the conversation on a phone, where replies are 16 px: the body step, not the desktop's small one. */
 body.web.native .todos { font-size: var(--fs-body); }
 @media (prefers-reduced-motion: reduce) {

@@ -11,6 +11,10 @@
  * searched again as it arrives. Escape closes the bar and clears the marks.
  *
  * openFind(pane) opens it (or selects its text when it is open already).
+ *
+ * A pane whose content is not all in the page (2026-10-13: a viewer's table draws only the rows in view) offers
+ * pane.findAdapter() -> { run(q, matchCase) -> { count, cur }, select(i), clear() } or null; the bar then searches
+ * through it (the table searches its data, scrolls to each match and marks it) instead of marking the page's text.
  */
 
 const DEBOUNCE_MS = 110;
@@ -95,6 +99,13 @@ export function openFind(pane) {
   let busy = false;
   let timer = null;
   let lastQ = '';
+  // The pane's own search (a virtual table), when it has one; its match count.
+  const adapter = typeof pane.findAdapter === 'function' ? pane.findAdapter() : null;
+  let aHits = 0;
+  const showAdapter = () => {
+    count.textContent = !input.value ? '' : aHits ? `${cur + 1} of ${aHits}` : 'No matches';
+    bar.classList.toggle('none', Boolean(input.value) && !aHits);
+  };
 
   const show = (scroll = true) => {
     hits.forEach((m, i) => m.classList.toggle('cur', i === cur));
@@ -107,6 +118,14 @@ export function openFind(pane) {
   };
   const run = ({ keep = false } = {}) => {
     const q = input.value;
+    if (adapter) {
+      const r = adapter.run(q, matchCase);
+      aHits = r.count;
+      cur = r.cur;
+      lastQ = q;
+      showAdapter();
+      return;
+    }
     const before = hits[cur];
     const at = before ? cur : 0;
     busy = true;
@@ -129,6 +148,13 @@ export function openFind(pane) {
     show(!keep);
   };
   const step = (d) => {
+    if (adapter) {
+      if (!aHits) return;
+      cur = (cur + d + aHits) % aHits;
+      adapter.select(cur);
+      showAdapter();
+      return;
+    }
     if (!hits.length) return;
     cur = (cur + d + hits.length) % hits.length;
     show();
@@ -136,6 +162,7 @@ export function openFind(pane) {
   const close = () => {
     clearTimeout(timer);
     observer.disconnect();
+    adapter?.clear();
     busy = true;
     try { clearMarks(root); } finally { busy = false; }
     bar.remove();
@@ -151,7 +178,8 @@ export function openFind(pane) {
     clearTimeout(timer);
     timer = setTimeout(() => run({ keep: true }), RESEARCH_MS);
   });
-  observer.observe(root, { childList: true, subtree: true, characterData: true });
+  // A pane that searches itself redraws its rows as it scrolls: those are not new text to search again.
+  if (!adapter) observer.observe(root, { childList: true, subtree: true, characterData: true });
 
   input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => run(), DEBOUNCE_MS); });
   input.addEventListener('keydown', (e) => {

@@ -197,7 +197,7 @@ export function createApakiTools({ store, sessionId = () => null, cwd = () => pr
       let body = got.buf.toString('utf8');
       let cut = '';
       if (body.length > VIEW_READ_MAX_CHARS) { cut = `\n[... ${body.length - VIEW_READ_MAX_CHARS} more characters not shown; the whole file is ${got.file}]`; body = body.slice(0, VIEW_READ_MAX_CHARS); }
-      return { ok: true, text: `${head}\n--- content ---\n${body}${cut}` };
+      return { ok: true, text: `${head}\nContent:\n${body}${cut}` };
     } catch (e) {
       return { ok: false, text: `Apaki could not read that: ${e.message || e}` };
     }
