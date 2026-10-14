@@ -29,15 +29,28 @@
  * pane whose pages are tabs; a session open anywhere is gone to, not opened
  * again; any pane can be maximized to the whole window and put back exactly.
  *
+ * The side panel (2026-10-13, apaki/docs/layout.md, sidepanel.js; Arthur: "the
+ * current way we display the browser is incredibly hectic ... have a dedicated
+ * pane that comes out from the right side of the app"): on the PC, viewers no
+ * longer take cells in the pane grid. Each tab has a panel docked to its right
+ * edge holding everything its conversations opened (browser pages, artifacts,
+ * changes, subagents and shells), grouped by conversation, following the
+ * focused one; it collapses to a slim rail and drags wider or narrower. A tab's
+ * viewers are its `items` (the tree holds conversations only); the phone, which
+ * shows one pane at a time, still pages through them after their conversation.
+ * Maximize fills the main area up to the panel.
+ *
  * The tabs and layout are saved in localStorage and come back at launch;
  * restored panes start Claude Code on their first message.
  *
  * Browser panes (2026-10-09, browser.js): web pages open in a built-in
- * browser pane beside the conversation that asked (Claude's browser_open,
- * show with a URL, a caught "start https://...", BROWSER, or a link card's
- * Open). The page is a native WebView2 the shell lays over the pane's body;
- * syncBrowsers() below tells it where the body is and hides it (with a
- * picture in its place) while a menu, a sheet or a drag needs the space.
+ * browser beside the conversation that asked (Claude's browser_open, show
+ * with a URL, a caught "start https://...", BROWSER, or a link card's Open);
+ * since 2026-10-13 in its tab's side panel. The page is a native WebView2 the
+ * shell lays over the browser's body; syncBrowsers() below tells it where the
+ * body is (the panel's content area), shows only the page on screen, and hides
+ * it (with a picture in its place) while a menu, a sheet or a drag needs the
+ * space. Hidden pages stay alive.
  */
 
 import { esc, md } from './markdown.js';
@@ -57,8 +70,10 @@ import { createAsks } from './askcard.js';
 import { DRAG_TASK, KIND_LABEL, TaskPane, closeTasksPanel, newTaskViewerId, specKey, taskGlyph, tasksPanel, tasksPanelPane } from './tasks.js';
 // Codex panes and rows (codex.js, 2026-10-12).
 import { CARD_ONLY_VIA } from './codex.js';
-import { ArtifactPane, isPublicWebUrl, newViewerId } from './artifacts.js';
-import { BrowserPane, samePage } from './browser.js';
+import { ArtifactPane, isPublicWebUrl, kindGlyph, newViewerId } from './artifacts.js';
+import { BrowserPane, samePage, tabInitial, tabTitle } from './browser.js';
+// The side panel of each tab (2026-10-13): its DOM; the rules are workspace.js's.
+import { SidePanel } from './sidepanel.js';
 // Tab names, automatic layouts, viewer links, maximize (2026-10-12, apaki/docs/layout.md).
 import * as W from './workspace.js';
 // Git worktrees (2026-10-12): the branch label, the Worktrees view, the actions, and the diff viewer.
@@ -115,6 +130,8 @@ const S = {
   info: new Map(), waiting: new Map(), foldersKnown: false,
   // The link accent of each conversation that has viewers (workspace.js accents), kept while it is free in its tab.
   accents: new Map(),
+  // The viewer in the side panel you last clicked into (2026-10-13): Ctrl+W, Ctrl+L and Ctrl+F act on it while it has the focus.
+  panelFocus: null,
 };
 
 /**
@@ -212,9 +229,15 @@ const activeTab = () => S.tabs.find((t) => t.id === S.active) || S.tabs[0] || nu
 const conversationsIn = (t) => L.ids(t?.root).map((id) => S.panes.get(id)).filter((p) => p && !p.isViewer);
 /** No room for another conversation: L.MAX_PANES of them, or MAX_LEAVES panes of any kind. */
 const tabFull = (t) => Boolean(t?.root) && (conversationsIn(t).length >= L.MAX_PANES || L.count(t.root) >= MAX_LEAVES);
-/** No room for another viewer, browser or task: only the layout's overall limit applies to them. */
-const tabFullForViewer = (t) => Boolean(t?.root) && L.count(t.root) >= MAX_LEAVES;
-const tabOf = (pane) => S.tabs.find((t) => L.has(t.root, pane.id)) || null;
+/**
+ * No room for another viewer, browser or task. Since 2026-10-13 viewers live in the tab's side panel (its `items`), as
+ * tabs there, so a tab always has room for one (before: L.count(t.root) >= MAX_LEAVES); kept so the callers read as before.
+ */
+const tabFullForViewer = () => false;
+/** The tab a pane is in: a conversation in its layout tree, a viewer in its side panel (items). */
+const tabOf = (pane) => S.tabs.find((t) => L.has(t.root, pane.id) || (t.items || []).includes(pane.id)) || null;
+/** Every pane of a tab: its conversations in layout order, then its viewers in the order they opened. */
+const panesIn = (t) => [...L.ids(t?.root), ...(t?.items || [])].map((id) => S.panes.get(id)).filter(Boolean);
 function focusedPane() {
   const t = activeTab();
   if (!t) return null;
@@ -224,18 +247,19 @@ const paneBySession = (id) => (id ? [...S.panes.values()].find((p) => p.sessionI
 
 /* ---------- arrangements (2026-10-12, workspace.js) ---------- */
 
-/** A tab's viewers: browsers, artifacts, diffs and tasks. */
-const viewersIn = (t) => L.ids(t?.root).map((id) => S.panes.get(id)).filter((p) => p && p.isViewer);
+/** A tab's viewers: browsers, artifacts, diffs and tasks (its side panel's items since 2026-10-13). */
+const viewersIn = (t) => (t?.items || []).map((id) => S.panes.get(id)).filter((p) => p && p.isViewer);
 /** The viewers that belong to conversation pane `id`, wherever they are. */
 const viewersOf = (id) => (id ? [...S.panes.values()].filter((v) => v.isViewer && v.sourcePane === id) : []);
 /** What the layout rules need to know of a pane: a viewer or not, and whose. */
 const paneInfo = (id) => { const p = S.panes.get(id); return { viewer: Boolean(p?.isViewer), source: p?.isViewer ? p.sourcePane || null : null }; };
 
-/** The size of a tab's stage for the layout rules; a tab in the background measures as the one in front. */
+/** The size of a tab's stage for the layout rules; a tab in the background measures as the one in front, less its side panel. */
 function stageBox(t) {
   let r = t?.stage?.getBoundingClientRect();
-  if (!r || r.width < 2 || r.height < 2) r = $('stages')?.getBoundingClientRect();
-  return { w: Math.round(r?.width || window.innerWidth || 1600), h: Math.round(r?.height || window.innerHeight || 900) };
+  let less = 0;
+  if (!r || r.width < 2 || r.height < 2) { r = $('stages')?.getBoundingClientRect(); less = panelSpace(t).w + panelSpace(t).g; }
+  return { w: Math.max(1, Math.round((r?.width || window.innerWidth || 1600) - less)), h: Math.round(r?.height || window.innerHeight || 900) };
 }
 
 /** Lays tab t out again by its arrangement (a tree you made by hand stays as it is). order: the panes in the order to use. */
@@ -261,8 +285,12 @@ function joinTab(t, id, { source = null } = {}) {
   rearrange(t, { order: [...L.ids(t.root), id] });
 }
 
-/** Takes pane `id` out of tab t; its arrangement closes the gap (a hand-made tree gives the space to the neighbours). */
+/**
+ * Takes pane `id` out of tab t; its arrangement closes the gap (a hand-made tree gives the space to the neighbours).
+ * A viewer leaves the tab's side panel instead (2026-10-13).
+ */
 function leaveTab(t, id) {
+  if ((t.items || []).includes(id)) { removeItem(t, id); return; }
   t.root = L.remove(t.root, id);
   if (t.max === id) t.max = null;
   if (t.root) rearrange(t);
@@ -270,6 +298,14 @@ function leaveTab(t, id) {
 
 /** Pane `v` takes the place of pane `oldId` in tab t (a viewer of the same kind reused, or a drop on a pane's middle). */
 function replaceInTab(t, oldId, v) {
+  // A viewer's place is in the side panel's items (2026-10-13): the new one takes the old one's place there.
+  const i = (t.items || []).indexOf(oldId);
+  if (i >= 0) {
+    t.items[i] = v.id;
+    t.panel?.mount(v.el);
+    for (const k of Object.keys(t.side.pick)) if (t.side.pick[k] === oldId) t.side.pick[k] = v.id;
+    if (S.panelFocus === oldId) S.panelFocus = v.id;
+  }
   t.root = L.mapLeaves(t.root, (lf) => (lf.pane === oldId ? L.leaf(v.id) : lf));
   if (t.focused === oldId) t.focused = v.id;
   if (t.max === oldId) t.max = v.id;
@@ -277,6 +313,328 @@ function replaceInTab(t, oldId, v) {
 
 /** You arranged tab t by hand (a pane dropped on an edge, two swapped): new panes now fit around what you made. */
 function madeCustom(t) { if (t) t.arrange = 'custom'; }
+
+/* ---------- the side panel (2026-10-13, apaki/docs/layout.md; sidepanel.js draws it, workspace.js has the rules) ----------
+   Arthur: "potentially have a dedicated pane that comes out from the right side of the app (that can be minimized and
+   opened, that has all the browsers that are opened ... when clicking on a session, it switches the tab in the browser
+   pane to the browser(s) specific to that session". Each tab keeps its viewers in `t.items` (the order they opened) and
+   the panel's state in `t.side`: open or collapsed to a rail, your width, the group wanted (a conversation's id or Other)
+   and the item picked in each group. The phone has no panel: its pager shows a tab's viewers as pages after their
+   conversation (phoneRoot). */
+
+const PANEL_GAP = 8;
+/** Keep at most this many artifacts, or tasks, of one conversation in the panel; the oldest gives way (its conversation remembers it). */
+const KEEP_PER_KIND = 8;
+
+/** A side panel's state: closed until something opens in the tab, at the default width (saved: open, width, group, pick). */
+function newSide(o = {}) {
+  return {
+    open: o.open === true,
+    // Something opened (or you opened or collapsed the panel) since the tab last had nothing in it: the next thing that
+    // opens does not open the panel by itself (Arthur: it "opens by itself the first time a session in that tab opens something").
+    seen: o.seen === true || o.open === true,
+    width: Number.isFinite(o.width) && o.width > 0 ? o.width : null,
+    group: typeof o.group === 'string' ? o.group : null,
+    pick: o.pick && typeof o.pick === 'object' && !Array.isArray(o.pick) ? Object.fromEntries(Object.entries(o.pick).filter(([k, v]) => typeof k === 'string' && typeof v === 'string')) : {},
+    // Groups where something new arrived that you have not looked at (drawn tinted until you do; not saved).
+    fresh: new Set(),
+  };
+}
+
+/** The main area's width, the box the panel's width is measured against. */
+const mainBoxW = () => Math.max(0, Math.round(($('stages')?.getBoundingClientRect().width || window.innerWidth || 1400) - 2 * PANEL_GAP));
+
+/** How much of the main area tab t's panel takes: { w, g, state }: its width and the gap beside it, none when it holds nothing. */
+function panelSpace(t) {
+  if (WEB || !t?.panel || !(t.items || []).length) return { w: 0, g: 0, state: 'none' };
+  if (!t.side.open) return { w: W.PANEL_RAIL, g: PANEL_GAP, state: 'rail' };
+  return { w: W.panelWidth(t.side.width, mainBoxW()), g: PANEL_GAP, state: 'open' };
+}
+
+/** The tab in front's panel space, as the CSS the stage and the maximized layer stop at (app.css --spw, --spg). */
+function applyPanelSpace(space = panelSpace(activeTab())) {
+  const s = document.body.style;
+  if (s.getPropertyValue('--spw') !== `${space.w}px`) s.setProperty('--spw', `${space.w}px`);
+  if (s.getPropertyValue('--spg') !== `${space.g}px`) s.setProperty('--spg', `${space.g}px`);
+}
+
+/** The group viewer v belongs to in tab t's panel: its conversation when that is in the same tab, else Other. */
+function groupOfViewer(t, v) {
+  const src = S.panes.get(v?.sourcePane);
+  return src && !src.isViewer && L.has(t?.root, src.id) ? src.id : W.OTHER;
+}
+
+/** Tab t's panel groups and entries (workspace.js panelGroups), from its conversations and its viewers. */
+function groupsOf(t) {
+  const items = viewersIn(t).map((v) => ({ id: v.id, kind: W.kindOf(v), source: v.sourcePane, pages: v.isBrowser ? v.tabs.map((x) => x.id) : undefined }));
+  return W.panelGroups(L.ids(t?.root), items);
+}
+
+/** What a group is called in the switcher: its conversation's title, or Other. */
+const groupLabel = (key) => (key === W.OTHER ? 'Other' : S.panes.get(key)?.title || 'Conversation');
+/** One or two letters for a group on the collapsed rail: the first letters of its first two words that say something. */
+const RAIL_SKIP = new Set(['the', 'a', 'an', 'of', 'to', 'for', 'in', 'on', 'and', 'with', 'at', 'by']);
+const initialsOf = (s) => {
+  const words = String(s || '').match(/[\p{L}\p{N}]+/gu) || [];
+  const said = words.filter((w, i) => i === 0 || !RAIL_SKIP.has(w.toLowerCase()));
+  return said.slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '·';
+};
+
+/** One entry as the panel draws it: its title, its mark (a page's initial, a kind's glyph) and its state. */
+function entryModel(e) {
+  const v = S.panes.get(e.item);
+  if (!v) return { ...e, title: 'Closed', mark: '' };
+  if (v.isBrowser) {
+    const st = (e.page && v.tab(e.page)?.st) || v.st || {};
+    const title = tabTitle(st);
+    return { ...e, title, mark: `<span class="sp-init">${esc(tabInitial(st))}</span>`, tip: `Page: ${title}${st.url && st.url !== 'about:blank' ? `\n${st.url}` : ''}`, loading: Boolean(st.loading), failed: Boolean(st.error) };
+  }
+  const kind = W.kindOf(v);
+  const word = { diff: 'Changes', task: 'Task', artifact: 'Artifact' }[kind] || 'Viewer';
+  const mark = kind === 'diff' ? GLYPH_WORKTREE : kind === 'task' ? taskGlyph(v.spec?.kind || 'task') : kindGlyph(v.art?.kind);
+  // The viewer's own header (its file, size) gives way to its toolbar in the panel, so the tab's tooltip names the file.
+  const where = v.art?.source || v.art?.path || v.spec?.path || '';
+  return { ...e, title: v.title || word, mark, tip: `${word}: ${v.title || ''}${where ? `\n${String(where).replace(/^[A-Za-z]:\\Users\\[^\\]+/, '~')}` : ''}` };
+}
+
+/** A group's tooltip: whose it is and what it holds ("2 pages, 1 artifact"). */
+function groupTip(g) {
+  const n = { browser: 0, artifact: 0, diff: 0, task: 0 };
+  for (const e of g.entries) n[e.kind] = (n[e.kind] || 0) + 1;
+  const parts = [n.browser && `${n.browser} page${n.browser === 1 ? '' : 's'}`, n.artifact && `${n.artifact} artifact${n.artifact === 1 ? '' : 's'}`, n.diff && `${n.diff} changes`, n.task && `${n.task} task${n.task === 1 ? '' : 's'}`].filter(Boolean).join(', ');
+  return g.key === W.OTHER ? `Other: ${parts}. Their conversations are closed or in no tab here.` : `${groupLabel(g.key)}: ${parts}. Click to show them and go to the conversation.`;
+}
+
+/** The viewer that has the panel's focus (you clicked into it), in the tab in front with its panel open; else null. */
+function panelFocused() {
+  const t = activeTab();
+  if (WEB || !t || !S.panelFocus || !t.side.open || !(t.items || []).includes(S.panelFocus)) return null;
+  return S.panes.get(S.panelFocus) || null;
+}
+
+/** Draws tab t's side panel (cheap: each part is replaced only when its HTML changed) and, in front, the space it takes. */
+function renderPanel(t) {
+  if (WEB || !t?.panel) return;
+  const space = panelSpace(t);
+  const groups = groupsOf(t);
+  const fp = S.panes.get(t.focused);
+  const focus = fp && !fp.isViewer ? fp.id : null;
+  const { group, note } = W.shownGroup(groups, { focus, want: t.side.group });
+  if (group && space.state === 'open') t.side.fresh.delete(group);
+  for (const k of [...t.side.fresh]) if (!groups.some((g) => g.key === k)) t.side.fresh.delete(k);
+  const g = groups.find((x) => x.key === group) || null;
+  const cur = W.currentEntry(g, t.side.pick[group], (id) => S.panes.get(id)?.active || null);
+  t.panel.render({
+    state: space.state,
+    width: space.w,
+    min: W.PANEL_MIN,
+    groups: groups.map((x) => ({ key: x.key, label: groupLabel(x.key), initial: initialsOf(groupLabel(x.key)), acc: x.conv && S.accents.has(x.conv) ? S.accents.get(x.conv) : null, count: x.entries.length, tip: groupTip(x), fresh: t.side.fresh.has(x.key) })),
+    group,
+    groupLabel: group ? groupLabel(group) : '',
+    entries: (g?.entries || []).map(entryModel),
+    entry: cur?.key || null,
+    shown: cur?.item || null,
+    note: note && group ? `"${fp?.title || 'This conversation'}" has nothing open here. Showing ${group === W.OTHER ? 'Other' : `"${groupLabel(group)}"`}.` : '',
+    focused: Boolean(t.id === S.active && panelFocused()),
+  });
+  if (t.id === S.active) applyPanelSpace(space);
+}
+
+let panelQueued = false;
+/** The tab in front's panel, drawn again on the next frame (titles, page loads, accents). */
+function panelSoon() {
+  if (WEB || panelQueued) return;
+  panelQueued = true;
+  const go = () => { panelQueued = false; renderPanel(activeTab()); };
+  if (document.visibilityState === 'visible') requestAnimationFrame(go); else setTimeout(go, 30);
+}
+
+/**
+ * Puts viewer v in tab t's side panel (the phone: among its pages). show: it becomes the entry its conversation shows.
+ * focus: you asked for it (a card's Open, a click): the panel opens on it. Claude's own opens (focus false) open the panel
+ * by itself only the first time something opens in the tab, come to the front only when they belong to the focused
+ * conversation (or the focused conversation has nothing open), are marked new otherwise, and never take the keyboard.
+ */
+function hostItem(t, v, { show = true, focus = false } = {}) {
+  if (!t || !v) return;
+  if (!t.items.includes(v.id)) t.items.push(v.id);
+  if (WEB) { layout(t); return; }
+  t.panel.mount(v.el);
+  const group = groupOfViewer(t, v);
+  if (show) t.side.pick[group] = v.id;
+  const focusOwn = groupsOf(t).some((g) => g.key === t.focused);
+  if (focus || group === t.focused || !focusOwn) { if (show) t.side.group = group; } else t.side.fresh.add(group);
+  if (focus || !t.side.seen) t.side.open = true;
+  if (!t.side.open) t.side.fresh.add(group);
+  t.side.seen = true;
+  renderPanel(t);
+  syncSoon();
+}
+
+/** Takes viewer `id` out of tab t's panel; a panel left with nothing hides, and opens by itself again next time. */
+function removeItem(t, id) {
+  const i = (t.items || []).indexOf(id);
+  if (i < 0) return;
+  t.items.splice(i, 1);
+  if (S.panelFocus === id) S.panelFocus = null;
+  for (const k of Object.keys(t.side.pick)) if (t.side.pick[k] === id) delete t.side.pick[k];
+  if (!t.items.length) { t.side.open = false; t.side.seen = false; t.side.group = null; t.side.fresh.clear(); }
+}
+
+/**
+ * At most KEEP_PER_KIND artifacts (or tasks) of one conversation stay in the panel: past that the oldest one not on
+ * screen closes, and its conversation keeps it in its reopen list (viewerClosed). Browser pages and changes are not trimmed.
+ */
+function trimKind(t, v) {
+  const kind = W.kindOf(v);
+  if (kind !== 'artifact' && kind !== 'task') return;
+  const group = groupOfViewer(t, v);
+  const same = viewersIn(t).filter((x) => x !== v && W.kindOf(x) === kind && groupOfViewer(t, x) === group);
+  while (same.length >= KEEP_PER_KIND) closePane(same.shift(), { confirmBusy: false });
+}
+
+/** Shows viewer v in its tab's panel (opened, on its conversation's group, on v), and the panel takes the focus. */
+function focusItem(v, { scroll = true } = {}) {
+  const t = tabOf(v);
+  if (!t) return;
+  if (t.id !== S.active) switchTab(t);
+  const group = groupOfViewer(t, v);
+  t.side.group = group;
+  t.side.pick[group] = v.id;
+  t.side.open = true;
+  t.side.seen = true;
+  S.panelFocus = v.id;
+  renderPanel(t);
+  if (scroll && v.isBrowser && document.activeElement?.closest?.('.pane') !== v.el) v.focusInto();
+  syncSoon();
+  save();
+}
+
+/** The panel's actions for tab t (sidepanel.js calls them). */
+function panelActions(t) {
+  return {
+    pickGroup: (key, o) => pickGroup(t, key, o),
+    pickEntry: (en) => pickEntry(t, en),
+    closeEntry: (en) => closeEntry(t, en),
+    closeGroup: (key) => closeGroup(t, key),
+    toggle: (open) => setPanelOpen(t, open),
+    resize: (w, done) => { t.side.width = W.panelWidth(w, mainBoxW()); renderPanel(t); if (done) save(); },
+    resetWidth: () => { t.side.width = null; renderPanel(t); save(); },
+    // Hovering a conversation's name in the panel rings its pane: the other end of the link.
+    hoverGroup: (key, on) => { const p = S.panes.get(key); if (p && !p.isViewer) p.el.classList.toggle('link-hi', on); },
+    menu: (anchor) => panelMenu(t, anchor),
+  };
+}
+
+/**
+ * A conversation picked in the switcher (or on the rail): the panel shows its things, and the conversation takes the
+ * focus too (Arthur: "when clicking on a session, it switches the tab in the browser pane"). Maximized on another
+ * conversation, the maximized view moves to it, so you stay in focus mode.
+ */
+function pickGroup(t, key, { open = false } = {}) {
+  t.side.group = key;
+  t.side.fresh.delete(key);
+  if (open) { t.side.open = true; t.side.seen = true; }
+  const p = S.panes.get(key);
+  if (p && !p.isViewer && tabOf(p) === t) {
+    if (t.max && t.max !== p.id) { S.panes.get(t.max)?.el.classList.remove('maxed'); t.max = p.id; layout(t); }
+    focusPane(p);
+  } else renderPanel(t);
+  syncSoon();
+  save();
+}
+
+/** An entry picked: it shows (a browser page becomes its browser's page on screen, and Claude's tools act on it). */
+function pickEntry(t, en) {
+  const v = S.panes.get(en.item);
+  if (!v) return;
+  const group = groupOfViewer(t, v);
+  t.side.group = group;
+  t.side.pick[group] = v.id;
+  if (en.page && v.isBrowser && v.active !== en.page) v.activate(en.page, { pick: true });
+  S.panelFocus = v.id;
+  renderPanel(t);
+  syncSoon();
+  save();
+}
+
+/** An entry closed (its x, a middle click, Delete, Ctrl+W in the panel): a page closes in its browser, a viewer closes; the next one shows. */
+function closeEntry(t, en) {
+  const v = S.panes.get(en.item);
+  if (!v) return;
+  if (en.page && v.isBrowser && v.tabs.length > 1) { v.closeTab(en.page); renderPanel(t); syncSoon(); save(); return; }
+  const group = groupOfViewer(t, v);
+  const next = W.neighbourEntry(groupsOf(t).find((x) => x.key === group), en.key);
+  if (next) t.side.pick[group] = next.item;
+  closePane(v, { confirmBusy: false });
+}
+
+/** The entry on screen in tab t's panel, if any. */
+function currentEntryOf(t) {
+  const groups = groupsOf(t);
+  const fp = S.panes.get(t.focused);
+  const { group } = W.shownGroup(groups, { focus: fp && !fp.isViewer ? fp.id : null, want: t.side.group });
+  return W.currentEntry(groups.find((x) => x.key === group), t.side.pick[group], (id) => S.panes.get(id)?.active || null);
+}
+
+/** Closes everything a group holds ("close all for this session"). */
+function closeGroup(t, key) {
+  for (const v of viewersIn(t).filter((x) => groupOfViewer(t, x) === key)) if (S.panes.has(v.id)) closePane(v, { confirmBusy: false });
+}
+
+/** Opens or collapses tab t's panel (its buttons, Ctrl+Shift+B, a drag nearly shut). Collapsed, a focused viewer gives the keyboard back. */
+function setPanelOpen(t, open) {
+  if (!t || WEB || !(t.items || []).length) return;
+  t.side.open = Boolean(open);
+  t.side.seen = true;
+  if (!open && S.panelFocus && t.items.includes(S.panelFocus)) {
+    S.panelFocus = null;
+    const p = focusedPane();
+    if (p && t.id === S.active) focusPane(p);
+  }
+  renderPanel(t);
+  syncSoon();
+  save();
+}
+
+/** Ctrl+Shift+B: the tab in front's panel, open or collapsed. */
+function togglePanel() {
+  const t = activeTab();
+  if (t?.items?.length) setPanelOpen(t, !t.side.open);
+}
+
+/** The panel's ... menu: close all for the conversation shown, close everything, collapse. */
+function panelMenu(t, anchor) {
+  const groups = groupsOf(t);
+  const fp = S.panes.get(t.focused);
+  const { group } = W.shownGroup(groups, { focus: fp && !fp.isViewer ? fp.id : null, want: t.side.group });
+  const g = groups.find((x) => x.key === group);
+  const n = groups.reduce((a, x) => a + x.entries.length, 0);
+  const items = [
+    ...(g ? [{ value: 'group', label: group === W.OTHER ? 'Close all under Other' : `Close all for "${groupLabel(group)}"`, hint: `${g.entries.length} open` }] : []),
+    ...(groups.length > 1 ? [{ value: 'all', label: 'Close everything in this panel', hint: `${n} open` }] : []),
+    { divider: true },
+    { value: 'hide', label: 'Collapse the panel', hint: 'Ctrl+Shift+B' },
+  ];
+  menu(anchor, items, {
+    above: false,
+    width: 300,
+    onPick: (v) => {
+      if (v === 'group' && group) closeGroup(t, group);
+      else if (v === 'all') for (const x of viewersIn(t)) if (S.panes.has(x.id)) closePane(x, { confirmBusy: false });
+      else if (v === 'hide') setPanelOpen(t, false);
+    },
+  });
+}
+
+/** The phone pages through a tab: each conversation followed by its viewers, then the viewers whose conversation is elsewhere. */
+function phoneRoot(t) {
+  const items = t.items || [];
+  if (!items.length) return t.root;
+  const order = W.groupsOf([...L.ids(t.root), ...items], paneInfo).flatMap((g) => [...(g.conv ? [g.conv] : []), ...g.viewers]);
+  if (order.length < 2) return order.length ? L.leaf(order[0]) : null;
+  return { type: 'split', dir: 'row', children: order.map(L.leaf), sizes: order.map(() => 1 / order.length) };
+}
 
 const host = {
   defaults: S.defaults,
@@ -477,11 +835,12 @@ function openDiff(spec) {
   }
   const src = focusedPane();
   const t = activeTab();
-  if (!t || !t.root || tabFullForViewer(t)) {
+  // An empty tab takes it too on the PC (its side panel shows it); the phone gives it a tab of its own, as before.
+  if (!t || (!t.root && WEB) || tabFullForViewer(t)) {
     const nt = createTab(null);
     const v = createDiffViewer({ ...spec, ownerPane: src && !src.isViewer ? src.id : null });
-    nt.root = L.leaf(v.id);
-    nt.focused = v.id;
+    hostItem(nt, v, { focus: true });
+    if (WEB) nt.focused = v.id;
     layout(nt);
     switchTab(nt);
     focusPane(v);
@@ -489,8 +848,9 @@ function openDiff(spec) {
     return v;
   }
   const v = createDiffViewer({ ...spec, ownerPane: src && !src.isViewer ? src.id : null });
-  // One diff viewer per conversation (2026-10-12): another worktree's changes take the place of the one it shows.
-  const old = src && !src.isViewer ? W.viewerFor([...S.panes.values()], 'diff', src.id) : null;
+  // One diff viewer per conversation on the phone (2026-10-12): another worktree's changes take the place of the one it
+  // shows. The PC's side panel gives each its own tab (2026-10-13).
+  const old = WEB && src && !src.isViewer ? W.viewerFor([...S.panes.values()], 'diff', src.id) : null;
   const ot = old && tabOf(old);
   if (old && ot) {
     replaceInTab(ot, old.id, v);
@@ -502,8 +862,8 @@ function openDiff(spec) {
     save();
     return v;
   }
-  joinTab(t, v.id, { source: v.sourcePane });
-  layout(t);
+  // Into the side panel of the conversation's tab (the phone: its pages, laid out again), shown, the panel open.
+  hostItem(t, v, { focus: true });
   focusPane(v);
   renderTabs();
   save();
@@ -562,13 +922,17 @@ function openViewerIn(art, { focus = false, auto = false } = {}) {
   const src = S.panes.get(art.sourcePane) || null;
   let v = viewers().find((x) => x.art.id === art.id && x.art.sessionId === art.sessionId) || null;
   const t = (v && tabOf(v)) || (src && tabOf(src)) || activeTab();
-  // The conversation's artifact viewer, wherever it is (one of a kind per conversation, 2026-10-12; a diff or task viewer is not one).
-  if (!v && art.sourcePane) v = W.viewerFor([...S.panes.values()], 'artifact', art.sourcePane);
+  // The conversation's artifact viewer, wherever it is: one of a kind per conversation on the phone (2026-10-12; a diff or
+  // task viewer is not one). The PC's side panel gives each artifact a tab of its own (2026-10-13).
+  if (!v && art.sourcePane && WEB) v = W.viewerFor([...S.panes.values()], 'artifact', art.sourcePane);
   const keep = document.activeElement;
   const restoreFocus = () => { if (!focus && keep && document.contains(keep) && document.activeElement !== keep) keep.focus({ preventScroll: true }); };
   if (v) {
     v.show(art);
-    if (focus) focusPane(v);
+    // A new revision comes to the front of the panel the way a new artifact does (hostItem), without the keyboard.
+    const vt = tabOf(v);
+    if (vt && !WEB) hostItem(vt, v, { focus });
+    if (focus) focusPane(v); else restoreFocus();
     renderTabs();
     save();
     return v;
@@ -577,8 +941,8 @@ function openViewerIn(art, { focus = false, auto = false } = {}) {
     if (auto && t) return null;
     const nt = createTab(null);
     v = createViewer(art);
-    nt.root = L.leaf(v.id);
-    nt.focused = v.id;
+    hostItem(nt, v, { focus: true });
+    if (WEB) nt.focused = v.id;
     layout(nt);
     switchTab(nt);
     focusPane(v);
@@ -586,11 +950,11 @@ function openViewerIn(art, { focus = false, auto = false } = {}) {
     return v;
   }
   v = createViewer(art);
-  // Beside its conversation, in that conversation's part of the layout, at the viewer's smaller share (2026-10-12).
-  joinTab(t, v.id, { source: v.sourcePane });
-  if (!t.focused) t.focused = v.id;
-  layout(t);
+  // In the side panel of its conversation's tab, under that conversation (2026-10-13); on the phone a page after it.
+  hostItem(t, v, { focus });
+  if (WEB && !t.focused) t.focused = v.id;
   if (focus) focusPane(v); else restoreFocus();
+  if (!WEB) trimKind(t, v);
   renderTabs();
   save();
   return v;
@@ -625,7 +989,15 @@ function openUrlHere(url, from = null, { focus = true, reason = 'card' } = {}) {
   // The conversation's browser pane already has this page in a tab: that tab is shown (2026-10-12, no page twice).
   const bp = owner ? W.viewerFor([...S.panes.values()], 'browser', owner.id) : null;
   const same = bp?.tabs.find((x) => samePage(x.st.url, url));
-  if (same) { bp.activate(same.id, { pick: true }); if (focus) focusPane(bp); syncSoon(); return; }
+  if (same) {
+    bp.activate(same.id, { pick: true });
+    // On the PC it is shown again in the side panel (opened when you asked for it).
+    const bt = tabOf(bp);
+    if (bt && !WEB) hostItem(bt, bp, { focus });
+    if (focus) focusPane(bp);
+    syncSoon();
+    return;
+  }
   // Otherwise a new tab in that pane (the shell makes the page, placeBrowser puts it in the pane), or the pane itself.
   invoke('browser', { cmd: 'open', args: { owner: owner?.id || null, url, focus, reason, hint: 'tab' } })
     .catch(() => send('openExternal', { url }));
@@ -666,6 +1038,9 @@ function placeBrowser(e) {
   let b = browserOf(e.id);
   if (b) {
     b.addTab(e.id, e.state, { show: true });
+    // On the PC the page comes to the front of the side panel (2026-10-13; hostItem decides how far, without the keyboard).
+    const bt = tabOf(b);
+    if (bt && !WEB) hostItem(bt, b, { focus: e.focus });
     if (e.focus) focusPane(b); else restoreFocus();
     renderTabs();
     save();
@@ -677,7 +1052,8 @@ function placeBrowser(e) {
   if (b) {
     b.addTab(e.id, e.state || { url: e.url || '' }, { show: true });
     const bt = tabOf(b);
-    if (bt && bt.max && bt.max !== b.id && bt.max !== owner.id) { bt.max = null; layout(bt); }
+    // Before 2026-10-13 a maximized other pane covered the browser and was put back here; the side panel sits beside it now.
+    if (bt && !WEB) hostItem(bt, b, { focus: e.focus });
     if (e.focus) focusPane(b); else restoreFocus();
     renderTabs();
     save();
@@ -688,14 +1064,15 @@ function placeBrowser(e) {
   b.attach(e.id, e.state);
   const t = (owner && tabOf(owner)) || activeTab();
   if (!t || tabFullForViewer(t)) {
-    const nt = createTab(L.leaf(b.id));
-    nt.focused = b.id;
+    const nt = createTab(null);
+    hostItem(nt, b, { focus: true });
+    if (WEB) nt.focused = b.id;
     layout(nt);
     if (e.focus || !t) { switchTab(nt); focusPane(b); }
   } else {
-    joinTab(t, b.id, { source: owner && !owner.isViewer ? owner.id : null });
-    if (!t.focused) t.focused = b.id;
-    layout(t);
+    // In the side panel of its conversation's tab, under that conversation (2026-10-13); on the phone a page after it.
+    hostItem(t, b, { focus: e.focus });
+    if (WEB && !t.focused) t.focused = b.id;
     if (e.focus) focusPane(b); else restoreFocus();
   }
   renderTabs();
@@ -712,15 +1089,20 @@ function overlays() {
 
 const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 
-/** Tells the shell where every browser pane's page goes, and which show. */
+/**
+ * Tells the shell where every browser's page goes, and which show. On the PC (2026-10-13) a page shows only when it is
+ * the entry on screen in the side panel of the tab in front, with the panel open: its place is the panel's content
+ * area. Every other page is hidden, and stays alive.
+ */
 function syncBrowsers() {
   syncQueued = false;
   const cover = overlays();
   const active = activeTab();
   for (const b of browsers()) {
     const t = tabOf(b);
-    // A maximized pane covers its tab (2026-10-12): the tab's other pages step aside, being native windows on top.
-    const here = Boolean(t && t === active && b.el.isConnected && (!t.max || t.max === b.id));
+    // The phone (no built-in browser of its own) keeps the old rule; a maximized pane covers nothing of the panel.
+    const shown = WEB ? (!t?.max || t.max === b.id) : Boolean(t?.panel && t.side.open && t.panel.shown === b.id && b.el.classList.contains('sp-on'));
+    const here = Boolean(t && t === active && b.el.isConnected && shown);
     const r = b.$.body.getBoundingClientRect();
     const covered = cover === 'all' || (Array.isArray(cover) && cover.some((c) => overlaps(c, r)));
     b.place(here && !covered, here && covered ? 'overlay' : 'away');
@@ -813,9 +1195,12 @@ function shortcut(key, shift) {
   const k = String(key).toLowerCase();
   // Ctrl+B from inside a browser pane (it forwards keys): the sidebar.
   if (k === 'b' && !shift && !WEB) { setRailCollapsed(!S.railCollapsed); return; }
+  // Ctrl+Shift+B (2026-10-13): the tab's side panel, open or collapsed (src/browser.rs forwards it from inside a page).
+  if (k === 'b' && shift && !WEB) { togglePanel(); return; }
   if (k === 't') { addTab(); return; }
-  if (k === 'w') { const p = focusedPane(); if (p) closePane(p); return; }
-  if (k === 'l') { const p = focusedPane(); if (p?.isBrowser) p.focusAddress(); return; }
+  // Ctrl+W with the side panel's focus closes what it shows (a page, a viewer); otherwise the focused pane.
+  if (k === 'w') { const v = panelFocused(); const t = activeTab(); const en = v && t ? currentEntryOf(t) : null; if (en) { closeEntry(t, en); return; } const p = focusedPane(); if (p) closePane(p); return; }
+  if (k === 'l') { const p = panelFocused() || focusedPane(); if (p?.isBrowser) p.focusAddress(); return; }
   if (key === 'Tab') {
     const i = S.tabs.indexOf(activeTab());
     switchTab(S.tabs[(i + (shift ? -1 : 1) + S.tabs.length) % S.tabs.length]);
@@ -827,10 +1212,14 @@ function shortcut(key, shift) {
   if (/^[1-6]$/.test(k)) { const id = L.ids(activeTab()?.root)[Number(k) - 1]; if (id) focusNth(S.panes.get(id)); }
 }
 
-/** Ctrl+1..6: that pane, with a maximized other pane of the tab put back first. */
+/**
+ * Ctrl+1..6: that conversation. With another one maximized, the maximized view moves to it (2026-10-13, Arthur: "if a
+ * session has several panes you should be able to navigate those panes"), so you stay in focus mode; before, the
+ * maximized pane was put back first.
+ */
 function focusNth(p) {
   const t = p && tabOf(p);
-  if (t?.max && t.max !== p.id) { t.max = null; layout(t); save(); }
+  if (t?.max && t.max !== p.id) { S.panes.get(t.max)?.el.classList.remove('maxed'); t.max = WEB ? null : p.id; layout(t); save(); }
   focusPane(p);
 }
 
@@ -847,12 +1236,18 @@ function createPane(settings = {}) {
  * A tab. name: the one you gave it ('' for the automatic name, workspace.js tabLabel); arrange: how new panes are laid
  * out ('auto', a preset, or 'custom' for a tree you made by hand); max: the pane maximized to the whole window, if any.
  */
-function createTab(root = null, { name = '', arrange = 'auto', max = null, shape = null } = {}) {
+function createTab(root = null, { name = '', arrange = 'auto', max = null, shape = null, side = null } = {}) {
   const stage = el('div', 'stage');
   stage.append(el('div', 'drop-hint'));
   $('stages').append(stage);
   // shape: 'wide' or 'tall', what its arrangement was made for (a saved tab laid out for another shape re-flows when shown).
-  const t = { id: newTabId(), root, focused: root ? L.ids(root)[0] : null, stage, name, arrange: W.ARRANGEMENTS.includes(arrange) || arrange === 'custom' ? arrange : 'auto', max, shape: shape === 'wide' || shape === 'tall' ? shape : null };
+  // items and side (2026-10-13): the viewers in its side panel, and the panel's state (newSide).
+  const t = { id: newTabId(), root, focused: root ? L.ids(root)[0] : null, stage, name, arrange: W.ARRANGEMENTS.includes(arrange) || arrange === 'custom' ? arrange : 'auto', max, shape: shape === 'wide' || shape === 'tall' ? shape : null, items: [], side: newSide(side || {}) };
+  // The side panel sits beside the stage, at the right of the main area; the phone has none (its pager shows viewers as pages).
+  if (!WEB) {
+    t.panel = new SidePanel(panelActions(t));
+    $('stages').append(t.panel.el);
+  }
   wireStage(t);
   S.tabs.push(t);
   return t;
@@ -882,7 +1277,10 @@ function addTab({ session = null, cwd = null, activate = true } = {}) {
 function switchTab(t) {
   if (!t) return;
   S.active = t.id;
-  for (const x of S.tabs) x.stage.classList.toggle('on', x === t);
+  for (const x of S.tabs) { x.stage.classList.toggle('on', x === t); x.panel?.el.classList.toggle('on', x === t); }
+  // Its side panel, and the space it takes (the stage and a maximized pane stop at it).
+  renderPanel(t);
+  if (WEB || !t.panel) applyPanelSpace({ w: 0, g: 0 });
   // The tab in front: its own maximized pane (or none), and its arrangement fitted to the window's shape now.
   if (t.root && t.arrange !== 'custom' && t.shape && t.shape !== W.shapeOf(stageBox(t).w, stageBox(t).h) && rearrange(t)) layout(t);
   syncMax();
@@ -909,12 +1307,22 @@ function focusPane(p, { scroll = true } = {}) {
   if (!p) return;
   const t = tabOf(p);
   if (!t) return;
+  // On the PC a viewer lives in its tab's side panel (2026-10-13): it shows there and the panel takes the focus; the
+  // tab's focused conversation stays the one it was.
+  if (p.isViewer && !WEB) { focusItem(p, { scroll }); return; }
   p.checkDrift?.();
   if (t.id !== S.active) switchTab(t);
   if (t.focused !== p.id || !p.el.classList.contains('focused')) {
     t.focused = p.id;
-    for (const id of L.ids(t.root)) S.panes.get(id)?.el.classList.toggle('focused', id === p.id);
+    for (const x of panesIn(t)) x.el.classList.toggle('focused', x.id === p.id);
     save();
+  }
+  // The side panel follows the focused conversation (Arthur: "when clicking on a session, it switches the tab in the
+  // browser pane to the browser(s) specific to that session"); one with nothing open keeps the panel as it was, with a note.
+  if (!WEB && !p.isViewer) {
+    S.panelFocus = null;
+    t.side.group = W.followFocus(groupsOf(t), p.id, t.side.group);
+    renderPanel(t);
   }
   if (p.unread) { p.unread = false; p.el.classList.remove('unread'); }
   // On a phone the keyboard would cover the conversation it just opened: it comes up when the person taps the box (2026-10-10).
@@ -969,17 +1377,20 @@ function closePane(p, { confirmBusy = true, viewers = 'ask' } = {}) {
   p.destroy();
   if (p.isViewer) { viewerClosed(p); refreshArtifactButtons(); }
   if (!t) return;
-  // The tab's arrangement closes the gap (2026-10-12); a tree you made by hand gives the space to the neighbours.
+  // The tab's arrangement closes the gap (2026-10-12); a tree you made by hand gives the space to the neighbours. A viewer
+  // leaves its tab's side panel (2026-10-13).
   leaveTab(t, p.id);
   if (t.focused === p.id) t.focused = (p.isViewer && p.sourcePane && L.has(t.root, p.sourcePane) ? p.sourcePane : null) || L.ids(t.root)[0] || null;
-  if (!t.root && S.tabs.length > 1) { closeTab(t, { confirmBusy: false }); return; }
+  if (!t.root && !t.items.length && S.tabs.length > 1) { closeTab(t, { confirmBusy: false }); return; }
+  // On the PC a viewer closing changes only the panel: the conversations keep their places and the keyboard stays where it is.
+  if (p.isViewer && !WEB) { renderPanel(t); renderLinks(); renderTabs(); syncSoon(); save(); return; }
   layout(t);
   const next = S.panes.get(t.focused);
   if (next) focusPane(next); else { renderTabs(); save(); }
 }
 
 function closeTab(t, { confirmBusy = true } = {}) {
-  const panes = L.ids(t.root).map((id) => S.panes.get(id)).filter(Boolean);
+  const panes = panesIn(t);
   if (confirmBusy && panes.some((p) => p.busy) && !window.confirm('A pane in this tab is still working. Stop it and close the tab?')) return;
   for (const p of panes) { if (!p.isViewer) send(p.following ? 'unfollow' : 'close', { paneId: p.id }); S.panes.delete(p.id); asks.drop(p); p.destroy(); }
   syncWaiting();
@@ -988,6 +1399,7 @@ function closeTab(t, { confirmBusy = true } = {}) {
   const i = S.tabs.indexOf(t);
   S.tabs.splice(i, 1);
   t.stage.remove();
+  t.panel?.destroy();
   if (!S.tabs.length) { addTab(); return; }
   if (S.active === t.id) switchTab(S.tabs[Math.max(0, i - 1)]);
   renderTabs();
@@ -1098,17 +1510,23 @@ let startUI = null;
 
 /** Renders a tab's layout tree, moving the existing pane elements (their state stays). */
 function layout(t) {
+  // The tree drawn: the tab's conversations on the PC (its viewers are in the side panel); on the phone, whose pager pages
+  // through a tab, every pane with each conversation's viewers after it (phoneRoot, 2026-10-13).
+  const tree = WEB ? phoneRoot(t) : t.root;
   const scrolls = new Map();
-  for (const id of L.ids(t.root)) { const p = S.panes.get(id); if (p) scrolls.set(p, p.$.ground.scrollTop); }
+  for (const id of L.ids(tree)) { const p = S.panes.get(id); if (p) scrolls.set(p, p.$.ground.scrollTop); }
   const hint = t.stage.querySelector('.drop-hint');
   t.stage.replaceChildren(hint);
-  t.stage.classList.toggle('multi', L.count(t.root) > 1);
-  if (!t.root) {
+  t.stage.classList.toggle('multi', L.count(tree) > 1);
+  renderPanel(t);
+  if (!tree) {
     const empty = el('div', 'stage-empty', `${MARK_SVG.replace('class="m-mark"', 'class="m-mark empty-mark"')}<p>Drag a session here from the left, or</p>`);
     const b = el('button', 'new', 'New conversation');
     b.onclick = () => { const p = createPane({}); t.root = L.leaf(p.id); t.focused = p.id; layout(t); p.open(null, { warm: true }); focusPane(p); };
     empty.append(b);
     t.stage.append(empty);
+    if (t.id === S.active) syncMax();
+    syncSoon();
     return;
   }
   if (t.max && !L.has(t.root, t.max)) t.max = null;
@@ -1125,12 +1543,12 @@ function layout(t) {
     });
     return box;
   };
-  const rootEl = build(t.root);
+  const rootEl = build(tree);
   rootEl.style.flex = '1 1 0px';
   t.stage.append(rootEl);
   if (t.id === S.active) syncMax();
   for (const [p, top] of scrolls) p.$.ground.scrollTop = top;
-  for (const id of L.ids(t.root)) S.panes.get(id)?.el.classList.toggle('focused', id === t.focused);
+  for (const id of L.ids(tree)) S.panes.get(id)?.el.classList.toggle('focused', id === t.focused);
   if (!t.shape && t.arrange !== 'custom') t.shape = W.shapeOf(stageBox(t).w, stageBox(t).h);
   renderLinks();
   syncSoon();
@@ -1169,12 +1587,17 @@ function syncMax() {
   }
   document.body.classList.toggle('pane-max', Boolean(p) && !WEB);
   for (const x of S.panes.values()) if (x !== p) x.el.classList.remove('maxed');
+  // The layer stops at the tab's side panel (2026-10-13: "the session pane take full screen up till the browser pane").
+  if (!WEB) applyPanelSpace(panelSpace(t));
   syncMaxButtons();
 }
 
-/** Maximizes pane p to the whole window, or puts it back where it was. */
+/**
+ * Maximizes pane p to the whole window up to its tab's side panel, or puts it back where it was. A viewer is not
+ * maximized: it lives in the side panel, which stays beside the maximized conversation.
+ */
 function toggleMaximize(p) {
-  if (WEB || !p) return;
+  if (WEB || !p || p.isViewer) return;
   const t = tabOf(p);
   if (!t) return;
   const was = t.max;
@@ -1187,22 +1610,52 @@ function toggleMaximize(p) {
   save();
 }
 
-/** Every pane's maximize button says what it does now. */
+/** Every pane's maximize button says what it does now; a maximized conversation's previous and next say where they go. */
 function syncMaxButtons() {
   for (const p of S.panes.values()) {
     const b = p.el.querySelector(':scope > .pane-bar .max-btn');
     if (!b) continue;
     const on = p.el.classList.contains('maxed');
     b.classList.toggle('on', on);
-    b.title = on ? 'Restore to its place in the tab (Ctrl+Shift+Enter)' : 'Maximize to the whole window (Ctrl+Shift+Enter, or double-click the header)';
+    b.title = on ? 'Restore to its place in the tab (Ctrl+Shift+Enter)' : 'Maximize up to the side panel (Ctrl+Shift+Enter, or double-click the header)';
     b.setAttribute('aria-label', on ? 'Restore' : 'Maximize');
+    const nav = p.el.querySelector(':scope > .pane-bar .max-nav');
+    if (!nav) continue;
+    const ids = on ? L.ids(tabOf(p)?.root) : [];
+    nav.hidden = ids.length < 2;
+    if (nav.hidden) continue;
+    const i = ids.indexOf(p.id);
+    const prev = S.panes.get(W.stepMax(ids, p.id, -1));
+    const next = S.panes.get(W.stepMax(ids, p.id, 1));
+    nav.querySelector('.mx-n').textContent = `${i + 1} of ${ids.length}`;
+    const pb = nav.querySelector('.mx-prev');
+    const nb = nav.querySelector('.mx-next');
+    pb.title = `Previous conversation: "${prev?.title || ''}" (Ctrl+${ids.indexOf(prev?.id) + 1})`;
+    nb.title = `Next conversation: "${next?.title || ''}" (Ctrl+${ids.indexOf(next?.id) + 1})`;
+    pb.setAttribute('aria-label', `Previous conversation: ${prev?.title || ''}`);
+    nb.setAttribute('aria-label', `Next conversation: ${next?.title || ''}`);
   }
+}
+
+/** Maximized: the maximized view moves to the previous (d = -1) or next (d = 1) conversation of the tab (2026-10-13). */
+function stepMaximize(p, d) {
+  const t = p && tabOf(p);
+  if (!t?.max) return;
+  const next = S.panes.get(W.stepMax(L.ids(t.root), t.max, d));
+  if (!next || next.id === t.max) return;
+  S.panes.get(t.max)?.el.classList.remove('maxed');
+  t.max = next.id;
+  layout(t);
+  focusPane(next);
+  save();
 }
 
 /* ---------- pane headers: maximize, and the links between a conversation and its viewers (2026-10-12) ---------- */
 
 const ICON_MAX = '<svg class="i-grow" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/></svg><svg class="i-shrink" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 6.5h-4v-4M9.5 6.5l4.5-4.5M2.5 9.5h4v4M6.5 9.5 2 14"/></svg>';
 const ICON_LINK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.6 9.4a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.9.9"/><path d="M9.4 6.6a2.6 2.6 0 0 0-3.7 0L3.5 8.8a2.6 2.6 0 0 0 3.7 3.7l.9-.9"/></svg>';
+const ICON_PREV = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>';
+const ICON_NEXT = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>';
 
 /**
  * Adds what every pane's header gets from the window: a maximize button before its close button, a double click on
@@ -1219,9 +1672,18 @@ function decorate(p) {
     mx.type = 'button';
     mx.onclick = (e) => { e.stopPropagation(); toggleMaximize(p); };
     bar.insertBefore(mx, close || null);
+    // Maximized, a conversation's header gets previous and next (2026-10-13): the other conversations of the tab without
+    // restoring first. Hidden otherwise (syncMaxButtons).
+    if (!p.isViewer) {
+      const nav = el('div', 'max-nav', `<button type="button" class="icon-btn mx-prev">${ICON_PREV}</button><span class="mx-n" aria-live="polite"></span><button type="button" class="icon-btn mx-next">${ICON_NEXT}</button>`);
+      nav.hidden = true;
+      nav.querySelector('.mx-prev').onclick = (e) => { e.stopPropagation(); stepMaximize(p, -1); };
+      nav.querySelector('.mx-next').onclick = (e) => { e.stopPropagation(); stepMaximize(p, 1); };
+      bar.insertBefore(nav, mx);
+    }
     bar.addEventListener('dblclick', (e) => {
       // The header's empty space only: the title renames, buttons and the address field keep their own double click.
-      if (e.target.closest('button, input, textarea, select, a, .title, .grip, .web-tabs, .link-chip, .meta-line')) return;
+      if (e.target.closest('button, input, textarea, select, a, .title, .grip, .web-tabs, .link-chip, .meta-line, .max-nav')) return;
       toggleMaximize(p);
     });
   }
@@ -1255,6 +1717,8 @@ function linkHover(p, on) {
   const others = p.isViewer ? [S.panes.get(p.sourcePane)].filter(Boolean) : viewersOf(p.id);
   for (const o of others) o.el.classList.toggle('link-hi', on);
   p.el.classList.toggle('link-from', on);
+  // On the PC a conversation's viewers are in the side panel: its name there lights up too (2026-10-13).
+  if (!WEB && !p.isViewer) tabOf(p)?.panel?.hi(p.id, on);
 }
 
 /** A viewer's chip: to its conversation (put back from maximized if needed), or, once that is closed, its session. */
@@ -1265,11 +1729,30 @@ function goToSource(v) {
   if (v.sourceSession) host.showSession(v.sourceSession);
 }
 
-/** A conversation's mark: its viewers in turn. */
+/**
+ * A conversation's mark: its viewers in turn. On the PC (2026-10-13) the side panel opens on its things; when it shows
+ * them already, the mark steps to the next one there.
+ */
 function goToViewers(p) {
   linkHover(p, false);
   const vs = viewersOf(p.id);
   if (!vs.length) return;
+  const t = tabOf(p);
+  if (!WEB && t?.panel && vs.some((v) => tabOf(v) === t)) {
+    const here = vs.filter((v) => tabOf(v) === t);
+    const groups = groupsOf(t);
+    const shown = t.side.open && W.shownGroup(groups, { focus: t.focused, want: t.side.group }).group === p.id;
+    const cur = S.panes.get(t.side.pick[p.id]);
+    const next = shown ? here[(here.indexOf(cur) + 1) % here.length] : (cur && here.includes(cur) ? cur : here[0]);
+    t.side.group = p.id;
+    t.side.pick[p.id] = next.id;
+    t.side.open = true;
+    t.side.seen = true;
+    renderPanel(t);
+    syncSoon();
+    save();
+    return;
+  }
   const f = focusedPane();
   const next = vs[(vs.indexOf(f) + 1) % vs.length];
   revealPane(next);
@@ -1303,6 +1786,9 @@ function renderLinks() {
       const name = live ? src.title : p.sourceTitle || '';
       chip.hidden = !name;
       chip.classList.toggle('gone', !live);
+      // In the PC's side panel the switcher names the conversation, so the chip shows only for a viewer whose conversation
+      // is closed (gone, its click reopens it) or in another tab (away, its click goes there): app.css (2026-10-13).
+      chip.classList.toggle('away', Boolean(live) && tabOf(src) !== tabOf(p));
       if (live && accOf.has(src.id)) p.el.classList.add(`acc-${accOf.get(src.id)}`);
       const t = chip.querySelector('.lc-t');
       if (t.textContent !== name) t.textContent = name;
@@ -1316,10 +1802,12 @@ function renderLinks() {
       if (vs.length && accOf.has(p.id)) p.el.classList.add(`acc-${accOf.get(p.id)}`);
       mark.querySelector('.lm-n').textContent = vs.length > 1 ? String(vs.length) : '';
       const names = vs.map((v) => `${W.kindOf(v) === 'browser' ? 'Browser' : W.kindOf(v) === 'diff' ? 'Changes' : W.kindOf(v) === 'task' ? 'Task' : 'Viewer'}: ${v.title}`);
-      mark.title = vs.length ? `${vs.length === 1 ? 'Its viewer' : `Its ${vs.length} viewers`} (click to go there; hover to see):\n${names.join('\n')}` : '';
+      mark.title = vs.length ? `${vs.length === 1 ? 'Its viewer' : `Its ${vs.length} viewers`} (click to ${WEB ? 'go there' : 'show them in the side panel'}; hover to see):\n${names.join('\n')}` : '';
       mark.setAttribute('aria-label', vs.length === 1 ? 'Go to its viewer' : `Go to its ${vs.length} viewers`);
     }
   }
+  // The side panel names conversations in their accents: drawn again with them.
+  panelSoon();
 }
 
 /**
@@ -1331,7 +1819,8 @@ function revealPane(p) {
   if (!p) return;
   const plan = W.goTo({
     active: S.active,
-    tabs: S.tabs.map((t) => ({ id: t.id, ids: L.ids(t.root), max: t.max || null })),
+    // A viewer on the PC is in a side panel beside any maximized pane: focusPane shows it there, nothing is restored.
+    tabs: S.tabs.map((t) => ({ id: t.id, ids: [...L.ids(t.root), ...(WEB ? t.items || [] : [])], max: t.max || null })),
     paneOf: () => p.id,
   }, p.id);
   const t = plan && S.tabs.find((x) => x.id === plan.tab);
@@ -1383,6 +1872,8 @@ function layoutMenu(anchor) {
 // you dragged into shape, and your gutter drags, stay as they are otherwise).
 new ResizeObserver(() => {
   const t = activeTab();
+  // The side panel's width is a share of the main area, held in its limits (workspace.js panelWidth).
+  renderPanel(t);
   if (!t?.root || t.arrange === 'custom' || !t.shape) return;
   const box = stageBox(t);
   if (W.shapeOf(box.w, box.h) !== t.shape && rearrange(t)) { layout(t); save(); }
@@ -1559,6 +2050,8 @@ function dropSession(t, z, s) {
   if (!s) return;
   const existing = paneBySession(s.id);
   if (existing) { revealPane(existing); existing.note('This session is already open here.'); return; }
+  // A viewer in the side panel (2026-10-13) has no place in the layout to give up: the session joins the layout instead.
+  if (z.where === 'center' && z.pane?.isViewer && (t.items || []).includes(z.pane.id)) z = { where: 'join', pane: S.panes.get(z.pane.sourcePane) || null };
   if (z.where === 'center' && z.pane.isViewer) {
     // Dropped on a viewer: the session takes the viewer's place.
     const v = z.pane;
@@ -1595,6 +2088,17 @@ function dropSession(t, z, s) {
 function dropPane(t, z, moving) {
   if (!moving) return;
   const from = tabOf(moving);
+  // A viewer moves into this tab's side panel (2026-10-13; on the phone, among its pages).
+  if (moving.isViewer && from && (from.items || []).includes(moving.id)) {
+    if (from === t) { focusPane(moving); return; }
+    removeItem(from, moving.id);
+    hostItem(t, moving, { focus: true });
+    if (!from.root && !from.items.length && S.tabs.length > 1) { S.tabs.splice(S.tabs.indexOf(from), 1); from.stage.remove(); from.panel?.destroy(); } else layout(from);
+    layout(t);
+    focusPane(moving);
+    save();
+    return;
+  }
   if (z.where === 'center' && from === t) {
     t.root = L.swap(t.root, moving.id, z.pane.id);
     madeCustom(t);
@@ -1609,7 +2113,9 @@ function dropPane(t, z, moving) {
   t.focused = moving.id;
   if (from && from !== t) {
     if (from.focused === moving.id) from.focused = L.ids(from.root)[0] || null;
-    if (!from.root) { S.tabs.splice(S.tabs.indexOf(from), 1); from.stage.remove(); } else layout(from);
+    // Its things in the side panel go with it to the other tab (2026-10-13).
+    for (const v of viewersOf(moving.id)) if ((from.items || []).includes(v.id)) { removeItem(from, v.id); hostItem(t, v, { show: false }); }
+    if (!from.root && !(from.items || []).length) { S.tabs.splice(S.tabs.indexOf(from), 1); from.stage.remove(); from.panel?.destroy(); } else layout(from);
   }
   layout(t);
   focusPane(moving);
@@ -1639,7 +2145,8 @@ function projectOfPane(p) {
 
 /** What workspace.js tabLabels needs of a tab: your name, its conversations' projects and titles, its viewers' titles. */
 function tabModel(t) {
-  const panes = L.ids(t.root).map((id) => S.panes.get(id)).filter(Boolean);
+  // Its conversations, then the viewers in its side panel (2026-10-13).
+  const panes = panesIn(t);
   return {
     name: t.name || '',
     convs: panes.filter((p) => !p.isViewer).map((p) => ({ project: projectOfPane(p), title: p.title })),
@@ -1697,7 +2204,8 @@ function renderTabs() {
   bar.innerHTML = '';
   const names = tabNames();
   for (const [ti, t] of S.tabs.entries()) {
-    const panes = L.ids(t.root).map((id) => S.panes.get(id)).filter(Boolean);
+    // Its conversations, then the viewers in its side panel (2026-10-13).
+    const panes = panesIn(t);
     // The number on a tab counts its conversations, not its viewers, browsers or tasks (2026-10-11).
     const convs = panes.filter((p) => !p.isViewer).length;
     const label = names[ti];
@@ -2191,10 +2699,11 @@ function openTask(spec, { tab = false, inTab = null, focus = true } = {}) {
   const src = S.panes.get(spec.ownerPane) || paneBySession(spec.sessionId) || null;
   const t = tab ? null : inTab || (src && tabOf(src)) || activeTab();
   if (!t || tabFullForViewer(t)) {
+    // A tab of its own (Ctrl+click, the + of the tab row): its side panel shows it (the phone: its one page).
     const nt = createTab(null);
     const v = createTaskViewer(spec);
-    nt.root = L.leaf(v.id);
-    nt.focused = v.id;
+    hostItem(nt, v, { focus: true });
+    if (WEB) nt.focused = v.id;
     layout(nt);
     switchTab(nt);
     focusPane(v);
@@ -2202,8 +2711,9 @@ function openTask(spec, { tab = false, inTab = null, focus = true } = {}) {
     return v;
   }
   const v = createTaskViewer(spec);
-  // One task viewer per conversation (2026-10-12): another of its subagents or shells takes that viewer's place.
-  const old = src && !src.isViewer && !inTab ? W.viewerFor([...S.panes.values()], 'task', src.id) : null;
+  // One task viewer per conversation on the phone (2026-10-12): another of its subagents or shells takes that viewer's
+  // place. The PC's side panel gives each its own tab (2026-10-13), the oldest giving way past KEEP_PER_KIND.
+  const old = WEB && src && !src.isViewer && !inTab ? W.viewerFor([...S.panes.values()], 'task', src.id) : null;
   const ot = old && tabOf(old);
   if (old && ot) {
     replaceInTab(ot, old.id, v);
@@ -2216,11 +2726,12 @@ function openTask(spec, { tab = false, inTab = null, focus = true } = {}) {
     save();
     return v;
   }
-  joinTab(t, v.id, { source: v.sourcePane });
-  if (!t.focused) t.focused = v.id;
-  layout(t);
+  // In the side panel of its conversation's tab, under that conversation (2026-10-13); on the phone a page after it.
+  hostItem(t, v, { focus });
+  if (WEB && !t.focused) t.focused = v.id;
   if (t.id !== S.active) switchTab(t);
   if (focus) focusPane(v);
+  if (!WEB) trimKind(t, v);
   renderTabs();
   save();
   return v;
@@ -2240,22 +2751,15 @@ function dragTask(spec, e) {
   document.body.classList.add('dragging');
 }
 
-/** A task dropped on a stage: split at an edge, take a viewer's place, or open beside a conversation. */
+/**
+ * A task dropped on a stage. Before 2026-10-13 it split a pane at an edge, took a viewer's place, or opened beside a
+ * conversation; since the side panel the layout holds conversations only, so it opens in the tab's side panel (the
+ * phone: a page after its conversation) wherever it lands.
+ */
 function dropTask(t, z, spec) {
   if (!spec?.sessionId) return;
-  if (z.where === 'center' && !z.pane.isViewer && tabFullForViewer(t)) { z.pane.note('This tab has no room for another pane; drop it on + for a new tab.', 'warn'); return; }
-  const v = createTaskViewer(spec);
-  if (z.where === 'root') t.root = L.leaf(v.id);
-  else if (z.where === 'edge') { t.root = L.insert(t.root, z.pane.id, v.id, z.edge); madeCustom(t); } else if (z.pane.isViewer) {
-    const old = z.pane;
-    replaceInTab(t, old.id, v);
-    S.panes.delete(old.id);
-    old.destroy();
-  } else joinTab(t, v.id, { source: v.sourcePane });
-  t.focused = v.id;
-  layout(t);
-  focusPane(v);
-  save();
+  void z;
+  openTask(spec, { inTab: t, focus: true });
 }
 
 const taskActions = {
@@ -3324,11 +3828,14 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Backquote' && !WEB) { e.preventDefault(); focusedPane()?.console?.toggle(); return; }
   const k = e.key.toLowerCase();
   // Ctrl+F: find in the focused pane (its conversation, task or artifact), not the browser's own find.
-  if (k === 'f' && !e.shiftKey) { e.preventDefault(); openFind(focusedPane()); return; }
+  // A viewer in the side panel you clicked into (2026-10-13) is the one Ctrl+F searches and Ctrl+W closes.
+  if (k === 'f' && !e.shiftKey) { e.preventDefault(); openFind(panelFocused() || focusedPane()); return; }
   if (k === 't') { e.preventDefault(); addTab(); return; }
-  if (k === 'w') { e.preventDefault(); const p = focusedPane(); if (p) closePane(p); return; }
+  if (k === 'w') { e.preventDefault(); shortcut('w', false); return; }
   // Ctrl+B: hide or show the sidebar, as in VS Code.
   if (k === 'b' && !e.shiftKey && !WEB) { e.preventDefault(); setRailCollapsed(!S.railCollapsed); return; }
+  // Ctrl+Shift+B (2026-10-13): the tab's side panel, open or collapsed to its rail.
+  if (k === 'b' && e.shiftKey && !WEB) { e.preventDefault(); togglePanel(); return; }
   // Ctrl+Shift+Enter: the focused pane to the whole window, or back to its place (2026-10-12).
   if (k === 'enter' && e.shiftKey && !WEB) { e.preventDefault(); const p = focusedPane(); if (p) toggleMaximize(p); return; }
   if (e.key === 'Tab') {
@@ -3439,6 +3946,14 @@ function snapshot() {
         ...(p?.console?.shown ? { console: true } : {}),
       };
     }),
+    // The side panel (2026-10-13): its viewers, saved as the leaves they used to be (web for a browser, view for the
+    // rest), and the panel's state. A workspace without them is an older one: restore moves its viewer leaves here.
+    items: (t.items || []).map((id) => {
+      const p = S.panes.get(id);
+      if (!p?.isViewer) return null;
+      return p.isBrowser ? { type: 'leaf', pane: id, web: p.saved() } : { type: 'leaf', pane: id, view: p.saved() };
+    }).filter(Boolean),
+    side: { open: Boolean(t.side?.open), width: t.side?.width ?? null, group: t.side?.group || null, pick: { ...(t.side?.pick || {}) } },
   }));
   return { v: 1, savedAt: Date.now(), active: S.tabs.findIndex((t) => t.id === S.active), tabs, rail: { view: S.view, expanded: [...S.expanded], scroll: $('sessions')?.scrollTop || 0, width: S.railW || null, collapsed: Boolean(S.railCollapsed), wtFolded: wtc.foldedList(), foldersOpen: folderOpen.list() }, win: S.win || null };
 }
@@ -3467,12 +3982,29 @@ function readLocal() {
   try { return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch { return null; }
 }
 
+/**
+ * A viewer made again from its saved leaf (a side panel item, 2026-10-13): a subagent or shell following its file, a
+ * browser with its tabs (each page loaded the first time it is on screen), changes read again, an artifact's latest
+ * revision. Null for a leaf that is none of these, or a pane id already in use.
+ */
+function viewerFromLeaf(lf) {
+  if (!lf || typeof lf.pane !== 'string' || S.panes.has(lf.pane)) return null;
+  if (lf.view?.task) return createTaskViewer(lf.view, lf.pane);
+  if (lf.web && typeof lf.web === 'object') return createBrowser({ ...lf.web }, lf.pane);
+  if (lf.view?.diff) return createDiffViewer(lf.view.diff, lf.pane);
+  if (lf.view?.id) return createViewer(lf.view, lf.pane);
+  return null;
+}
+
 function restore(saved = readLocal()) {
   // Several browser panes of one conversation (before 2026-10-12, some in tabs of their own) come back as that
   // conversation's one browser pane with a tab for each page (workspace.js foldBrowsers).
   const folded = W.foldBrowsers(saved?.v === 1 && Array.isArray(saved.tabs) ? saved.tabs : [], saved?.active ?? 0);
-  const tabs = folded.tabs;
-  if (saved && folded.tabs !== saved.tabs) saved = { ...saved, active: folded.active };
+  // Viewers saved as leaves of the layout tree (before 2026-10-13) move into the side panel of their conversation's tab;
+  // those whose conversation is gone stay in their tab, under Other (workspace.js migrateViewers).
+  const migrated = W.migrateViewers(folded.tabs, folded.active);
+  const tabs = migrated.tabs;
+  if (saved && (folded.tabs !== saved.tabs || migrated.tabs !== folded.tabs)) saved = { ...saved, active: migrated.active };
   if (saved?.rail) {
     if (typeof saved.rail.view === 'string') S.view = saved.rail.view;
     S.expanded = new Set(Array.isArray(saved.rail.expanded) ? saved.rail.expanded : []);
@@ -3521,10 +4053,15 @@ function restore(saved = readLocal()) {
       p.open(sid ? { id: sid, cwd: lf.cwd, title: lf.title } : null, { warm: false });
       return L.leaf(p.id);
     });
-    if (!root || !L.valid(root)) continue;
+    // The side panel's viewers (2026-10-13), made the way the tree's used to be, in the order they opened.
+    const items = (Array.isArray(st.items) ? st.items : []).map(viewerFromLeaf).filter(Boolean);
+    const okRoot = root && L.valid(root) ? root : null;
+    if (!okRoot && !items.length) continue;
     // A workspace saved before 2026-10-12 has no arrangement: its tree comes back exactly as saved (custom).
-    const t = createTab(root, { name: typeof st.name === 'string' ? st.name.slice(0, 60) : '', arrange: typeof st.arrange === 'string' ? st.arrange : 'custom', max: typeof st.max === 'string' && L.has(root, st.max) ? st.max : null, shape: st.shape || (typeof st.arrange === 'string' ? 'wide' : null) });
-    t.focused = L.has(root, st.focused) ? st.focused : L.ids(root)[0];
+    const t = createTab(okRoot, { name: typeof st.name === 'string' ? st.name.slice(0, 60) : '', arrange: typeof st.arrange === 'string' ? st.arrange : 'custom', max: typeof st.max === 'string' && L.has(okRoot, st.max) ? st.max : null, shape: st.shape || (typeof st.arrange === 'string' ? 'wide' : null), side: { ...(st.side && typeof st.side === 'object' ? st.side : {}), seen: items.length > 0 } });
+    t.items = items.map((v) => v.id);
+    for (const v of items) t.panel?.mount(v.el);
+    t.focused = L.has(okRoot, st.focused) ? st.focused : WEB && t.items.includes(st.focused) ? st.focused : L.ids(okRoot)[0] || null;
     layout(t);
   }
   if (!S.tabs.length) { addTab(); return; }
@@ -3562,7 +4099,8 @@ await listen('engine', ({ payload: e }) => {
     // The page is a tab of a conversation's browser pane (2026-10-12): the pane shows the tab Claude works in.
     const b = browserOf(e.browserId);
     if (b) {
-      if (b.active !== e.browserId) { b.activate(e.browserId); syncSoon(); save(); }
+      // In the side panel (2026-10-13) that page becomes its browser's tab on screen, without moving the panel elsewhere.
+      if (b.active !== e.browserId) { b.activate(e.browserId); syncSoon(); panelSoon(); save(); }
       b.activity(e.text || e.action || '');
     }
     return;
@@ -3821,15 +4359,16 @@ await listen('browser', ({ payload: e }) => {
   const b = browserOf(e.id);
   switch (e.ev) {
     case 'created': case 'reveal': placeBrowser(e); break;
-    case 'state': if (b) { b.update(e.id, e); if (!b.tab(e.id)?.live) b.attach(e.id, e); } break;
+    // A page's title, address and loading light: its tab in the side panel shows them too (2026-10-13).
+    case 'state': if (b) { b.update(e.id, e); if (!b.tab(e.id)?.live) b.attach(e.id, e); panelSoon(); } break;
     case 'focus': if (b) focusPane(b, { scroll: false }); break;
     case 'key': if (b) focusPane(b, { scroll: false }); shortcut(e.key, e.shift); break;
     // A page that closes itself (window.close) takes its tab with it; the last tab takes the pane.
-    case 'closeRequested': if (b) { b.removeTab(e.id); renderTabs(); save(); } break;
+    case 'closeRequested': if (b) { b.removeTab(e.id); renderTabs(); panelSoon(); save(); } break;
     // Closed by the shell: could not start (its tab says why), or closed by Claude's browser_tabs (the tab goes).
     case 'closed':
-      if (b && e.error) b.gone(e.id, `The browser could not start: ${e.error}`);
-      else if (b) { b.removeTab(e.id); renderTabs(); save(); }
+      if (b && e.error) { b.gone(e.id, `The browser could not start: ${e.error}`); panelSoon(); }
+      else if (b) { b.removeTab(e.id); renderTabs(); panelSoon(); save(); }
       break;
     default: break;
   }
@@ -3913,7 +4452,8 @@ S.restored = true;
 restoreWindow(startState?.win);
 save();
 renderTabs();
-for (const id of S.alive) if (!S.panes.get(id)?.isBrowser) invoke('browser', { cmd: 'close', args: { id } }).catch(() => {});
+// A page kept is any tab of a restored browser, not only its first one (2026-10-13: the side panel's hidden tabs stay alive).
+for (const id of S.alive) if (!S.panes.get(id)?.isBrowser && !browserOf(id)) invoke('browser', { cmd: 'close', args: { id } }).catch(() => {});
 syncSoon();
 // Ask the engine for its state in case it was ready before this page loaded.
 send('sessions');
@@ -3933,4 +4473,5 @@ $('refreshSessions').onclick = () => {
 // 2026-10-11: focusPane and openFromRail for the phone (apaki/web/src/pager.js focuses the pane a swipe settles on;
 // desktop.js opens a conversation from "On your desktop" the way a tap in the session list does, or follows the desktop
 // pane with followDesktop when the PC offers 'follow'). The window never calls them.
-window.__apaki = { S, L, W, wt: wtc, openDiff, openTask, toggleMaximize, revealPane, setArrangement, tabNames, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, followDesktop, dropSession:(s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };
+// 2026-10-13: the side panel for checks and the demo harness (togglePanel, setPanelOpen, groupsOf, stepMaximize).
+window.__apaki = { S, L, W, wt: wtc, openDiff, openTask, toggleMaximize, revealPane, setArrangement, tabNames, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, followDesktop, togglePanel, setPanelOpen, groupsOf, stepMaximize, dropSession:(s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };

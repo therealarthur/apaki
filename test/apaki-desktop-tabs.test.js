@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_PANES, desktopTabs } from '../apaki/engine/desktop-tabs.js';
+import { MAX_PANES, MAX_VIEWERS, desktopTabs } from '../apaki/engine/desktop-tabs.js';
 import { BROADCAST_EVENTS } from '../apaki/engine/remote-policy.js';
 
 const leaf = (o) => ({ type: 'leaf', ...o });
@@ -42,6 +42,36 @@ test('desktop tabs: each pane carries the window\'s pane id so a phone can name 
   assert.deepEqual(Object.keys(panes[0]).sort(), ['busy', 'focused', 'kind', 'paneId', 'sessionId', 'title']);
   const text = JSON.stringify(desktopTabs(st));
   for (const secret of ['unsent words', 'queued words', 'secret-dir', 'npm run dev', '"away"', '"draft"', '"queue"']) assert.ok(!text.includes(secret), `${secret} stays on the PC`);
+});
+
+test('desktop tabs: since the side panel a tab\'s viewers are its items, each listed under its conversation, the rest last', () => {
+  const st = {
+    active: 0,
+    tabs: [{
+      focused: 'p2', label: 'acme-web',
+      root: { type: 'split', dir: 'row', sizes: [0.5, 0.5], children: [leaf({ pane: 'p1', s: 's1', title: 'Fix the build', draft: '' }), leaf({ pane: 'p2', s: 's2', title: 'Dashboard', draft: '' })] },
+      items: [
+        leaf({ pane: 'v1', view: { sessionId: 's1', id: 'a1', title: 'Findings.md', kind: 'markdown', sourcePane: 'p1' } }),
+        leaf({ pane: 'b1', web: { url: 'https://example.com/private', title: 'Cart', owner: 'p2', tabs: [{ id: 'b1' }, { id: 'b2' }] } }),
+        leaf({ pane: 'v2', view: { sessionId: 's2', id: 'a2', title: 'Receipt', kind: 'html', sourcePane: 'p2' } }),
+        leaf({ pane: 'v9', view: { sessionId: 'gone', id: 'a9', title: 'Old notes', kind: 'markdown', sourcePane: 'closed' } }),
+        { not: 'a leaf' },
+      ],
+      side: { open: true, group: 'p2', width: 480, pick: {} },
+    }],
+  };
+  const panes = desktopTabs(st)[0].panes;
+  assert.deepEqual(panes.map((p) => [p.paneId, p.kind, p.for || null]), [
+    ['p1', 'session', null], ['v1', 'viewer', 'Fix the build'],
+    ['p2', 'session', null], ['b1', 'browser', 'Dashboard'], ['v2', 'viewer', 'Dashboard'],
+    ['v9', 'viewer', null],
+  ]);
+  assert.equal(panes[3].tabs, 2, 'a browser says how many pages');
+  assert.ok(!JSON.stringify(panes).includes('example.com'), 'addresses stay on the PC');
+  // Viewers come on top of the pane limit, up to their own.
+  const many = Array.from({ length: 12 }, (_, i) => leaf({ pane: `v${i}`, view: { id: `a${i}`, title: `A${i}`, sourcePane: 'p1' } }));
+  const lots = desktopTabs({ active: 0, tabs: [{ root: leaf({ pane: 'p1', s: 's1', title: 'One', draft: '' }), items: many }] })[0].panes;
+  assert.equal(lots.length, 1 + MAX_VIEWERS);
 });
 
 test('desktop tabs: limits, empty and odd input', () => {

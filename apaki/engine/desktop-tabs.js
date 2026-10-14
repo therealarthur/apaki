@@ -21,6 +21,11 @@
 /** At most this many tabs and panes per tab go to a phone (the desktop keeps 6 panes a tab). */
 export const MAX_TABS = 12;
 export const MAX_PANES = 6;
+/**
+ * At most this many viewers per tab go along, on top of its panes (2026-10-13). Since the side panel the window saves a
+ * tab's viewers as `items` beside its tree; each is listed under its conversation, so a phone still sees whose it is.
+ */
+export const MAX_VIEWERS = 8;
 const TITLE_CHARS = 120;
 
 const title = (s, fallback) => {
@@ -68,17 +73,30 @@ function leaves(node, out = [], depth = 0) {
  * The phone's view of a saved workspace: [{ index, active, label, panes: [...] }]. label (2026-10-12): the name the tab
  * shows on the PC (the project its conversations share, or the one the person gave it); '' from an older window.
  * A viewer pane may carry `for` (its conversation's title) and a browser `tabs` (how many pages, from two).
+ *
+ * Since the side panel (2026-10-13) a tab's viewers are its `items`, not leaves of its tree: each one is listed right
+ * after its conversation (whose things are together, as the PC's panel groups them), and those whose conversation is not
+ * in the tab come last. Panes from the tree keep their limit (MAX_PANES); viewers come on top, up to MAX_VIEWERS.
  */
 export function desktopTabs(state) {
   const tabs = Array.isArray(state?.tabs) ? state.tabs : [];
   return tabs.slice(0, MAX_TABS).map((t, index) => {
     const ls = leaves(t?.root);
+    const items = (Array.isArray(t?.items) ? t.items : []).filter((l) => l && typeof l === 'object' && l.type === 'leaf');
     const names = new Map(ls.filter((l) => typeof l.pane === 'string' && !l.web && !l.view && 'draft' in l).map((l) => [l.pane, title(l.title, 'New conversation')]));
+    const panes = ls.map((l) => [l, paneOf(l, t?.focused, names)]).filter(([, p]) => p).slice(0, MAX_PANES);
+    const viewers = items.map((l) => [l, paneOf(l, t?.focused, names)]).filter(([, p]) => p && p.kind !== 'session').slice(0, MAX_VIEWERS);
+    const out = [];
+    for (const [l, p] of panes) {
+      out.push(p);
+      for (const [v, vp] of viewers) if (ownerOf(v) === l.pane) out.push(vp);
+    }
+    for (const [v, vp] of viewers) if (!panes.some(([l]) => l.pane === ownerOf(v))) out.push(vp);
     return {
       index,
       active: index === state.active,
       label: typeof t?.label === 'string' ? title(t.label, '') : '',
-      panes: ls.map((l) => paneOf(l, t?.focused, names)).filter(Boolean).slice(0, MAX_PANES),
+      panes: out,
     };
   });
 }

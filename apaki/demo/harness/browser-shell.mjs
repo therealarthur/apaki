@@ -125,7 +125,8 @@ export function createBrowserShell({ emitBrowser, emitEngine }) {
       const p = pages.get(args.id);
       switch (cmd) {
         case 'open': {
-          const id = await api.open({ id: args.id || null, owner: args.owner, url: args.url, focus: args.focus !== false, reason: args.reason });
+          // As the real shell (src/browser.rs open): no focus unless the window asks for it, so a page made again on restore takes nothing.
+          const id = await api.open({ id: args.id || null, owner: args.owner, url: args.url, focus: args.focus === true, reason: args.reason });
           return { id };
         }
         case 'place': {

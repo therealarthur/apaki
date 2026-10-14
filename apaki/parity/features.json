@@ -2432,7 +2432,7 @@
         "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
       ],
       "verifiedAgainst": {},
-      "notes": "Arthur 2026-10-12: \"think about the tri pane view, the side by side, top/bottom, 2 top, 1 bottom, etc - all should happen automatically\". 1 full; 2 side by side or stacked when tall; 3 one large and two stacked (two over one when tall); 4 a 2x2 grid; 5 and 6 three over two or three (two columns of three rows when tall). A viewer sits in its conversation's cell at 40 percent. Dragging to an edge or swapping makes the tab Custom; old workspaces restore as Custom. Phone n/a: a phone shows one pane at a time and pages through them in layout order (pager.js)."
+      "notes": "Arthur 2026-10-12: \"think about the tri pane view, the side by side, top/bottom, 2 top, 1 bottom, etc - all should happen automatically\". 1 full; 2 side by side or stacked when tall; 3 one large and two stacked (two over one when tall); 4 a 2x2 grid; 5 and 6 three over two or three (two columns of three rows when tall). A viewer sat in its conversation's cell at 40 percent until 2026-10-13; since then the arrangement holds conversations only and viewers are in the tab's side panel (side-panel-per-tab). Dragging to an edge or swapping makes the tab Custom; old workspaces restore as Custom. Phone n/a: a phone shows one pane at a time and pages through them in layout order (pager.js)."
     },
     {
       "id": "viewers-linked-to-their-conversation",
@@ -2468,7 +2468,7 @@
         "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
       ],
       "verifiedAgainst": {},
-      "notes": "Arthur 2026-10-12: \"its not super obvious when you have multiple panes which pane a browser window is connected to\". Each conversation with viewers gets an accent (six, never the focus, waiting or finished colours); its viewers carry a chip with its name in that accent, it carries a mark with the count; hovering either rings the other, clicking goes there. One viewer of a kind per conversation (the slot is reused). Closing a conversation with viewers asks whether to close them too. Phone: the nav row says \"for <conversation>\" on a viewer page and \"N viewers\" on a conversation page, a tap goes to the other end; \"On your desktop\" says whose each PC viewer is."
+      "notes": "Arthur 2026-10-12: \"its not super obvious when you have multiple panes which pane a browser window is connected to\". Each conversation with viewers gets an accent (six, never the focus, waiting or finished colours); its viewers carry a chip with its name in that accent, it carries a mark with the count; hovering either rings the other, clicking goes there. One viewer of a kind per conversation (the slot is reused). Closing a conversation with viewers asks whether to close them too. 2026-10-13 (side-panel-per-tab): on the PC the viewers are in the tab's side panel, whose switcher names each conversation in its accent; the mark opens the panel on its things, hovering it lights the name there, and hovering a name rings the pane; a viewer shows its chip there only when its conversation is closed or in another tab; one viewer of a kind per conversation now holds on the phone only (the panel gives each its own tab). Phone: the nav row says \"for <conversation>\" on a viewer page and \"N viewers\" on a conversation page, a tap goes to the other end; \"On your desktop\" says whose each PC viewer is."
     },
     {
       "id": "one-browser-pane-per-conversation-tabs",
@@ -2504,7 +2504,7 @@
         "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
       ],
       "verifiedAgainst": {},
-      "notes": "Arthur 2026-10-12: \"additional tabs wanted to be opened by the session should open those tabs IN the browser pane (like codex/gpt)\". browser_open reuse loads the active tab, new and tab open a tab in the same pane (never an Apaki tab); browser_tabs lists, switches and closes; read, click, type, back and screenshot act on the active tab. Pages from show, caught commands and the BROWSER shim reload a tab already showing the address, else open a new tab. The pane has a tab strip (initial, title, close) and + for a new tab; picking a tab tells the engine (browserTab, desktop only). Old workspaces fold several browser panes of one conversation into one. Phone: the browser view lists the tabs and switches the PC's active tab (browserView tab, Full only, own conversation only)."
+      "notes": "Arthur 2026-10-12: \"additional tabs wanted to be opened by the session should open those tabs IN the browser pane (like codex/gpt)\". browser_open reuse loads the active tab, new and tab open a tab in the same pane (never an Apaki tab); browser_tabs lists, switches and closes; read, click, type, back and screenshot act on the active tab. Pages from show, caught commands and the BROWSER shim reload a tab already showing the address, else open a new tab. The pane has a tab strip (initial, title, close) and + for a new tab; picking a tab tells the engine (browserTab, desktop only). Old workspaces fold several browser panes of one conversation into one. 2026-10-13 (side-panel-per-tab): on the PC the browser lives in the tab's side panel and each of its pages is a tab of the panel (the pane's own strip is hidden there); picking one still tells the engine. Phone: the browser view lists the tabs and switches the PC's active tab (browserView tab, Full only, own conversation only)."
     },
     {
       "id": "go-to-open-session-pane",
@@ -2562,7 +2562,41 @@
         "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
       ],
       "verifiedAgainst": {},
-      "notes": "Arthur 2026-10-12: \"a full screen toggle that lets you maximize a pane to take the whole desktop app window size, and then a minimize that has it go back\". The button beside close, a double click on the header's empty space, or Ctrl+Shift+Enter; the pane is drawn over the window under the top strip and its tab's tree is never touched, so restoring is exact; each tab remembers its own; the other panes keep running. Phone n/a: a pane there already fills the screen."
+      "notes": "Arthur 2026-10-12: \"a full screen toggle that lets you maximize a pane to take the whole desktop app window size, and then a minimize that has it go back\". The button beside close, a double click on the header's empty space, or Ctrl+Shift+Enter; the pane is drawn over the window under the top strip and its tab's tree is never touched, so restoring is exact; each tab remembers its own; the other panes keep running. 2026-10-13 (side-panel-per-tab): it fills the main area up to the tab's side panel, which shows the maximized conversation's things; previous and next in its header (\"2 of 3\") and Ctrl+1..6 move the maximized view to another conversation without restoring; Ctrl+Shift+B collapses the panel for the whole width. Viewers are not maximized (they live in the panel). Phone n/a: a pane there already fills the screen."
+    },
+    {
+      "id": "side-panel-per-tab",
+      "title": "A side panel per tab with everything its conversations opened (browser pages, artifacts, changes, tasks), grouped by conversation and following the focused one",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": {
+        "desktop": "supported",
+        "phone": "n/a"
+      },
+      "where": [
+        "apaki/ui/sidepanel.js",
+        "apaki/ui/app.js",
+        "apaki/ui/app.css",
+        "apaki/ui/workspace.js",
+        "apaki/engine/desktop-tabs.js",
+        "apaki/src/browser.rs",
+        "apaki/docs/layout.md",
+        "apaki/demo/harness/data.mjs",
+        "apaki/demo/harness/engine.mjs",
+        "test/apaki-workspace.test.js",
+        "test/apaki-desktop-tabs.test.js"
+      ],
+      "commits": [
+        "b8f9e51",
+        "6ff5203",
+        "086e050"
+      ],
+      "sessions": [
+        "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
+      ],
+      "verifiedAgainst": {},
+      "notes": "Arthur 2026-10-13: \"the current way we display the browser is incredibly hectic ... i dont know what browser is connected to what session ... have a dedicated pane that comes out from the right side of the app (that can be minimized and opened, that has all the browsers that are opened\". Desktop layout change: viewers leave the pane grid. Each tab has a panel docked right: a switcher of the tab's conversations that have something open (names in their link accents, counts, Other for viewers whose conversation is closed or elsewhere), that conversation's things as tabs (each browser page its own tab, then artifacts, changes, tasks; close, middle click, Close all), and the viewer (a browser keeps its own address, back, forward, reload). It follows focus and never goes blank (a quiet note when the focused conversation has nothing open); opens by itself the first time something opens in the tab; Claude's opens never take the keyboard; collapses to a slim rail of counts (button, ... menu, Ctrl+Shift+B, also forwarded from inside a page by src/browser.rs); resizes from its left edge (40 percent of the main area up to 640 px by default, 320 to 1100 px). The native browser page is placed over the panel's content area; only the page on screen is visible, the others stay alive. Saved per tab as items and side; old workspaces' viewer leaves move into their conversation's tab's panel on restore (workspace.js migrateViewers), orphans under Other. One artifact or task tab per thing (up to 8 of a kind per conversation; the oldest gives way) instead of one viewer of a kind. Phone n/a and unchanged: it has no panel; its pager still shows a tab's viewers as pages after their conversation, and On your desktop lists the PC's viewers (now read from items) under their conversation. Demo: desktop.html?ws=side-panel."
     },
     {
       "id": "pane-console",

@@ -16,7 +16,7 @@
 
 import {
   buildSessions, buildFolders, buildHistory, buildGlass, buildSubagents, buildAgentLines, handoffMessages,
-  CONTEXT, CONTEXT_USED, COMMANDS, PRESETS, ID, DAY, HOUR, MIN,
+  CONTEXT, CONTEXT_USED, COMMANDS, PRESETS, ID, DAY, HOUR, MIN, ARTIFACTS,
 } from './data.mjs';
 import { Turn, TurnAborted, SCRIPTS } from './turns.mjs';
 // Codex panes (2026-10-12): the ops a Codex pane sends, answered from invented data.
@@ -450,6 +450,8 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     // A Codex pane's ops (and the two only Codex has) are answered there; the workspace starts with Codex only in the codex preset.
     if (codexDemo.handle(c, pane)) return;
     if (worktrees.handle(c)) return;
+    // The side-panel preset's two artifacts (data.mjs ARTIFACTS) are answered here; every other id by the viewers' catalog.
+    if (c.op === 'artifactGet' && ARTIFACTS[c.id]) { artifactGet(c); return; }
     if (artifactsDemo.handle(c)) return;
     switch (c.op) {
       case 'sessions': sendSessions(c.reqId); break;
@@ -512,6 +514,25 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
       case 'billing': later(40, { ev: 'billing', paneId: c.paneId, ...billing() }); break;
       default: break;
     }
+  }
+
+  /**
+   * The answer to a viewer's artifactGet, shaped like the real engine's artifactContent: the text for markdown, and for
+   * HTML a data: address the sandboxed frame loads (the real engine serves it from its local server) plus the text the
+   * phone draws from.
+   */
+  function artifactGet(c) {
+    const a = ARTIFACTS[c.id];
+    if (!a) { later(60, { ev: 'artifactContent', reqId: c.reqId, paneId: c.paneId, error: 'This artifact is not part of the demo.' }); return; }
+    const src = a.kind === 'html' ? `data:text/html;charset=utf-8,${encodeURIComponent(a.content)}` : null;
+    const ext = a.kind === 'html' ? 'html' : 'md';
+    const mime = a.kind === 'html' ? 'text/html' : 'text/markdown';
+    const at = NOW - 20 * MIN;
+    later(140, {
+      ev: 'artifactContent', reqId: c.reqId, paneId: c.paneId, id: c.id, sessionId: c.sessionId, rev: 1, latest: 1, kind: a.kind, title: a.title, ext, mime,
+      revs: [{ rev: 1, at, title: a.title, ext, kind: a.kind, by: 'session' }], by: 'session', size: a.content.length, source: null,
+      path: `C:\\Users\\dev\\.claude\\latch\\artifacts\\${c.sessionId}\\${c.id}.${ext}`, encoding: 'utf8', content: a.content, src,
+    });
   }
 
   function agentWatch(c) {
