@@ -119,6 +119,20 @@ thread_local! {
     static JS_SEQ: Cell<u64> = const { Cell::new(0) };
     /// Clicks sent as real mouse events and through the bridge script (shown by "debug", checked by the smoke test).
     static CLICKS: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    /// The last callbacks WebKit made, newest last (shown by "debug"): what to read when a page does something unexpected.
+    static TRACE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// One line in the trace (kept to the last 80).
+fn trace(line: String) {
+    TRACE.with(|t| {
+        let mut t = t.borrow_mut();
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() % 1_000_000).unwrap_or(0);
+        t.push(format!("{ms} {line}"));
+        if t.len() > 80 {
+            t.remove(0);
+        }
+    });
 }
 
 /* ---------- entry points (the same three as the Windows module) ---------- */
@@ -497,6 +511,7 @@ define_class!(
                     action.shouldPerformDownload(),
                 )
             };
+            trace(format!("{} action {url} main={main_frame} download={download}", self.ivars().id));
             // Addresses of other apps (mailto:, itms-apps:, a custom scheme) are not opened from a page; downloads are not supported.
             if download || !allowed_scheme(&url) {
                 handler.call((WKNavigationActionPolicy::Cancel,));
@@ -524,6 +539,7 @@ define_class!(
                 let status = r.downcast_ref::<NSHTTPURLResponse>().map(|h| h.statusCode() as i32);
                 (response.isForMainFrame(), response.canShowMIMEType(), status)
             };
+            trace(format!("{} response main={main_frame} show={can_show} status={status:?}", self.ivars().id));
             if main_frame {
                 let id = self.ivars().id.clone();
                 BROWSERS.with(|m| {
@@ -541,6 +557,7 @@ define_class!(
         #[unsafe(method(webView:didStartProvisionalNavigation:))]
         fn did_start(&self, _wv: &WKWebView, _nav: Option<&WKNavigation>) {
             let id = self.ivars().id.clone();
+            trace(format!("{id} start"));
             BROWSERS.with(|m| {
                 if let Ok(mut m) = m.try_borrow_mut() {
                     if let Some(b) = m.get_mut(&id) {
@@ -557,6 +574,7 @@ define_class!(
         #[unsafe(method(webView:didCommitNavigation:))]
         fn did_commit(&self, _wv: &WKWebView, _nav: Option<&WKNavigation>) {
             let id = self.ivars().id.clone();
+            trace(format!("{id} commit"));
             BROWSERS.with(|m| {
                 if let Ok(mut m) = m.try_borrow_mut() {
                     if let Some(b) = m.get_mut(&id) {
@@ -572,6 +590,7 @@ define_class!(
         #[unsafe(method(webView:didFinishNavigation:))]
         fn did_finish(&self, _wv: &WKWebView, _nav: Option<&WKNavigation>) {
             let id = self.ivars().id.clone();
+            trace(format!("{id} finish"));
             BROWSERS.with(|m| {
                 if let Ok(mut m) = m.try_borrow_mut() {
                     if let Some(b) = m.get_mut(&id) {
@@ -589,7 +608,13 @@ define_class!(
                 }
             });
             emit_state(&id);
-            settle(&id);
+            // The title can arrive a moment after the load ends; the answers waiting for the load carry it.
+            let later_id = id.clone();
+            later(120, move || {
+                refresh(&later_id);
+                emit_state(&later_id);
+                settle(&later_id);
+            });
         }
 
         #[unsafe(method(webView:didFailNavigation:withError:))]
@@ -618,6 +643,7 @@ impl NavDelegate {
     fn failed(&self, error: &NSError) {
         let id = self.ivars().id.clone();
         let text = error_text(error);
+        trace(format!("{id} failed domain={} code={} -> {text}", error.domain(), error.code()));
         let stopped = text == "stopped";
         BROWSERS.with(|m| {
             if let Ok(mut m) = m.try_borrow_mut() {
@@ -774,6 +800,7 @@ define_class!(
         fn observe(&self, _key_path: Option<&NSString>, _object: Option<&AnyObject>, _change: Option<&NSDictionary<NSKeyValueChangeKey, AnyObject>>, _context: *mut c_void) {
             let id = self.ivars().id.clone();
             refresh(&id);
+            trace(format!("{id} changed {:?} -> {}", _key_path.map(|k| k.to_string()), state_json(&id)));
             emit_state(&id);
         }
     }
@@ -973,6 +1000,7 @@ fn debug_json() -> Value {
         "window": main.as_ref().and_then(|v| v.window()).map(|w| json!({ "frame": rect(w.frame()), "key": w.isKeyWindow() })),
         "browsers": frames,
         "mouse": { "native": CLICKS.with(Cell::get).0, "js": CLICKS.with(Cell::get).1 },
+        "trace": TRACE.with(|t| t.borrow().clone()),
     })
 }
 

@@ -150,14 +150,18 @@ async function run(mouse) {
 
     // open + read
     let r = await call('open', { url: `${base}/` });
-    check('browser_open loads a page and waits for it', r.ok && /Smoke home/.test(r.text), r.text);
+    check('browser_open loads a page and waits for it', r.ok && /HTTP 200/.test(r.text), r.text);
+    await sleep(300);
+    const st = await shell.request('browser.state', { owner });
+    check('the browser reports the page title and address', st.title === 'Smoke home' && st.url === `${base}/` && st.loading === false, JSON.stringify(st));
     r = await call('read');
     const outline = r.text || '';
-    check('browser_read gives the title, headings, links and fields with refs', r.ok && /Page: Smoke home/.test(outline) && /heading "Apaki browser smoke"/.test(outline) && /link "Go to page two" \[ref=\d+\]/.test(outline) && /textbox "Search" \[ref=\d+\]/.test(outline), outline.slice(0, 160));
-    const ref = (re) => Number((outline.match(re) || [])[1]);
+    // An inline link reads [link "name" ref=N], a block one link "name" [ref=N].
+    const refOf = (text, kind, name) => { const m = text.match(new RegExp(`${kind} "${name}"(?: \\[ref=(\\d+)\\]| ref=(\\d+))`)); return m ? Number(m[1] || m[2]) : NaN; };
+    check('browser_read gives the title, headings, links and fields with refs', r.ok && /Page: Smoke home/.test(outline) && /heading "Apaki browser smoke"/.test(outline) && refOf(outline, 'link', 'Go to page two') > 0 && refOf(outline, 'textbox', 'Search') > 0, outline.slice(0, 400));
 
     // click a link
-    r = await call('click', { ref: ref(/link "Go to page two" \[ref=(\d+)\]/) });
+    r = await call('click', { ref: refOf(outline, 'link', 'Go to page two') });
     check('browser_click follows a link and reports the new page', r.ok && /\/two/.test(r.text) && /Now at/.test(r.text), r.text);
     r = await call('read');
     check('the new page reads as page two', /Page: Page two/.test(r.text || ''), (r.text || '').slice(0, 80));
@@ -167,8 +171,7 @@ async function run(mouse) {
     // type + submit
     r = await call('read');
     const out2 = r.text || '';
-    const q = Number((out2.match(/textbox "Search" \[ref=(\d+)\]/) || [])[1]);
-    r = await call('type', { ref: q, text: 'hello world', submit: true });
+    r = await call('type', { ref: refOf(out2, 'textbox', 'Search'), text: 'hello world', submit: true });
     check('browser_type replaces a field and Enter submits the form', r.ok && /search\?q=hello(\+|%20)world/.test(r.text), r.text);
     r = await call('read');
     check('the results page shows what was typed', /You searched for: hello world/.test(r.text || ''), (r.text || '').slice(0, 200));
@@ -177,16 +180,15 @@ async function run(mouse) {
     // checkbox, select, button, textarea
     r = await call('read');
     const out3 = r.text || '';
-    const num = (re) => Number((out3.match(re) || [])[1]);
-    r = await call('click', { ref: num(/checkbox "Tick me" \[ref=(\d+)\]/) });
+    r = await call('click', { ref: refOf(out3, 'checkbox', 'Tick me') });
     const afterCb = (await call('read')).text || '';
-    check('browser_click ticks a checkbox', r.ok && /checkbox "Tick me" \[ref=\d+\] \[checked\]/.test(afterCb) && /checkbox on/.test(afterCb), afterCb.split('\n').filter((l) => /checkbox|state|idle/.test(l)).join(' | '));
-    r = await call('type', { ref: num(/combobox "[^"]*" \[ref=(\d+)\]/), text: 'Beta' });
+    check('browser_click ticks a checkbox', r.ok && /checkbox "Tick me"[^\n]*\[checked\]/.test(afterCb) && /checkbox on/.test(afterCb), afterCb.split('\n').filter((l) => /checkbox|state|idle/.test(l)).join(' | '));
+    r = await call('type', { ref: refOf(out3, 'combobox', 'sel'), text: 'Beta' });
     check('browser_type picks an option in a dropdown', r.ok && /Beta/.test(r.text), r.text);
-    r = await call('click', { ref: num(/button "count" \[ref=(\d+)\]/) });
+    r = await call('click', { ref: refOf(out3, 'button', 'count') });
     const afterBtn = (await call('read')).text || '';
     check('browser_click presses a button (page script runs)', /clicked 1/.test(afterBtn), afterBtn.split('\n').filter((l) => /button/.test(l)).join(' | '));
-    r = await call('type', { ref: num(/textbox "" \[ref=(\d+)\]/), text: 'line one' });
+    r = await call('type', { ref: refOf(out3, 'textbox', ''), text: 'line one' });
     check('browser_type fills a textarea', r.ok && /line one/.test(r.text), r.text);
 
     // pictures
@@ -217,15 +219,15 @@ async function run(mouse) {
     check('browser_tabs closes a tab', tabs.ok && /Closed tab/.test(tabs.text), tabs.text);
 
     // placement: the window's page placed the pane; the frame must lie inside the window
-    await sleep(1500);
-    const d = await dbg();
+    let d = await dbg();
+    for (let i = 0; i < 40 && !(d.browsers || []).some((x) => x.shown); i++) { await sleep(250); d = await dbg(); }
     const wf = d.window?.frame;
     const mainF = d.main?.frame;
     const b = (d.browsers || []).find((x) => x.shown) || (d.browsers || [])[0];
     check('the window made a pane for the page and placed it inside the window', Boolean(b && b.shown && wf && b.frame.w > 150 && b.frame.h > 150 && b.frame.w <= (mainF?.w || wf.w) + 1 && b.frame.h <= (mainF?.h || wf.h) + 1), JSON.stringify({ scale: d.scale, window: wf && { w: wf.w, h: wf.h }, main: mainF, frame: b?.frame, hidden: b?.hidden, shown: b?.shown, flipped: d.main?.flipped }));
+    // The browsers are views of the window's content view (the parent of the page), which may or may not be flipped.
     if (b && d.main) {
-      const flipped = d.main.flipped;
-      const topInMain = flipped ? b.frame.y - d.main.frame.y : d.main.frame.y + d.main.frame.h - (b.frame.y + b.frame.h);
+      const topInMain = d.parent?.flipped ? b.frame.y - d.main.frame.y : d.main.frame.y + d.main.frame.h - (b.frame.y + b.frame.h);
       check('the pane sits below the title bar and the tab row, not at the very top', topInMain > 20, `top edge ${topInMain.toFixed(0)} pt below the top of the page`);
     }
     // a placement with known numbers lands where it should
@@ -236,7 +238,7 @@ async function run(mouse) {
     const m2 = d2.main;
     if (f2 && m2) {
       const topLeftX = f2.x - m2.frame.x;
-      const topY = m2.flipped ? f2.y - m2.frame.y : m2.frame.y + m2.frame.h - (f2.y + f2.h);
+      const topY = d2.parent?.flipped ? f2.y - m2.frame.y : m2.frame.y + m2.frame.h - (f2.y + f2.h);
       check('place() puts a pane at the point given in physical pixels', Math.abs(topLeftX - 200) < 1.5 && Math.abs(topY - 120) < 1.5 && Math.abs(f2.w - 500) < 1.5 && Math.abs(f2.h - 300) < 1.5, JSON.stringify({ topLeftX, topY, w: f2.w, h: f2.h }));
     } else check('place() puts a pane at the point given in physical pixels', false, 'no frame');
     const counters = d2.mouse || {};
@@ -248,6 +250,9 @@ async function run(mouse) {
   } catch (e) {
     check('the run finished without an error', false, e.stack || e);
   } finally {
+    if (results.some((x) => !x.ok) && shell?.available) {
+      try { console.log(`  shell trace (last callbacks):\n    ${((await shell.request('browser.debug', { owner: 'smoke-pane' })).trace || []).slice(-45).join('\n    ')}`); } catch { /* the app is gone */ }
+    }
     if (!keep) {
       for (const pid of pids) { try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ } }
       await sleep(800);
@@ -279,16 +284,31 @@ function voice() {
 
 /* ---------- BROWSER shim ---------- */
 
-function shim() {
+async function shim() {
   console.log('\n=== BROWSER shim ===');
   const sh = path.join(engineRoot, 'apaki', 'bin', 'apaki-open');
   check('apaki-open is in the app and executable', fs.existsSync(sh) && (fs.statSync(sh).mode & 0o111) !== 0);
-  const r = spawnSync(sh, ['http://127.0.0.1:9/x?a=1&b=2'], { env: { ...process.env, APAKI_NODE: path.join(resources, 'node', 'node'), APAKI_OPEN_NO_FALLBACK: '1' }, encoding: 'utf8' });
-  check('apaki-open runs on the app\'s own Node and exits cleanly', r.status === 0, r.stderr);
+  // A stand-in for the engine's /open endpoint (apaki/engine/open-server.js): records what the shim posts.
+  const got = [];
+  const open = http.createServer((req, res) => {
+    let b = '';
+    req.on('data', (d) => { b += d; });
+    req.on('end', () => { got.push({ token: req.headers['x-apaki-token'], url: JSON.parse(b).url }); res.writeHead(200); res.end('ok'); });
+  });
+  await new Promise((r) => open.listen(0, '127.0.0.1', r));
+  const env = { ...process.env, APAKI_NODE: path.join(resources, 'node', 'node'), APAKI_OPEN_URL: `http://127.0.0.1:${open.address().port}/open`, APAKI_OPEN_TOKEN: 'smoke-token', APAKI_OPEN_NO_FALLBACK: '1' };
+  try {
+    const url = 'http://127.0.0.1:5173/p?a=1&b=2&c=3';
+    const r = spawnSync(sh, [url], { env, encoding: 'utf8' });
+    check('apaki-open runs on the app\'s own Node and hands a URL with "&" to the engine whole', r.status === 0 && got.length === 1 && got[0].url === url && got[0].token === 'smoke-token', r.stderr || JSON.stringify(got));
+    const py = spawnSync('python3', ['-c', "import webbrowser,sys; sys.exit(0 if webbrowser.open('http://127.0.0.1:8888/tree?token=abc&x=1') else 5)"], { env: { ...env, BROWSER: sh }, encoding: 'utf8' });
+    if (py.error) console.log('  (no python3: the webbrowser check is skipped)');
+    else check('Python\'s webbrowser, with BROWSER set to apaki-open, reaches the engine', py.status === 0 && got.length === 2 && got[1].url === 'http://127.0.0.1:8888/tree?token=abc&x=1', py.stderr || JSON.stringify(got));
+  } finally { open.close(); }
 }
 
 try {
-  shim();
+  await shim();
   if (process.argv.includes('--voice')) voice();
   for (const m of mouseArg === 'both' ? ['native', 'js'] : mouseArg === 'none' ? [] : [mouseArg]) await run(m);
 } finally {
