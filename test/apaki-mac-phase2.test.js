@@ -7,7 +7,7 @@
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -18,6 +18,14 @@ import { downloadModel } from '../apaki/engine/voice-model.js';
 import { bundledVoiceDir, openShimName } from '../src/platform.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/** Runs a program without blocking this process (the servers in these tests live in it). */
+const run = (file, args, env) => new Promise((resolve) => {
+  const c = spawn(file, args, { env });
+  let stderr = '';
+  c.stderr.on('data', (d) => { stderr += d; });
+  c.on('close', (status) => resolve({ status, stderr }));
+});
 
 test('the voice folder inside a Mac app is found beside the engine, and only there', () => {
   const app = '/Applications/Myrlin Apaki.app/Contents/Resources';
@@ -86,13 +94,25 @@ test('apaki-open hands a URL whole to the engine (POSIX shells only)', { skip: p
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   try {
     const url = 'http://127.0.0.1:5173/p?a=1&b=2&c=3';
-    const r = await new Promise((resolve) => {
-      const c = spawnSync('sh', [path.join(root, 'apaki', 'bin', 'apaki-open'), url], { env: { ...process.env, APAKI_NODE: process.execPath, APAKI_OPEN_URL: `http://127.0.0.1:${srv.address().port}/open`, APAKI_OPEN_TOKEN: 'tok', APAKI_OPEN_NO_FALLBACK: '1' }, encoding: 'utf8' });
-      resolve(c);
-    });
+    const r = await run('sh', [path.join(root, 'apaki', 'bin', 'apaki-open'), url], { ...process.env, APAKI_NODE: process.execPath, APAKI_OPEN_URL: `http://127.0.0.1:${srv.address().port}/open`, APAKI_OPEN_TOKEN: 'tok', APAKI_OPEN_NO_FALLBACK: '1' });
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(got, [{ token: 'tok', body: { url } }]);
   } finally { srv.close(); }
+});
+
+test('apaki-open.mjs still runs when it is started through a symlinked folder (/tmp is /private/tmp on a Mac)', { skip: process.platform === 'win32' && 'needs symlinks' }, async () => {
+  const got = [];
+  const srv = http.createServer((req, res) => { let b = ''; req.on('data', (d) => { b += d; }); req.on('end', () => { got.push(JSON.parse(b).url); res.writeHead(200); res.end('ok'); }); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-open-real-'));
+  const link = `${real}-link`;
+  try {
+    fs.copyFileSync(path.join(root, 'apaki', 'bin', 'apaki-open.mjs'), path.join(real, 'apaki-open.mjs'));
+    fs.symlinkSync(real, link, 'dir');
+    const r = await run(process.execPath, [path.join(link, 'apaki-open.mjs'), 'http://127.0.0.1:5173/a?b=1&c=2'], { ...process.env, APAKI_OPEN_URL: `http://127.0.0.1:${srv.address().port}/open`, APAKI_OPEN_TOKEN: 'tok', APAKI_OPEN_NO_FALLBACK: '1' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(got, ['http://127.0.0.1:5173/a?b=1&c=2']);
+  } finally { srv.close(); fs.rmSync(link, { force: true }); fs.rmSync(real, { recursive: true, force: true }); }
 });
 
 test('the browser bridge script is valid JavaScript that evaluates to a function returning the bridge', () => {
