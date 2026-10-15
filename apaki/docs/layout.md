@@ -36,6 +36,7 @@ New conversations join the layout instead of halving the focused pane. Each tab 
 
 - The main area is what is left of the tab beside its side panel, so the arrangement is chosen for that shape.
 - Gutters still resize anything; sizes stay until the arrangement changes.
+- Two kinds of edge when you drag a pane or a session (2026-10-15, Arthur: "it should be easier to drag and put a pane underneath two panes above it"): within 30 px of the **tab's** outer edge, the drop spans the whole width (top, bottom) or height (left, right), so a pane dropped along the bottom of two side by side sits under both ("Full width below"). Further in, a **pane's** edge splits only that pane ("Split bottom"). When the layout already runs that way (panes stacked, then one more at the bottom), the new pane is one more equal part; otherwise the layout and the new pane share it half and half (`insertAtEdge` in `layout-tree.js`).
 - Dragging a pane to an edge, or swapping two, makes the tab **Custom**: your tree is kept as you built it, and a new pane then splits the largest pane along its longer side. The layout menu's Auto puts it back.
 - Auto re-flows only when the tab's shape flips between wide and tall (or panes come and go), so resizing the window does not undo your gutter drags.
 - Old saved workspaces have no arrangement and restore as Custom, exactly as saved (less their viewers, below).

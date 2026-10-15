@@ -106,6 +106,7 @@ const GUTTER_PX = 6;
 const MIN_PANE_W = 150;
 const MIN_PANE_H = 110;
 const EDGE_ZONE = 0.28; // share of a pane's width or height that counts as its edge when dropping
+const STAGE_EDGE_PX = 30; // the band along the tab's outer edge where a drop spans the whole width or height (2026-10-15)
 const TAB_HOVER_SWITCH_MS = 450;
 const DRAG_SESSION = 'application/x-apaki-session';
 const DRAG_PANE = 'application/x-apaki-pane';
@@ -1952,18 +1953,41 @@ function dragKind(e) {
   return null;
 }
 
-/** Where a drop at this point would go: a pane edge, a pane's middle, or the empty stage. */
+/**
+ * Where a drop at this point would go: the whole tab's edge, a pane edge, a pane's middle, or the empty stage.
+ * The tab's edge (2026-10-15, Arthur: "it should be easier to drag and put a pane underneath two panes above it"): within
+ * STAGE_EDGE_PX of the tab's outer edge, the pane spans the full width (top, bottom) or height (left, right), e.g. one
+ * pane under two side by side. Further in, a pane's own edge splits only that pane, as before.
+ */
 function dropZone(t, e, kind) {
   const stageRect = t.stage.getBoundingClientRect();
   if (!t.root) return { where: 'root', rect: stageRect, stageRect };
+  const movingId = kind === 'pane' ? S.drag?.paneId : null;
+  const sameTab = movingId && L.has(t.root, movingId);
+  const full = (S.drag?.paneId && S.panes.get(S.drag.paneId)?.isViewer ? tabFullForViewer(t) : tabFull(t)) && !sameTab;
+  const rest = sameTab ? L.remove(t.root, movingId) : t.root;
+  if ((kind === 'pane' || kind === 'session') && !full && L.count(rest) >= 2 && !S.panes.get(movingId)?.isViewer) {
+    const sx = e.clientX - stageRect.left;
+    const sy = e.clientY - stageRect.top;
+    const [sEdge, sDist] = Object.entries({ left: sx, right: stageRect.width - sx, top: sy, bottom: stageRect.height - sy }).sort((p, q) => p[1] - q[1])[0];
+    if (sDist < STAGE_EDGE_PX) {
+      const share = L.edgeShare(rest, sEdge);
+      const w = stageRect.width * share;
+      const h = stageRect.height * share;
+      const rect = {
+        left: { left: stageRect.left, top: stageRect.top, width: w, height: stageRect.height },
+        right: { left: stageRect.right - w, top: stageRect.top, width: w, height: stageRect.height },
+        top: { left: stageRect.left, top: stageRect.top, width: stageRect.width, height: h },
+        bottom: { left: stageRect.left, top: stageRect.bottom - h, width: stageRect.width, height: h },
+      }[sEdge];
+      return { where: 'stage', edge: sEdge, pane: null, rect, stageRect };
+    }
+  }
   const paneEl = e.target.closest?.('.pane');
   const pane = paneEl && S.panes.get(paneEl.dataset.pane);
   if (!pane) return null;
   const r = paneEl.getBoundingClientRect();
-  const movingId = kind === 'pane' ? S.drag?.paneId : null;
   if (movingId === pane.id) return null;
-  const sameTab = movingId && L.has(t.root, movingId);
-  const full = (S.drag?.paneId && S.panes.get(S.drag.paneId)?.isViewer ? tabFullForViewer(t) : tabFull(t)) && !sameTab;
   const x = (e.clientX - r.left) / r.width;
   const y = (e.clientY - r.top) / r.height;
   const [edge, dist] = Object.entries({ left: x, right: 1 - x, top: y, bottom: 1 - y }).sort((p, q) => p[1] - q[1])[0];
@@ -1986,6 +2010,7 @@ function showHint(t, z, kind) {
   Object.assign(hint.style, { left: `${rect.left - stageRect.left + 4}px`, top: `${rect.top - stageRect.top + 4}px`, width: `${rect.width - 8}px`, height: `${rect.height - 8}px` });
   let text = 'Open here';
   if (z.where === 'edge') text = `Split ${z.edge}`;
+  if (z.where === 'stage') text = { top: 'Full width above', bottom: 'Full width below', left: 'Full height on the left', right: 'Full height on the right' }[z.edge];
   if (z.where === 'center') {
     if (kind === 'pane') text = L.has(t.root, S.drag?.paneId) ? 'Swap these panes' : 'Move here';
     else if (kind === 'task') text = z.pane.isViewer ? 'Replace this viewer' : 'Open beside this conversation';
@@ -2076,6 +2101,7 @@ function dropSession(t, z, s) {
   const p = createPane({ cwd: s.cwd, title: s.title, ...inheritable(base) });
   // On an edge you chose: that split, and the tab is yours to arrange (custom). Anywhere else: it joins the layout.
   if (z.where === 'root') t.root = L.leaf(p.id);
+  else if (z.where === 'stage') { t.root = L.insertAtEdge(t.root, p.id, z.edge); madeCustom(t); }
   else if (z.where === 'edge') { t.root = L.insert(t.root, z.pane.id, p.id, z.edge); madeCustom(t); } else joinTab(t, p.id);
   if (t.max) t.max = null;
   t.focused = p.id;
@@ -2109,6 +2135,7 @@ function dropPane(t, z, moving) {
   }
   if (from) leaveTab(from, moving.id);
   if (z.where === 'root') t.root = L.leaf(moving.id);
+  else if (z.where === 'stage') { t.root = L.insertAtEdge(t.root, moving.id, z.edge); madeCustom(t); }
   else if (z.where === 'edge' && L.has(t.root, z.pane.id)) { t.root = L.insert(t.root, z.pane.id, moving.id, z.edge); madeCustom(t); } else joinTab(t, moving.id, { source: moving.isViewer ? moving.sourcePane : null });
   if (t.max) t.max = null;
   t.focused = moving.id;

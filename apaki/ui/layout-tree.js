@@ -75,6 +75,35 @@ export function insert(root, targetId, newId, edge, share = 0.5) {
   return flatten(walk(root));
 }
 
+/**
+ * A new tree with pane `newId` along a whole EDGE of the layout (2026-10-15), not of one pane: Arthur, "it should be
+ * easier to drag and put a pane underneath two panes above it (i.e the two panes above it are half vertically, and the
+ * pane underneath is 1 full have cut horizontally". Dropped on the bottom edge of two panes side by side, the new pane
+ * spans the full width under both. When the layout already runs in that direction (a column for top and bottom, a row
+ * for left and right), the new pane joins it as one more equal part; otherwise the layout and the new pane share it
+ * half and half.
+ */
+export function insertAtEdge(root, newId, edge) {
+  if (!root) return leaf(newId);
+  const dir = edge === 'left' || edge === 'right' ? 'row' : 'col';
+  const before = edge === 'left' || edge === 'top';
+  if (root.type === 'split' && root.dir === dir) {
+    const n = root.children.length;
+    const s = 1 / (n + 1);
+    const sizes = root.sizes.map((x) => x * (1 - s));
+    const children = [...root.children];
+    if (before) { children.unshift(leaf(newId)); sizes.unshift(s); } else { children.push(leaf(newId)); sizes.push(s); }
+    return { ...root, children, sizes };
+  }
+  return flatten({ type: 'split', dir, children: before ? [leaf(newId), root] : [root, leaf(newId)], sizes: [0.5, 0.5] });
+}
+
+/** The share of its direction a pane dropped by insertAtEdge would get (for the drop hint). */
+export function edgeShare(root, edge) {
+  const dir = edge === 'left' || edge === 'right' ? 'row' : 'col';
+  return root && root.type === 'split' && root.dir === dir ? 1 / (root.children.length + 1) : 0.5;
+}
+
 /** A new tree without pane `id`; its space goes to its neighbours. */
 export function remove(root, id) {
   if (!root) return null;

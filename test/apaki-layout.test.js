@@ -91,3 +91,41 @@ test('random splits and closes always leave a valid tree', () => {
     assert.ok(L.count(r) <= L.MAX_PANES);
   }
 });
+
+// The whole tab's edge (2026-10-15): Arthur, "it should be easier to drag and put a pane underneath two panes above it".
+test('insertAtEdge puts a pane across the full width under two panes side by side', () => {
+  const two = L.insert(L.leaf('a'), 'a', 'b', 'right');
+  const t = L.insertAtEdge(two, 'c', 'bottom');
+  assert.equal(t.type, 'split');
+  assert.equal(t.dir, 'col');
+  assert.deepEqual(t.sizes, [0.5, 0.5]);
+  assert.equal(t.children[0].dir, 'row');
+  assert.deepEqual(L.ids(t.children[0]), ['a', 'b']);
+  assert.deepEqual(t.children[1], L.leaf('c'));
+  assert.ok(L.valid(t));
+  // Above instead: the new pane first.
+  assert.deepEqual(L.ids(L.insertAtEdge(two, 'c', 'top')), ['c', 'a', 'b']);
+});
+
+test('insertAtEdge joins a layout that already runs that way as one more equal part', () => {
+  const stacked = L.insert(L.leaf('a'), 'a', 'b', 'bottom');
+  const t = L.insertAtEdge(stacked, 'c', 'bottom');
+  assert.equal(t.dir, 'col');
+  assert.deepEqual(L.ids(t), ['a', 'b', 'c']);
+  assert.ok(t.sizes.every((x) => Math.abs(x - 1 / 3) < 1e-9));
+  assert.ok(L.valid(t));
+  // A full-height pane on the left of a 2 over 1 layout wraps it in a row, half and half.
+  const twoOverOne = L.insertAtEdge(L.insert(L.leaf('a'), 'a', 'b', 'right'), 'c', 'bottom');
+  const left = L.insertAtEdge(twoOverOne, 'd', 'left');
+  assert.equal(left.dir, 'row');
+  assert.deepEqual(left.sizes, [0.5, 0.5]);
+  assert.deepEqual(L.ids(left), ['d', 'a', 'b', 'c']);
+  assert.ok(L.valid(left));
+});
+
+test('edgeShare says how much room the dropped pane would get, and an empty layout takes the pane whole', () => {
+  const two = L.insert(L.leaf('a'), 'a', 'b', 'right');
+  assert.equal(L.edgeShare(two, 'bottom'), 0.5);
+  assert.equal(L.edgeShare(two, 'right'), 1 / 3);
+  assert.deepEqual(L.insertAtEdge(null, 'a', 'left'), L.leaf('a'));
+});
