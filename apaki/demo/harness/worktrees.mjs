@@ -91,9 +91,12 @@ const PATCHES = [
   },
 ];
 
-/** `enabled`: only the worktrees preset has repositories; every other scene shows the window as it was (no branch labels). */
-export function createWorktrees({ emit, later, now = () => Date.now(), enabled = true }) {
-  let repos = enabled ? buildRepos() : [];
+/**
+ * `enabled`: only the worktrees preset has repositories; every other scene shows the window as it was (no branch labels).
+ * `extra`: more repositories after the demo's two (the load workspace's, load.mjs, 2026-10-15).
+ */
+export function createWorktrees({ emit, later, now = () => Date.now(), enabled = true, extra = null }) {
+  let repos = enabled ? [...buildRepos(), ...(extra || [])] : [];
   const findWt = (p) => { for (const r of repos) for (const w of r.worktrees) if (w.path === p) return { r, w }; return null; };
   const findRepo = (p) => repos.find((r) => r.root === p || r.worktrees.some((w) => w.path === p)) || null;
   const send = () => emit({ ev: 'worktrees', reqId: null, repos });

@@ -5,7 +5,8 @@
  * and then read the page's layout (to keep the reader at the end). With four panes streaming that was four layouts per
  * frame, in a page whose transcripts are thousands of blocks long, and the main thread had no room left for a key press.
  * This painter takes every reply that has new text and, once per frame:
- *   - draws at most one update per reply per `gap` ms (about 20 a second),
+ *   - draws every reply that has new text in the same frame, at most once per `gap` ms (about 20 a second; since
+ *     2026-10-15 the gap is the painter's, not each reply's, so replies streaming side by side share their frames),
  *   - draws nothing while a key was pressed in the last `hold` ms (someone is typing: their key press must not queue
  *     behind a paint), and catches up the moment they pause; a reply that has waited `maxWait` ms is drawn anyway,
  *   - stops drawing when the frame has spent `budget` ms, and carries the rest to the next frame (at least one reply is
@@ -26,9 +27,15 @@ export function createStreamPainter({
   gap = 50, hold = 200, maxWait = 800, budget = 6,
 } = {}) {
   const jobs = new Map();
-  const last = new WeakMap();
   let scheduled = false;
   let keyAt = -Infinity;
+  // One drawing for every reply at once (2026-10-15, window lag). Each reply used to keep its own 50 ms gap, so three
+  // replies streaming drifted apart and were drawn in three different frames: up to 60 frames a second with work in
+  // them, each paying for the whole page's style, layout and paint. Now the gap is the painter's: every reply with new
+  // text is drawn in the same frame, at most once per gap (each reply still at most ~20 times a second), and between
+  // drawings the painter waits on a timer instead of looking every frame.
+  let lastAt = -Infinity; // when a frame last drew something
+  let behind = false;     // the last frame ran out of budget with replies still waiting: the next one goes at once
 
   function schedule(delay = 0) {
     if (scheduled) return;
@@ -48,21 +55,23 @@ export function createStreamPainter({
       for (const [key, job] of jobs) if (t0 - job.since >= maxWait) forced.add(key);
       if (!forced.size) { if (jobs.size) schedule(Math.min(typingFor, gap) + 1); return; }
     }
+    // Drawn less than a gap ago: look again when the gap is over (unless the last frame left replies behind).
+    const since = t0 - lastAt;
+    if (!behind && since < gap) { schedule(Math.max(1, Math.ceil(gap - since))); return; }
+    behind = false;
     const settles = new Set();
     let drawn = 0;
-    let waiting = false;
     for (const [key, job] of jobs) {
       if (typingFor > 0 && !forced.has(key)) continue;
-      if (t0 - (last.get(key) ?? -Infinity) < gap) { waiting = true; continue; }
-      if (drawn && now() - t0 > budget) { waiting = true; break; }
+      if (drawn && now() - t0 > budget) { behind = true; break; }
       jobs.delete(key);
-      last.set(key, t0);
       try { job.draw(); } catch (e) { /* one reply failing to draw must not stop the others */ }
       drawn++;
       if (job.settle) settles.add(job.settle);
     }
+    if (drawn) lastAt = t0;
     for (const settle of settles) { try { settle(); } catch (e) { /* a pane that went away */ } }
-    if (jobs.size) schedule(waiting ? 0 : Math.min(gap, 16));
+    if (jobs.size) schedule(behind ? 0 : gap);
   }
 
   return {

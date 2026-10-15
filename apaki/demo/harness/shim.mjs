@@ -62,8 +62,11 @@ const shell = createBrowserShell({ emitBrowser: (ev) => deliver('browser', ev), 
 const engine = createEngine({ send: (ev) => deliver('engine', ev), browser: shell, preset: q.get('ws') || 'base', now: () => Date.now() });
 
 const sent = [];
+// The lines the page writes to apaki-window.log (ui_log: a stall, a busy minute), kept for perf.mjs to show (2026-10-15).
+const uiLog = [];
 
 async function invoke(cmd, args = {}) {
+  if (cmd === 'ui_log') { uiLog.push(String(args.text || '')); if (uiLog.length > 50) uiLog.shift(); return null; }
   // The last ops the window sent, newest last, for a check from outside (window.__demo.sent: an answer, a send...).
   if (cmd === 'engine_send') { sent.push(args.msg); if (sent.length > 200) sent.shift(); engine.handle(args.msg); return null; }
   if (cmd === 'browser') return shell.invoke(args.cmd, args.args || {});
@@ -125,6 +128,7 @@ window.__demo = {
   /** One engine event, as if the engine sent it: an ask, an ask_gone (questions in the pane, askcard.js, 2026-10-12). */
   emit: (ev) => deliver('engine', ev),
   sent,
+  uiLog,
 };
 
 window.addEventListener('DOMContentLoaded', () => {

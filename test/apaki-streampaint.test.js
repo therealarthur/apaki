@@ -150,3 +150,21 @@ test('cancel drops a queued reply; a draw that throws does not stop the others',
   r.step();
   assert.deepEqual(log, ['ok']);
 });
+
+test('replies streaming side by side are drawn in the same frames, not each on its own beat (2026-10-15)', () => {
+  const r = rig({ gap: 50 });
+  const frames = [];
+  let frame = 0;
+  const draw = (n) => () => { (frames[frame] ||= []).push(n); };
+  // Three replies whose text arrives out of step: a, then b 20 ms later, then c 20 ms after that, for half a second.
+  for (let ms = 0; ms < 500; ms += 10) {
+    if (ms % 30 === 0) r.painter.queue(key('a'), draw('a'));
+    if (ms % 30 === 20) r.painter.queue(key('b'), draw('b'));
+    if (ms % 30 === 10) r.painter.queue(key('c'), draw('c'));
+    if (r.step(10)) frame++;
+  }
+  const drawn = frames.filter(Boolean);
+  // About one frame with drawing per 50 ms, each taking every reply that had something new.
+  assert.ok(drawn.length <= 11, `at most about 10 frames drew in 500 ms, got ${drawn.length}`);
+  assert.ok(drawn.slice(1).every((f) => f.length >= 2), 'later frames draw several replies together');
+});

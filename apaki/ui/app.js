@@ -82,10 +82,13 @@ import { DiffPane, newDiffViewerId } from './diff.js';
 import { initTooltips, setTip } from './tooltip.js';
 // The session list in the ChatGPT app's manner, folders that open in place, the session menu and Details (2026-10-12).
 import {
-  GLYPH, createOpenState, detailLine, detailsHtml, folderMenuItems, groupRows, leadHtml, navKey, rowTip, sessionFacts, sessionMenuItems, shortTime,
+  GLYPH, agoText, createOpenState, detailLine, detailsHtml, folderMenuItems, groupRows, leadHtml, navKey, placeChildren, rowTip, sessionFacts, sessionMenuItems, shortTime,
 } from './sessionlist.js';
 // Decorative motion rests while the window is hidden or unfocused (2026-10-12, input lag).
 import { initRest } from './rest.js';
+// What the main thread did, a minute at a time (perfwatch.js, 2026-10-15, window lag): Apaki's drawing paths are timed
+// through it (renderRail, renderTabs, renderPanel, layout, saveNow, the engine's events), and a busy minute is logged.
+import { watch } from './perfwatch.js';
 import { osName, pc } from './platform.js';
 
 initRest();
@@ -414,8 +417,11 @@ function panelFocused() {
   return S.panes.get(S.panelFocus) || null;
 }
 
+/** Draws tab t's side panel (timed for the minute line, perfwatch.js; drawPanel draws). */
+function renderPanel(t) { return watch.time('panel', () => drawPanel(t)); }
+
 /** Draws tab t's side panel (cheap: each part is replaced only when its HTML changed) and, in front, the space it takes. */
-function renderPanel(t) {
+function drawPanel(t) {
   if (WEB || !t?.panel) return;
   const space = panelSpace(t);
   const groups = groupsOf(t);
@@ -764,6 +770,8 @@ if (!WEB && typeof PerformanceObserver === 'function') {
   try {
     new PerformanceObserver((list) => {
       for (const e of list.getEntries()) {
+        // Every long task counts toward the minute's line (below).
+        watch.longTask(e.duration);
         if (e.duration < 1000 || Date.now() - lastStall < 5000) continue;
         lastStall = Date.now();
         const panes = [...S.panes.values()];
@@ -772,6 +780,20 @@ if (!WEB && typeof PerformanceObserver === 'function') {
       }
     }).observe({ type: 'longtask', buffered: false });
   } catch { /* no long-task timing here */ }
+}
+
+// A busy minute leaves a trace too (2026-10-15, Arthur: "it gets kind of laggy with multiple tabs and panes running at
+// the same time - it doesnt stay sharp"). Lag without a single long stall is a thread that is busy most of the time in
+// shorter pieces, which the stall line above never sees. Once a minute, when the main thread was busy for more than
+// BUSY_LOG_PCT of it, one line goes to apaki-window.log: how busy, the long tasks and the worst, and where Apaki's own
+// time went by drawing path (perfwatch.js), with what the window held. Desktop only; costs a timer every 250 ms.
+if (!WEB) {
+  watch.start();
+  setInterval(() => {
+    const panes = [...S.panes.values()];
+    const m = watch.minute(`${S.tabs?.length ?? '?'} tabs, ${panes.length} panes, ${panes.filter((p) => p.busy).length} working`);
+    if (m.line) invoke('ui_log', { text: m.line }).catch(() => {});
+  }, 60_000);
 }
 
 const wtc = initWorktrees({
@@ -789,14 +811,22 @@ const wtc = initWorktrees({
 });
 host.wt = wtc;
 
-/** The engine sent repositories: every branch label, diff viewer, tab tooltip and the sidebar follow. */
-function wtChanged({ save: keep = false } = {}) {
+/**
+ * The engine sent repositories: every branch label, diff viewer, tab tooltip and the sidebar follow.
+ * shape: false when only the numbers moved (worktree.js layoutKey). The engine sends the repositories again after
+ * every turn and every few seconds while files change, almost always with new numbers only; the session list (400
+ * rows) and the tab bar show no numbers outside the Worktrees view, so since 2026-10-15 (window lag: the list was drawn
+ * again every 2 to 3 seconds per working pane) they are drawn again only when something they show changed.
+ */
+function wtChanged({ save: keep = false, shape = true } = {}) {
   for (const p of S.panes.values()) {
     if (p.isDiff) p.repoChanged();
     else if (!p.isViewer) p.setCwdLine();
   }
-  if (!S.drag) renderRail();
-  renderTabs();
+  if (shape || S.view === 'worktrees') {
+    if (!S.drag) railSoon();
+    renderTabs();
+  }
   if (keep) save();
 }
 
@@ -1510,8 +1540,11 @@ let startUI = null;
 
 /* ---------- layout rendering ---------- */
 
+/** Renders a tab's layout tree (timed for the minute line, perfwatch.js; drawLayout draws). */
+function layout(t) { return watch.time('layout', () => drawLayout(t)); }
+
 /** Renders a tab's layout tree, moving the existing pane elements (their state stays). */
-function layout(t) {
+function drawLayout(t) {
   // The tree drawn: the tab's conversations on the PC (its viewers are in the side panel); on the phone, whose pager pages
   // through a tab, every pane with each conversation's viewers after it (phoneRoot, 2026-10-13).
   const tree = WEB ? phoneRoot(t) : t.root;
@@ -2225,7 +2258,10 @@ function beginTabRename(t, tabEl, current) {
   input.addEventListener('dblclick', (e) => e.stopPropagation());
 }
 
-function renderTabs() {
+/** The tab bar (timed for the minute line, perfwatch.js; drawTabs draws). */
+function renderTabs() { return watch.time('tabs', drawTabs); }
+
+function drawTabs() {
   const bar = $('tabs');
   // A tab being named keeps its field until you finish (a redraw would take the field away under your typing).
   if (S.tabEdit && bar.querySelector('.tab-rename')) return;
@@ -3362,6 +3398,43 @@ function sessionRow(s, o = {}) {
   return li;
 }
 
+/*
+ * Rows kept between drawings (2026-10-15, window lag). The list was emptied and every row (up to 400) made again on
+ * each drawing: its markup, its hover card, its handlers, and the browser's style for all of them. A row is now kept
+ * under a key of everything it shows (rowKey) and used again while that key is the same; the list is put in order by
+ * moving only what moved (placeChildren). A row with anything new (its title, time, state, branch, folder, warm ring,
+ * search snippet) gets a new key and is made again, exactly as before. The key holds the whole session record, so the
+ * record a kept row's handlers hold is the same as the list's in everything they read.
+ */
+let railKept = new Map();
+let headsKept = new Map();
+
+/** Everything a session row shows, as one string (sessionRow draws from exactly these). */
+function rowKey(s, o = {}) {
+  const live = liveOf(s);
+  const p = live.pane;
+  const b = branchOf(s);
+  const at = s.lastModified || 0;
+  const now = Date.now();
+  return JSON.stringify([
+    s, o.grouped ? 1 : 0, o.inFolder || '', live.runningHere, live.waiting, p ? [p.id, p.isViewer ? 1 : 0, p.model || '', p.busy ? 1 : 0] : 0,
+    b.branch, b.worktree, folderNameOf(s), S.warm.has(s.id), S.expanded.has(s.id), s.snippet ? [S.query, S.searchTerms || null] : 0,
+    shortTime(at, now, { grouped: Boolean(o.grouped) }), agoText(at, now),
+  ]);
+}
+
+/** The row for a session: the one drawn last time when it shows the same, else a new one (sessionRow). */
+function keptRow(s, o, kept) {
+  const key = rowKey(s, o);
+  let li = kept.get(key);
+  if (li) kept.delete(key);
+  else li = sessionRow(s, o);
+  railKept.set(key, li);
+  return li;
+}
+
+// (placeChildren, which puts the list in order moving only what moved, is in sessionlist.js, where it is tested.)
+
 /** A recency heading in the list (Pinned, Today, Yesterday...). */
 function groupHead(label) {
   const li = el('li', 'sr-group');
@@ -3388,9 +3461,10 @@ function restoreNavFocus(box, key) {
   const items = [...box.querySelectorAll('[data-nav]')];
   let target = null;
   if (key) target = items.find((x) => x.dataset.nav === key.nav && (x.dataset.id || null) === key.id && (x.dataset.folder || null) === key.folder) || null;
-  for (const x of items) x.tabIndex = -1;
+  // Only what changes is written (2026-10-15): kept rows already have their tab stop, and a write is a change to restyle.
   const tabStop = target || items.find((x) => x.classList.contains('on')) || items[0];
-  if (tabStop) tabStop.tabIndex = 0;
+  for (const x of items) if (x !== tabStop && x.tabIndex !== -1) x.tabIndex = -1;
+  if (tabStop && tabStop.tabIndex !== 0) tabStop.tabIndex = 0;
   if (target) target.focus({ preventScroll: true });
 }
 
@@ -3452,7 +3526,24 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
-function renderRail() {
+/*
+ * The session list drawn again for the engine's events, once per frame at most (2026-10-15, window lag). Subagent
+ * counts, terminals, keep-warm and the repositories each drew all of it (400 rows) the moment they arrived; with five
+ * panes working they arrived several times a second, often in the same frame. railSoon() asks for one drawing on the next
+ * frame, so a burst costs one. What you do yourself (a view, a search, a rename) still draws at once (renderRail), and a
+ * drawing at once takes the one that was asked for with it.
+ */
+let railFrame = 0;
+function railSoon() {
+  if (railFrame) return;
+  railFrame = requestAnimationFrame(() => { railFrame = 0; if (!S.drag) renderRail(); });
+}
+
+/** The sidebar's views, folders and session list (timed for the minute line, perfwatch.js; drawRail draws). */
+function renderRail() { return watch.time('rail', drawRail); }
+
+function drawRail() {
+  if (railFrame) { cancelAnimationFrame(railFrame); railFrame = 0; }
   const views = $('views');
   views.innerHTML = '';
   for (const v of viewList()) {
@@ -3484,26 +3575,35 @@ function renderRail() {
   const list = $('sessions');
   // The list is drawn again on every sessions event: the keyboard's place stays where it was.
   const keepFocus = navFocusKey(list);
-  list.innerHTML = '';
-  if (wtView) { const clean = wtc.cleanRowEl(); if (clean) list.append(clean); }
+  // What the list holds, in order; rows that show the same as last time are the same elements (keptRow, 2026-10-15).
+  const want = [];
+  const kept = railKept;
+  const heads = headsKept;
+  railKept = new Map();
+  headsKept = new Map();
+  if (wtView) { const clean = wtc.cleanRowEl(); if (clean) want.push(clean); }
   const focusedCwd = focusedPane()?.cwd || '';
   const addRow = (s, grouped) => {
-    list.append(sessionRow(s, { grouped }));
-    if (S.expanded.has(s.id)) for (const sub of subRows(s)) list.append(sub);
+    want.push(keptRow(s, { grouped }, kept));
+    if (S.expanded.has(s.id)) for (const sub of subRows(s)) want.push(sub);
   };
   if (!S.results && !wtView) {
     // The ChatGPT app's order (2026-10-12): Pinned, Today, Yesterday, Previous 7 days, Previous 30 days, then by month.
     for (const g of groupRows(rows.slice(0, 400), Date.now(), { pinned: S.view !== 'archived' })) {
-      list.append(groupHead(g.label));
+      const head = heads.get(g.label) || groupHead(g.label);
+      heads.delete(g.label);
+      headsKept.set(g.label, head);
+      want.push(head);
       for (const s of g.rows) addRow(s, true);
     }
   } else {
     for (const s of rows.slice(0, 400)) {
       // A repository or a worktree row of the Worktrees view; the conversations between them are ordinary rows.
-      if (s.wtRow) { list.append(wtc.rowEl(s.wtRow, { focusedCwd })); continue; }
+      if (s.wtRow) { want.push(wtc.rowEl(s.wtRow, { focusedCwd })); continue; }
       addRow(s, false);
     }
   }
+  placeChildren(list, want);
   restoreNavFocus(list, keepFocus);
   if (!rows.length) list.append(el('li', 'note', S.results ? 'Nothing matches in this view.' : S.view === 'archived' ? 'Nothing archived.' : wtView ? (wtc.hasData() ? 'No worktrees yet. Start a conversation in a new worktree to see it here.' : 'Looking for worktrees…') : 'No sessions here yet.'));
   const newWt = wtView ? wtc.newRowEl() : null;
@@ -3988,8 +4088,11 @@ function snapshot() {
   return { v: 1, savedAt: Date.now(), active: S.tabs.findIndex((t) => t.id === S.active), tabs, rail: { view: S.view, expanded: [...S.expanded], scroll: $('sessions')?.scrollTop || 0, width: S.railW || null, collapsed: Boolean(S.railCollapsed), wtFolded: wtc.foldedList(), foldersOpen: folderOpen.list() }, win: S.win || null };
 }
 
+/** Saves at once (timed for the minute line, perfwatch.js; saveNowUntimed saves). */
+function saveNow() { return watch.time('save', saveNowUntimed); }
+
 /** Saves at once: localStorage, and the engine's copy on disk (desktop only). */
-function saveNow() {
+function saveNowUntimed() {
   clearTimeout(saveTimer);
   saveTimer = null;
   if (!S.restored) return; // nothing to save over the last good state before it is back
@@ -4110,13 +4213,15 @@ let phone = null;
 
 // Registered before anything is sent: `listen` is async, and events that
 // arrive before it resolves are lost (a reload lost restored panes' opens).
-await listen('engine', ({ payload: e }) => {
+// Each event is timed for the minute line (perfwatch.js): its own handling as 'events', a pane's as 'panes', and what
+// they draw under their own names.
+await listen('engine', watch.wrap('events', ({ payload: e }) => {
   // Git worktrees (worktree.js): the repositories, and the answers to what this window asked about them.
   if (wtc.handle(e)) return;
   // Something Claude showed: a card in its conversation, and the viewer beside it.
   if (e.ev === 'artifact' || e.ev === 'openUrl') {
     const p = S.panes.get(e.paneId);
-    p?.handle(e);
+    if (p) watch.time('panes', () => p.handle(e));
     // A turn's changes and a picture Codex looked at are cards (their Open shows the viewer); only Claude's and Codex's own shows pop one up.
     if (e.ev === 'artifact' && (!CARD_ONLY_VIA.has(e.via) || e.open)) openViewer({ ...e, sourcePane: e.paneId }, { auto: !e.open });
     // openUrl: the engine already put it in the built-in browser (browserId),
@@ -4138,7 +4243,7 @@ await listen('engine', ({ payload: e }) => {
   if (e.paneId && PANE_EVENTS.has(e.ev)) {
     const p = S.panes.get(e.paneId);
     if (!p) return; // a pane closed while its event was on the way
-    p.handle(e);
+    watch.time('panes', () => p.handle(e));
     if (e.ev === 'result') cameBack(p, 'done');
     if (e.ev === 'taken_over') cameBack(p, 'ask');
     // Opened afresh (not re-attached to a running pane): nothing it asked before still waits, so its cards go.
@@ -4213,7 +4318,7 @@ await listen('engine', ({ payload: e }) => {
       for (const [id, r] of Object.entries(t)) {
         if (!S.sessions.some((s) => s.id === id)) S.sessions.unshift({ id, title: `New session (${r.name || 'terminal'})`, firstPrompt: '', cwd: r.cwd || '', lastModified: r.updatedAt || Date.now(), terminal: { name: r.name, status: r.status, pid: r.pid }, folder: null });
       }
-      if (!S.drag) renderRail();
+      if (!S.drag) railSoon();
       break;
     }
     case 'codexModels':
@@ -4238,7 +4343,7 @@ await listen('engine', ({ payload: e }) => {
       S.subs.set(e.sessionId, { agents: e.agents || [], shells: e.shells || [], at: Date.now() });
       const s = S.sessions.find((x) => x.id === e.sessionId);
       if (s) s.subagents = (e.agents || []).length;
-      if (S.expanded.has(e.sessionId) && !S.drag) renderRail();
+      if (S.expanded.has(e.sessionId) && !S.drag) railSoon();
       const pp = tasksPanelPane();
       if (pp && pp.sessionId === e.sessionId) openTasksPanel(pp, null);
       for (const p of S.panes.values()) if (p.sessionId === e.sessionId) p.renderTasksButton?.();
@@ -4248,14 +4353,14 @@ await listen('engine', ({ payload: e }) => {
       const s = S.sessions.find((x) => x.id === e.sessionId);
       if (s) s.subagents = e.count;
       if (S.expanded.has(e.sessionId) || tasksPanelPane()?.sessionId === e.sessionId) send('subagents', { sessionId: e.sessionId });
-      else if (s && !S.drag) renderRail();
+      else if (s && !S.drag) railSoon();
       for (const p of S.panes.values()) if (p.sessionId === e.sessionId) p.renderTasksButton?.();
       break;
     }
     case 'state': S.stateWait?.(e.state || null); S.stateWait = null; break;
     case 'warm':
       S.warm = new Set(e.sessions || []);
-      if (!S.drag) renderRail();
+      if (!S.drag) railSoon();
       renderTabs();
       break;
     case 'renamed': {
@@ -4380,7 +4485,7 @@ await listen('engine', ({ payload: e }) => {
       break;
     default: break;
   }
-});
+}));
 
 // The built-in browser's events (src/browser.rs): pages made, their state,
 // the keyboard in a page, a page closing itself.
@@ -4504,4 +4609,5 @@ $('refreshSessions').onclick = () => {
 // desktop.js opens a conversation from "On your desktop" the way a tap in the session list does, or follows the desktop
 // pane with followDesktop when the PC offers 'follow'). The window never calls them.
 // 2026-10-13: the side panel for checks and the demo harness (togglePanel, setPanelOpen, groupsOf, stepMaximize).
-window.__apaki = { S, L, W, wt: wtc, openDiff, openTask, toggleMaximize, revealPane, setArrangement, tabNames, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, followDesktop, togglePanel, setPanelOpen, groupsOf, stepMaximize, dropSession:(s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };
+// 2026-10-15: renderRail and renderTabs, so apaki/demo/perf.mjs can time a drawing of the list and the tab bar on its own.
+window.__apaki = { S, L, W, wt: wtc, renderRail, renderTabs, openDiff, openTask, toggleMaximize, revealPane, setArrangement, tabNames, focusedPane, activeTab, addTab, arrangeGrid, openViewer, viewers, browsers, openUrlHere, syncBrowsers, focusPane, openFromRail, followDesktop, togglePanel, setPanelOpen, groupsOf, stepMaximize, dropSession:(s, edge) => { const t = activeTab(); const target = focusedPane(); dropSession(t, target ? { where: edge === 'center' ? 'center' : 'edge', edge, pane: target } : { where: 'root' }, s); } };

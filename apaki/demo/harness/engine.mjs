@@ -25,6 +25,8 @@ import { createCodexDemo } from './codex.mjs';
 import { createWorktrees } from './worktrees.mjs';
 // The viewers (2026-10-13): invented artifacts of every kind, for the viewer panes of the "viewers" preset.
 import { createArtifactsDemo } from './artifacts.mjs';
+// The load workspace (2026-10-15, window lag): hundreds of sessions, 26 repositories, long transcripts, five panes working.
+import { LOAD_SCRIPTS, loadEarlierPage, loadHistory, loadRepos, loadSessions, seeded, tickRepos } from './load.mjs';
 
 const MODEL = 'claude-opus-5-5';
 const PAIR_URL = 'https://apaki.myrlin.io/pair#v1.q7T2mK9xRw4LbN8cHf3Yp6Ds5GjV1eAu';
@@ -54,10 +56,11 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
   let idSeq = 0;
   const nextId = (prefix) => `${prefix}_demo_${String(++idSeq).padStart(3, '0')}`;
 
-  let sessions = buildSessions(NOW);
   let folders = buildFolders(NOW);
   const start = (PRESETS[preset] || PRESETS.base)();
-  const worktrees = createWorktrees({ emit: (ev) => send(ev), later: (ms, ev) => setTimeout(() => send(ev), ms), now, enabled: Boolean(start.worktrees) });
+  // The load workspace lists hundreds of sessions and 26 repositories (load.mjs).
+  let sessions = start.load ? loadSessions(NOW) : buildSessions(NOW);
+  const worktrees = createWorktrees({ emit: (ev) => send(ev), later: (ms, ev) => setTimeout(() => send(ev), ms), now, enabled: Boolean(start.worktrees), extra: start.load ? loadRepos() : null });
   // The worktrees preset moves a few conversations into worktrees of the invented repositories.
   if (start.worktrees) sessions = worktrees.remap(sessions, ID);
   const scripts = new Map(Object.entries(start.scripts || {}).map(([k, v]) => [k, [...v]]));
@@ -153,6 +156,10 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
       ...(tookOver ? { tookOver: true } : {}),
     });
     if (!s) return;
+    // The load workspace: a long transcript (2400 messages, or the first 300 of 3000), and a turn for the panes that work.
+    const lh = start.load ? loadHistory(s.id, NOW) : null;
+    if (start.load && (start.busy || []).includes(s.id) && !attached) setTimeout(() => { if (panes.get(pane.id) === pane && !pane.turn) runTurn(pane, scriptFor(s.id), '', true); }, 1200);
+    if (lh) { later(120, { ev: 'history', paneId: pane.id, sessionId: s.id, rev: revOf(s.id), ...lh }); return; }
     const h = historyOf(s.id);
     if (h.earlier) {
       later(120, { ev: 'history', paneId: pane.id, sessionId: s.id, messages: h.messages, total: h.total, source: 'transcript', first: h.earlierCount, hasMore: true, earlier: h.earlierCount, rev: revOf(s.id) });
@@ -220,6 +227,13 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     browser,
     /** The task tool registers its subagent so the viewer opened from its tool line can show what it did. */
     registerAgent(toolUseId, spec) { agents.set(toolUseId, spec); },
+    /** A session's subagent files changed on disk (engine live.js onSubagents): the count, a moment later (load.mjs). */
+    subagentsChanged(sessionId) {
+      const s = sessions.find((x) => x.id === sessionId);
+      if (!s) return;
+      s.subagents = (s.subagents || 0) + 1;
+      later(400, { ev: 'subagentsChanged', sessionId, count: s.subagents });
+    },
     contextSoon(paneId, fraction = 0.03) {
       const p = panes.get(paneId);
       if (!p) return;
@@ -239,7 +253,7 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     const t = new Turn(host, { paneId: pane.id, sessionId: pane.sessionId, text, auto });
     pane.turn = t;
     try {
-      await (SCRIPTS[name] || SCRIPTS.generic)(t);
+      await (SCRIPTS[name] || LOAD_SCRIPTS[name] || SCRIPTS.generic)(t);
     } catch (e) {
       if (e instanceof TurnAborted) emit({ ev: 'result', paneId: pane.id, subtype: 'interrupted', durationMs: 0, usage: {}, cost: null });
       else console.error('demo turn failed', name, e);
@@ -481,6 +495,9 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
       }
       case 'mode': later(30, { ev: 'settings', paneId: c.paneId, mode: c.mode }); break;
       case 'historyBefore': {
+        // The load workspace's paged sessions have 2700 more messages before their first page (load.mjs).
+        const lp = start.load ? loadEarlierPage(c.sessionId, NOW, c.before, { all: Boolean(c.all), limit: c.limit || 300 }) : null;
+        if (lp) { later(200, { ev: 'historyPage', paneId: c.paneId, sessionId: c.sessionId, before: c.before, source: 'transcript', ...lp }); break; }
         const h = buildHistory(c.sessionId, NOW);
         later(450, { ev: 'historyPage', paneId: c.paneId, sessionId: c.sessionId, before: c.before, first: 0, hasMore: false, earlier: 0, total: h.total || 0, messages: h.earlier || [] });
         break;
@@ -593,6 +610,35 @@ export function createEngine({ send, browser, preset = 'base', now = () => Date.
     later(250, { ev: 'warm', sessions: sessions.filter((s) => s.warm).map((s) => s.id) });
     // A phone hears the desktop's tabs (engine desktop-tabs.js), for "On your desktop" on its list.
     if (start.desktopTabs) later(280, { ev: 'desktopTabs', tabs: start.desktopTabs });
+    if (start.load) startLoad();
+  }
+
+  /**
+   * The load workspace's background (load.mjs, 2026-10-15), timed like the real engine: the repositories' numbers move
+   * every 2 to 3 seconds and are sent whole (sendWorktrees after a turn or a save), the session list comes again every
+   * 10 seconds while transcripts change (live.js LIST_MIN_GAP_MS) with the terminals just before it, and Glass's usage
+   * every 30 seconds.
+   */
+  function startLoad() {
+    const rnd = seeded(23);
+    const repos = worktrees.repos();
+    const tick = () => {
+      tickRepos(repos, rnd);
+      send({ ev: 'worktrees', reqId: null, repos });
+      setTimeout(tick, 2000 + Math.floor(rnd() * 1000));
+    };
+    setTimeout(tick, 2500);
+    setInterval(() => {
+      for (const id of start.busy || []) { const s = sessions.find((x) => x.id === id); if (s) s.lastModified = now(); }
+      send(terminalsEvent());
+      sendSessions(null, 30);
+    }, 10_000);
+    setInterval(() => {
+      const live = liveClaude();
+      live.headroom = Math.max(5, live.headroom - 1);
+      for (const w of live.windows || []) w.percent = Math.min(99, w.percent + 1);
+      send(glassEvent(false));
+    }, 30_000);
   }
 
   /** What the scene runner drives from outside (window.__demo). */

@@ -102,6 +102,7 @@ The scenes are in `scenes.mjs`. A scene is `run(s)` with a small director: `s.be
 | `harness/engine.mjs` | A pretend engine. Answers the window's ops (`sessions`, `open`, `send`, `steer`, `glassSwap`, `remote*`, `search`, `askSearch`, `subagents`, `agentWatch`...) with events shaped like the real engine's. |
 | `harness/turns.mjs` | Scripted Claude turns: streamed text, tool calls and results, subagent tasks, steer points, system lines. Which script a session plays is set by the workspace preset. |
 | `harness/data.mjs` | The invented dataset and the named starting workspaces (`PRESETS`). Node safe. |
+| `harness/load.mjs`, `perf.mjs` | The `load` workspace (hundreds of sessions, 26 repositories, long transcripts, five panes working) and the driver that measures the window in it (2026-10-15; see Measuring the window under load). |
 | `harness/browser-shell.mjs`, `harness/pages.mjs` | A pretend of the shell's built-in browser: the page is an iframe laid over the pane's body, placed by the same `place` command the real shell gets. The pages are a fictional shop. |
 | `harness/cursor.mjs`, `harness/demo.css` | The on-screen pointer and click ripple, because a browser recording has none. |
 | `scenes.mjs`, `capture.mjs` | The scenes and the Playwright and ffmpeg runner. |
@@ -135,6 +136,32 @@ node apaki/demo/brand-images.mjs ffmpeg=<exe>    # docs/media/wordmark-*.png and
 ```
 
 ffmpeg needs libx264 and libwebp (the `ffmpeg-static` package has both). Since 2026-10-12 the site gets the close-ups from `crops/`: each clip's MP4 copied as captured, and its poster as WebP (quality 90, `-preset text`) at exactly the clip's pixel size, light and dark: `hero-pane`, `hero-phone`, `glass-card`, `steer-line`, `worktree-diff`, `search-meaning`, `browser-pane`, `pair-sheet`, `pair-phone`, `codex-pair` (`<name>-<theme>.mp4` and `.webp`), plus the still crops `sessions-list` (704 wide) and `pane-a` to `pane-d` (at their own 2x pixels) as `<name>-<theme>.webp`. `legacy=1` also writes the older set: the full-window clips with their 1200 and 2000 px posters, the phone's stills and the `search-hits` crop. Nothing is ever deleted from `relay/site/assets/media`; the page's author removes files it no longer points at.
+
+## Measuring the window under load (2026-10-15)
+
+The report was "our apaki app gets kind of laggy with multiple tabs and panes running at the same time - it doesnt stay sharp". The `load` workspace is a window that busy, on invented data (`harness/load.mjs`): five tabs, thirteen conversations, five of them working at once (three in the tab on screen), each turn streamed the way the Agent SDK sends it (thinking and tool input deltas, text, tool calls with long output, a subagent whose own traffic comes through), two panes with 2400 messages and four with the first 300 of 3000, the side panel with three viewers, about 640 sessions in the list and 26 repositories whose numbers move every 2 to 3 seconds (a `worktrees` event each time), the list again every 10 seconds. Look at it with `desktop.html?ws=load`.
+
+```
+node apaki/demo/perf.mjs
+node apaki/demo/perf.mjs seconds=60 warm=10 label=after out=<folder>
+node apaki/demo/perf.mjs ui=<a copy of an older apaki/ui> label=before
+```
+
+It starts the server and one headless Chromium (1440x900, device scale 1), waits for the workspace to come back, lets the load run `warm` seconds, then types into the focused composer, a key every 250 ms, for `seconds`, and prints:
+
+| Number | What it is |
+| - | - |
+| `startup` | time until every pane drew its history, and the long tasks meanwhile |
+| `measured.busyPct` | share of the main thread spent in tasks while typing (CDP `TaskDuration`), with script, layout and style shares; `harnessPct` is the pretend engine's own share (it runs on the page's thread here, the real one does not) |
+| `inputP50Ms`, `inputP95Ms` | time from a key press to the next frame after it |
+| `longTasksPerMin`, `worstLongTaskMs` | tasks over 50 ms |
+| `watching` | the same load for `watch` seconds (default 15) with no one typing |
+| `loadAll` | the worst stall while a paged conversation's 2700 earlier messages come in |
+| `tabSwitch` | the worst stall as each tab comes forward |
+| `memory` | JS heap, DOM nodes and listeners at the end |
+| `windowLog` | the lines the page wrote for apaki-window.log (a stall, a busy minute) |
+
+Then the functions with the most self time, and Apaki's own by total time. `trace=1` adds a timeline trace of the typing stretch (main thread time by event, style and layout by what forced them, the longest tasks and what filled them); `trace=switch` traces the tab switches instead. `out=` also writes `<label>.json` and `<label>.cpuprofile` (open it in DevTools). `ui=` serves another copy of `apaki/ui` on the same harness, for a before and after. Runs differ by a few points from one to the next; compare runs of 60 seconds, twice each.
 
 ## What it cannot fake yet
 

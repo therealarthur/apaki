@@ -25,7 +25,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const UI = path.resolve(HERE, '..', 'ui');
+// The UI served (2026-10-15): apaki/ui, or another copy of it (startServer's ui, APAKI_DEMO_UI), so apaki/demo/perf.mjs
+// can measure an older version on the same harness for a before and after.
+let UI = path.resolve(process.env.APAKI_DEMO_UI || path.join(HERE, '..', 'ui'));
 const HARNESS = path.join(HERE, 'harness');
 const TEMPLATE = path.join(HERE, 'desktop.html');
 // The phone page (2026-10-12): its template, and where the phone client's own files live.
@@ -88,7 +90,8 @@ function fileUnder(root, rel) {
   try { return fs.statSync(full).isFile() ? full : null; } catch { return null; }
 }
 
-export function startServer({ port = 0, host = '127.0.0.1' } = {}) {
+export function startServer({ port = 0, host = '127.0.0.1', ui = null } = {}) {
+  if (ui) UI = path.resolve(ui);
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
     const p = decodeURIComponent(u.pathname);

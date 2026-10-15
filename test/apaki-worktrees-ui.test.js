@@ -328,10 +328,12 @@ test('the window: Worktrees view, branch label, New worktree, + menu, tab toolti
   assert.match(app, /\{ id: 'worktrees', label: 'Worktrees', n: wtc\.count\(\) \}/);
   assert.match(app, /if \(S\.view === 'worktrees'\) return wtc\.inLinked\(s\.cwd\);/);
   assert.match(app, /wtc\.rows\(S\.sessions\.filter\(\(s\) => !s\.archived\)\)\.map\(\(r\) => \(r\.k === 'kid' \? \{ \.\.\.r\.s, wtKid: true \} : \{ wtRow: r \}\)\)/);
-  assert.match(app, /if \(s\.wtRow\) \{ list\.append\(wtc\.rowEl\(s\.wtRow, \{ focusedCwd \}\)\); continue; \}/);
+  // Since 2026-10-15 the list is put in order from `want` (placeChildren), so kept rows are not made again.
+  assert.match(app, /if \(s\.wtRow\) \{ want\.push\(wtc\.rowEl\(s\.wtRow, \{ focusedCwd \}\)\); continue; \}/);
   assert.match(app, /S\.view !== 'worktrees' && !S\.folders\.some/, 'a folders event does not throw the view back to All');
   // The engine's state and its answers reach the controller before anything else sees the event; the list is asked for at start and on ready.
-  assert.match(app, /await listen\('engine', \(\{ payload: e \}\) => \{\n[^\n]*\n  if \(wtc\.handle\(e\)\) return;/);
+  // The handler is timed for the window's minute line since 2026-10-15 (perfwatch.js watch.wrap); worktrees still come first.
+  assert.match(app, /await listen\('engine', watch\.wrap\('events', \(\{ payload: e \}\) => \{\n[^\n]*\n  if \(wtc\.handle\(e\)\) return;/);
   assert.equal((app.match(/send\('worktrees'\);/g) || []).length, 2);
   // Every branch label, diff viewer and tab tooltip follows the state.
   assert.match(app, /if \(p\.isDiff\) p\.repoChanged\(\);\n    else if \(!p\.isViewer\) p\.setCwdLine\(\);/);

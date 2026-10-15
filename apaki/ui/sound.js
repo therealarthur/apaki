@@ -29,11 +29,20 @@ export function setSoundOn(value) {
   try { localStorage.setItem(KEY, on ? 'on' : 'off'); } catch { /* not saved */ }
 }
 
+// When the context was last asked to resume (arm). Every key press and click arms it; while the context stays suspended
+// (no audio device, or the system holding it) each of those asked again, and resume() is not cheap: about 7 ms of
+// every key press went there in a measured run (2026-10-15, window lag). Once a second is plenty.
+let resumedAt = -Infinity;
+const RESUME_GAP_MS = 1000;
+
 /** Creates or resumes the audio context; call from a user gesture. */
 export function arm() {
   try {
     if (!ctx) ctx = new AudioContext();
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    if (ctx.state === 'suspended' && Date.now() - resumedAt >= RESUME_GAP_MS) {
+      resumedAt = Date.now();
+      ctx.resume().catch(() => {});
+    }
   } catch { ctx = null; }
 }
 
