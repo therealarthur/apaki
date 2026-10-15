@@ -28,6 +28,7 @@
 
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { latchDir } from './host.js';
 import { terminalCommand as platformTerminalCommand } from '../../src/platform.js';
@@ -40,26 +41,61 @@ export const GIT_ENV = Object.freeze({ GIT_PAGER: 'cat', GIT_TERMINAL_PROMPT: '0
 /** How many processes this module started (a repository with no linked worktree must cost none; tests read it). */
 export const counters = { spawns: 0 };
 
-/** Runs a program with an argument list (no shell). Never rejects: { code, stdout, stderr, missing, timedOut }. */
-export function run(bin, args, { cwd, timeout = 30000, env, maxBuffer = 32 * 1024 * 1024 } = {}) {
+/**
+ * Runs a program with an argument list (no shell). Never rejects: { code, stdout, stderr, missing, timedOut }.
+ * low: below-normal CPU priority (2026-10-15), for the background reads, so a busy PC serves the window, Claude
+ * Code and its hooks first.
+ */
+export function run(bin, args, { cwd, timeout = 30000, env, maxBuffer = 32 * 1024 * 1024, low = false } = {}) {
   counters.spawns += 1;
   return new Promise((resolve) => {
     try {
-      execFile(bin, args, { cwd, timeout, maxBuffer, windowsHide: true, env: { ...process.env, ...GIT_ENV, ...env } }, (err, stdout, stderr) => {
+      const child = execFile(bin, args, { cwd, timeout, maxBuffer, windowsHide: true, env: { ...process.env, ...GIT_ENV, ...env } }, (err, stdout, stderr) => {
         resolve({
           code: err ? (Number.isInteger(err.code) ? err.code : -1) : 0,
           stdout: String(stdout ?? ''), stderr: String(stderr ?? ''),
           missing: err?.code === 'ENOENT', timedOut: Boolean(err?.killed && err?.signal), overflow: err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
         });
       });
+      if (low && child?.pid) {
+        try { os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* it may have exited already */ }
+      }
     } catch (e) {
       resolve({ code: -1, stdout: '', stderr: String(e?.message || e), missing: false, timedOut: false, overflow: false });
     }
   });
 }
 
-/** git in `cwd`; file names come back as they are (core.quotepath off). */
-export const git = (cwd, args, opts = {}) => run('git', ['-c', 'core.quotepath=false', ...args], { cwd, ...opts });
+/**
+ * At most this many of this module's git processes run at once (2026-10-15). A refresh read every repository with
+ * linked worktrees, 4 repositories and 2 worktrees each at a time with about 6 commands per worktree: bursts of 50 to
+ * 80 git processes (each with a console host, each scanned by Defender) every 30 s and after every turn. On a busy PC
+ * that pushed Claude Code's hooks past their 10 s limit ("PreToolUse:Bash hook was cancelled"). The same commands
+ * still run, in the same order per worktree; they queue instead of piling up.
+ */
+export const GIT_AT_ONCE = 4;
+let gitRunning = 0;
+const gitWaiting = [];
+/** The most git processes this module had running at once (tests read it). */
+export const gitPeak = { max: 0 };
+async function gitSlot() {
+  if (gitRunning < GIT_AT_ONCE) { gitRunning += 1; gitPeak.max = Math.max(gitPeak.max, gitRunning); return; }
+  await new Promise((resolve) => gitWaiting.push(resolve));
+}
+function gitDone() {
+  const next = gitWaiting.shift();
+  if (next) next(); else gitRunning -= 1;
+}
+
+/** git in `cwd`; file names come back as they are (core.quotepath off). Bounded (GIT_AT_ONCE) and at low priority. */
+export const git = async (cwd, args, opts = {}) => {
+  await gitSlot();
+  try {
+    return await run('git', ['-c', 'core.quotepath=false', ...args], { cwd, low: true, ...opts });
+  } finally {
+    gitDone();
+  }
+};
 
 /** The first useful line of a failed command, for a message. */
 export function whyFailed(r, what = 'git') {
@@ -893,6 +929,8 @@ export class WorktreeIndex {
     this.infos = new Map();
     /** The records of the last snapshot, for knownPath and repoOf. */
     this.last = [];
+    /** repo id + request -> the load in flight (2026-10-15): a timer and a window asking at once share one pass. */
+    this.pending = new Map();
   }
 
   /** findRepo for a cwd, remembered for a minute (a folder's repository rarely changes). */
@@ -949,9 +987,13 @@ export class WorktreeIndex {
     const key = `${[...want].sort().join('|')}#${isFull ? 'F' : ''}`;
     const hit = this.cache.get(id);
     if (!force && hit && hit.key === key && this.now() - hit.at < this.ttl) return hit.rec;
-    const rec = await loadRepo(info, { wantStats: (p) => want.has(pathKey(p)), full: isFull, meta: this.meta, hint });
-    this.cache.set(id, { at: this.now(), key, rec });
-    return rec;
+    const k = `${id}\n${key}`;
+    if (this.pending.has(k)) return this.pending.get(k);
+    const job = loadRepo(info, { wantStats: (p) => want.has(pathKey(p)), full: isFull, meta: this.meta, hint })
+      .then((rec) => { this.cache.set(id, { at: this.now(), key, rec }); return rec; })
+      .finally(() => { this.pending.delete(k); });
+    this.pending.set(k, job);
+    return job;
   }
 
   /** The record of the repository holding `p`, with numbers for the worktree at `p`'s root: { rec, wt } or null. */

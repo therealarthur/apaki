@@ -274,6 +274,32 @@ test('the index lists every repository a folder belongs to, reuses a pass, and k
   assert.ok(counters.spawns > before, 'invalidate makes the next pass look again');
 });
 
+// 2026-10-15: a refresh started 50 to 80 git processes at once and pushed Claude Code's hooks past their 10 s limit.
+test('a timer and a window asking at once share one pass, and git never runs more than GIT_AT_ONCE at a time', async (t) => {
+  const { GIT_AT_ONCE, gitPeak } = await import('../apaki/engine/worktrees.js');
+  const r = repo(t);
+  addWt(r, 'one');
+  addWt(r, 'two');
+  addWt(r, 'three');
+  const cwds = [r.root];
+  // What one pass costs, on a fresh index.
+  const solo = new WorktreeIndex({ meta: new WtMeta(path.join(r.dir, 'meta-solo.json')) });
+  let before = counters.spawns;
+  await solo.snapshot({ cwds });
+  const one = counters.spawns - before;
+  assert.ok(one > 0);
+  // Three at once on another fresh index: the same cost, the same answer.
+  const idx = new WorktreeIndex({ meta: new WtMeta(path.join(r.dir, 'meta.json')) });
+  gitPeak.max = 0;
+  before = counters.spawns;
+  const [a, b, c] = await Promise.all([idx.snapshot({ cwds }), idx.snapshot({ cwds }), idx.snapshot({ cwds })]);
+  assert.equal(counters.spawns - before, one, 'concurrent snapshots share the load in flight');
+  assert.deepEqual(a, b);
+  assert.deepEqual(b, c);
+  assert.ok(gitPeak.max <= GIT_AT_ONCE, `at most ${GIT_AT_ONCE} git processes at once (saw ${gitPeak.max})`);
+  assert.equal(a[0].worktrees.length, 4);
+});
+
 /* ---------- create ---------- */
 
 test('create: the plan shows the exact command, the run does exactly that, and the base is remembered', async (t) => {
