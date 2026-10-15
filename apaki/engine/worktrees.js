@@ -24,8 +24,16 @@
  *
  * Cost: a repository with no linked worktree is "light": its record comes from files, with no git process. A
  * process runs for repositories that have linked worktrees, and for folders the caller names (open panes).
+ *
+ * Less git (2026-10-15, Arthur's PC: the engine at 93% of a core, 84% of it in process creation): a refresh reuses
+ * what it saw last time. Each worktree's numbers are kept with a fingerprint (its status output, the size and time of
+ * every file status names, and the refs its numbers depend on); a worktree whose fingerprint has not moved keeps its
+ * numbers after one `git status` instead of five or six more commands, and one that nobody marked changed is not
+ * looked at at all until its repository's time is up. The engine runs all of this in a worker thread
+ * (worktrees-worker.js, worktrees-client.js), so process creation never holds up its main thread.
  */
 
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -412,9 +420,12 @@ async function pool(items, limit, fn) {
 const UNTRACKED_FILES_MAX = 300;
 const UNTRACKED_BYTES_MAX = 256 * 1024;
 
-/** Lines in the untracked files of a worktree (they are part of its change count): { added, approx }. */
-async function untrackedLines(root, entries) {
-  let paths = entries.filter((e) => e.kind === 'untracked').map((e) => e.path);
+/**
+ * Lines in the untracked files of a worktree (they are part of its change count): { added, approx }. `expanded`
+ * (2026-10-15): the untracked files already listed one by one (untrackedFiles), so git is not asked twice.
+ */
+async function untrackedLines(root, entries, expanded = null) {
+  let paths = expanded || entries.filter((e) => e.kind === 'untracked').map((e) => e.path);
   if (!paths.length) return { added: 0, approx: false };
   // A collapsed untracked folder ("dir/") is expanded to its files.
   if (paths.some((p) => p.endsWith('/'))) {
@@ -446,6 +457,126 @@ async function refExists(cwd, ref) {
   return (await git(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).code === 0;
 }
 
+/* ---------- what a worktree's numbers depend on (2026-10-15) ---------- */
+
+/**
+ * The fingerprint of each inspected worktree record: { print, dep }. Kept beside the record, never in it, so it never
+ * reaches a window or a phone (a WeakMap is invisible to JSON and to a worker's structured clone).
+ */
+const PRINTS = new WeakMap();
+
+/** A short hash of some text. */
+const hashOf = (text) => createHash('sha1').update(String(text)).digest('hex').slice(0, 20);
+
+/** Past this many entries in a worktree's status its fingerprint is not taken (its numbers are read every time). */
+const PRINT_ENTRIES_MAX = 2000;
+
+/**
+ * A worktree's status output plus the size and modified time of every file it names: while this stays the same, so
+ * do the lines and files counted from it (an edit to a file that was already changed moves its time). `untracked`:
+ * the untracked files one by one (untrackedFiles), standing in for status's untracked entries. null when it cannot
+ * tell: a folder of new files still shown as one entry (a file inside can change without the folder showing it), or
+ * too many files.
+ */
+export function statusPrint(root, statusText, entries, untracked = null) {
+  const files = [...entries.filter((e) => !(untracked && e.kind === 'untracked')).map((e) => e.path), ...(untracked || [])];
+  if (files.length > PRINT_ENTRIES_MAX) return null;
+  const parts = [String(statusText ?? '')];
+  for (const rel of files) {
+    if (rel.endsWith('/')) return null;
+    let st = null;
+    try { st = fs.statSync(path.join(root, rel)); } catch { st = null; }
+    parts.push(st ? `${rel}\0${st.size}\0${st.mtimeMs}` : `${rel}\0gone`);
+  }
+  return hashOf(parts.join('\n'));
+}
+
+/**
+ * The untracked files of a worktree one by one: status's own entries, or, when status folds a new folder into one
+ * entry ("dir/"), git's list of them (one process). null when git could not list them.
+ */
+async function untrackedFiles(root, entries) {
+  const paths = entries.filter((e) => e.kind === 'untracked').map((e) => e.path);
+  if (!paths.some((p) => p.endsWith('/'))) return paths;
+  const r = await git(root, ['ls-files', '--others', '--exclude-standard', '-z']);
+  return r.code === 0 ? r.stdout.split('\0').filter(Boolean) : null;
+}
+
+/**
+ * The output of `git for-each-ref` over refs/heads and refs/remotes, one "<sha> <ref name> <symref target>" a line
+ * (newest commit first) as { heads: [branch names, newest first], map: Map(full ref name -> sha), originHead: what
+ * refs/remotes/origin/HEAD points at ('' when unset), remotesPrint: one hash of every remote branch }.
+ */
+export function parseRefs(text) {
+  const heads = [];
+  const map = new Map();
+  const remote = [];
+  let originHead = '';
+  for (const line of lines(text)) {
+    const m = /^([0-9a-f]{7,64}) (\S+)(?: (\S*))?$/.exec(line.trim());
+    if (!m) continue;
+    const [, sha, name, sym] = m;
+    if (name === 'refs/remotes/origin/HEAD') { originHead = sym || ''; continue; }
+    map.set(name, sha);
+    if (name.startsWith('refs/heads/')) heads.push(name.slice('refs/heads/'.length));
+    else if (name.startsWith('refs/remotes/')) remote.push(`${sha} ${name}`);
+  }
+  return { heads, map, originHead, remotesPrint: hashOf(remote.sort().join('\n')) };
+}
+
+/** Every branch and remote branch with its commit, from one git process (null when git could not list them). */
+export async function readRefs(cwd) {
+  const r = await git(cwd, ['for-each-ref', '--sort=-committerdate', '--format=%(objectname) %(refname) %(symref)', 'refs/heads', 'refs/remotes']);
+  return r.code === 0 ? parseRefs(r.stdout) : null;
+}
+
+/** The commit a branch name points at, from parseRefs (a branch, or a remote branch like origin/main); null when not a branch. */
+export function refSha(refs, name) {
+  if (!refs || !name) return null;
+  for (const full of [`refs/heads/${name}`, `refs/remotes/${name}`, name]) if (refs.map.has(full)) return refs.map.get(full);
+  return null;
+}
+
+/**
+ * defaultBranch without a process, from parseRefs: what origin/HEAD points at (a local branch of that name, else the
+ * remote one), else main, master, trunk or develop when one exists, else the main checkout's branch, else the newest.
+ */
+export function baseFromRefs(refs, mainBranch = '') {
+  const prefix = 'refs/remotes/origin/';
+  const sym = refs.originHead.startsWith(prefix) ? refs.originHead.slice(prefix.length) : '';
+  if (sym) {
+    if (refs.map.has(`refs/heads/${sym}`)) return sym;
+    if (refs.map.has(`${prefix}${sym}`)) return `origin/${sym}`;
+  }
+  for (const c of ['main', 'master', 'trunk', 'develop']) if (refs.map.has(`refs/heads/${c}`)) return c;
+  return mainBranch || refs.heads[0] || '';
+}
+
+/**
+ * Everything outside a worktree's own folder that its numbers depend on: its commit, the base and the commit the base
+ * is at, every remote branch (what is unpushed), and Apaki's note of the base it was made from. null when one of
+ * those cannot be read from the refs (a tag or a commit as the base): its numbers are then read every time.
+ */
+export function depOf(e, baseName, refs, note) {
+  if (!refs) return null;
+  const baseSha = baseName ? refSha(refs, baseName) : '';
+  const noteSha = note?.base ? refSha(refs, note.base) : '';
+  if (baseSha === null || noteSha === null) return null;
+  return [e.head || refSha(refs, e.branch) || '', e.branch || '', e.detached ? 'D' : '', baseName, baseSha, refs.remotesPrint, note?.base || '', noteSha, note?.startSha || ''].join('|');
+}
+
+/** A worktree list entry is the same place, branch and state as an earlier record of it. */
+const sameEntry = (rec, e) => rec.branch === e.branch && Boolean(rec.detached) === Boolean(e.detached) && Boolean(rec.bare) === Boolean(e.bare)
+  && (rec.locked || null) === (e.locked || null) && (rec.prunable || null) === (e.prunable || null) && (!e.head || e.head === rec.head);
+
+/** An earlier record with the list's fields as they are now (its fingerprint goes with it). */
+function keep(rec, e) {
+  const out = { ...rec, ...e, head: e.head || rec.head };
+  const print = PRINTS.get(rec);
+  if (print) PRINTS.set(out, print);
+  return out;
+}
+
 /**
  * The repository's usual base branch: what origin/HEAD points at, else main, master, trunk or develop when one
  * exists, else the main checkout's branch.
@@ -464,8 +595,13 @@ export async function defaultBranch(cwd, branches, mainBranch = '') {
 /**
  * Everything the sidebar and the pane header show about one worktree: the entry from the list plus status and
  * numbers against `base` (null base: the worktree's own HEAD). Never throws; a failure is `error`.
+ *
+ * prev, refs, dep (2026-10-15): an earlier record of this worktree, the repository's refs (parseRefs) and what its
+ * numbers depend on (depOf). When the status fingerprint (statusPrint) and `dep` are what they were for `prev`, its
+ * numbers are kept after the one status command. `refs` also answers "does Apaki's noted base still exist" without a
+ * process.
  */
-export async function inspectWorktree(wt, { base = '', meta = null } = {}) {
+export async function inspectWorktree(wt, { base = '', meta = null, prev = null, refs = null, dep = null } = {}) {
   const out = { ...wt, stats: true, base, added: 0, removed: 0, files: 0, changed: 0, untracked: 0, conflicts: 0, staged: 0, upstream: '', aheadUp: 0, behindUp: 0, ahead: 0, behind: 0, unpushed: 0, merged: false, approx: false };
   if (wt.bare) return out;
   if (wt.prunable || !isDir(wt.path)) { out.missing = true; out.error = 'Its folder is gone.'; return out; }
@@ -473,24 +609,38 @@ export async function inspectWorktree(wt, { base = '', meta = null } = {}) {
   const st = await git(cwd, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal', '-z']);
   if (st.code !== 0) { out.error = whyFailed(st); return out; }
   const s = parseStatus(st.stdout);
+  // Nothing it depends on moved since `prev` was read: the same numbers, without the commands below. A folder of new
+  // files is listed file by file first (one process, which the line count below would run anyway).
+  const untracked = dep ? await untrackedFiles(cwd, s.entries) : null;
+  const print = dep && untracked ? statusPrint(cwd, st.stdout, s.entries, untracked) : null;
+  const was = prev ? PRINTS.get(prev) : null;
+  if (print && was && was.print === print && was.dep === dep && prev.stats && !prev.error) {
+    const again = keep(prev, wt);
+    if (!again.head && s.oid) again.head = s.oid;
+    return again;
+  }
+  // The commits are where they were (the same HEAD, the same refs) and only files moved: the counts against the base,
+  // what is unpushed and whether it is merged all stand, and only the lines and files are counted again (2026-10-15).
+  const sameCommits = Boolean(was && dep && was.dep === dep && was.diffBase && s.oid && was.oid === s.oid && prev.stats && !prev.error);
   Object.assign(out, { upstream: s.upstream, aheadUp: s.ahead, behindUp: s.behind, changed: s.entries.length, untracked: s.untracked, conflicts: s.conflicts, staged: s.staged });
   if (!out.head && s.oid) out.head = s.oid;
   const rec = meta?.get?.(wt.path) || null;
   // The base this worktree was made from, if Apaki made it and it still exists; else the repository's.
-  const baseName = rec?.base && (await refExists(cwd, rec.base)) ? rec.base : base;
+  const baseName = sameCommits ? prev.base : rec?.base && (refSha(refs, rec.base) || (await refExists(cwd, rec.base))) ? rec.base : base;
   out.base = baseName;
   const onBase = !wt.detached && wt.branch && wt.branch === baseName;
-  let diffBase = 'HEAD';
-  if (baseName && !onBase) {
+  let diffBase = sameCommits ? was.diffBase : 'HEAD';
+  if (!sameCommits && baseName && !onBase) {
     const mb = await git(cwd, ['merge-base', baseName, 'HEAD']);
     if (mb.code === 0 && one(mb.stdout)) diffBase = one(mb.stdout);
   }
-  const [num, lr, uns, anc, extra] = await Promise.all([
+  // (2026-10-15) No separate `git merge-base` ancestor check any more: HEAD is inside the base exactly when the
+  // left-right count finds no commit of HEAD's that the base lacks (ahead 0), so `lr` answers it with one process less.
+  const [num, lr, uns, extra] = await Promise.all([
     s.oid ? git(cwd, ['diff', '--numstat', diffBase]) : null,
-    baseName && !onBase && s.oid ? git(cwd, ['rev-list', '--left-right', '--count', `${baseName}...HEAD`]) : null,
-    s.oid ? git(cwd, ['rev-list', '--count', 'HEAD', '--not', '--remotes', ...(baseName ? [baseName] : [])]) : null,
-    baseName && !onBase && s.oid ? git(cwd, ['merge-base', '--is-ancestor', 'HEAD', baseName]) : null,
-    untrackedLines(cwd, s.entries),
+    !sameCommits && baseName && !onBase && s.oid ? git(cwd, ['rev-list', '--left-right', '--count', `${baseName}...HEAD`]) : null,
+    !sameCommits && s.oid ? git(cwd, ['rev-list', '--count', 'HEAD', '--not', '--remotes', ...(baseName ? [baseName] : [])]) : null,
+    untrackedLines(cwd, s.entries, untracked),
   ]);
   let trackedFiles = 0;
   if (num && num.code === 0) {
@@ -500,10 +650,18 @@ export async function inspectWorktree(wt, { base = '', meta = null } = {}) {
   out.added += extra.added;
   out.approx = extra.approx;
   out.files = trackedFiles + s.untracked;
-  if (lr && lr.code === 0) { const m = /^(\d+)\s+(\d+)/.exec(one(lr.stdout)); if (m) { out.behind = Number(m[1]); out.ahead = Number(m[2]); } }
+  if (sameCommits) {
+    Object.assign(out, { ahead: prev.ahead, behind: prev.behind, unpushed: prev.unpushed, merged: prev.merged });
+    PRINTS.set(out, { print, dep, oid: s.oid, diffBase });
+    return out;
+  }
+  let counted = false;
+  if (lr && lr.code === 0) { const m = /^(\d+)\s+(\d+)/.exec(one(lr.stdout)); if (m) { out.behind = Number(m[1]); out.ahead = Number(m[2]); counted = true; } }
   // null: git could not tell, and the remove guard then refuses rather than guesses.
   out.unpushed = uns ? (uns.code === 0 ? Number(one(uns.stdout)) || 0 : null) : 0;
-  if (anc && anc.code === 0 && !onBase && wt.branch && !wt.detached) {
+  // HEAD is an ancestor of the base (what the merge-base ancestor check answered): no commit of its own beyond the base.
+  const inside = counted && out.ahead === 0;
+  if (inside && !onBase && wt.branch && !wt.detached) {
     // Inside the base is not enough: a branch made a moment ago and never committed to is inside it too. It counts as
     // merged once it had work of its own (it left the commit Apaki made it at, or its reflog has more than its creation).
     let had = false;
@@ -514,6 +672,8 @@ export async function inspectWorktree(wt, { base = '', meta = null } = {}) {
     }
     out.merged = had;
   }
+  // What these numbers were read from, so the next look can tell whether they still hold.
+  if (dep) PRINTS.set(out, { print, dep, oid: s.oid, diffBase });
   return out;
 }
 
@@ -522,9 +682,16 @@ export async function inspectWorktree(wt, { base = '', meta = null } = {}) {
  * worktrees }. `wantStats(path)` says which worktrees get the numbers (a linked repository gets them for all, up to
  * MAX_INSPECT, the ones the caller named first); `full` also reads the branches and the base, for a repository the
  * New worktree sheet is about to use. A light repository (no linked worktree, nobody asked) needs no git process.
+ *
+ * prev and only (2026-10-15): an earlier record of the same repository, and the worktree roots (pathKey) to look at
+ * again. With `only`, a worktree outside it whose list entry and refs did not move keeps prev's numbers with no
+ * process at all (a turn ended in one worktree: the others are not looked at); everything else goes through
+ * inspectWorktree with its prev, which keeps the numbers after one status when its fingerprint holds. Without prev the
+ * whole repository is read as before. The list itself and the refs are always read (2 processes), so a worktree
+ * added, removed or moved, a commit, a merge or a fetch is always seen.
  */
 const MAX_INSPECT = 24;
-export async function loadRepo(info, { wantStats = () => false, full = false, meta = null, hint = '' } = {}) {
+export async function loadRepo(info, { wantStats = () => false, full = false, meta = null, hint = '', prev = null, only = null } = {}) {
   const commonDir = normPath(info.commonDir);
   const mainTop = path.basename(commonDir) === '.git' ? path.dirname(commonDir) : (hint ? normPath(hint) : '');
   const linked = hasLinked(commonDir);
@@ -545,22 +712,44 @@ export async function loadRepo(info, { wantStats = () => false, full = false, me
   entries.forEach((e, i) => { e.main = i === 0; });
   const need = entries.map((e) => !e.bare && (linked || wantStats(e.path)));
   rec.light = !linked && !need.some(Boolean) && !full;
+  // The refs in one process (2026-10-15): the branches, the base, and what every worktree's numbers depend on.
+  let refs = null;
   if (!rec.light) {
     const cwd = rec.root && isDir(rec.root) ? rec.root : commonDir;
-    const fe = await git(cwd, ['for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', '--count=60', 'refs/heads']);
-    rec.branches = fe.code === 0 ? lines(fe.stdout) : [];
-    const rm = await git(cwd, ['remote']);
-    const remotes = rm.code === 0 ? lines(rm.stdout) : [];
-    rec.remote = remotes.includes('origin') ? 'origin' : (remotes[0] || null);
-    rec.base = await defaultBranch(cwd, rec.branches, entries[0]?.branch || '');
+    refs = await readRefs(cwd);
+    if (refs) {
+      rec.branches = refs.heads.slice(0, 60);
+      rec.base = baseFromRefs(refs, entries[0]?.branch || '');
+    } else {
+      const fe = await git(cwd, ['for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', '--count=60', 'refs/heads']);
+      rec.branches = fe.code === 0 ? lines(fe.stdout) : [];
+    }
+    // The remotes come from the config: kept from prev between a repository's full looks (a turn that ended), read on each.
+    if (only && prev && !prev.light && !prev.error && refs) rec.remote = prev.remote ?? null;
+    else {
+      const rm = await git(cwd, ['remote']);
+      const remotes = rm.code === 0 ? lines(rm.stdout) : [];
+      rec.remote = remotes.includes('origin') ? 'origin' : (remotes[0] || null);
+    }
+    if (!refs) rec.base = await defaultBranch(cwd, rec.branches, entries[0]?.branch || '');
   }
   const order = entries.map((e, i) => i).filter((i) => need[i]);
   // Past the cap the ones the caller asked about come first, then the rest in list order.
   order.sort((a, b) => (Number(wantStats(entries[b].path)) - Number(wantStats(entries[a].path))) || (a - b));
   const chosen = new Set(order.slice(0, MAX_INSPECT));
+  const before = new Map((prev?.worktrees || []).filter((w) => w.stats && !w.error).map((w) => [pathKey(w.path), w]));
   rec.worktrees = await pool(entries, 2, async (e, i) => {
     if (!chosen.has(i)) return { ...e, base: rec.base, added: 0, removed: 0, files: 0, changed: 0, untracked: 0, conflicts: 0, staged: 0, upstream: '', aheadUp: 0, behindUp: 0, ahead: 0, behind: 0, unpushed: 0, merged: false, approx: false, ...(e.bare ? {} : { stats: false }) };
-    const w = await inspectWorktree(e, { base: rec.base, meta });
+    const k = pathKey(e.path);
+    const was = before.get(k) || null;
+    const dep = depOf(e, rec.base, refs, meta?.get?.(e.path) || null);
+    // Nobody marked it changed, and its place, branch and refs are where they were: its numbers stand, no process.
+    if (only && !only.has(k) && was && dep && PRINTS.get(was)?.dep === dep && sameEntry(was, e)) {
+      const w = keep(was, e);
+      if (w.main) { w.merged = false; }
+      return w;
+    }
+    const w = await inspectWorktree(e, { base: rec.base, meta, prev: was, refs, dep });
     if (w.main) { w.merged = false; }
     return w;
   });
@@ -917,13 +1106,22 @@ export function terminalCommand(platform, dir, opts) {
  * carries: every repository some session or pane ran in (found from files, no git), each with its worktrees; the
  * numbers (stats) only for linked repositories and for the folders named in `stats` (open panes). Results are kept
  * for ttlMs, so a refresh every 30 s and a window asking at the same moment cost one pass.
+ *
+ * Two ages (2026-10-15): a repository named in `hot` (an open pane is in it, or a window asked about it lately) is
+ * looked at again after ttlMs; any other keeps its record for coldTtlMs (minutes). A turn that ended marks only its
+ * own worktree changed (changed()), and the next pass reads the list and refs of that one repository and that one
+ * worktree (loadRepo `only`), not every repository. Looking again reuses the last record (loadRepo `prev`), so an
+ * unchanged worktree costs one status. invalidate(p) forgets one repository (after an action); invalidate() all.
  */
+export const HOT_TTL_MS = 20 * 1000;
+export const COLD_TTL_MS = 5 * 60 * 1000;
 export class WorktreeIndex {
-  constructor({ meta = new WtMeta(), ttlMs = 20000, now = Date.now } = {}) {
+  constructor({ meta = new WtMeta(), ttlMs = HOT_TTL_MS, coldTtlMs = COLD_TTL_MS, now = Date.now } = {}) {
     this.meta = meta;
     this.ttl = ttlMs;
+    this.coldTtl = coldTtlMs;
     this.now = now;
-    /** repo id -> { at, key, rec } */
+    /** repo id -> { at (when every worktree was last looked at), rec, want (worktree roots it has numbers for), dirty (worktree roots marked changed) } */
     this.cache = new Map();
     /** cwd -> { at, info } (findRepo answers, a minute) */
     this.infos = new Map();
@@ -950,8 +1148,10 @@ export class WorktreeIndex {
    * @param {string[]} [o.stats]  folders whose worktree gets the numbers even in a repository with no linked worktree
    * @param {string[]} [o.full]   folders whose repository is read in full (branches, base): a New worktree sheet
    * @param {boolean} [o.force]   ignore what was kept
+   * @param {string[]} [o.hot]    folders whose repositories are looked at again after ttlMs; the others after
+   *                              coldTtlMs. Left out, every repository is hot (as before 2026-10-15).
    */
-  async snapshot({ cwds = [], stats = [], full = [], force = false } = {}) {
+  async snapshot({ cwds = [], stats = [], full = [], force = false, hot = null } = {}) {
     const repos = new Map(); // id -> { info, hint }
     const add = (cwd) => {
       const info = this.info(cwd);
@@ -972,28 +1172,72 @@ export class WorktreeIndex {
     mark(stats, statsBy);
     const fullBy = new Map();
     mark(full, fullBy);
+    // Which repositories get the short age: those holding a hot folder (all of them when the caller names none).
+    let hotIds = null;
+    if (Array.isArray(hot)) {
+      hotIds = new Set();
+      for (const c of hot) { const info = c ? this.info(c) : null; if (info) hotIds.add(repoId(info.commonDir)); }
+    }
     const ids = [...repos.keys()];
     const made = await pool(ids, 4, (id) => {
       const { info, hint } = repos.get(id);
-      return this.load(id, info, hint, statsBy.get(id) || new Set(), fullBy.has(id), force);
+      const ttl = hotIds && !hotIds.has(id) ? this.coldTtl : this.ttl;
+      return this.load(id, info, hint, statsBy.get(id) || new Set(), fullBy.has(id), force, ttl);
     });
     this.last = made.filter(Boolean).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
     for (const id of [...this.cache.keys()]) if (!repos.has(id)) this.cache.delete(id);
     return this.last;
   }
 
-  /** One repository's record, kept for ttlMs per (folders with numbers, full) request. */
-  async load(id, info, hint, want, isFull, force = false) {
-    const key = `${[...want].sort().join('|')}#${isFull ? 'F' : ''}`;
+  /**
+   * One repository's record. Kept as long as it is younger than `ttl`, nothing in it was marked changed, and it has
+   * numbers for every worktree in `want` (and is read in full when `isFull`). Otherwise read again from the record it
+   * had: only the marked and the missing worktrees while it is young, every worktree (one status each when nothing
+   * moved) once it is not. `force` reads it from scratch.
+   */
+  async load(id, info, hint, want, isFull, force = false, ttl = this.ttl) {
     const hit = this.cache.get(id);
-    if (!force && hit && hit.key === key && this.now() - hit.at < this.ttl) return hit.rec;
+    const young = Boolean(hit) && this.now() - hit.at < ttl;
+    // Asked for numbers it has not got (and was not asked for before: a folder git lists under another spelling of its
+    // path is not read again on every pass for that).
+    const missing = [...want].filter((k) => !hit?.want.has(k) && !(hit?.rec.worktrees || []).some((w) => w.stats && pathKey(w.path) === k));
+    if (!force && hit && young && !missing.length && !hit.dirty.size && (!isFull || !hit.rec.light)) return hit.rec;
+    const key = `${[...want].sort().join('|')}#${isFull ? 'F' : ''}${force ? '!' : ''}`;
     const k = `${id}\n${key}`;
     if (this.pending.has(k)) return this.pending.get(k);
-    const job = loadRepo(info, { wantStats: (p) => want.has(pathKey(p)), full: isFull, meta: this.meta, hint })
-      .then((rec) => { this.cache.set(id, { at: this.now(), key, rec }); return rec; })
+    const only = !force && hit && young ? new Set([...hit.dirty, ...missing]) : null;
+    const prev = force || !hit ? null : hit.rec;
+    // The marks this pass takes care of; marks made while it runs stay for the next one.
+    const taken = hit ? hit.dirty : new Set();
+    if (hit) hit.dirty = new Set();
+    const job = loadRepo(info, { wantStats: (p) => want.has(pathKey(p)), full: isFull, meta: this.meta, hint, prev, only })
+      .then((rec) => {
+        const now = this.cache.get(id);
+        // A pass over every worktree starts the age again; one over a few marked ones keeps the age it had.
+        this.cache.set(id, { at: only && hit ? hit.at : this.now(), rec, want: only && hit ? new Set([...hit.want, ...want]) : new Set(want), dirty: now?.dirty || new Set() });
+        return rec;
+      }, (e) => {
+        const now = this.cache.get(id);
+        for (const t of taken) now?.dirty.add(t);
+        throw e;
+      })
       .finally(() => { this.pending.delete(k); });
     this.pending.set(k, job);
     return job;
+  }
+
+  /**
+   * A turn ended in `p` (2026-10-15): its worktree's numbers are read again at the next pass, and only that
+   * repository's list and refs with it. Nothing else is touched. False when no record holds `p` yet (the next pass
+   * reads it anyway).
+   */
+  changed(p) {
+    const info = p ? this.info(p) : null;
+    if (!info) return false;
+    const hit = this.cache.get(repoId(info.commonDir));
+    if (!hit) return false;
+    hit.dirty.add(pathKey(info.top));
+    return true;
   }
 
   /** The record of the repository holding `p`, with numbers for the worktree at `p`'s root: { rec, wt } or null. */
@@ -1007,8 +1251,7 @@ export class WorktreeIndex {
 
   /** The last snapshot's repository that holds this folder, or null. */
   repoOf(p) {
-    if (!p) return null;
-    return this.last.find((r) => r.worktrees.some((w) => isInside(p, w.path))) || null;
+    return repoOfIn(this.last, p);
   }
 
   /** This folder is a known worktree or in one (a phone may start a conversation there). */
@@ -1023,8 +1266,58 @@ export class WorktreeIndex {
     return loadRepo(info, { wantStats: () => true, full: true, meta: this.meta, hint: info.top });
   }
 
-  /** Forget what was kept (after an action changed something). */
-  invalidate() {
-    this.cache.clear();
+  /**
+   * Forget what was kept (after an action changed something). With a folder (2026-10-15), only the repository that
+   * holds it: the next pass reads that one from scratch and keeps every other record.
+   */
+  invalidate(p = null) {
+    if (!p) { this.cache.clear(); return; }
+    const info = this.info(p);
+    if (info) this.cache.delete(repoId(info.commonDir));
   }
+}
+
+/** Of some repository records, the one with a worktree that holds this folder, or null (WorktreeIndex.repoOf). */
+export function repoOfIn(list, p) {
+  if (!p || !Array.isArray(list)) return null;
+  return list.find((r) => (r.worktrees || []).some((w) => isInside(p, w.path))) || null;
+}
+
+/**
+ * What Apaki remembers after an action ran (2026-10-15, moved here from engine.js wtAfter so it runs where the git
+ * runs): the base a new worktree came from and the commit it started at, and forgetting a removed one.
+ */
+export async function remember(plan, meta) {
+  if (!plan?.data) return;
+  if (plan.kind === 'create' && plan.data.path) {
+    const h = await run('git', ['rev-parse', 'HEAD'], { cwd: plan.data.path });
+    meta.set(plan.data.path, { base: plan.data.base || '', startSha: h.code === 0 ? h.stdout.trim() : '', branch: plan.data.branch, createdAt: new Date().toISOString() });
+  }
+  if (plan.kind === 'remove' && plan.data.path) meta.forget(plan.data.path);
+}
+
+/**
+ * Everything the engine asks of its worktree index, by name, with arguments that survive a structured clone (2026-10-15).
+ * The worker thread answers with this table (worktrees-worker.js), and the engine's client uses the same table on its
+ * own thread when no worker can run (worktrees-client.js), so both paths are one code.
+ */
+export function indexMethods(index) {
+  return {
+    snapshot: (o) => index.snapshot(o || {}),
+    recordFor: (p) => index.recordFor(p),
+    fresh: (p) => index.fresh(p),
+    invalidate: (p) => { index.invalidate(p || null); return true; },
+    changed: (p) => index.changed(p),
+    diff: (p, o) => diffOf(p, o || {}),
+    // A plan is made from a fresh record of the repository holding `where`: { repo, plan }.
+    plan: async (kind, args, where, ctx) => {
+      const repo = where ? await index.fresh(where) : null;
+      return { repo, plan: await plan(kind, args, repo, ctx || {}) };
+    },
+    execute: (p) => execute(p),
+    after: async (p) => { await remember(p, index.meta); return true; },
+    metaSet: (p, rec) => { index.meta.set(p, rec); return true; },
+    metaForget: (p) => { index.meta.forget(p); return true; },
+    spawns: () => counters.spawns,
+  };
 }
