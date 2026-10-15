@@ -65,6 +65,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+mod autostart;
 mod browser;
 mod host;
 // macOS only in what it does: the menu bar, the page tweaks, the PATH; its pure helpers (bundle folders) run everywhere.
@@ -401,12 +402,15 @@ fn main() {
         // "Update ready" card (updater.js). updater.rs decides when to look.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(updater::plugin())
+        // Opens at sign-in (2026-10-15, autostart.rs): the Run value / LaunchAgent, on by default once.
+        .plugin(tauri_plugin_autostart::Builder::new().arg(autostart::FLAG).build())
         .manage(Engine { stdin: Mutex::new(None), restarts: Mutex::new(Vec::new()), gen: std::sync::atomic::AtomicU64::new(0), closing: AtomicBool::new(false), flushed: Mutex::new(None), early: Mutex::new(Some(Vec::new())) })
-        .invoke_handler(tauri::generate_handler![engine_send, browser::browser, ui_log, updater::update_status, updater::update_check, updater::update_install])
+        .invoke_handler(tauri::generate_handler![engine_send, browser::browser, ui_log, updater::update_status, updater::update_check, updater::update_install, autostart::autostart_get, autostart::autostart_set])
         .setup(|app| {
             // The browser borrows the main webview's WebView2 environment; nothing starts until one opens.
             browser::init(app.handle());
             updater::init(app.handle());
+            autostart::init(app.handle());
             #[cfg(target_os = "macos")]
             mac::install_menu(app.handle())?;
             // What the window sends before the engine answers (its start-up

@@ -16,6 +16,8 @@
  * the engine (apaki/engine/prefs.js) and passed to every Claude Code it starts.
  * release: false (the phone client) leaves "Free hidden conversations" out: also the PC's (the host closes the
  * Claude Code process of a conversation in a tab that has been hidden and idle; 2026-10-12).
+ * autostart: { get(), set(on) } (promises of a boolean) for "Open at sign-in", the window shell's (src/autostart.rs,
+ * 2026-10-15, after Arthur's PC came back from a crash without Apaki); null (the phone client) leaves it out.
  */
 
 import { esc } from './markdown.js';
@@ -33,13 +35,15 @@ const COMPACT_LABELS = [{ value: 'off', label: 'Off' }, { value: 200000, label: 
 /** The choices of "Free hidden conversations", in the order shown (the engine's RELEASE_CHOICES, minutes; 0 is off). */
 const RELEASE_LABELS = [{ value: 0, label: 'Off' }, { value: 5, label: '5 min' }, { value: 15, label: '15 min' }, { value: 30, label: '30 min' }, { value: 60, label: '1 h' }];
 
-export function initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm: showWarm = true, compact: showCompact = true, release: showRelease = true }) {
+export function initSettings({ button, sheet, send, theme, themeUi, sound, indexText, warm: showWarm = true, compact: showCompact = true, release: showRelease = true, autostart = null }) {
   let warm = null;
   // The engine's answer to autoCompact: { value, choices, standard }; null until it arrives.
   let compact = null;
   // The engine's answer to releaseHidden: { value (minutes), choices, standard }; null until it arrives.
   let release = null;
   let root = null;
+  // Open at sign-in: true or false once the shell answers, 'n/a' when this window's shell cannot (an older build).
+  let signIn = null;
 
   function warmLine() {
     if (!warm) return 'Reading keep-warm…';
@@ -63,6 +67,10 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
         <div class="set-t"><b>Ding</b><small>A soft chime when a conversation finishes or asks you something.</small></div>
         ${seg('ding', [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }], sound.on() ? 'on' : 'off')}
       </section>
+      ${autostart ? `<section class="set-row">
+        <div class="set-t"><b>Open at sign-in</b><small>${signIn === 'n/a' ? 'Restart Apaki once to use this.' : `Apaki opens when you sign in to ${osName()}, with your tabs as you left them. A conversation that was running when the PC stopped waits for your next message.`}</small></div>
+        ${signIn === 'n/a' ? '' : seg('signin', [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }], signIn === null ? null : signIn ? 'on' : 'off')}
+      </section>` : ''}
       ${showWarm ? `<section class="set-row">
         <div class="set-t"><b>Keep cache warm</b><small>On API keys: a one-word request every 52 minutes keeps a conversation's prompt cache, so coming back reads it from cache instead of paying to write it again. ${esc(warmLine())}.</small>${ttl}${verdict}</div>
         ${seg('warm', [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }], warm?.on ? 'on' : 'off')}
@@ -97,6 +105,11 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
         if (which === 'ding') sound.set(v === 'on');
         if (which === 'warm') { warm = { ...(warm || {}), on: v === 'on' }; send('warmState', { on: v === 'on' }); }
         if (which === 'release') { const value = Number(v); release = { ...(release || {}), value }; send('releaseHidden', { value }); }
+        if (which === 'signin' && autostart) {
+          const on = v === 'on';
+          signIn = on;
+          autostart.set(on).then((now) => { signIn = now === true; paint(); }).catch(() => { signIn = 'n/a'; paint(); });
+        }
         if (which === 'compact') { const value = v === 'default' || v === 'off' ? v : Number(v); compact = { ...(compact || {}), value }; send('autoCompact', { value }); }
         paint();
       };
@@ -109,6 +122,7 @@ export function initSettings({ button, sheet, send, theme, themeUi, sound, index
     if (showWarm) send('warmState');
     if (showCompact) send('autoCompact');
     if (showRelease) send('releaseHidden');
+    if (autostart) autostart.get().then((on) => { signIn = on === true; paint(); }).catch(() => { signIn = 'n/a'; paint(); });
     sheet('<div class="settings-host"></div>', (r, done) => {
       root = r.querySelector('.settings-host');
       close = () => { root = null; close = null; window.removeEventListener('keydown', onKey, true); done(); };

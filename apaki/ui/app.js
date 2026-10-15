@@ -3697,6 +3697,8 @@ const settings = initSettings({
   compact: !WEB,
   // Freeing the Claude Code process of a hidden, idle conversation is the host's, on the PC (the same: a phone cannot send that op).
   release: !WEB,
+  // Open at sign-in is the window shell's (src/autostart.rs); the phone has no such thing.
+  autostart: WEB ? null : { get: () => invoke('autostart_get'), set: (on) => invoke('autostart_set', { on }) },
   sound: { on: soundOn, set: (on) => { setSoundOn(on); if (on) ding('done'); } },
 });
 // The Phone button is phone.js's (initPhone below fills it in); the glyph shows until that module loads.

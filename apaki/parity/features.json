@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "about": "Feature ledger of the upstream parity tracker (apaki/parity/PARITY.md). One entry per feature Apaki supports or plans. Edit by hand; npm test checks the shape.",
-  "updated": "2026-10-13",
+  "updated": "2026-10-15",
   "features": [
     {
       "id": "claude-code-runner",
@@ -2681,6 +2681,30 @@
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
       "notes": "Looked at 2026-10-13 for the effort popup and left out. applyFlagSettings({ advisorModel: \"opus\" }) is accepted on an idle session and getSettings().applied.advisor then says claude-opus-5-5 (null clears it), so a row in the popup would apply live. Not done: which models may advise, whether it bills extra, and what it does on a subscription are unverified without a billable turn. Arthur decides."
+    },
+    {
+      "id": "open-at-sign-in",
+      "title": "Apaki opens when you sign in, with the tabs as they were",
+      "product": "apaki",
+      "upstream": [],
+      "status": "supported",
+      "surfaces": {
+        "desktop": "supported",
+        "phone": "n/a"
+      },
+      "where": [
+        "apaki/src/autostart.rs",
+        "apaki/src/main.rs",
+        "apaki/ui/settings.js",
+        "apaki/ui/app.js",
+        "test/apaki-autostart.test.js"
+      ],
+      "commits": [],
+      "sessions": [
+        "c6e7b179-2ed4-4ae5-afac-7845f0c7b029"
+      ],
+      "verifiedAgainst": {},
+      "notes": "Arthur 2026-10-15, after the PC blue-screened: \"apaki didnt automatically start when the computer came back - that needs to be fixed\". tauri-plugin-autostart writes the Run value \"Myrlin Apaki\" (\"<exe>\" --autostart) on Windows and a LaunchAgent on macOS. On by default: the first run of a build that has it turns it on once and writes autostart-chosen in the app config folder, so an Off from Settings is never undone. Settings has Open at sign-in (On, Off). Phone n/a: it is the PC window's own start."
     }
   ]
 }

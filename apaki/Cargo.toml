@@ -19,6 +19,8 @@ serde_json = "1"
 tauri-plugin-single-instance = "2"
 # Self-update from GitHub Releases (src/updater.rs, 2026-10-13): the feed, the signature check, the installer.
 tauri-plugin-updater = "2"
+# Opens at sign-in (2026-10-15, src/autostart.rs).
+tauri-plugin-autostart = "2"
 # tokio's timer for the update loop (Tauri's async runtime is tokio already; this only turns on its time feature).
 tokio = { version = "1", features = ["time"] }
 # HMAC-SHA256 for the engine host's handshake (src/host.rs). Same crate and
