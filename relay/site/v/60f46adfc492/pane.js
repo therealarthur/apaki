@@ -1,0 +1,2649 @@
+/**
+ * pane.js: one conversation in Myrlin Apaki. A tab holds up to six panes;
+ * each pane is its own Claude Code session with its own transcript, composer,
+ * model, effort, permission mode and billing, and its own runner in the
+ * engine (every command carries this pane's id).
+ *
+ * Moved here from the single-conversation app.js (2026-10-09) when Apaki got
+ * tabs and split panes; the rendering is the same, now per pane instead of
+ * one global transcript.
+ *
+ * The pane talks to the app through `host`:
+ *   send(op, args), focus(pane), close(pane), voice(pane), folder(pane, value),
+ *   changed(pane), dragPane(pane, event), defaults, folders(), sessions(),
+ *   engineQueue (true in the desktop window: the pane tells the engine its queue, see syncQueue).
+ */
+
+import { esc, md, streamCut, streamState } from './markdown.js';
+import { EFFORTS, effortGrid, menu } from './menu.js';
+import { pickVerb } from './verbs.js';
+// The effort popup beyond the effort levels: Ultracode and its workflow size (Claude), reasoning summary and speed (Codex), tune.js.
+import { EFFORT_HINTS, chipExtra, chipExtraHtml, chipTitle, claudeEffortMenu, claudePick, codexEffortMenu, codexPick, tuneChange, tuneFor, ultracodeLock } from './tune.js';
+// What Claude Code shows that is not Claude's reply: blocked prompts, hook errors, retries, limits (2026-10-11).
+import { noticeFor } from './notices.js';
+import { SHOW_TOOL, artifactCard, kindGlyph, kindLabel, linkCard, parseOpened, parseRef, updateCard } from './artifacts.js';
+// TodoWrite as a live checklist (todos.js, 2026-10-12).
+import { continuesList, hasTodos, normalizeTodos, paintTodos, sameTodos } from './todos.js';
+// A Codex pane is this same pane with the Codex app's pickers, patches and footer (codex.js, 2026-10-12).
+import { CODEX_LOCAL, CODEX_MODES, codexFooter, codexMode, earlierText, effortNames, findModel, isCodexId, modelLabel, patchArgs, patchHtml, pickMode, pickModel, usageText, usageWorst } from './codex.js';
+// The branch label in the header when the conversation's folder is in a git repository (worktree.js, 2026-10-12).
+import { GLYPH_WORKTREE, branchLabel, branchName, changeText, relPath, tooltip, trouble } from './worktree.js';
+import { setTip } from './tooltip.js';
+// The console: this conversation in the real Claude Code or Codex terminal UI, toggled in place (console.js, 2026-10-12).
+import { CLAUDE_TUI_BARE, CODEX_TUI_BARE, PaneConsole, tuiCommand } from './console.js';
+// Every streaming reply in the window is painted by one painter (streampaint.js, 2026-10-12, input lag).
+import { createStreamPainter } from './streampaint.js';
+// Older messages of a long conversation are folded into chunks the browser can skip (chunks.js, pane.js sealOld).
+import { planChunks } from './chunks.js';
+
+// How many nodes at the end of a transcript stay open, and the size of a chunk (sealOld). SEAL_STAYS: nodes that stay loose.
+const SEAL_KEEP = 48;
+const SEAL_SIZE = 24;
+const SEAL_STAYS = '.hist-more, .arch-line, .hist-err, .takeover, .empty, .chunk';
+
+const painter = createStreamPainter();
+// A key press slows the stream updates for a moment, so typing never waits behind a paint.
+if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('keydown', () => painter.typed(), true);
+
+// Images go in at most this many pixels on the long edge (the API's sweet
+// spot, and under the 2000 px limit that breaks a session).
+const IMAGE_MAX_EDGE = 1568;
+// A file attached to a Codex message (not a picture): the most one carries; the phone policy allows the same.
+const DOC_MAX_BYTES = 6 * 1024 * 1024;
+// History pages (engine history.js): how many messages each earlier page asks for, and how close to the
+// top of the loaded part the reader gets before the next page loads on its own.
+const HISTORY_PAGE = 300;
+const NEAR_TOP_PX = 600;
+// The line at the top of a conversation Apaki's transcript archive kept after Claude Code deleted it (setArchivedCopy).
+const ARCHIVED_COPY_TEXT = 'Claude Code deleted the original after 30 days. Images were not kept. Send a message to restore it and continue.';
+
+const LOCAL = [
+  { name: 'new', description: 'Start a new conversation in this pane' },
+  { name: 'resume', description: 'Find a conversation to open (words to search for)' },
+  { name: 'model', description: 'Switch model: opus, sonnet, haiku, fable or a full id' },
+  { name: 'effort', description: 'Set effort: low, medium, high, xhigh, max' },
+  { name: 'mode', description: 'Permission mode: bypassPermissions, acceptEdits, plan, default' },
+  { name: 'key', description: 'Billing: follow Glass, subscription, or a vault key' },
+  { name: 'folder', description: 'Move this conversation to a folder (name)' },
+  { name: 'warm', description: 'Keep the prompt cache warm between messages (on, off, status)' },
+];
+const MODELS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-1' };
+const MODEL_NAMES = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5', 'claude-fable-5-1': 'Fable 5.1' };
+// Permission modes, in Shift+Tab order, worded like Claude Code's footer.
+// bypassPermissions is "full access" in Codex terms. `short` is the chip's word in a narrow message box
+// (a phone, a narrow split; 2026-10-12), so every setting shows whole instead of being cut at the edge.
+export const MODES = [
+  { value: 'bypassPermissions', label: 'Bypass permissions', short: 'Bypass', mark: '⏵⏵', hint: 'Full access: every tool runs without asking' },
+  { value: 'acceptEdits', label: 'Auto-accept edits', short: 'Accept edits', mark: '⏵⏵', hint: 'File edits run; other tools follow your settings' },
+  { value: 'plan', label: 'Plan mode', short: 'Plan', mark: '⏸', hint: 'Claude plans and asks before changing anything' },
+  { value: 'default', label: 'Ask permissions', short: 'Ask', mark: '?', hint: 'Your Claude Code permission rules decide' },
+];
+// (EFFORT_HINTS moved to tune.js, 2026-10-13, where the effort popup's rows are built.)
+
+export const short = (p) => String(p || '').replace(/^C:\\Users\\[^\\]+/i, '~');
+
+/**
+ * The time a message shows on hover: "11:42 PM" today, "Yesterday 11:42 PM",
+ * "Oct 8, 11:42 PM" before that (the year too when it is not this one).
+ */
+export function stamp(at, now = new Date()) {
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return '';
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const back = Math.round((day(now) - day(d)) / 86400000);
+  if (back === 0) return time;
+  if (back === 1) return `Yesterday ${time}`;
+  const date = d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
+  return `${date}, ${time}`;
+}
+
+/** The artifact kind a file's extension gives (for cards rebuilt from history). */
+const kindFromPath = (p) => {
+  const e = (String(p).match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+  // xlsx, xls and docx since 2026-10-13 (the viewer draws workbooks and Word documents).
+  return { html: 'html', htm: 'html', md: 'markdown', markdown: 'markdown', svg: 'svg', pdf: 'pdf', xlsx: 'sheet', xlsm: 'sheet', xlsb: 'sheet', xls: 'sheet', docx: 'docx' }[e] || (/^(png|jpe?g|gif|webp|bmp|ico|avif)$/.test(e) ? 'image' : 'text');
+};
+
+function el(tag, cls, html) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html !== undefined) e.innerHTML = html;
+  return e;
+}
+
+/** Apaki's browser tools (mcp__apaki__browser_open...) read as "Browser" plus what they did. */
+const BROWSER_TOOL = 'mcp__apaki__browser_';
+function browserArgs(name, input = {}) {
+  const action = name.slice(BROWSER_TOOL.length);
+  const ref = input.ref != null ? ` [${input.ref}]` : '';
+  const text = input.text != null ? ` "${String(input.text).slice(0, 60)}"${input.submit ? ' + Enter' : ''}` : '';
+  return `${action}${input.url ? ` ${input.url}` : ''}${ref}${text}${input.from ? ` from line ${input.from}` : ''}`;
+}
+
+export function toolArgs(name, input = {}) {
+  if (name.startsWith(BROWSER_TOOL)) return browserArgs(name, input).slice(0, 160);
+  const pick = input.command ?? input.file_path ?? input.notebook_path ?? input.pattern ?? input.url ?? input.query ?? input.description ?? input.prompt ?? input.skill ?? '';
+  if (name === 'TodoWrite' && Array.isArray(input.todos)) return `${input.todos.length} todos`;
+  if (name === 'ApplyPatch') return patchArgs(input.changes).slice(0, 160);
+  return String(pick).replace(/\s+/g, ' ').slice(0, 160);
+}
+
+/**
+ * The name on a message another window sent into this conversation (the shared view). A phone's own name stands as it is; the
+ * PC's window is "Desktop" to the engine and "the PC" to a phone that follows it. Nothing for a message with no sender.
+ */
+export function peerName(from, onPhone = false) {
+  const n = String(from || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (!n) return '';
+  return n === 'Desktop' ? (onPhone ? 'the PC' : '') : n;
+}
+
+export class Pane {
+  constructor(id, host, settings = {}) {
+    this.id = id;
+    this.host = host;
+    this.sessionId = settings.sessionId || null;
+    this.cwd = settings.cwd || '';
+    this.title = settings.title || 'New conversation';
+    this.model = settings.model || host.defaults.model;
+    this.effort = settings.effort || host.defaults.effort;
+    this.mode = settings.mode || host.defaults.mode;
+    // 'claude' or 'codex' (2026-10-12): a Codex session id, or the engine's opened event, makes the pane a Codex one. Its model,
+    // effort and mode are Codex's, left empty until the engine says what the thread has (or a new conversation is picked).
+    this.kind = settings.kind === 'codex' || isCodexId(settings.sessionId) ? 'codex' : 'claude';
+    if (this.kind === 'codex') { this.model = settings.model || ''; this.effort = settings.effort || ''; this.mode = settings.mode || ''; }
+    // What the person chose in this Codex pane (the rest is the thread's own or the user's Codex config): only picks travel with open.
+    this.picked = { model: false, effort: false, mode: false };
+    // Beside the effort (2026-10-13, tune.js): Ultracode and its workflow size on a Claude pane, the reasoning summary and speed on a Codex one.
+    this.tune = tuneFor(this.kind, settings.tune || (this.kind === 'codex' ? null : host.defaults.tune));
+    // A phone below Full access never has Ultracode on (the PC keeps it off; a pane restored with it on says what is true).
+    if (this.kind !== 'codex' && ultracodeLock(host.phoneCap?.() || 'full')) this.tune.ultracode = false;
+    this.billing = host.defaults.billing;
+    this.busy = false;
+    this.unread = false;
+    this.attachments = [];
+    // Messages typed while Claude works: sent when the turn ends, or steered
+    // into it now (see submit / steerItem).
+    this.queue = [];
+    this.steering = new Map();
+    this.stoppedByUser = false;
+    this.commands = [];
+    // Usage warnings and notifications already shown (notices.js), so a repeat on every turn stays quiet.
+    this.noticeSeen = new Map();
+    this.streams = new Map();
+    this.tools = new Map();
+    this.cardKeys = new Set(); // artifact and link cards already in the transcript
+    // The checklist card of the turn being drawn { card, list } (addTodos): later TodoWrite calls of the turn update it in place.
+    this.todoCard = null;
+    this.closedArts = new Map(); // viewers of this conversation's artifacts that were closed (by id)
+    // Subagents, shells, monitors and workflows this conversation's Claude Code
+    // started (task_* messages): taskId -> task. See tasks.js and the Tasks button.
+    this.liveTasks = new Map();
+    this.slashSel = 0;
+    this.curMsg = null;
+    this.tick = null;
+    this.turnStart = 0;
+
+    this.el = document.getElementById('paneTpl').content.firstElementChild.cloneNode(true);
+    this.el.dataset.pane = id;
+    const q = (s) => this.el.querySelector(s);
+    this.$ = {
+      title: q('.title'), cwd: q('.cwd'), T: q('.transcript'), ground: q('.ground'), input: q('textarea'),
+      send: q('.send'), status: q('.status'), slash: q('.slash'), attachments: q('.attachments'), composer: q('.composer'),
+      file: q('input[type=file]'), mic: q('.mic'), model: q('.chip-btn.model'), effort: q('.chip-btn.effort'), mode: q('.chip-btn.mode'),
+      folder: q('.folder-chip'), wt: q('.wt-btn'), billing: q('.chip-btn.billing'), close: q('.close'), grip: q('.grip'), ctx: q('.chip-btn.ctx'),
+      statusLine: q('.status-line'), egridSlot: q('.egrid-slot'), wrap: q('.composer-wrap'), queue: q('.queue'),
+      pin: q('.prompt-pin'), artReopen: q('.art-reopen'), tasksBtn: q('.tasks-btn'), kindMark: q('.kind-mark'),
+      consoleBtn: q('.console-btn'), termBtn: q('.term-btn'),
+    };
+    // The console (console.js): made now, drawn the first time it opens.
+    this.console = new PaneConsole(this);
+    // Scrolled near the top of a long conversation: its earlier messages load (see loadEarlier).
+    this.$.ground.addEventListener('scroll', () => { this.noteScroll(); this.schedulePin(); this.host.dirty?.(); this.maybeLoadEarlier(); }, { passive: true });
+    // The composer floats over the conversation (frosted); keep the last
+    // message clear of it as it grows and shrinks.
+    new ResizeObserver(() => {
+      const g = this.$.ground;
+      const atEnd = g.scrollHeight - g.scrollTop - g.clientHeight < 8;
+      this.el.style.setProperty('--composer-h', `${this.$.wrap.offsetHeight}px`);
+      if (atEnd) g.scrollTop = g.scrollHeight;
+    }).observe(this.$.wrap);
+    // The prompt pin floats over the top of the conversation (2026-10-12): its height, so the conversation fades out
+    // under it instead of showing a cut line of text above and beside the card (app.css .ground mask, --pin-h).
+    if (this.$.pin) new ResizeObserver(() => this.el.style.setProperty('--pin-h', `${this.$.pin.offsetHeight}px`)).observe(this.$.pin);
+    // A pane drawn while hidden (a background tab, the phone's list screen) measured nothing, so its pin was stale
+    // when it came into view and covered your message (2026-10-12): look again whenever the conversation's box changes size.
+    // And a pane that was hidden (a background tab) is put back where the reader was, or at the end (settleScroll, 2026-10-12).
+    new ResizeObserver(() => { this.settleScroll(); this.schedulePin(); }).observe(this.$.ground);
+    this.renderChips();
+    this.setTitle(this.title);
+    this.wire();
+    this.renderBilling();
+    this.showEmpty();
+    this.applyKind();
+  }
+
+  send(op, args = {}) { return this.host.send(op, { paneId: this.id, ...args }); }
+
+  /* ---------- wiring ---------- */
+
+  wire() {
+    this.$.cwd.onclick = () => { if (!this.sessionId && !this.busy) this.host.chooseFolder(this); };
+    const { input } = this.$;
+    this.el.addEventListener('pointerdown', () => this.host.focus(this), true);
+    this.el.addEventListener('focusin', () => this.host.focus(this));
+    input.addEventListener('input', () => { this.autosize(); this.updateSlash(); this.renderSendButton(); this.host.dirty?.(); });
+    input.addEventListener('keydown', (e) => this.onKey(e));
+    // Stop only when the box is empty; with text it queues (see submit).
+    this.$.send.onclick = () => { if (this.busy && !this.hasDraft()) this.stop(); else this.submit(); };
+    this.$.file.addEventListener('change', async (e) => { for (const f of e.target.files) await this.addImageFile(f); e.target.value = ''; });
+    this.$.mic.onclick = () => this.host.voice(this);
+    // A Codex pane's pickers list Codex's models, their efforts and the Codex app's permission presets (codexMenu below).
+    this.$.model.onclick = () => (this.kind === 'codex' ? this.codexMenu('model') : menu(this.$.model, Object.entries(MODEL_NAMES).map(([value, label]) => ({ value, label, checked: value === this.model })), { onPick: (v) => this.setModel(v) }));
+    // The effort popup (2026-10-13): the levels, and under them Ultracode with its size (Claude) or the reasoning summary and speed (Codex).
+    this.$.effort.onclick = () => (this.kind === 'codex' ? this.codexMenu('effort') : this.effortMenu());
+    this.$.mode.onclick = () => (this.kind === 'codex' ? this.codexMenu('mode') : menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 }));
+    this.$.folder.onclick = () => this.host.folderMenu(this, this.$.folder);
+    // The branch label: changes, commit, push, pull request, merge, remove (worktree.js paneMenu).
+    this.$.wt.onclick = () => this.host.worktreeMenu?.(this, this.$.wt);
+    this.$.billing.onclick = () => (this.kind === 'codex' ? this.note('Codex bills the ChatGPT account (or API key) it is signed in with. Myrlin Glass switches that account.') : this.send('billingOptions'));
+    if (this.$.ctx) this.$.ctx.onclick = () => this.contextMenu();
+    this.$.close.onclick = () => this.host.close(this);
+    if (this.$.artReopen) this.$.artReopen.onclick = () => this.artifactsMenu();
+    if (this.$.tasksBtn) this.$.tasksBtn.onclick = () => this.host.openTasksPanel?.(this, this.$.tasksBtn);
+    // The console toggle and Open in terminal (2026-10-12): in the header, and in the menu a right-click on the title opens.
+    if (this.$.consoleBtn) this.$.consoleBtn.onclick = () => this.console.toggle();
+    if (this.$.termBtn) this.$.termBtn.onclick = () => this.openTerminal();
+    // The phone cannot host a terminal: no buttons there (a conversation in the PC's console shows read only, showLocked).
+    if (!this.host.consoleAvailable?.()) for (const b of [this.$.consoleBtn, this.$.termBtn]) if (b) b.hidden = true;
+    this.$.title.closest('.title-block')?.addEventListener('contextmenu', (e) => {
+      if (!this.host.consoleAvailable?.()) return;
+      e.preventDefault();
+      menu({ x: e.clientX, y: e.clientY }, [
+        { value: 'console', label: this.console.shown ? 'Back to Apaki\'s view' : 'Open the console', hint: 'Ctrl+`' },
+        { value: 'terminal', label: 'Open in a terminal window' },
+      ], { above: false, width: 230, onPick: (v) => (v === 'console' ? this.console.toggle() : this.openTerminal()) });
+    });
+    this.$.title.ondblclick = () => this.host.renameSession?.(this, this.$.title);
+    this.$.title.title = 'Double-click to rename';
+    this.$.grip.addEventListener('dragstart', (e) => this.host.dragPane(this, e));
+    this.$.grip.addEventListener('dragend', () => this.host.dragEnd());
+  }
+
+  onKey(e) {
+    const { slash, input } = this.$;
+    if (!slash.hidden) {
+      const items = [...slash.children];
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); this.slashSel = (this.slashSel + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; this.paintSlash(); return; }
+      if ((e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) && items[this.slashSel]) {
+        const name = items[this.slashSel].dataset.name;
+        if (e.key === 'Tab' || input.value.trim() !== `/${name}`) { e.preventDefault(); input.value = `/${name} `; this.hideSlash(); return; }
+      }
+      if (e.key === 'Escape') { this.hideSlash(); return; }
+    }
+    // Ctrl+Enter (Cmd+Enter on a Mac) steers: while Claude works the message goes into the running
+    // turn now instead of the queue (Arthur, 2026-10-10). Enter alone still queues it.
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); this.submit({ steer: true }); return; }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.submit(); return; }
+    // Up in an empty box pulls the last queued message back to edit, as in Codex.
+    if (e.key === 'ArrowUp' && !input.value && this.queue.length) { e.preventDefault(); this.editItem(this.queue[this.queue.length - 1].id); return; }
+    // Shift+Tab cycles the permission mode, as in Claude Code.
+    if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); this.cycleMode(); return; }
+    if (e.key === 'Escape' && this.busy) this.stop();
+  }
+
+  cycleMode() {
+    const list = this.kind === 'codex' ? CODEX_MODES : MODES;
+    const i = list.findIndex((m) => m.value === this.mode);
+    this.setMode(list[(i + 1) % list.length].value);
+  }
+
+  /* ---------- Codex (2026-10-12): the Codex app's pickers in this pane ---------- */
+
+  /** The model list the app read from Codex ({ models, defaults, presets, account }), or null until it did. */
+  codexInfo() { return this.host.codexModels?.() || null; }
+
+  /** Switches the pane between Claude Code and Codex (before its first message), or follows what the engine opened. */
+  setKind(kind, { fromEngine = false } = {}) {
+    if (kind !== 'codex' && kind !== 'claude') return;
+    if (kind === this.kind && !fromEngine) return;
+    const was = this.kind;
+    this.kind = kind;
+    if (was !== kind) {
+      // The picks of one are not the other's: a Claude model means nothing to Codex.
+      this.tune = tuneFor(kind, kind === 'codex' ? null : this.host.defaults.tune);
+      if (kind !== 'codex' && ultracodeLock(this.host.phoneCap?.() || 'full')) this.tune.ultracode = false;
+      if (kind === 'codex') {
+        this.model = ''; this.effort = ''; this.mode = ''; this.picked = { model: false, effort: false, mode: false };
+        // Codex bills the ChatGPT account it is signed in with, not Claude's: blank until the engine says which.
+        this.billing = this.codexInfo()?.account || null;
+        if (this.billing) this.renderBilling(); else this.$.billing.textContent = '';
+      } else { this.model = this.host.defaults.model; this.effort = this.host.defaults.effort; this.mode = this.host.defaults.mode; this.billing = this.host.defaults.billing; this.renderBilling(); }
+    }
+    this.applyKind();
+    if (kind === 'codex' && !this.codexInfo()) this.host.askCodexModels?.();
+  }
+
+  /** Everything on the page that depends on the kind: the word mark, the box's hint, what can be attached, the chips. */
+  applyKind() {
+    const codex = this.kind === 'codex';
+    this.el.classList.toggle('codex', codex);
+    if (this.$.kindMark) this.$.kindMark.hidden = !codex;
+    // The phone's field is one line beside the clip, mic and send (2026-10-12: Arthur saw the long hint wrap and cut off
+    // there), so it gets just the name; / still opens the commands. The desktop keeps the full hint.
+    this.$.input.placeholder = window.apakiShell === 'web'
+      ? (codex ? 'Message Codex' : 'Message Claude')
+      : (codex ? 'Message Codex, / for commands, paste or drop files' : 'Message Claude, / for commands, paste or drop images');
+    this.$.file.accept = codex ? '' : 'image/*';
+    this.$.file.closest('label')?.setAttribute('title', codex ? 'Attach images or files' : 'Attach images');
+    this.renderChips();
+    if (!this.sessionId && !this.$.T.querySelector('.turn-user')) this.showEmpty();
+  }
+
+  /** The models arrived (or changed): the chips and an open menu use them. */
+  codexModelsChanged() {
+    if (this.kind !== 'codex') return;
+    const info = this.codexInfo();
+    // A new conversation shows what Codex would start with until the engine's opened event says so (none of it is a pick).
+    if (info?.defaults && !this.sessionId && !this.model) { this.model = info.defaults.model; this.effort = info.defaults.effort; this.mode = info.defaults.mode; }
+    if (info?.account && this.billing?.source !== 'codex') { this.billing = info.account; this.renderBilling(); }
+    this.renderChips();
+  }
+
+  /** The Codex pickers: model (each with its description), effort (that model's own), permissions (the three presets). */
+  codexMenu(which) {
+    const info = this.codexInfo();
+    if (!info) { this.host.askCodexModels?.(); this.note('Reading the model list from Codex… try again in a moment.'); return; }
+    if (which === 'model') {
+      menu(this.$.model, info.models.map((m) => ({ value: m.id, label: m.name, hint: m.description, checked: m.id === this.model })), { onPick: (v) => this.setModel(v), width: 340 });
+    } else if (which === 'effort') {
+      // That model's own efforts (Ultra where it offers it), the reasoning summary, the speed it lists, and the line on Ultracode (tune.js).
+      this.openEffortPopup(300);
+    } else {
+      menu(this.$.mode, CODEX_MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 360 });
+    }
+  }
+
+  /** The settings line of a Codex pane. */
+  renderCodexChips() {
+    const { model, effort, mode } = this.$;
+    const info = this.codexInfo();
+    model.textContent = this.model ? modelLabel(info?.models, this.model) : 'Model';
+    const levels = effortNames(info?.models, this.model);
+    // A faster speed than standard shows as "+ fast" after the effort word, nothing else (tune.js chipExtra).
+    const row = findModel(info?.models, this.model);
+    effort.innerHTML = `${effortGrid(this.effort, { levels })}<span>${esc(this.effort || 'effort')}${chipExtraHtml(chipExtra('codex', this.tune, { model: row }))}</span>`;
+    const m = codexMode(this.mode);
+    mode.innerHTML = `<span class="mm">${m.mark}</span><span class="ml-full">${esc(m.label)}</span><span class="ml-short">${esc(m.short || m.label)}</span>`;
+    mode.setAttribute('aria-label', `Permissions: ${m.label}`);
+    mode.dataset.mode = m.value;
+    mode.title = `${m.hint} · Shift+Tab to cycle`;
+    model.title = 'Model';
+    effort.title = chipTitle('codex', this.effort, this.tune, { model: row });
+  }
+
+  /**
+   * The effort popup (2026-10-13), for either kind: the levels and what sits beside them (tune.js builds the rows). A pick of
+   * an effort closes it; Ultracode, a size, a summary or a speed leave it open and repaint it, so the size row can appear
+   * under the switch the moment it is on.
+   */
+  openEffortPopup(width) {
+    const rows = () => {
+      if (this.kind === 'codex') {
+        const info = this.codexInfo();
+        return codexEffortMenu({ model: findModel(info?.models, this.model), effort: this.effort, tune: this.tune, defaults: info?.defaults || null });
+      }
+      return claudeEffortMenu({ effort: this.effort, tune: this.tune, lock: ultracodeLock(this.host.phoneCap?.() || 'full') });
+    };
+    const popup = menu(this.$.effort, rows(), {
+      width,
+      onPick: (v) => {
+        const pick = this.kind === 'codex' ? codexPick(v) : claudePick(v, this.tune);
+        if (!pick) return;
+        if (pick.effort) this.setEffort(pick.effort);
+        if (pick.tune) { this.setTune(pick.tune); popup.update?.(rows()); }
+      },
+    });
+    return popup;
+  }
+
+  /** The Claude effort popup (Max, Ultracode and its workflow size). */
+  effortMenu() { return this.openEffortPopup(300); }
+
+  /** The settings line under the message box: model, effort grid, mode, billing. */
+  renderChips() {
+    if (this.kind === 'codex') { this.renderCodexChips(); return; }
+    const { model, effort, mode } = this.$;
+    model.textContent = MODEL_NAMES[this.model] || this.model;
+    // Ultracode on shows as "+ ultracode" after the effort word ("+ ultra" in a narrow box): a word, not a pill (tune.js chipExtra).
+    effort.innerHTML = `${effortGrid(this.effort)}<span>${esc(this.effort)}${chipExtraHtml(chipExtra('claude', this.tune))}</span>`;
+    effort.title = chipTitle('claude', this.effort, this.tune);
+    const m = MODES.find((x) => x.value === this.mode) || MODES[0];
+    // The full label, and the short one a narrow message box shows instead (app.css .ml-short).
+    mode.innerHTML = `<span class="mm">${m.mark}</span><span class="ml-full">${esc(m.label)}</span><span class="ml-short">${esc(m.short || m.label)}</span>`;
+    mode.setAttribute('aria-label', `Permission mode: ${m.label}`);
+    mode.dataset.mode = m.value;
+    mode.title = `${m.hint} · Shift+Tab to cycle`;
+  }
+
+  /* ---------- header ---------- */
+
+  setTitle(title) {
+    this.title = title || 'New conversation';
+    this.$.title.textContent = this.title;
+    this.$.title.title = `${this.title}\nDouble-click to rename`;
+  }
+
+  setCwdLine() {
+    // In a git repository the folder line gains a branch label (worktree.js); a new conversation waiting for its worktree has none yet.
+    const f = this.pendingWorktree ? null : (this.host.worktreeFor?.(this) || null);
+    this.wt = f;
+    this.renderWorktree(f);
+    // Under the label the line is only what is left of the folder (below the worktree's root) and the session id.
+    const rest = f && this.sessionId ? [relPath(this.cwd, f.wt.path), this.sessionId].filter(Boolean).join('  ·  ') : null;
+    this.$.cwd.textContent = rest ?? (this.pendingWorktree ? this.startPathText() : `${short(this.cwd)}${this.sessionId ? `  ·  ${this.sessionId}` : ''}`);
+    // Until the first message the folder can still change: say so, and let a click do it.
+    const open = !this.sessionId;
+    this.$.cwd.classList.toggle('pickable', open);
+    this.$.cwd.title = open ? 'Folder this conversation starts in · click to change' : this.cwd;
+    const start = this.$.T.querySelector('.start-path');
+    if (start) start.textContent = this.startPathText();
+  }
+
+  /** Where a new conversation starts, in words: its folder, or the worktree it is about to make. */
+  startPathText() {
+    const p = this.pendingWorktree;
+    return p ? `new worktree of ${p.name || short(p.repo)}` : (short(this.cwd) || '~');
+  }
+
+  /**
+   * The branch label (2026-10-12): the branch, a worktree glyph when it is not the main checkout, the lines added and
+   * removed against its base, and in the one colour trouble gets, conflicts or being behind. Hidden outside a repository.
+   */
+  renderWorktree(f) {
+    const b = this.$.wt;
+    if (!b) return;
+    if (!f) { if (!b.hidden) { b.hidden = true; b.textContent = ''; delete b.dataset.key; } return; }
+    const { wt, repo } = f;
+    const tr = trouble(wt);
+    const counts = changeText(wt);
+    const key = [wt.path, branchName(wt), counts, tr, wt.main ? 'm' : 'w'].join('|');
+    b.hidden = false;
+    if (b.dataset.key === key) return;
+    b.dataset.key = key;
+    b.classList.toggle('trouble', Boolean(tr));
+    b.innerHTML = `${wt.main ? '' : GLYPH_WORKTREE}<span class="wt-b">${esc(branchName(wt))}</span>${counts ? `<span class="wt-n">${esc(counts)}</span>` : ''}${tr ? `<span class="wt-t">${esc(tr)}</span>` : ''}`;
+    b.title = `${tooltip(repo, wt)}
+Click for changes, commit, push, pull request, merge`;
+    b.setAttribute('aria-label', `Branch ${branchLabel(wt)}${tr ? `, ${tr}` : ''}. Open its menu`);
+  }
+
+  /**
+   * This new conversation will start in a worktree it makes (worktree.js makeFor), not in a folder: the first message names
+   * the branch, shows the git command and creates it. The pane's folder is the repository until then.
+   */
+  setPendingWorktree(p) {
+    if (this.sessionId || this.busy) return;
+    this.pendingWorktree = p;
+    this.cwd = p.repo;
+    this.setCwdLine();
+    this.open(null, { warm: false });
+    this.host.changed(this);
+  }
+
+  /**
+   * Phones that show this conversation too (the shared view, 2026-10-11): one plain line in the header, "Also on iPhone", gone
+   * when nobody does. Text only: no dot, no badge, no motion. The engine sends it when the phones watching change (ev followers).
+   */
+  setFollowers(phones) {
+    const names = (Array.isArray(phones) ? phones : []).filter((n) => typeof n === 'string' && n).slice(0, 4);
+    if (!names.length) { this.$.also?.remove(); this.$.also = null; return; }
+    if (!this.$.also) { this.$.also = el('span', 'also-on'); this.$.cwd.after(this.$.also); }
+    this.$.also.textContent = `Also on ${names.join(', ')}`;
+    this.$.also.title = 'A phone is watching this conversation. Nothing was taken over from this window.';
+  }
+
+  /**
+   * This pane follows a conversation open in a pane on the PC (the phone's shared view, 2026-10-12; app.js followDesktop, engine
+   * op follow): `desktopPaneId` names the PC's pane, null ends it. The pane shows that conversation live and its messages go into
+   * the PC's pane, so the model, effort and permission mode are the PC pane's: their chips stay on screen, read only. One bar at the
+   * top of the conversation says where it is being watched and offers Take over (app.js takeOver asks first, because it stops the PC's
+   * pane). readOnly (this phone's access is No shell or Chat only): the message box gives way to a "View only" line.
+   */
+  setFollowing(desktopPaneId, { readOnly = false } = {}) {
+    this.following = desktopPaneId || null;
+    this.el.classList.toggle('following', Boolean(this.following));
+    for (const k of ['model', 'effort', 'mode']) if (this.$[k]) this.$[k].disabled = Boolean(this.following);
+    this.setViewOnly(Boolean(this.following) && readOnly);
+    this.renderFollowBar();
+  }
+
+  /** The "View only" line in place of the message box (a follower whose phone may watch but not send). */
+  setViewOnly(on) {
+    this.el.classList.toggle('view-only', Boolean(on));
+    const note = this.el.querySelector('.view-only-note');
+    if (!on) { note?.remove(); return; }
+    if (!note) this.$.wrap?.append(el('div', 'view-only-note', '<b>View only</b><span>This phone can watch this conversation but not send to it. Take over to continue it here.</span>'));
+  }
+
+  /** The follow bar: "Watching on <PC>" and Take over, sticky at the top of the conversation. Gone when the pane does not follow. */
+  renderFollowBar() {
+    this.$.fbar?.remove();
+    this.$.fbar = null;
+    if (!this.following) return;
+    const pc = String(window.__apakiLink?.pcName?.() || '').trim() || 'your PC';
+    const bar = el('div', 'follow-bar', `<span class="fb-t"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.6 8s2.3-4.4 6.4-4.4S14.4 8 14.4 8s-2.3 4.4-6.4 4.4S1.6 8 1.6 8z"/><circle cx="8" cy="8" r="1.9"/></svg><span class="fb-w">Watching live on <b>${esc(pc)}</b></span></span><button type="button" class="fb-go" aria-label="Take over this conversation here">Take over</button>`);
+    bar.querySelector('.fb-go').onclick = () => this.host.takeOver?.(this);
+    this.$.ground.prepend(bar);
+    this.$.fbar = bar;
+  }
+
+  /** Stops following without closing the PC's pane (the PC drops this pane from its watchers). */
+  stopFollowing() {
+    if (!this.following) return;
+    this.setFollowing(null);
+    this.send('unfollow');
+  }
+
+  /**
+   * Take over: the conversation moves from the PC's pane to this one. The PC stops that pane before its next message (the
+   * same as opening a conversation the PC holds and choosing Take over here), so nothing forks.
+   */
+  takeOver() {
+    if (!this.following) return;
+    const s = { id: this.sessionId, cwd: this.cwd, title: this.title, codex: this.kind === 'codex' };
+    this.stopFollowing();
+    this.open(s, { warm: true, force: true });
+    this.host.changed(this);
+  }
+
+  /**
+   * The PC's pane is gone (closed there, or the PC no longer has it): this pane stops following and says so, keeping the transcript.
+   * Open here starts the conversation in this pane (nothing holds it any more), Close pane drops it.
+   */
+  followEnded() {
+    if (!this.following) return;
+    this.setFollowing(null);
+    this.setBusy(false);
+    this.setStatus('');
+    this.$.T.querySelector('.takeover')?.remove();
+    const card = el('div', 'takeover', `
+      <div class="tk-kicker">Closed on the PC</div>
+      <h3>The PC closed this conversation's pane</h3>
+      <p>${this.sessionId ? 'Nothing is watching it now. You can open it here and carry on, or close this pane.' : 'It had not started yet. Close this pane or start a new conversation here.'}</p>
+      <div class="tk-row">${this.sessionId ? '<button class="tk-go">Open here</button>' : ''}<button class="tk-no">Close pane</button></div>`);
+    const go = card.querySelector('.tk-go');
+    if (go) go.onclick = () => { card.remove(); this.open({ id: this.sessionId, cwd: this.cwd, title: this.title, codex: this.kind === 'codex' }, { warm: true }); this.host.changed(this); };
+    card.querySelector('.tk-no').onclick = () => this.host.close(this);
+    this.$.T.append(card);
+    this.scrollDown(true);
+    this.host.changed(this);
+  }
+
+  /** Starts this new conversation in another folder (only before its first message). */
+  setStartFolder(dir) {
+    if (this.sessionId || this.busy) return;
+    this.pendingWorktree = null;
+    this.cwd = dir;
+    this.setCwdLine();
+    this.open(null, { warm: true });
+    this.host.changed(this);
+  }
+
+  renderBilling() {
+    const b = this.billing;
+    if (!b) return;
+    // A key says so beside its name (Arthur, 2026-10-09): it bills per token, a subscription does not.
+    const key = b.isKey ? '<span class="key-tag" aria-label="(API key)">API key</span>' : '';
+    // A Codex account says how much of its plan's windows is used (the server's numbers, kept current by the engine).
+    const used = this.kind === 'codex' ? usageWorst(b.limits) : '';
+    this.$.billing.innerHTML = `<span class="bn">${esc(b.name)}</span>${key}${b.follow && !/glass/i.test(b.name) ? '<span class="src">Glass</span>' : used ? `<span class="src">${esc(used)}</span>` : ''}`;
+    // A card, not a sentence (tooltip.js, 2026-10-12): who pays, how, and what a click does.
+    setTip(this.$.billing, this.kind === 'codex'
+      ? { head: `Codex bills ${b.name}`, rows: [['Billing', b.isKey ? 'API key, per token' : 'Subscription'], ...(usageText(b.limits) ? [['Plan usage', usageText(b.limits)]] : [])], hint: 'Myrlin Glass switches the signed-in account' }
+      : { head: `Billing: ${b.name}`, rows: [['Billed', b.isKey ? 'API key, per token' : 'Subscription'], ...(b.follow ? [['Account', 'Follows Myrlin Glass']] : [])], hint: 'Click to change' });
+  }
+
+  /** The folder chip under the title: the folder's name, or a quiet "Add to folder". */
+  renderFolderSelect(folders, sessions) {
+    const chip = this.$.folder;
+    const cur = sessions.find((s) => s.id === this.sessionId)?.folder || '';
+    const f = folders.find((x) => x.id === cur);
+    chip.textContent = f ? f.name : 'Add to folder';
+    chip.classList.toggle('set', Boolean(f));
+    chip.hidden = !this.sessionId;
+    this.folderId = f?.id || null;
+  }
+
+  setModel(m) { this.model = m; this.picked.model = true; this.renderChips(); this.send('model', { model: m }); this.host.changed(this); this.askContext(1500); }
+
+  /* ---------- the context meter (2026-10-10) ---------- */
+
+  /** Asks the engine how full this conversation's context window is (it also says so after every turn). */
+  askContext(ms = 1200) {
+    clearTimeout(this.ctxTimer);
+    this.ctxTimer = setTimeout(() => { if (this.sessionId || this.busy) this.send('contextUsage'); }, ms);
+  }
+
+  /** The meter in the settings line: a thin bar and the percentage, warmer as the window fills. */
+  /** The name of what runs this conversation, for the lines that say who is working. */
+  agentName() { return this.kind === 'codex' ? 'Codex' : 'Claude'; }
+
+  renderContext() {
+    const b = this.$.ctx;
+    const c = this.ctx;
+    if (!b) return;
+    if (!c || c.percentage == null) { b.hidden = true; return; }
+    const pct = Math.max(0, Math.round(c.percentage));
+    b.hidden = false;
+    b.querySelector('.ctx-n').textContent = `${pct}%`;
+    b.style.setProperty('--ctx', Math.min(1, pct / 100).toFixed(3));
+    b.classList.toggle('warm', pct >= 70 && pct < 88);
+    b.classList.toggle('full', pct >= 88);
+    const k = (n) => (n == null ? '?' : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+    const auto = typeof c.autoCompact === 'number' ? ` ${this.kind === 'codex' ? 'Codex' : 'Claude Code'} compacts it on its own near ${Math.round(c.autoCompact)}%.` : c.autoCompact === false ? ' Auto-compact is off: Compact now (click) summarizes it when you choose.' : '';
+    // A card with the same bar as the meter (tooltip.js, 2026-10-12; it was one long sentence in a Windows tooltip).
+    const tone = pct >= 88 ? 'full' : pct >= 70 ? 'warm' : '';
+    setTip(b, c.estimate
+      ? { head: `Context about ${pct}%`, meter: pct / 100, tone: `${tone} estimate`.trim(), rows: [['Used', `about ${k(c.totalTokens)} of ${k(c.maxTokens)} tokens`]], lines: [`Estimated from the transcript at the last reply; exact once ${this.agentName()} runs here.`] }
+      : { head: `Context ${pct}%`, meter: pct / 100, tone, rows: [['Used', `${k(c.totalTokens)} of ${k(c.maxTokens)} tokens`], ...(c.maxTokens && c.totalTokens != null ? [['Left', `${k(Math.max(0, c.maxTokens - c.totalTokens))} tokens`]] : [])], lines: [auto.trim()], hint: 'Click for the breakdown and Compact now' });
+    b.classList.toggle('estimate', Boolean(c.estimate));
+    b.setAttribute('aria-label', `Context ${pct}% used`);
+  }
+
+  /** The breakdown: what fills the window, and Compact now. */
+  contextMenu() {
+    const c = this.ctx;
+    if (!c) { this.askContext(0); return; }
+    const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
+    const items = [{ heading: `Context ${Math.round(c.percentage)}% · ${k(c.totalTokens || 0)} of ${k(c.maxTokens || 0)}` }];
+    for (const u of c.used || []) items.push({ label: u.name, hint: `${k(u.tokens)} tokens`, value: null, disabled: true });
+    items.push({ divider: true });
+    items.push({ label: 'Compact now', hint: 'summarize the conversation to free the window', value: 'compact', disabled: this.busy ? `Wait until ${this.agentName()} finishes` : false });
+    items.push({ label: 'Measure again', value: 'refresh' });
+    menu(this.$.ctx, items, {
+      width: 300,
+      onPick: (v) => {
+        if (v === 'refresh') this.askContext(0);
+        if (v === 'compact' && !this.busy) { this.$.input.value = '/compact'; this.submit(); }
+      },
+    });
+  }
+  setEffort(x) { this.effort = x; this.picked.effort = true; this.renderChips(); this.send('effort', { effort: x }); this.host.changed(this); }
+  /**
+   * Ultracode and its workflow size (Claude), the reasoning summary and the speed (Codex): `change` names only the keys that
+   * moved. The engine applies it to the running session at once and keeps it for the pane; the window saves it with the workspace.
+   */
+  setTune(change) {
+    this.tune = tuneChange(this.kind, this.tune, change);
+    this.renderChips();
+    this.send('tune', change);
+    this.host.changed(this);
+  }
+  setMode(x) { this.mode = x; this.picked.mode = true; this.renderChips(); this.send('mode', { mode: x }); this.host.changed(this); }
+
+  /* ---------- open ---------- */
+
+  /** Opens a session here (null for a new conversation). warm=false waits for the first message to start Claude Code. */
+  open(s, { warm = true, force = false } = {}) {
+    // Opening a conversation in a pane that follows the PC's pane ends the following first (the PC refuses an open on a follower).
+    if (this.following) this.stopFollowing();
+    const sessionId = s?.id || null;
+    if (s?.title) this.setTitle(s.title);
+    if (!sessionId) this.setTitle('New conversation');
+    this.lockedBy = null;
+    this.lockLost = false;
+    this.stopDriftWatch();
+    this.lastOpen = s ? { id: s.id, cwd: s.cwd, title: s.title } : null;
+    // A Codex thread (a list row marked codex, or its id) makes this a Codex pane before anything is sent.
+    if (s?.codex || isCodexId(s?.id)) this.setKind('codex');
+    else if (s && this.kind === 'codex' && s.id !== this.sessionId) this.setKind('claude');
+    // A Codex pane sends only what the person picked here; the thread's own model, effort and permissions are the engine's to read.
+    // The tune (Ultracode and size; summary and speed) travels with open like the picks do.
+    const picks = this.kind === 'codex'
+      ? { kind: 'codex', ...(this.picked.model ? { model: this.model } : {}), ...(this.picked.effort ? { effort: this.effort } : {}), ...(this.picked.mode ? { mode: this.mode } : {}), tune: this.tune }
+      : { model: this.model, effort: this.effort, mode: this.mode, tune: { ultracode: this.tune?.ultracode === true, size: this.tune?.size || null } };
+    this.send('open', { sessionId, cwd: s?.cwd || this.cwd || null, warm, force, ...picks });
+  }
+
+  /**
+   * The session is held by another window (latch in a terminal, another
+   * Apaki): say who, and offer to take it over here. A takeover stops the
+   * other window before it writes again, so the conversation cannot fork.
+   * `lost` = this pane had it and the other window took it.
+   */
+  showLocked(e, { lost = false } = {}) {
+    const h = e.holder || {};
+    const who = h.name || 'Another window';
+    const when = h.at ? new Date(h.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+    this.lockedBy = h;
+    this.lockLost = lost;
+    // A pane that lost its session keeps its transcript and follows it while it stays on screen (checkDrift).
+    if (lost) this.startDriftWatch(); else this.stopDriftWatch();
+    this.sessionId = e.sessionId || this.sessionId;
+    if (e.title) this.setTitle(e.title);
+    if (e.cwd) this.cwd = e.cwd;
+    this.setCwdLine();
+    this.setBusy(false);
+    this.setStatus('');
+    if (!lost) this.$.T.innerHTML = '';
+    this.$.T.querySelector('.takeover')?.remove();
+    const terminal = h.app === 'latch-relay' || !h.app;
+    // On a phone, when a pane of the PC's window has it open: watching it live takes nothing from that pane (the shared view).
+    const watchPane = lost ? null : this.host.deskPaneFor?.(e.sessionId || this.sessionId) || null;
+    const card = el('div', 'takeover', `
+      <div class="tk-kicker">${lost ? 'Taken over' : 'Session in use'}</div>
+      <h3>${lost ? `${esc(who)} took this session` : `Open in ${esc(who)}`}</h3>
+      <p>${lost
+        ? `It moved there${when ? ` at ${esc(when)}` : ''}, so this pane stopped before it could write anything. Take it back to continue here.`
+        : `${esc(who.charAt(0).toUpperCase() + who.slice(1))} has had it since ${esc(when || 'earlier')}${h.pid ? ` (pid ${h.pid})` : ''}. Take it over to work on it here.`}</p>
+      <p class="tk-fine">${terminal
+        ? 'That terminal window is blocked as soon as you take over: its next message is stopped with a note to continue here, so nothing forks.'
+        : 'That window stops before its next message, with a note to continue here, so nothing forks.'} Anything it already did is on disk and loads here.</p>
+      <div class="tk-row">${watchPane ? '<button class="tk-go tk-watch">Watch live</button>' : ''}<button class="${watchPane ? 'tk-take' : 'tk-go tk-take'}">${lost ? 'Take it back' : 'Take over here'}</button><button class="tk-no">${lost ? 'Close pane' : 'Cancel'}</button></div>`);
+    card.querySelector('.tk-take').onclick = () => {
+      this.$.T.innerHTML = '';
+      this.open(this.lastOpen || { id: this.sessionId, cwd: this.cwd, title: this.title }, { warm: true, force: true });
+    };
+    const watch = card.querySelector('.tk-watch');
+    if (watch) watch.onclick = () => this.host.watchLive?.(this, watchPane);
+    card.querySelector('.tk-no').onclick = () => {
+      if (lost) { this.host.close(this); return; }
+      this.lockedBy = null;
+      this.sessionId = null;
+      this.setTitle('New conversation');
+      this.setCwdLine();
+      this.open(null, { warm: false });
+    };
+    this.$.T.append(card);
+    // Held by the PC's console (2026-10-12): what it shows, read only (the phone cannot run a terminal).
+    if (h.app === 'apaki-console') this.watchConsole(card);
+    this.scrollDown(true);
+    this.host.changed(this);
+  }
+
+  showEmpty() {
+    this.$.T.innerHTML = '';
+    queueMicrotask(() => {
+      const b = this.$.T.querySelector('.start-in');
+      if (b) b.onclick = () => this.host.chooseFolder(this);
+      // Claude Code or Codex for this new conversation (2026-10-12); the choice ends with the first message.
+      for (const k of this.$.T.querySelectorAll('.kind-pick button')) {
+        k.onclick = () => { if (this.sessionId || this.busy || k.dataset.kind === this.kind) return; this.setKind(k.dataset.kind); this.open(null, { warm: true }); this.host.changed(this); };
+      }
+    });
+    // 40 cells, slow and out of step; about 5% (two, placed at random) in peach, the rest periwinkle.
+    const peach = new Set();
+    while (peach.size < 2) peach.add(Math.floor(Math.random() * 40));
+    const cells = Array.from({ length: 40 }, (_, i) => `<i${peach.has(i) ? ' class="pk"' : ''} style="--d:${(-Math.random() * 9).toFixed(2)}s"></i>`).join('');
+    this.$.T.append(el('div', 'empty', `<div class="empty-grid rand" aria-hidden="true">${cells}</div><h3>New conversation</h3><p>${this.kind === 'codex' ? 'It becomes a Codex thread with your first message.' : 'It becomes a Claude Code session with your first message.'}</p>${this.host.codexAvailable?.() ? `<div class="kind-pick" role="group" aria-label="Start with"><button data-kind="claude" aria-pressed="${this.kind !== 'codex'}">Claude Code</button><button data-kind="codex" aria-pressed="${this.kind === 'codex'}">Codex</button></div>` : ''}<button class="start-in" title="Choose the folder this conversation starts in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.6 0-1.2-.5-1.2-1.2z"/></svg><span class="start-label">Starts in</span><span class="start-path">${esc(this.startPathText())}</span><span class="start-change">Change</span></button><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
+  }
+
+  /* ---------- transcript ---------- */
+
+  scrollDown(force = false) {
+    // Earlier messages drawn off-screen to go on top (prependHistory) keep the reader where they are.
+    // A conversation being drawn from history is scrolled once, at its end (renderHistory): asking for the end after
+    // every message made the browser lay the whole page out again each time (2400 messages took half a minute).
+    if (this._prepending || this._replaying) return;
+    const g = this.$.ground;
+    // No box (a background tab): there is nothing to scroll yet; the reader is put at the end when it shows (settleScroll).
+    if (!this.hasBox()) { if (force) this.scrollMemo = { atEnd: true, top: 0 }; return; }
+    if (force || g.scrollHeight - g.scrollTop - g.clientHeight < 160) g.scrollTop = g.scrollHeight;
+    this.schedulePin();
+  }
+
+  /* Where the reader is, in a pane with no box (2026-10-12) */
+
+  // A background tab is display: none, so its conversation has no box: scrollHeight and clientHeight read 0 and a
+  // scrollTop written to it is lost. A tab opened in the background, or restored with the window, therefore opened
+  // scrolled to the top instead of the end of its conversation (found in the last desktop UI pass); the workspace
+  // also saved "at the end, 0" for such a pane, which lost where you were reading. The pane now keeps where the
+  // reader is (scrollMemo: { atEnd, top }, updated as they scroll and when something asks for the end) and puts
+  // them there the moment it has a box (settleScroll, from the ground's ResizeObserver). The phone's tabs are the
+  // same stages, so the phone has the same fix.
+
+  /** True while the conversation has a box on screen (a hidden tab does not). */
+  hasBox() {
+    return (this.$.ground?.clientHeight || 0) > 0;
+  }
+
+  /** Where the reader is: { atEnd, top } as drawn; with no box, what it was when last seen or last asked for. */
+  scrollState() {
+    const g = this.$.ground;
+    if (this.hasBox()) return { atEnd: g.scrollHeight - g.scrollTop - g.clientHeight < 40, top: Math.round(g.scrollTop) };
+    return this.scrollMemo || { atEnd: true, top: 0 };
+  }
+
+  /** The ground scrolled: remember it (only while it has a box; a hidden one reports 0). */
+  noteScroll() {
+    if (this.hasBox()) this.scrollMemo = this.scrollState();
+  }
+
+  /**
+   * The ground's size changed. When it has just got a box after having none, the reader goes where the memo says:
+   * the end (a new tab, a conversation that grew while hidden) or the offset they had.
+   */
+  settleScroll() {
+    const had = this._hadBox;
+    this._hadBox = this.hasBox();
+    // Shown again after being hidden: replies that kept collecting text are drawn now, in one go (flushUnpainted).
+    if (this._hadBox && had === false) this.flushUnpainted();
+    if (this._hadBox && had === false && this._sealPending && !this._sealAt) this._sealAt = requestAnimationFrame(() => this.sealOld());
+    if (!this._hadBox || had !== false) return;
+    const want = this.scrollMemo || { atEnd: true, top: 0 };
+    const g = this.$.ground;
+    const go = () => { g.scrollTop = want.atEnd ? g.scrollHeight : want.top; };
+    // The composer's height is read from its box a moment later (the wrap's ResizeObserver): measure it now, so the end is the real end.
+    this.el.style.setProperty('--composer-h', `${this.$.wrap.offsetHeight}px`);
+    go();
+    requestAnimationFrame(go);
+    this.schedulePin();
+  }
+
+  /* ---------- the prompt pin ---------- */
+
+  // Arthur, 2026-10-09: scrolled down, the message that started what you are
+  // reading sits in a card at the top; a click scrolls back up to it. Scroll
+  // up past that message and the card shows the one before it.
+  schedulePin() {
+    if (this._pinRaf) return;
+    this._pinRaf = requestAnimationFrame(() => { this._pinRaf = 0; this.updatePin(); });
+  }
+
+  /** Your messages in the conversation, top to bottom. Older ones sit inside chunks (sealOld), so not only direct children. */
+  userTurns() {
+    return this.$.T.querySelectorAll('.turn-user');
+  }
+
+  /* ---------- long conversations: chunks (2026-10-12, input lag) ---------- */
+
+  // Thousands of top-level blocks made every update (a streamed word, a tool result, a composer resize) cost the browser
+  // a walk over all of them: about 7 ms per update in a 2400-message pane, per streaming pane per frame. Older
+  // messages are wrapped in groups of about SEAL_SIZE in a `.chunk` box that app.css gives content-visibility: auto and
+  // the height measured here, so what is off screen is skipped and the transcript has a hundred blocks, not thousands.
+  // The last SEAL_KEEP nodes stay open. Nothing is removed or rewritten: nodes are moved into a box, so every reference
+  // (tools, the todo card, links) stays valid, find-in-pane still walks all the text, and the pin counts through chunks.
+
+  /** Folds the older messages into chunks, when the pane has a box to measure in. Safe to call often. */
+  sealOld() {
+    this._sealAt = 0;
+    const T = this.$.T;
+    if (this._prepending || this._replaying || T.childElementCount < SEAL_KEEP + SEAL_SIZE) return;
+    // A pane in a background tab has no box to measure: it folds when it is shown (settleScroll).
+    if (!this.hasBox()) { this._sealPending = true; return; }
+    this._sealPending = false;
+    const kids = [...T.children];
+    const kinds = kids.map((n) => (n.classList.contains('turn-user') ? 'turn' : n.matches(SEAL_STAYS) ? 'skip' : 'item'));
+    const ranges = planChunks(kinds, { keep: SEAL_KEEP, size: SEAL_SIZE });
+    if (!ranges.length) return;
+    const g = this.$.ground;
+    const atEnd = g.scrollHeight - g.scrollTop - g.clientHeight < 40;
+    // The reader's place: the first node below the top edge of the conversation, and how far down it is.
+    const edge = g.getBoundingClientRect().top;
+    let anchor = null;
+    for (const n of kids) { if (n.getBoundingClientRect().bottom > edge) { anchor = n; break; } }
+    const y0 = anchor ? anchor.getBoundingClientRect().top : 0;
+    // Wrap first, measure, then switch the skipping on (a chunk that is skipped has no height to measure).
+    const made = ranges.map(([a, b]) => {
+      const c = document.createElement('div');
+      c.className = 'chunk';
+      kids[a].before(c);
+      c.append(...kids.slice(a, b));
+      return c;
+    });
+    const heights = made.map((c) => c.getBoundingClientRect().height);
+    // The remembered size is the content box's (a skipped chunk keeps its padding on top of it), so the padding comes off.
+    const pad = parseFloat(getComputedStyle(made[0]).paddingBottom) || 0;
+    made.forEach((c, i) => { c.style.containIntrinsicSize = `auto ${Math.max(1, Math.round(heights[i] - pad))}px`; c.classList.add('cv'); });
+    // Margins no longer collapse across a chunk's edge (app.css .chunk offsets that); keep the reader where they were.
+    if (atEnd) g.scrollTop = g.scrollHeight;
+    else if (anchor?.isConnected) g.scrollTop += anchor.getBoundingClientRect().top - y0;
+    this.chunkCount = (this.chunkCount || 0) + made.length;
+    this._sealedKids = T.childElementCount - SEAL_KEEP;
+  }
+
+  /** Folds soon (a frame later), once the transcript has grown enough beyond what is folded. Cheap to call after every update. */
+  sealSoon() {
+    // The transcript was cleared and drawn again (a refresh, another conversation): count from the start.
+    if (this.$.T.childElementCount < (this._sealedKids || 0) + SEAL_KEEP) this._sealedKids = 0;
+    if (this._sealAt || this.$.T.childElementCount < SEAL_KEEP + SEAL_SIZE * 2 + (this._sealedKids || 0)) return;
+    this._sealAt = requestAnimationFrame(() => this.sealOld());
+  }
+
+  /** Your last message scrolled out above the top edge ({ el, n, of }), or null. */
+  pinnedTurn() {
+    const turns = this.userTurns();
+    if (!turns.length) return null;
+    // Not laid out (display: none, a hidden tab): every box measures 0, which read as "scrolled past" (2026-10-12).
+    // No pin until it shows; the ground's ResizeObserver asks again then.
+    const box = this.$.ground.getBoundingClientRect();
+    if (!box.height) return null;
+    const edge = box.top + 6;
+    // Turns run top to bottom, so the last one above the edge is a binary search away.
+    // A turn inside a chunk (sealOld) is placed by its chunk's box first: a chunk wholly above or below the edge says
+    // so for all its turns, and only the chunk the edge runs through is asked turn by turn (asking a skipped chunk's
+    // turn makes the browser lay that chunk out). The answer is the same as asking every turn.
+    const above = (t) => {
+      const c = t.parentElement;
+      if (c && c.classList.contains('chunk')) {
+        const r = c.getBoundingClientRect();
+        if (r.bottom < edge) return true;
+        if (r.top >= edge) return false;
+      }
+      return t.getBoundingClientRect().bottom < edge;
+    };
+    let lo = 0;
+    let hi = turns.length - 1;
+    let hit = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (above(turns[mid])) { hit = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    // Counted over the whole conversation: the prompts before the first one loaded here come from the engine
+    // (history prompts.before, 2026-10-11), so "N of M" is your real place, not "13 of 13" of a loaded page.
+    const before = Math.max(0, this.promptsBefore || 0);
+    // more: earlier pages exist and their prompts are not counted yet (a Codex thread before its count arrives): "of M+".
+    const more = Boolean(this.history?.hasMore) && this.promptsKnown === false;
+    return hit < 0 ? null : { el: turns[hit], n: before + hit + 1, of: before + turns.length, more };
+  }
+
+  updatePin() {
+    const pin = this.$.pin;
+    if (!pin) return;
+    const t = this.pinnedTurn();
+    if (!t) { pin.hidden = true; this._pinKey = ''; return; }
+    const key = `${t.n}/${t.of}${t.more ? '+' : ''}`;
+    if (key === this._pinKey && !pin.hidden && this._pinEl === t.el) return;
+    this._pinKey = key;
+    this._pinEl = t.el;
+    // Its own text (Ctrl+F's marks included), not the steer tag or image row.
+    const words = [...t.el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE || n.matches?.('mark.find-hit')).map((n) => n.textContent).join('').trim();
+    const imgs = t.el.querySelectorAll('.imgs img, .imgs .img-marker').length;
+    const text = words || (imgs ? `${imgs} image${imgs > 1 ? 's' : ''}` : 'Your message');
+    // "N of M" opens the list of all your prompts (2026-10-12); the rest of the card jumps up to this one.
+    pin.innerHTML = `<div class="pin-card" role="button" tabindex="0" title="Scroll up to this message"><span class="pin-head"><span class="pin-who">${t.el.classList.contains('steered') ? 'You, steered in' : 'You asked'}</span><button class="pin-n" title="All your prompts in this conversation">${t.n} of ${t.of}${t.more ? '+' : ''}</button><span class="pin-go">Jump up<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2"/></svg></span></span><span class="pin-text">${esc(text)}</span></div>`;
+    const card = pin.querySelector('.pin-card');
+    card.onclick = (ev) => { if (ev.target.closest('.pin-n')) return; this.jumpTo(t.el); };
+    card.onkeydown = (ev) => { if ((ev.key === 'Enter' || ev.key === ' ') && !ev.target.closest('.pin-n')) { ev.preventDefault(); this.jumpTo(t.el); } };
+    pin.querySelector('.pin-n').onclick = (ev) => { ev.stopPropagation(); this.openPromptList(ev.currentTarget, t.n); };
+    pin.hidden = false;
+  }
+
+  /* ---------- the list of your prompts (2026-10-12) ---------- */
+
+  // Arthur: "the prompt list at the top that shows user prompts that you can click on to see the response is 100%
+  // accurate - it can have 20 of 21+, but when you reach the top it should load ALL prompts as the user scrolls all
+  // the way to the start". The engine lists every prompt of the conversation (op historyPrompts, the same rule the
+  // bubbles are drawn by); picking one that is not loaded yet loads the history back to it, keeping your place.
+
+  /** Asks for every prompt of this conversation and shows them in a menu at the pin's count. */
+  openPromptList(anchor, current) {
+    if (!this.sessionId) { this.showPromptList(anchor, this.domPrompts(), current); return; }
+    const reqId = `pl-${Date.now().toString(36)}`;
+    this._promptListReq = { reqId, anchor, current };
+    this.send('historyPrompts', { reqId, sessionId: this.sessionId });
+  }
+
+  /** The prompts drawn here, as the list shows them (a conversation the engine has no transcript of yet). */
+  domPrompts() {
+    return [...this.userTurns()].map((u, i) => ({ id: u.dataset.mid || `dom-${i}`, text: [...u.childNodes].filter((x) => x.nodeType === Node.TEXT_NODE).map((x) => x.textContent).join('').trim(), images: u.querySelectorAll('.imgs > *').length }));
+  }
+
+  /** ev historyPrompts: the menu. Prompts typed here since the engine read the transcript are added from the screen. */
+  onHistoryPrompts(e) {
+    const want = this._promptListReq;
+    if (!want || e.reqId !== want.reqId) return;
+    this._promptListReq = null;
+    if (e.error) { this.note(e.error, 'warn'); return; }
+    const list = Array.isArray(e.prompts) ? e.prompts.slice() : [];
+    const drawn = this.userTurns().length + Math.max(0, this.promptsBefore || 0);
+    if (drawn > list.length) list.push(...this.domPrompts().slice(list.length - drawn));
+    this.showPromptList(want.anchor, list, want.current);
+  }
+
+  showPromptList(anchor, list, current) {
+    if (!list.length) { this.note('No prompts in this conversation yet.'); return; }
+    const items = [{ heading: `Your prompts (${list.length})` }, ...list.map((p, i) => ({
+      value: String(i), label: `${i + 1}. ${p.text || (p.images ? `${p.images} image${p.images > 1 ? 's' : ''}` : 'Your message')}`.slice(0, 160),
+      hint: p.at ? stamp(Date.parse(p.at)) : '', checked: i + 1 === current,
+    }))];
+    const box = menu(anchor, items, { above: false, width: 340, onPick: (v) => this.jumpToPrompt(list[Number(v)], Number(v)) });
+    box?.querySelector('.menu-item.on')?.scrollIntoView({ block: 'center' });
+  }
+
+  /**
+   * Scrolls to one of your prompts: drawn already, or loaded first (the history back to it, page by page, your place
+   * kept while it loads). i: its place in the whole conversation (0 = the first).
+   */
+  async jumpToPrompt(p, i) {
+    const find = () => {
+      if (p?.id) { const hit = this.$.T.querySelector(`.turn-user[data-mid="${CSS.escape(p.id)}"]`); if (hit) return hit; }
+      // By its place: the prompts before the loaded ones are counted (promptsBefore), the rest are drawn in order.
+      const k = i - Math.max(0, this.promptsBefore || 0);
+      const turns = this.userTurns();
+      return k >= 0 && k < turns.length && this.promptsKnown !== false ? turns[k] : null;
+    };
+    let el = find();
+    for (let guard = 0; !el && this.history?.hasMore && guard < 400; guard++) {
+      if (!(await this.loadEarlier({ until: p?.id && !String(p.id).startsWith('dom-') ? p.id : null }))) break;
+      el = find();
+    }
+    if (el) this.jumpTo(el);
+    else this.note('That prompt could not be found in what this pane can load.', 'warn');
+  }
+
+  /** ev historyCount: how many prompts come before the loaded pages (a Codex thread, a moment after its first page). */
+  onHistoryCount(e) {
+    if (e.sessionId !== this.sessionId || !this.history || e.first !== this.history.first || !e.prompts) return;
+    this.promptsBefore = Math.max(0, e.prompts.before || 0);
+    this.promptsKnown = true;
+    this._pinKey = '';
+    this.updatePin();
+  }
+
+  /** Scrolls a message of yours to the top (just under the pin) and marks it for a moment. */
+  jumpTo(u) {
+    const g = this.$.ground;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // 22 px under the pin (2026-10-12): clear of the 20 px fade the conversation takes under the pin (app.css --pin-h).
+    // After the jump the pin shows the message before this one, which can run to two lines where this one had one,
+    // so room is kept for a two-line pin.
+    const txt = this.$.pin.querySelector('.pin-text');
+    const lh = txt ? parseFloat(getComputedStyle(txt).lineHeight) || 0 : 0;
+    const oneLine = Boolean(lh) && txt.offsetHeight < lh * 1.5;
+    const room = (this.$.pin.offsetHeight || 0) + (oneLine ? lh : 0);
+    const top = u.getBoundingClientRect().top - g.getBoundingClientRect().top + g.scrollTop - room - 22;
+    g.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' });
+    u.classList.remove('pin-arrive');
+    void u.offsetWidth;
+    u.classList.add('pin-arrive');
+    setTimeout(() => u.classList.remove('pin-arrive'), 1400);
+  }
+
+  note(text, tone = '') {
+    const n = el('div', `note ${tone}`);
+    n.textContent = text;
+    this.$.T.append(n);
+    this.scrollDown();
+  }
+
+  /**
+   * A system line (notices.js): something Claude Code itself says, such as
+   * a prompt a hook blocked, a hook error, an API retry or a usage warning.
+   * Drawn apart from Claude's words (a label, its own color, smaller type),
+   * the way Claude Code prints these in yellow or gray (Arthur, 2026-10-11).
+   */
+  sysline({ text, tone = 'info', label = '', mono = false }) {
+    this.clearEmpty();
+    const n = el('div', `sysline ${tone}${mono ? ' mono' : ''}`);
+    n.setAttribute('role', tone === 'error' || tone === 'warn' ? 'alert' : 'note');
+    if (label) n.append(el('span', 'sys-label', label));
+    n.append(el('span', 'sys-text', text));
+    this.$.T.append(n);
+    this.scrollDown();
+  }
+
+  clearEmpty() { if (this.$.T.querySelector('.empty')) this.$.T.innerHTML = ''; }
+
+  addUser(text, images = [], { steered = false, mid = null, from = '' } = {}) {
+    this.clearEmpty();
+    // You wrote something: the next TodoWrite starts a new checklist (a steered message is part of the turn that runs, so it keeps its card).
+    if (!steered) this.todoCard = null;
+    const u = el('div', steered ? 'turn-user steered' : 'turn-user');
+    // A message another window of this conversation sent (the shared view): who sent it, in the same quiet tag.
+    if (from) u.append(el('span', 'steer-tag', `${steered ? 'Steered in' : 'Sent'} from ${esc(from)}`));
+    else if (steered) u.append(el('span', 'steer-tag', 'Steered in'));
+    if (images.length) {
+      const box = el('div', 'imgs');
+      // From history, an image is a placeholder that loads it on demand (ref); never all of them up front.
+      for (const im of images) { if (im.url) { const i = el('img'); i.src = im.url; box.append(i); } else if (im.ref) box.append(this.imagePlaceholder(im)); else box.append(el('span', 'img-marker', im.name ? esc(im.name) : '[image]')); }
+      u.append(box);
+    }
+    u.append(document.createTextNode(text));
+    u.dataset.ts = stamp(this._at || Date.now());
+    // The message's id from the history, so the list of your prompts can find it (jumpToPrompt).
+    if (mid) u.dataset.mid = mid;
+    this.$.T.append(u);
+    this.scrollDown(true);
+    return u;
+  }
+
+  /**
+   * Redraws a streaming reply as markdown, once per animation frame (2026-10-12, input lag): only the growing
+   * tail is parsed and replaced (drawStream), and a pane with no box on screen (a background tab) draws nothing
+   * until it is shown: the text just collects in a._raw (flushUnpainted draws it in one go).
+   */
+  paintStream(a) {
+    if (!this.isShown()) { (this._unpainted ||= new Set()).add(a); return; }
+    // One painter for every pane (streampaint.js): at most ~20 updates a second per reply, a time budget per frame,
+    // and one layout for all of them, instead of each pane forcing its own.
+    a._raf = 1;
+    painter.queue(a, () => {
+      a._raf = 0;
+      if (!this.isShown()) { (this._unpainted ||= new Set()).add(a); return; }
+      this.drawStream(a);
+    }, (this._settleStream ||= () => { this.scrollDown(); this.sealSoon(); }));
+  }
+
+  /** The reply as it is now: the finished blocks stay where they are, the tail after the last safe cut is parsed again. */
+  drawStream(a) {
+    const raw = a._raw || '';
+    const st = a._md || (a._md = { scan: streamState(), done: 0, nodes: 0 });
+    const cut = streamCut(raw, st.scan);
+    const dropTail = () => { while (a.childNodes.length > st.nodes) a.lastChild.remove(); };
+    if (cut > st.done) {
+      dropTail();
+      a.insertAdjacentHTML('beforeend', md(raw.slice(st.done, cut)));
+      st.nodes = a.childNodes.length;
+      st.done = cut;
+    }
+    dropTail();
+    const tail = md(raw.slice(st.done));
+    if (tail) a.insertAdjacentHTML('beforeend', tail);
+  }
+
+  /** True while the conversation has a box (its tab is showing). Cached from the ground's ResizeObserver, so asking costs no layout. */
+  isShown() {
+    return this._hadBox !== false;
+  }
+
+  /** The pane came into view: every reply that collected text while it was hidden is drawn now, once. */
+  flushUnpainted() {
+    const pending = this._unpainted;
+    if (!pending?.size) return;
+    this._unpainted = null;
+    for (const a of pending) {
+      if (!a.isConnected) continue;
+      if (a._final != null) { this.finishStream(a, a._final); continue; }
+      this.drawStream(a);
+    }
+    this.scrollDown();
+  }
+
+  /** The finished text of a reply that streamed: drawn whole, once (the stream's parts are replaced by the final render). */
+  finishStream(live, text) {
+    painter.cancel(live);
+    live._raf = 0;
+    live.classList.remove('streaming');
+    live._final = null;
+    live._md = null;
+    live.innerHTML = md(text);
+    this.host.linkSessions?.(live);
+  }
+
+  addAssistant(text) {
+    if (!text || !text.trim()) return null;
+    const a = el('div', 'turn-assistant', md(text));
+    a.dataset.ts = stamp(this._at || Date.now());
+    this.host.linkSessions?.(a);
+    this.$.T.append(a);
+    this.scrollDown();
+    return a;
+  }
+
+  addTool(block) {
+    // Apaki's show tool is drawn as a card the user can open again later.
+    if (block.name === SHOW_TOOL) { this.addShowCard(block); return; }
+    // Claude used Apaki's browser here (2026-10-12): the phone page lights its Browser button for this conversation
+    // (pager.js, browserview.js). Marked once, also when the conversation is drawn from history.
+    if (block.name.startsWith(BROWSER_TOOL)) this.markBrowser();
+    // A TodoWrite call is a checklist, not a tool line (an input without a list, or an empty one with nothing to clear, stays a line).
+    if (block.name === 'TodoWrite' && hasTodos(block.input) && (normalizeTodos(block.input).length || this.liveTodoCard())) { this.addTodos(block); return; }
+    const d = el('details', 'tool');
+    const label = block.name === 'Task' ? 'Agent' : block.name.startsWith(BROWSER_TOOL) ? 'Browser' : block.name === 'ApplyPatch' ? 'Patch' : block.name;
+    d.innerHTML = `<summary><span class="dot">⏺</span><span class="name">${esc(label)}</span><span class="args">(${esc(toolArgs(block.name, block.input))})</span></summary><div class="sum">running…</div>`;
+    if ((block.name === 'Edit' || block.name === 'MultiEdit') && block.input) {
+      const edits = block.input.edits || [{ old_string: block.input.old_string, new_string: block.input.new_string }];
+      const diff = edits.map((e) => `${String(e.old_string || '').split('\n').map((l) => `<span class="del">- ${esc(l)}</span>`).join('')}${String(e.new_string || '').split('\n').map((l) => `<span class="add">+ ${esc(l)}</span>`).join('')}`).join('');
+      d.append(el('pre', 'diff', diff));
+    } else if (block.input && (block.name === 'Write' || block.name === 'Bash' || block.name === 'PowerShell')) {
+      d.append(el('pre', '', esc(block.input.content || block.input.command || '')));
+    } else if (block.name === 'ApplyPatch' && Array.isArray(block.input?.changes)) {
+      // Codex's file changes (2026-10-12): the diffs it applied, a header per file.
+      const pre = el('pre', 'diff', patchHtml(block.input.changes, { open: true }));
+      // The file name in a patch header opens the file in the viewer, as the Codex app's side panel does.
+      pre.addEventListener('click', (ev) => {
+        const b = ev.target.closest?.('.file-open');
+        if (!b) return;
+        ev.preventDefault();
+        this.send('codexOpenFile', { path: b.dataset.path });
+      });
+      d.append(pre);
+    }
+    this.$.T.append(d);
+    this.tools.set(block.id, d);
+    // A subagent: openable at once (the engine finds its transcript by this tool call).
+    if (block.name === 'Task' || block.name === 'Agent') this.linkTool(block.id, { id: null, type: 'local_agent', description: block.input?.description || '', subagentType: block.input?.subagent_type || 'agent', status: this.liveTasks.size ? 'running' : 'completed' });
+    this.scrollDown();
+  }
+
+  /* ---------- the todo checklist (todos.js) ---------- */
+
+  /** The checklist card of the current turn, while it is still in the transcript. */
+  liveTodoCard() {
+    return this.todoCard?.card?.parentNode ? this.todoCard : null;
+  }
+
+  /**
+   * A TodoWrite call as a checklist. Every call carries the whole list, so a call in the same turn updates the card
+   * the first one drew (in place, where it started) instead of adding another; a new turn, or a new plan once the
+   * old one is finished, starts a new card (continuesList). The result of the call has nothing to show, so each
+   * call's id points at its card and toolResult leaves it alone.
+   */
+  addTodos(block) {
+    const list = normalizeTodos(block.input);
+    const cur = this.liveTodoCard();
+    if (cur && (!list.length || continuesList(cur.list, list))) {
+      this.tools.set(block.id, cur.card);
+      if (!sameTodos(cur.list, list)) {
+        paintTodos(cur.card, list);
+        cur.list = list;
+        // A live update glows for a moment; replaying history does not.
+        if (!this._replaying) this.flashTodos(cur.card);
+      }
+      return;
+    }
+    this.clearEmpty();
+    const card = el('div', 'todos');
+    card.setAttribute('role', 'group');
+    paintTodos(card, list);
+    this.$.T.append(card);
+    this.tools.set(block.id, card);
+    this.todoCard = { card, list };
+    this.scrollDown();
+  }
+
+  flashTodos(card) {
+    card.classList.remove('fresh');
+    void card.offsetWidth;
+    card.classList.add('fresh');
+    clearTimeout(card._fresh);
+    card._fresh = setTimeout(() => card.classList.remove('fresh'), 900);
+  }
+
+  /* ---------- artifact and link cards (artifacts.js) ---------- */
+
+  /** A card for a show call; it gets its id from the artifact event or the tool's result. */
+  addShowCard(block) {
+    const input = block.input || {};
+    const kind = String(input.kind || 'file').toLowerCase();
+    const card = artifactCard({ title: input.title || (input.path ? String(input.path).split(/[\\/]/).pop() : 'Artifact'), kind, lang: typeof input.language === 'string' ? input.language : undefined, state: 'pending' }, { onOpen: (c) => this.openCard(c) });
+    card.dataset.tool = block.id;
+    card.dataset.input = kind === 'url' ? JSON.stringify({ url: input.url || input.content || input.path || '', title: input.title || '' }) : '';
+    this.clearEmpty();
+    this.$.T.append(card);
+    this.tools.set(block.id, card);
+    this.scrollDown();
+  }
+
+  /** Opens a card's artifact in a viewer beside this conversation. */
+  openCard(c) {
+    this.host.showArtifact?.({ sessionId: this.sessionId, id: c.dataset.id, rev: Number(c.dataset.rev) || null, title: c.dataset.title, kind: c.dataset.kind, sourcePane: this.id }, { focus: true });
+  }
+
+  /* ---------- subagents, shells, monitors (tasks.js) ---------- */
+
+  /** Folds one task_* message (or the live set) into liveTasks and redraws what shows it. */
+  onTaskMessage(msg) {
+    const now = Date.now();
+    const get = (id) => this.liveTasks.get(id);
+    const put = (id, patch) => { const t = { ...(get(id) || { id, status: 'running', startedAt: now }), ...patch }; this.liveTasks.set(id, t); return t; };
+    switch (msg.subtype) {
+      case 'task_started':
+        put(msg.task_id, {
+          type: msg.task_type || (msg.subagent_type ? 'local_agent' : 'local_bash'), description: msg.description || '', subagentType: msg.subagent_type || '',
+          prompt: msg.prompt || '', toolUseId: msg.tool_use_id || null, parentId: msg.parent_task_id || null, depth: msg.spawn_depth || 1,
+          workflowName: msg.workflow_name || '', backgrounded: Boolean(msg.is_backgrounded), ambient: Boolean(msg.ambient || msg.skip_transcript), status: 'running', startedAt: now,
+        });
+        break;
+      case 'task_progress':
+        put(msg.task_id, { usage: msg.usage || get(msg.task_id)?.usage, lastTool: msg.last_tool_name || get(msg.task_id)?.lastTool || '', summary: msg.summary || get(msg.task_id)?.summary || '', ...(msg.description ? { description: msg.description } : {}), ...(msg.subagent_type ? { subagentType: msg.subagent_type } : {}) });
+        break;
+      case 'task_updated': {
+        const p = msg.patch || {};
+        put(msg.task_id, { ...(p.status ? { status: p.status } : {}), ...(p.description ? { description: p.description } : {}), ...(p.error ? { error: p.error } : {}), ...(p.is_backgrounded !== undefined ? { backgrounded: p.is_backgrounded } : {}), ...(p.end_time ? { endedAt: p.end_time } : {}) });
+        break;
+      }
+      case 'task_notification':
+        put(msg.task_id, { status: msg.status, outputFile: msg.output_file || '', summary: msg.summary || get(msg.task_id)?.summary || '', usage: msg.usage || get(msg.task_id)?.usage, endedAt: now, ...(msg.tool_use_id ? { toolUseId: msg.tool_use_id } : {}) });
+        break;
+      case 'background_tasks_changed':
+        for (const t of msg.tasks || []) put(t.task_id, { type: t.task_type, description: t.description || get(t.task_id)?.description || '', subagentType: t.subagent_type || get(t.task_id)?.subagentType || '', backgrounded: true, ambient: Boolean(t.ambient), ...(get(t.task_id) ? {} : { status: 'running' }) });
+        break;
+      default: break;
+    }
+    const t = get(msg.task_id);
+    if (t?.toolUseId) this.linkTool(t.toolUseId, t);
+    this.renderTasksButton();
+    this.host.tasksChanged?.(this);
+  }
+
+  /** Running (non-housekeeping) tasks, for the button and the tab. */
+  runningTasks() {
+    return [...this.liveTasks.values()].filter((t) => !t.ambient && (t.status === 'running' || t.status === 'pending'));
+  }
+
+  /** The Tasks button: shown once there is anything to list; brand ink and a count while some run. */
+  renderTasksButton() {
+    const b = this.$.tasksBtn;
+    if (!b) return;
+    const run = this.runningTasks();
+    const disk = this.sessionId ? this.host.subagentCount?.(this.sessionId) || 0 : 0;
+    const any = run.length || [...this.liveTasks.values()].some((t) => !t.ambient) || disk;
+    b.hidden = !any;
+    b.classList.toggle('lit', run.length > 0);
+    b.querySelector('.tb-n').textContent = run.length ? String(run.length) : disk ? String(disk) : '';
+    b.title = run.length ? `${run.length} running: ${run.map((t) => t.description || t.subagentType || t.type).slice(0, 4).join(', ')}${run.length > 4 ? '…' : ''}` : disk ? `${disk} subagent${disk === 1 ? '' : 's'} in this session` : 'Subagents and background tasks';
+  }
+
+  /** A tool line that started a task gets an Open button (and the task's name). */
+  linkTool(toolUseId, t) {
+    const d = this.tools.get(toolUseId);
+    if (!d || d.classList.contains('art-card')) return;
+    let b = d.querySelector('.tool-open');
+    if (!b) {
+      b = document.createElement('button');
+      b.className = 'tool-open';
+      b.textContent = 'Open';
+      d.querySelector('summary')?.append(b);
+    }
+    const kind = /agent/.test(t.type || '') ? 'agent' : 'shell';
+    b.title = `Open this ${kind === 'agent' ? 'subagent' : 'shell'} in a viewer (Ctrl+click: new tab; drag onto a pane edge or a tab)`;
+    b.classList.toggle('running', t.status === 'running');
+    const spec = () => (kind === 'agent'
+      ? { kind, sessionId: this.sessionId, toolUseId, taskId: t.id, ownerPane: this.id, title: t.description, type: t.subagentType || 'agent' }
+      : { kind, sessionId: this.sessionId, taskId: t.id, ownerPane: this.id, title: t.description, type: t.type });
+    b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this.host.openTask?.(spec(), { tab: e.ctrlKey || e.metaKey }); };
+    b.draggable = true;
+    b.ondragstart = (e) => this.host.dragTask?.(spec(), e);
+    b.ondragend = () => this.host.dragEnd();
+  }
+
+  /* ---------- reopening this conversation's artifacts ---------- */
+
+  // Arthur, 2026-10-09: "when you close the artifact page it should be linked
+  // to the session and there should be an icon on the top left to let you open
+  // it back up again". The icon beside the grip lists what this conversation
+  // showed (its ready cards, plus viewers of it that were closed).
+
+  /** A viewer of one of this conversation's artifacts closed: keep it to reopen. */
+  rememberArtifact(a) {
+    if (!a?.id) return;
+    this.closedArts.set(a.id, { id: a.id, title: a.title || 'Artifact', kind: a.kind || 'file', rev: null });
+    this.renderArtifactsButton();
+  }
+
+  /** This conversation's artifacts, newest first, one entry per artifact (its latest card). */
+  artifactsList() {
+    const by = new Map(this.closedArts);
+    for (const c of this.$.T.querySelectorAll('.art-card[data-state=ready][data-id]')) {
+      if (c.classList.contains('link')) continue;
+      by.delete(c.dataset.id);
+      by.set(c.dataset.id, { id: c.dataset.id, title: c.dataset.title || 'Artifact', kind: c.dataset.kind || 'file', rev: Number(c.dataset.rev) || null });
+    }
+    return [...by.values()].reverse();
+  }
+
+  renderArtifactsButton() {
+    const b = this.$.artReopen;
+    if (!b) return;
+    const list = this.sessionId ? this.artifactsList() : [];
+    // Lit only for viewers you closed here (not for every artifact of an old session).
+    const shut = list.filter((a) => this.closedArts.has(a.id) && !this.host.artifactOpen?.(this.sessionId, a.id));
+    b.hidden = !list.length;
+    b.classList.toggle('lit', shut.length > 0);
+    b.querySelector('.ar-n').textContent = list.length > 1 ? String(list.length) : '';
+    const one = list.length === 1 ? list[0] : null;
+    b.title = !list.length ? '' : one ? (this.host.artifactOpen?.(this.sessionId, one.id) ? `"${one.title}" is open` : `Reopen "${one.title}"`) : `${list.length} artifacts from this conversation${shut.length ? `, ${shut.length} closed here` : ''}`;
+  }
+
+  /** One artifact: reopen it (or bring its viewer forward). Several: a menu, newest first. */
+  artifactsMenu() {
+    const list = this.artifactsList();
+    if (!list.length) return;
+    const open = (a) => this.host.showArtifact?.({ sessionId: this.sessionId, id: a.id, rev: null, title: a.title, kind: a.kind, sourcePane: this.id }, { focus: true });
+    if (list.length === 1) { open(list[0]); return; }
+    const items = list.map((a) => ({
+      value: a.id,
+      html: `<span class="ar-g">${kindGlyph(a.kind)}</span><span class="ml">${esc(a.title)}</span>`,
+      hint: `${kindLabel(a.kind)}${a.rev > 1 ? ` · rev ${a.rev}` : ''}`,
+      checked: Boolean(this.host.artifactOpen?.(this.sessionId, a.id)),
+    }));
+    menu(this.$.artReopen, [{ heading: 'Artifacts from this conversation' }, ...items], { above: false, width: 300, onPick: (v) => { const a = list.find((x) => x.id === v); if (a) open(a); } });
+  }
+
+  /** Swaps a show card for a link card (kind url), or adds one after `after`. */
+  placeLink({ url, title, reason, toolUseId }, replace = null, after = null) {
+    const key = `u:${url}:${toolUseId || Math.random()}`;
+    if (this.cardKeys.has(key)) return;
+    this.cardKeys.add(key);
+    const card = linkCard({ url, title, reason }, { onOpen: (u) => this.host.openUrl?.(u, this) });
+    if (replace) { replace.replaceWith(card); if (toolUseId) this.tools.set(toolUseId, card); } else if (after?.isConnected) after.after(card); else this.$.T.append(card);
+    this.scrollDown();
+  }
+
+  /** A card for an artifact a caught "open" command or BROWSER showed. */
+  placeArtifact({ id, rev, title, kind, sub, ext, lang, by }, after = null) {
+    const key = `a:${id}:${rev}`;
+    if (this.cardKeys.has(key)) return;
+    this.cardKeys.add(key);
+    this.clearEmpty();
+    const card = artifactCard({ id, rev, title, kind, sub, ext, lang, by, state: 'ready' }, { onOpen: (c) => this.openCard(c) });
+    if (after?.isConnected) {
+      // After the tool line and any cards already placed after it.
+      let at = after;
+      while (at.nextElementSibling?.classList.contains('art-card')) at = at.nextElementSibling;
+      at.after(card);
+    } else this.$.T.append(card);
+    this.scrollDown();
+    this.renderArtifactsButton();
+  }
+
+  /** The engine stored an artifact for this pane: fill its show card, or add a card. */
+  onArtifact(e) {
+    // Your own edit in the viewer (2026-10-13, the canvas): the newest card of that artifact says "edited by you" and
+    // takes the new revision, rather than a new card; the session reads it with view_read.
+    if (e.via === 'user-edit') {
+      const mine = [...this.$.T.querySelectorAll('.art-card')].filter((c) => c.dataset.id === e.id).pop();
+      if (mine) { updateCard(mine, { rev: e.rev, by: 'user', sub: 'You edited it in the viewer. Claude reads your version with view_read.' }); this.renderArtifactsButton(); return; }
+      this.placeArtifact({ id: e.id, rev: e.rev, title: e.title, kind: e.kind, ext: e.ext, lang: e.lang, sub: 'You edited it in the viewer.', by: 'user' });
+      return;
+    }
+    let card = e.toolUseId ? this.tools.get(e.toolUseId) : null;
+    if (card && !card.classList.contains('art-card')) card = null; // a Bash line: the open was caught
+    if (!card && e.via === 'show') card = [...this.$.T.querySelectorAll('.art-card[data-state=pending]')].pop() || null;
+    if (card) {
+      this.cardKeys.add(`a:${e.id}:${e.rev}`);
+      updateCard(card, { id: e.id, rev: e.rev, title: e.title, kind: e.kind, ext: e.ext, lang: e.lang, by: e.by || 'session', state: 'ready' });
+      this.renderArtifactsButton();
+      return;
+    }
+    const via = e.sub || (e.via && e.via !== 'show' && !/^codex-/.test(e.via) ? `Opened by ${e.via}` : e.via === 'codex-diff' ? 'Changed in this turn' : '');
+    this.placeArtifact({ id: e.id, rev: e.rev, title: e.title, kind: e.kind, ext: e.ext, lang: e.lang, sub: via }, e.toolUseId ? this.tools.get(e.toolUseId) : null);
+  }
+
+  /** Marks that this conversation has a page in the PC's built-in browser (the phone's Browser button, 2026-10-12). Once. */
+  markBrowser() {
+    if (!this.el?.dataset || this.el.dataset.browser === '1') return;
+    this.el.dataset.browser = '1';
+    this.el.dispatchEvent?.(new CustomEvent('apaki:browser-used', { bubbles: true }));
+  }
+
+  onOpenUrl(e) {
+    // The page went to the PC's built-in browser (browserId): this conversation has one a phone can look at.
+    if (e.browserId) this.markBrowser();
+    const tool = e.toolUseId ? this.tools.get(e.toolUseId) : null;
+    if (tool?.classList.contains('art-card')) { this.placeLink({ url: e.url, title: e.title, reason: e.reason, toolUseId: e.toolUseId }, tool); return; }
+    this.clearEmpty();
+    this.placeLink({ url: e.url, title: e.title, reason: e.reason, toolUseId: e.toolUseId }, null, tool);
+  }
+
+  /** A running command's output so far (Codex streams it): the newest part in a block the final result replaces, its last line in the summary. */
+  toolLive(id, text) {
+    const d = this.tools.get(id);
+    if (!d || d.classList.contains('ok') || d.classList.contains('err')) return;
+    let pre = d.querySelector('pre.live');
+    if (!pre) { pre = el('pre', 'live'); d.append(pre); }
+    pre.textContent = String(text || '').slice(-20000);
+    const last = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).pop();
+    const sum = d.querySelector('.sum');
+    if (sum && last) sum.textContent = last.slice(0, 200);
+    if (pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40) pre.scrollTop = pre.scrollHeight;
+  }
+
+  /** A tool's result into its tool line. `block` (from history) says when the output was cut and which images it had. */
+  toolResult(id, content, isError, block = null) {
+    const d = this.tools.get(id);
+    if (!d) return;
+    d.querySelector('pre.live')?.remove();
+    const text = Array.isArray(content) ? content.filter((c) => c.type === 'text').map((c) => c.text).join('\n') : String(content ?? '');
+    // A TodoWrite result is only "Todos have been modified successfully": the checklist is the result. An error says why it failed.
+    if (d.classList.contains('todos')) {
+      if (isError && !d.querySelector('.todos-err')) d.append(el('div', 'todos-err', esc(text.split('\n')[0].slice(0, 200) || 'The todo list could not be updated.')));
+      return;
+    }
+    if (d.classList.contains('art-card')) {
+      if (d.classList.contains('link')) return;
+      const urlInput = d.dataset.input ? JSON.parse(d.dataset.input) : null;
+      if (urlInput && !isError) { this.placeLink({ url: urlInput.url, title: urlInput.title, reason: 'show', toolUseId: id }, d); return; }
+      const ref = parseRef(text);
+      if (isError || !ref) { updateCard(d, { state: 'error', error: text.replace(/^Apaki could not show that: /, '').slice(0, 240) }); return; }
+      this.cardKeys.add(`a:${ref.id}:${ref.rev}`);
+      updateCard(d, { id: ref.id, rev: ref.rev, state: 'ready' });
+      this.renderArtifactsButton();
+      return;
+    }
+    // A command run in the background: its result names the task, so it can be opened.
+    const bg = text.match(/running in (?:the )?background with ID: ([\w-]+)/i);
+    if (bg && !d.querySelector('.tool-open')) this.linkTool(id, { id: bg[1], type: 'local_bash', description: d.querySelector('.args')?.textContent.slice(1, -1) || 'Shell', status: this.liveTasks.get(bg[1])?.status || 'completed' });
+    // A shell command Apaki caught opening something: cards for what it showed.
+    const opened = parseOpened(text);
+    for (const o of opened) {
+      if (o.kind === 'url') this.placeLink({ url: o.url, reason: 'command', toolUseId: id }, null, d);
+      else this.placeArtifact({ id: o.id, rev: o.rev, title: o.path.split(/[\\/]/).pop(), kind: kindFromPath(o.path), sub: 'Opened by a command' }, d);
+    }
+    const lines = text.split('\n').filter((l) => l.trim());
+    // Denied only because Apaki showed it itself: that is a success, not an error.
+    d.classList.add(isError && !opened.length ? 'err' : 'ok');
+    if (opened.length) d.classList.add('caught');
+    d.querySelector('.sum').textContent = lines.length ? `${lines[0].slice(0, 200)}${lines.length > 1 ? `  … +${lines.length - 1} lines` : ''}` : '(no output)';
+    const pre = el('pre');
+    pre.textContent = text.slice(0, 20000);
+    d.append(pre);
+    // From history: the output was cut for speed; the whole of it comes from the transcript on request.
+    if (block?.truncated && block.ref) d.append(this.showAllButton(block, pre));
+    // Pictures in the result (screenshots, images Claude read): placeholders that load one at a time.
+    for (const im of block?.images || []) if (im.ref) d.append(this.imagePlaceholder(im, 'tool-shot'));
+    // What Claude saw (browser_screenshot): the picture, small, inside the tool line.
+    const shot = Array.isArray(content) ? content.find((c) => c.type === 'image' && (c.source?.data || c.data)) : null;
+    if (shot) {
+      const img = el('img', 'tool-shot');
+      img.alt = 'Screenshot Claude took';
+      img.src = `data:${shot.source?.media_type || shot.mimeType || 'image/png'};base64,${shot.source?.data || shot.data}`;
+      d.append(img);
+    }
+  }
+
+  renderBlocks(role, content, { images, steered = false } = {}) {
+    if (typeof content === 'string') { if (role === 'user') this.addUser(content, images, { steered }); else this.addAssistant(content); return; }
+    if (!Array.isArray(content)) return;
+    if (role === 'user') {
+      const texts = content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
+      const imgs = content.filter((b) => b.type === 'image' || b.type === 'image_marker');
+      if ((texts && !/^<(command-|local-command-|task-notification)/.test(texts)) || imgs.length) this.addUser(texts, imgs.map((b) => (b.ref ? { ref: b.ref, media_type: b.media_type, bytes: b.bytes } : {})), { steered });
+      for (const b of content) if (b.type === 'tool_result') this.toolResult(b.tool_use_id, b.content, b.is_error, b);
+      return;
+    }
+    for (const b of content) {
+      if (b.type === 'text') this.addAssistant(b.text);
+      else if (b.type === 'tool_use') this.addTool(b);
+      else if (b.type === 'thinking' && b.thinking) this.addThinking(b);
+    }
+  }
+
+  /** Messages from the engine's history, drawn in order (the first page, or an earlier page off-screen). */
+  renderMessages(messages) {
+    // Replaying history: a checklist updated by a later call is drawn as it ended, without the live glow (addTodos).
+    this._replaying = true;
+    try { this.renderMessagesIn(messages); } finally { this._replaying = false; }
+  }
+
+  renderMessagesIn(messages) {
+    for (const m of messages) {
+      if (m.type === 'compact') { this.addCompactMarker(m); continue; }
+      // What Claude Code said itself, from the transcript (engine history.js systemNote, hookNote): a system line.
+      if (m.type === 'notice') { if (m.notice?.text) this.sysline(m.notice); continue; }
+      if (m.parent_tool_use_id) continue; // subagent traffic
+      if (m.type !== 'user' && m.type !== 'assistant') continue;
+      const c = m.message?.content;
+      // A slash command's output shows as the system line it was; its name and reminders stay hidden.
+      if (m.type === 'user' && typeof c === 'string' && /^\s*<local-command-(stdout|stderr)>/.test(c)) { const n = noticeFor({ type: 'user', isSynthetic: true, message: { content: c } }); if (n) this.sysline(n); continue; }
+      // The engine marked whether this is a prompt you typed (history.js promptOf, codex-map.js; 2026-10-12): a bubble
+      // for exactly those, so the pin's "N of M" and the list of your prompts match what is drawn. Tool results still
+      // go to their calls; an interruption or a bash mode line is a system line, never "you".
+      if (m.type === 'user' && m.prompt !== undefined) {
+        this._at = m.at ? Date.parse(m.at) : null;
+        const blocks = Array.isArray(c) ? c : [];
+        if (m.prompt) {
+          const imgs = blocks.filter((b) => b.type === 'image' || b.type === 'image_marker').map((b) => (b.ref ? { ref: b.ref, media_type: b.media_type, bytes: b.bytes } : {}));
+          this.addUser(m.prompt.text, imgs, { steered: Boolean(m.queued), mid: m.uuid });
+        } else if (m.note?.text) this.sysline(m.note);
+        for (const b of blocks) if (b.type === 'tool_result') this.toolResult(b.tool_use_id, b.content, b.is_error, b);
+        continue;
+      }
+      if (m.type === 'user' && typeof c === 'string' && (/^\s*<(command-|local-command-|system-reminder)/.test(c))) continue;
+      this._at = m.at ? Date.parse(m.at) : null;
+      // queued: typed while Claude worked and taken into the running turn, as "Steered in" shows live.
+      this.renderBlocks(m.type, c, { steered: Boolean(m.queued) });
+    }
+    this._at = null;
+  }
+
+  renderHistory(messages, total, e = {}) {
+    // From the transcript (engine history.js): the newest page of the whole conversation, the rest on request.
+    const paged = (e.source === 'transcript' || e.source === 'codex') && e.first !== undefined;
+    // The same conversation at the same revision is already on screen (a reconnect): keep it, no redraw.
+    if (!e.refresh && e.rev && e.rev === this.historyRev && e.sessionId === this.historyShownFor && this.$.T.childElementCount > 0) return;
+    // The transcript's revision as drawn here, for checkDrift (2026-10-11).
+    this.historyRev = e.rev || null;
+    // Your prompts before the first one drawn (pinnedTurn counts the whole conversation).
+    this.promptsBefore = e.prompts?.before || 0;
+    // Known unless earlier pages exist and the engine has not counted them yet (a Codex thread: ev historyCount follows).
+    this.promptsKnown = Boolean(e.prompts) || !paged || !e.hasMore;
+    this.historyShownFor = e.sessionId || this.sessionId || null;
+    // A refresh (the conversation moved on elsewhere): keep the takeover card and, unless you were at the end, your place.
+    const card = e.refresh ? this.$.T.querySelector(':scope > .takeover') : null;
+    const g = this.$.ground;
+    const atEnd = !e.refresh || g.scrollHeight - g.scrollTop - g.clientHeight < 160;
+    const keepTop = g.scrollTop;
+    for (const r of this.history?.waits || []) r(false);
+    clearTimeout(this.history?.timer);
+    this.history = paged ? { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total, loaded: messages.length, loading: false, waits: [], countless: Boolean(e.countless) } : null;
+    // Ctrl+F says when it can only search the messages loaded here.
+    this.historyCut = paged ? (e.hasMore ? { shown: messages.length, total, paged: true } : null) : total > messages.length ? { shown: messages.length, total } : null;
+    this.$.T.innerHTML = '';
+    this.tools.clear();
+    this.cardKeys.clear();
+    this.todoCard = null;
+    if (paged) this.renderLoader();
+    else if (total > messages.length) this.note(`Showing the latest ${messages.length} of ${total} messages. The whole conversation is in the session.`);
+    this.renderMessages(messages);
+    // A conversation Claude Code deleted and Apaki's archive kept (2026-10-12): the list marks it archivedCopy
+    // (or the history event does); one quiet line at the top says so. Absent flag, nothing is drawn.
+    this.setArchivedCopy(Boolean(e.archivedCopy) || Boolean(this.host.archivedCopy?.(this.historyShownFor)));
+    this.flushOpenNotes();
+    this.scrollDown(true);
+    // Back where you were reading when the workspace was saved (crash recovery).
+    // (A pane in a background tab has no box to scroll: the place waits in the memo for settleScroll.)
+    if (this.restoreScroll && !this.restoreScroll.atEnd) {
+      if (this.hasBox()) this.$.ground.scrollTop = this.restoreScroll.top;
+      else this.scrollMemo = { atEnd: false, top: this.restoreScroll.top };
+    }
+    this.restoreScroll = null;
+    this.renderArtifactsButton();
+    this.renderTasksButton();
+    if (paged) requestAnimationFrame(() => this.maybeLoadEarlier());
+    if (card) { this.$.T.append(card); this.scrollDown(atEnd); }
+    if (e.refresh && !atEnd) g.scrollTop = keepTop;
+    // A long conversation: the older messages are folded into chunks a frame later (sealOld).
+    this._sealedKids = 0;
+    this.sealSoon();
+  }
+
+  /* ---------- no drift (2026-10-11) ---------- */
+
+  // Arthur: "when taking over session from another open tab, we need to make sure that when that tab takes over
+  // back or is reopened or reloaded that it automatically refreshes to make sure it has the most recent
+  // transcript/session data/etc - we need to make sure there is no drift always. Reliably." Opening, taking back
+  // and re-attaching always load the transcript; checkDrift covers the rest: a pane that was not writing its
+  // conversation (taken over, or idle while a terminal or a phone went on) asks the engine whether the transcript
+  // moved on, when it comes back into view (app.js), every few seconds while it shows "Taken over", and before it
+  // sends. A newer transcript arrives as history with refresh: true (renderHistory); the draft, attachments and
+  // queue are never touched.
+
+  /** Asks whether this conversation moved on elsewhere. wait: resolves once the engine answered (at most 1.5 s). */
+  checkDrift({ wait = false } = {}) {
+    if (!this.sessionId || this.isViewer || this.busy) return Promise.resolve(true);
+    // In use in another app: the card replaces the transcript until you take it over, which loads it fresh.
+    if (this.lockedBy && !this.lockLost) return Promise.resolve(true);
+    const now = Date.now();
+    // Streaming now, or a moment ago: this pane holds the session and its stream is the newest there is.
+    if (now - (this.lastLiveAt || 0) < 15000) return Promise.resolve(true);
+    if (!wait && now - (this.driftAt || 0) < 1500) return Promise.resolve(true);
+    this.driftAt = now;
+    const reqId = `drift-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    this.send('historyCheck', { reqId, sessionId: this.sessionId, rev: this.historyRev || null });
+    if (!wait) return Promise.resolve(true);
+    if (!this.driftWaits) this.driftWaits = new Map();
+    return new Promise((resolve) => {
+      this.driftWaits.set(reqId, resolve);
+      setTimeout(() => { if (this.driftWaits?.delete(reqId)) resolve(true); }, 1500);
+    });
+  }
+
+  /** The engine answered a historyCheck (any newer history came just before this). */
+  onHistoryChecked(e) {
+    const done = this.driftWaits?.get(e.reqId);
+    if (done) { this.driftWaits.delete(e.reqId); done(Boolean(e.fresh)); }
+  }
+
+  /** While this pane shows "Taken over", follow its conversation every 5 s when it is on screen. */
+  startDriftWatch() {
+    this.stopDriftWatch();
+    this.driftTimer = setInterval(() => {
+      if (document.visibilityState !== 'visible' || !this.el.isConnected || !this.el.offsetParent) return;
+      this.checkDrift();
+    }, 5000);
+  }
+
+  stopDriftWatch() {
+    clearInterval(this.driftTimer);
+    this.driftTimer = null;
+  }
+
+  /* ---------- the rest of a long conversation (2026-10-10) ---------- */
+
+  // Arthur: "im not entirely sure if we;re really pulling the FULL transcript of sessions". The engine
+  // now sends the whole conversation across compactions, newest page first; earlier pages come with
+  // historyBefore (the button at the top, or on their own when scrolled near the top), cut tool output,
+  // long thinking and compaction summaries in full and images one at a time with historyBlock.
+
+  /**
+   * An archived copy (2026-10-12): Claude Code deletes a transcript after 30 days, and Apaki's transcript archive
+   * (engine transcript-archive.js) keeps a slim copy, without images. The list marks such a session archivedCopy;
+   * open here, one quiet line at the very top of the conversation says what it is and how to bring it back.
+   * on=false takes the line away (the engine restored it after a message). Idempotent.
+   */
+  setArchivedCopy(on) {
+    this.archivedCopy = Boolean(on);
+    const T = this.$.T;
+    const line = T.querySelector(':scope > .arch-line');
+    if (!this.archivedCopy) { line?.remove(); return; }
+    if (line) { if (T.firstElementChild !== line) T.prepend(line); return; }
+    const n = el('div', 'arch-line');
+    n.setAttribute('role', 'note');
+    // Reads as one sentence: "From Apaki's archive: Claude Code deleted the original after 30 days. ..."
+    n.innerHTML = `<span class="arch-k">From Apaki's archive:</span> ${esc(ARCHIVED_COPY_TEXT)}`;
+    T.prepend(n);
+  }
+
+  /** "Load earlier messages" at the top while there is more; gone once everything is here. */
+  renderLoader() {
+    const h = this.history;
+    let box = this.$.T.querySelector(':scope > .hist-more');
+    if (!h?.hasMore) { box?.remove(); return; }
+    if (!box) {
+      box = el('div', 'hist-more');
+      box.addEventListener('click', (ev) => {
+        if (ev.target.closest('.hm-load')) this.loadEarlier();
+        else if (ev.target.closest('.hm-all')) this.loadAllHistory();
+      });
+      this.$.T.prepend(box);
+    }
+    box.classList.toggle('loading', Boolean(h.loading));
+    box.innerHTML = `<button class="hm-load"${h.loading ? ' disabled' : ''}>${h.loading ? 'Loading earlier messages…' : 'Load earlier messages'}</button>`
+      + `<span class="hm-n">${earlierText(h)}</span>`
+      + `<button class="hm-all link-btn"${h.loading ? ' disabled' : ''} title="Load the whole conversation (Ctrl+F can then search all of it)">Load all</button>`;
+  }
+
+  /** Near the top of the loaded part: the page before it comes (once at a time). */
+  maybeLoadEarlier() {
+    const h = this.history;
+    const g = this.$.ground;
+    if (!h?.hasMore || h.loading || !g.clientHeight) return;
+    // Ahead of the reader (2026-10-12): a page comes while more than a screen is still above, so scrolling all the way
+    // up to the first prompt never waits at an empty top.
+    if (g.scrollTop < Math.max(NEAR_TOP_PX, g.clientHeight * 1.5)) this.loadEarlier();
+  }
+
+  /** Asks for the page before the oldest loaded message (all: everything before it). Resolves true once it is drawn. */
+  loadEarlier({ all = false, until = null } = {}) {
+    const h = this.history;
+    if (!h?.hasMore) return Promise.resolve(false);
+    const done = new Promise((resolve) => h.waits.push(resolve));
+    if (h.loading) return done;
+    h.loading = true;
+    this.renderLoader();
+    // until: a prompt picked in the list of your prompts; the page reaches back to it (2026-10-12).
+    this.send('historyBefore', { sessionId: this.sessionId, before: h.first, ...(all ? { all: true } : { limit: HISTORY_PAGE }), ...(until ? { until } : {}) });
+    // No answer (the engine restarted): the button works again.
+    h.timer = setTimeout(() => { if (this.history !== h || !h.loading) return; h.loading = false; this.renderLoader(); for (const r of h.waits.splice(0)) r(false); }, 30000);
+    return done;
+  }
+
+  /** Loads everything still missing (Ctrl+F's Search all, the Load all button). True when it is all here. */
+  async loadAllHistory() {
+    for (let i = 0; i < 20 && this.history?.hasMore; i++) if (!(await this.loadEarlier({ all: true }))) break;
+    return !this.history?.hasMore;
+  }
+
+  /**
+   * An earlier page arrived (ev historyPage): drawn off-screen, put on top,
+   * and the scroll position kept on what you were reading.
+   */
+  prependHistory(e) {
+    const h = this.history;
+    if (!h || e.before !== h.first) return; // another session's, or a page already drawn
+    clearTimeout(h.timer);
+    h.loading = false;
+    const waits = h.waits.splice(0);
+    if (e.error || e.gone) {
+      if (e.gone) h.hasMore = false;
+      this.renderLoader();
+      // One notice at a time: a retry that fails again must not stack a second copy above the first.
+      for (const old of this.$.T.querySelectorAll(':scope > .hist-err')) old.remove();
+      const n = el('div', 'note warn hist-err');
+      n.textContent = e.error || 'This conversation changed on disk since it opened; reopen it to load the rest.';
+      this.$.T.prepend(n);
+      for (const r of waits) r(false);
+      return;
+    }
+    const g = this.$.ground;
+    const real = this.$.T;
+    // A page that arrives after an earlier failure clears that notice (it no longer applies).
+    for (const old of real.querySelectorAll(':scope > .hist-err')) old.remove();
+    const loader = real.querySelector(':scope > .hist-more');
+    const anchor = loader ? loader.nextElementSibling : real.firstElementChild;
+    const y0 = anchor ? anchor.getBoundingClientRect().top : 0;
+    const box = document.createElement('div');
+    this.$.T = box;
+    this._prepending = true;
+    // An earlier page is drawn apart from the checklist of the turn at the end of the conversation (todos.js).
+    const keepTodos = this.todoCard;
+    this.todoCard = null;
+    try { this.renderMessages(e.messages || []); } finally { this.$.T = real; this._prepending = false; this.todoCard = keepTodos; }
+    const frag = document.createDocumentFragment();
+    while (box.firstChild) frag.append(box.firstChild);
+    if (anchor) real.insertBefore(frag, anchor); else real.append(frag);
+    // Whatever the browser's own scroll anchoring did, the message you were reading stays put.
+    if (anchor) g.scrollTop += anchor.getBoundingClientRect().top - y0;
+    Object.assign(h, { first: e.first, hasMore: Boolean(e.hasMore), earlier: e.earlier || 0, total: e.total ?? h.total, loaded: h.loaded + (e.messages || []).length, countless: Boolean(e.countless) });
+    // Earlier prompts are on screen now: fewer come before the first one drawn (the pin's "N of M", 2026-10-11).
+    if (e.prompts && Number.isFinite(e.prompts.before)) { this.promptsBefore = e.prompts.before; this.promptsKnown = true; this._pinKey = ''; this.updatePin?.(); }
+    // Everything is here: the count is what is drawn (promptsBefore 0), whatever the engine could count before.
+    else if (!e.hasMore) { this.promptsBefore = 0; this.promptsKnown = true; this._pinKey = ''; this.updatePin?.(); }
+    this.historyCut = h.hasMore ? { shown: h.loaded, total: h.total, paged: true } : null;
+    this.renderLoader();
+    // The archived-copy line stays the first thing in the conversation, above the earlier page and the loader.
+    if (this.archivedCopy) this.setArchivedCopy(true);
+    this.renderArtifactsButton();
+    for (const r of waits) r(true);
+    requestAnimationFrame(() => this.maybeLoadEarlier());
+    // The earlier page is on top of whatever is already folded: it folds too.
+    this._sealedKids = 0;
+    this.sealSoon();
+  }
+
+  /** One block in full from the transcript (historyBlock), shared by everything waiting for the same one. */
+  fetchBlock(ref) {
+    this.blockWaits ||= new Map();
+    return new Promise((resolve) => {
+      const list = this.blockWaits.get(ref) || [];
+      list.push(resolve);
+      this.blockWaits.set(ref, list);
+      if (list.length === 1) this.send('historyBlock', { sessionId: this.sessionId, ref });
+      setTimeout(() => {
+        const l = this.blockWaits.get(ref);
+        const i = l ? l.indexOf(resolve) : -1;
+        if (i < 0) return;
+        l.splice(i, 1);
+        if (!l.length) this.blockWaits.delete(ref);
+        resolve({ error: 'No answer from the PC. Try again.' });
+      }, 30000);
+    });
+  }
+
+  onHistoryBlock(e) {
+    const l = this.blockWaits?.get(e.ref);
+    if (!l) return;
+    this.blockWaits.delete(e.ref);
+    for (const r of l) r(e);
+  }
+
+  /** "Show all N characters" under something cut for speed; the full text replaces the cut one in `target`. */
+  showAllButton(block, target, { markdown = false } = {}) {
+    const b = el('button', 'show-all');
+    const label = `Show all ${Number(block.length || 0).toLocaleString()} characters`;
+    b.type = 'button';
+    b.textContent = label;
+    b.onclick = async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      b.disabled = true;
+      b.textContent = 'Loading…';
+      const r = await this.fetchBlock(block.ref);
+      if (r?.kind !== 'text') { b.disabled = false; b.textContent = label; b.title = r?.error || 'Could not load it'; return; }
+      const tail = r.cut ? `\n… (the first ${r.text.length.toLocaleString()} of ${r.length.toLocaleString()} characters)` : '';
+      if (markdown) target.innerHTML = md(r.text + tail); else target.textContent = r.text + tail;
+      b.remove();
+    };
+    return b;
+  }
+
+  /** A picture from history, not loaded yet: its size and Show, which fetches that one image. */
+  imagePlaceholder(im, loadedClass = '') {
+    const b = el('button', 'img-ph');
+    b.type = 'button';
+    const size = im.bytes ? (im.bytes >= 1048576 ? `${(im.bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(im.bytes / 1024))} KB`) : '';
+    b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.6"/><circle cx="6" cy="6.8" r="1.2"/><path d="m3 12 3.6-3.4 2.4 2.2 1.8-1.6L14 12"/></svg><span class="ip-t">Image${size ? ` · ${esc(size)}` : ''}</span><span class="ip-go">Show</span>`;
+    b.title = 'Load this image from the transcript';
+    b.onclick = async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      b.disabled = true;
+      b.querySelector('.ip-go').textContent = 'Loading…';
+      const r = await this.fetchBlock(im.ref);
+      const type = /^image\/(png|jpeg|gif|webp)$/.test(r?.media_type || '') ? r.media_type : 'image/png';
+      if (r?.kind === 'image' && typeof r.data === 'string' && /^[A-Za-z0-9+/=]+$/.test(r.data)) {
+        const img = el('img', loadedClass || 'hist-img');
+        img.alt = 'Image from this conversation';
+        img.src = `data:${type};base64,${r.data}`;
+        b.replaceWith(img);
+        return;
+      }
+      b.disabled = false;
+      b.querySelector('.ip-go').textContent = 'Retry';
+      b.title = r?.error || 'Could not load it';
+    };
+    return b;
+  }
+
+  /** Claude's thinking, from history: collapsed under "Thinking", its first words beside it. */
+  addThinking(block) {
+    const d = el('details', 'thinking');
+    const first = String(block.thinking).replace(/\s+/g, ' ').trim().slice(0, 120);
+    d.innerHTML = `<summary><span class="th-mark">Thinking</span><span class="th-peek">${esc(first)}</span></summary>`;
+    const body = el('div', 'th-body');
+    body.textContent = block.thinking;
+    d.append(body);
+    if (block.truncated && block.ref) d.append(this.showAllButton(block, body));
+    this.$.T.append(d);
+  }
+
+  /** Where Claude Code compacted the conversation: a divider, with the summary it kept folded inside. */
+  addCompactMarker(m) {
+    const d = el('details', 'compact-mark');
+    const k = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+    const tokens = m.preTokens ? `${k(m.preTokens)}${m.postTokens ? ` to ${k(m.postTokens)}` : ''} tokens` : '';
+    const how = m.trigger === 'manual' ? 'with /compact' : m.trigger === 'auto' ? 'automatically' : '';
+    const meta = [tokens, m.at ? stamp(m.at) : ''].filter(Boolean).join(' · ');
+    d.innerHTML = `<summary><span class="cm-rule" aria-hidden="true"></span><span class="cm-label">Conversation compacted${how ? ` ${how}` : ''}</span>${meta ? `<span class="cm-meta">${esc(meta)}</span>` : ''}${m.summary?.text ? '<span class="cm-open">Summary</span>' : ''}<span class="cm-rule" aria-hidden="true"></span></summary>`;
+    if (m.summary?.text) {
+      const body = el('div', 'cm-body', md(m.summary.text));
+      d.append(body);
+      if (m.summary.truncated && m.summary.ref) d.append(this.showAllButton(m.summary, body, { markdown: true }));
+    } else d.querySelector('summary').style.cursor = 'default';
+    this.$.T.append(d);
+  }
+
+  flushOpenNotes() {
+    for (const [text, tone] of this.openNotes || []) this.note(text, tone);
+    this.openNotes = [];
+  }
+
+  /* ---------- live SDK messages ---------- */
+
+  onSdk(msg) {
+    // Live traffic: this pane's own Claude Code process is writing the conversation (checkDrift skips then).
+    this.lastLiveAt = Date.now();
+    if (msg.parent_tool_use_id) return;
+    const T = this.$.T;
+    if (msg.type === 'result' && this.autoTurn) {
+      this.setBusy(false);
+      this.setStatus('');
+      queueMicrotask(() => this.flushQueue());
+    }
+    if (msg.type === 'stream_event') {
+      const ev = msg.event || {};
+      if (ev.type === 'message_start') {
+        this.curMsg = ev.message?.id;
+        // A turn Claude started by itself (a background task finished, a
+        // notification): it works like one you sent, with its timer and Stop.
+        if (!this.busy) { this.autoTurn = true; this.setBusy(true); }
+      }
+      if (ev.type === 'content_block_start' && ev.content_block?.type === 'text') {
+        this.clearEmpty();
+        const a = el('div', 'turn-assistant streaming');
+        a.dataset.ts = stamp(Date.now());
+        T.append(a);
+        this.streams.set(`${this.curMsg}:${ev.index}`, a);
+      }
+      if (ev.type === 'content_block_start') {
+        const b = ev.content_block || {};
+        // Thinking reads as Claude Code's own playful words (verbs.js), a fresh one for each stretch of thinking.
+        const thinking = b.type === 'thinking' || b.type === 'redacted_thinking';
+        if (thinking && this.phase !== this.verb) this.verb = pickVerb(this.verb);
+        const next = thinking ? this.verb : b.type === 'text' ? 'Writing' : b.type === 'tool_use' ? `Running ${String(b.name || 'a tool').replace(/^mcp__\w+__/, '')}` : this.phase;
+        if (next !== this.phase) { this.phase = next; if (this.busy) this.showWorking(); }
+      }
+      if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+        const a = this.streams.get(`${this.curMsg}:${ev.index}`);
+        // Formatted while it streams (Arthur saw raw ** before), redrawn at most once a frame.
+        if (a) { a._raw = (a._raw || '') + ev.delta.text; this.paintStream(a); }
+      }
+      return;
+    }
+    if (msg.type === 'assistant') {
+      const id = msg.message?.id;
+      (msg.message?.content || []).forEach((b, i) => {
+        // The SDK can send each block of a message on its own (index 0), while
+        // the stream numbered it after a thinking block; so fall back to the
+        // oldest open stream of the same message, or the reply is drawn twice.
+        let key = `${id}:${i}`;
+        if (!this.streams.has(key)) key = [...this.streams.keys()].find((k) => k.startsWith(`${id}:`)) || key;
+        const live = this.streams.get(key);
+        if (b.type === 'text') {
+          if (live) {
+            // A hidden pane keeps the final text for when it is shown (flushUnpainted); a shown one draws it now.
+            if (this.isShown()) this.finishStream(live, b.text);
+            else { painter.cancel(live); live._raf = 0; live.classList.remove('streaming'); live._final = b.text; (this._unpainted ||= new Set()).add(live); }
+            this.streams.delete(key);
+          } else this.addAssistant(b.text);
+        } else if (b.type === 'tool_use') {
+          this.addTool(b);
+        } else if (b.type === 'thinking' && b.thinking && msg.codex) {
+          // Codex's reasoning summary (2026-10-12), collapsed under "Thinking" like the ones history draws.
+          this.addThinking(b);
+        }
+      });
+      if (msg.error) this.note(String(msg.error), 'error');
+      return;
+    }
+    if (msg.type === 'user') {
+      const content = Array.isArray(msg.message?.content) ? msg.message.content : [];
+      for (const b of content) if (b.type === 'tool_result') this.toolResult(b.tool_use_id, b.content, b.is_error);
+      // Text the harness adds (Stop hook feedback, a slash command's output) shows as a system line, never as you.
+      if (!content.some((b) => b.type === 'tool_result')) { const n = noticeFor(msg, this.noticeSeen); if (n) this.sysline(n); }
+      return;
+    }
+    // Everything else Claude Code shows its users (notices.js): drawn apart from Claude's reply.
+    const notice = noticeFor(msg, this.noticeSeen);
+    if (notice) this.sysline(notice);
+    // A running command's output so far (Codex streams it, 2026-10-12).
+    if (msg.type === 'system' && msg.subtype === 'tool_output') this.toolLive(msg.tool_use_id, msg.text);
+    if (msg.type === 'system' && msg.subtype === 'status' && msg.status === 'compacting' && this.busy) this.setStatus('Compacting the conversation…');
+    if (msg.type === 'system' && msg.subtype === 'compact_boundary') this.note('Conversation compacted.');
+    if (msg.type === 'system' && /^(task_|background_tasks_changed)/.test(msg.subtype || '')) this.onTaskMessage(msg);
+  }
+
+  /* ---------- status, busy state ---------- */
+
+  setStatus(text) {
+    this._working = false;
+    this.$.status.textContent = text;
+    this.statusOn(Boolean(text));
+  }
+
+  statusOn(on) {
+    const g = this.$.ground;
+    const atEnd = g.scrollHeight - g.scrollTop - g.clientHeight < 8;
+    const was = this.$.statusLine.classList.contains('on');
+    this.$.statusLine.classList.toggle('on', on);
+    // The transcript makes room for the working line in one step (app.css): stay at the end if you were there.
+    if (atEnd && was !== on) g.scrollTop = g.scrollHeight;
+  }
+
+  /**
+   * The working line: what Claude is doing (Thinking, Writing, Running Bash),
+   * three moving dots, and the time. Built once per turn and updated in place,
+   * so the dots keep their rhythm.
+   */
+  showWorking() {
+    const st = this.$.status;
+    if (!this._working) {
+      st.innerHTML = '<span class="ph"></span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="st-rest"></span>';
+      this._working = true;
+      this.statusOn(true);
+    }
+    st.querySelector('.ph').textContent = this.phase || this.verb || 'Working';
+    st.querySelector('.st-rest').textContent = ` · ${Math.round((Date.now() - this.turnStart) / 1000)}s · esc to stop`;
+  }
+
+  setBusy(on) {
+    this.busy = on;
+    if (!on) this.autoTurn = false;
+    this.renderSendButton();
+    this.renderQueue();
+    this.el.classList.toggle('busy', on);
+    clearInterval(this.tick);
+    // While working, the status line above the message box carries a live grid.
+    this.$.egridSlot.innerHTML = on ? effortGrid('max', { live: true }) : '';
+    if (on) {
+      this.turnStart = Date.now();
+      // Until Claude writes or runs something, the line shows a random thinking word, as Claude Code does.
+      this.verb = pickVerb(this.verb);
+      this.phase = this.verb;
+      // (A pane in a hidden tab has no one watching its seconds: it redraws them when it is shown, on the next beat.)
+      this.tick = setInterval(() => { if (this.isShown()) this.showWorking(); }, 500);
+      this.showWorking();
+    }
+    this.host.changed(this);
+  }
+
+  /* ---------- send ---------- */
+
+  /** The slash commands the window answers itself in a Codex pane (the engine answers compact, status, review, diff, mcp). */
+  codexLocalCommand(cmd, arg) {
+    const info = this.codexInfo();
+    switch (cmd) {
+      case 'new': case 'clear': this.host.newConversation(this); return true;
+      case 'resume': case 'continue': this.host.findSession?.(arg); return true;
+      case 'model': {
+        if (!arg) { this.note(`Model: ${modelLabel(info?.models, this.model)}`); return true; }
+        const m = pickModel(info?.models, arg);
+        if (m) this.setModel(m.id); else this.note(`Codex has no model called "${arg}". ${info?.models?.length ? `Try: ${info.models.map((x) => x.id).join(', ')}.` : ''}`, 'warn');
+        return true;
+      }
+      case 'effort': {
+        const list = effortNames(info?.models, this.model);
+        if (!arg) { this.note(`Effort: ${this.effort || 'the thread\'s own'}`); return true; }
+        if (list.includes(arg)) this.setEffort(arg); else this.note(`This model offers: ${list.join(', ') || 'no efforts'}.`, 'warn');
+        return true;
+      }
+      case 'approvals': case 'mode': case 'permissions': {
+        if (!arg) { this.note(`Permissions: ${codexMode(this.mode).label}`); return true; }
+        const v = pickMode(arg);
+        if (v) this.setMode(v); else this.note('Permissions: full-access, auto or read-only.', 'warn');
+        return true;
+      }
+      case 'folder': if (arg && this.sessionId) this.send('folder', { action: 'create', name: arg, sessionId: this.sessionId }); return true;
+      // A copy of the thread to take elsewhere (the engine answers 'forked' and the window opens it).
+      case 'fork': if (this.sessionId) this.send('forkSession', { sessionId: this.sessionId }); else this.note('Send a message first; there is nothing to fork yet.'); return true;
+      default: return false;
+    }
+  }
+
+  localCommand(text) {
+    const [cmd, ...rest] = text.slice(1).split(/\s+/);
+    const arg = rest.join(' ').trim();
+    if (this.kind === 'codex') return this.codexLocalCommand(cmd, arg);
+    switch (cmd) {
+      case 'new': case 'clear': this.host.newConversation(this); return true;
+      // Claude Code's /resume picker is terminal-only (the SDK answers "isn't available in this environment"): Apaki's search instead.
+      case 'resume': case 'continue': this.host.findSession?.(arg); return true;
+      case 'model': if (arg) this.setModel(MODELS[arg] || arg); else this.note(`Model: ${this.model}`); return true;
+      case 'effort': if (arg) this.setEffort(arg); else this.note(`Effort: ${this.effort}`); return true;
+      case 'mode': if (arg) this.setMode(arg); else this.note(`Mode: ${this.mode}`); return true;
+      case 'key': this.send('billingOptions'); return true;
+      case 'warm': this.send('warm', { arg }); return true;
+      case 'folder': if (arg && this.sessionId) this.send('folder', { action: 'create', name: arg, sessionId: this.sessionId }); return true;
+      default: return false;
+    }
+  }
+
+  /** True when the box holds something to send (text or images). */
+  hasDraft() {
+    return Boolean(this.$.input.value.trim()) || this.attachments.length > 0;
+  }
+
+  /** The button: Send when idle; while working, Queue with a draft and Stop without. */
+  renderSendButton() {
+    const b = this.$.send;
+    const mode = !this.busy ? 'send' : this.hasDraft() ? 'queue' : 'stop';
+    b.textContent = { send: 'Send', queue: 'Queue', stop: 'Stop' }[mode];
+    b.classList.toggle('stop', mode === 'stop');
+    b.classList.toggle('queue', mode === 'queue');
+    const who = this.agentName();
+    b.title = { send: 'Send (Enter)', queue: `Queue this for when ${who} finishes (Enter). Ctrl+Enter steers it in now`, stop: `Stop ${who} (Esc)` }[mode];
+  }
+
+  /** Stops the running turn. Queued messages stay; they do not go out on their own after a stop. */
+  stop() {
+    if (!this.busy) return;
+    this.stoppedByUser = true;
+    this.send('interrupt');
+    this.setStatus('Stopping…');
+  }
+
+  /* ---------- queued messages ---------- */
+
+  enqueue(text, attachments) {
+    this.queue.push({ id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, text, attachments });
+    this.renderQueue();
+    this.syncQueue();
+  }
+
+  /**
+   * Tells the engine what is queued (op queueSet), every time the queue changes
+   * (not on a redraw, and not on a restore: the engine's copy may be newer, see
+   * adoptQueue). The engine keeps the copy so it can send the queue itself
+   * when a turn ends while no window is connected (the window was closed);
+   * while this window is connected it never sends, and this pane flushes as
+   * before. Not on the phone page: phone queues stay in the phone's pane
+   * (remote-policy.js does not allow queueSet from a phone). apaki/engine/queue-hold.js has the rule.
+   */
+  syncQueue() {
+    if (!this.host.engineQueue) return;
+    this.send('queueSet', {
+      items: this.queue.map(({ id, text, attachments }) => ({ id, text, images: attachments.map(({ media_type, data, w, h, name }) => ({ media_type, data, w, h, ...(name ? { name } : {}) })) })),
+    });
+  }
+
+  /**
+   * Re-attached to the engine (opened with attached: true): its copy of the
+   * queue is what is still unsent. `held` is what it still has, `sent` the ids it
+   * sent while no window was here (the pane shows the first and drops the
+   * second). An item only this pane has (typed while the link was down, or
+   * restored from an older save) stays and goes to the engine; an item only
+   * the engine has (images included) is added.
+   */
+  adoptQueue(held, sent) {
+    const gone = new Set(sent);
+    const heldIds = new Set(held.map((it) => it.id));
+    const mine = new Map(this.queue.map((it) => [it.id, it]));
+    const next = held.map((it) => mine.get(it.id) || {
+      id: it.id,
+      text: it.text,
+      attachments: (it.images || []).map((im) => ({ media_type: im.media_type, data: im.data, ...(im.name ? { name: im.name, size: Math.round(String(im.data).length * 0.75) } : {}), url: im.name ? '' : `data:${im.media_type};base64,${im.data}`, w: im.w || 0, h: im.h || 0 })),
+    });
+    const extra = this.queue.filter((it) => !heldIds.has(it.id) && !gone.has(it.id));
+    this.queue = [...next, ...extra];
+    this.renderQueue();
+    if (extra.length) this.syncQueue();
+  }
+
+  renderQueue() {
+    const box = this.$.queue;
+    if (!box) return;
+    this.host.dirty?.();
+    box.hidden = !this.queue.length;
+    if (!this.queue.length) { box.innerHTML = ''; this.queueSig = ''; return; }
+    // While Claude works: Steer adds the message to the current work now.
+    // After a stop (nothing to steer): Send starts a new turn with it.
+    const act = this.busy ? 'Steer' : 'Send';
+    const actTip = this.busy ? `Add this to what ${this.agentName()} is doing now, without stopping it (Ctrl+Enter in the box does the same)` : 'Send this now';
+    // Rebuilt only when something changed: a row replaced between press and release swallows the click
+    // (2026-10-10, "the steer button doesnt work").
+    const sig = `${this.busy}|${this.queue.map((it) => `${it.id}:${it.text.length}:${it.attachments.length}`).join(',')}`;
+    if (sig === this.queueSig && box.childElementCount) return;
+    this.queueSig = sig;
+    box.innerHTML = `<div class="q-head"><span>${this.queue.length === 1 ? 'Queued' : `${this.queue.length} queued`}</span><span class="q-hint">${this.busy ? `Sends when ${this.agentName()} finishes · Steer or Ctrl+Enter adds it now` : `Not sent: ${this.agentName()} was stopped`}</span></div>`
+      + this.queue.map((it) => `<div class="q-item" data-id="${it.id}"><span class="q-text" title="Edit">${esc(it.text || '(images)')}</span>${it.attachments.length ? `<span class="q-img">${it.attachments.length} ${it.attachments.every((a) => a.url) ? 'image' : 'file'}${it.attachments.length > 1 ? 's' : ''}</span>` : ''}<button class="q-act" data-q="act" title="${actTip}">${act}</button><button class="q-edit" data-q="edit" title="Put it back in the message box to change it (Up arrow in an empty box does the same)">Edit</button><button class="q-x" data-q="x" title="Remove" aria-label="Remove">×</button></div>`).join('');
+    // One listener for the whole list (set once), reading the row and the button at click time.
+    if (!box.dataset.wired) {
+      box.dataset.wired = '1';
+      box.addEventListener('click', (e) => {
+        const row = e.target.closest('.q-item');
+        if (!row) return;
+        const id = row.dataset.id;
+        const k = e.target.closest('[data-q]')?.dataset.q || (e.target.closest('.q-text') ? 'edit' : null);
+        if (k === 'act') { if (this.busy) this.steerItem(id); else this.sendItem(id); }
+        else if (k === 'edit') this.editItem(id);
+        else if (k === 'x') this.removeItem(id);
+      });
+    }
+  }
+
+  /** Takes one item out. `sync: false` when a send or steer follows that names it (the engine then drops its copy in the same step). */
+  takeItem(id, { sync = true } = {}) {
+    const i = this.queue.findIndex((x) => x.id === id);
+    if (i < 0) return null;
+    const [it] = this.queue.splice(i, 1);
+    this.renderQueue();
+    if (sync) this.syncQueue();
+    return it;
+  }
+
+  removeItem(id) { this.takeItem(id); this.$.input.focus(); }
+
+  /** Pulls a queued message back into the box to change it (Enter queues it again). */
+  editItem(id) {
+    const it = this.takeItem(id);
+    if (!it) return;
+    const { input } = this.$;
+    input.value = input.value.trim() ? `${it.text}\n${input.value}` : it.text;
+    this.attachments = [...it.attachments, ...this.attachments];
+    this.renderAttachments();
+    this.autosize();
+    this.renderSendButton();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+
+  /** Steer: hand a queued message to the running turn; it is shown once Claude Code took it. */
+  steerItem(id, it = null) {
+    // The steer op names this item (qid), so the engine drops its copy with it.
+    it = it || this.takeItem(id, { sync: false });
+    if (!it) return;
+    this.steering.set(id, it);
+    // Seen while it goes (2026-10-11): "Steering..." until Claude Code took it or it comes back.
+    if (this.$?.status) this.setStatus('Steering your message in…');
+    this.send('steer', { qid: id, text: it.text, images: it.attachments.map(({ media_type, data, name }) => ({ media_type, data, ...(name ? { name } : {}) })) });
+  }
+
+  sendItem(id) {
+    const it = this.takeItem(id, { sync: false });
+    if (it) this.sendNow(it.text, it.attachments, [it.id]);
+  }
+
+  /**
+   * Starts a turn with this message. `queued`: ids of queued items this message
+   * carries, so the engine drops its copy of them in the same step as it
+   * receives the send (a window that closes right after leaves nothing for the
+   * engine to send again).
+   */
+  sendNow(text, attachments = [], queued = []) {
+    const images = attachments.map(({ media_type, data, name }) => ({ media_type, data, ...(name ? { name } : {}) }));
+    this.stoppedByUser = false;
+    this.addUser(text, attachments);
+    this.setBusy(true);
+    this.send('send', { text, images, ...(queued.length && this.host.engineQueue ? { queued } : {}) });
+  }
+
+  /**
+   * After a turn ends on its own, everything queued goes out together as the next message.
+   * This window owns the queue while it is connected; the engine only sends a queue itself when
+   * no window is connected (queue-hold.js), and the send names the ids so it never sends them again.
+   */
+  flushQueue() {
+    if (this.busy || this.stoppedByUser || !this.queue.length) return;
+    const items = this.queue.splice(0);
+    this.renderQueue();
+    this.sendNow(items.map((it) => it.text).filter(Boolean).join('\n\n'), items.flatMap((it) => it.attachments), items.map((it) => it.id));
+  }
+
+  /** Sends the box. While Claude works it queues, or with { steer: true } (Ctrl+Enter) goes into the running turn now. */
+  submit({ steer = false, checked = false } = {}) {
+    // The window is reconnecting to the engine: the message stays in the box until it is back (2026-10-11).
+    if (this.host.engineLost?.()) { this.setStatus('Reconnecting to the engine; your message is still here.'); return; }
+    // Idle for a while: make sure the transcript here is the newest before adding to it (checkDrift, 2026-10-11).
+    if (!checked && !this.busy && !this.lockedBy && this.sessionId && Date.now() - (this.lastLiveAt || 0) > 15000 && this.$.input.value.trim()) {
+      this.checkDrift({ wait: true }).then(() => this.submit({ steer, checked: true }));
+      return;
+    }
+    // Held elsewhere: the card's button is the way forward, not a message.
+    if (this.lockedBy) { this.$.T.querySelector('.takeover')?.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }], { duration: 220, easing: 'ease-out' }); return; }
+    const { input } = this.$;
+    const text = input.value.trim();
+    if (!text && !this.attachments.length) return;
+    this.hideSlash();
+    // Commands that only work in the terminal UI (/config, the /model picker, /permissions...) open the console for
+    // themselves instead of failing (2026-10-12). Without a console (the phone), the bare ones keep Apaki's answer.
+    const tui = text.startsWith('/') && !this.attachments.length ? tuiCommand(this.kind, text) : null;
+    const bare = tui && (this.kind === 'codex' ? CODEX_TUI_BARE : CLAUDE_TUI_BARE).includes(tui.slice(1));
+    if (tui && (this.host.consoleAvailable?.() || !bare)) { input.value = ''; this.autosize(); this.console.open({ command: tui }); return; }
+    if (text.startsWith('/') && !this.attachments.length && this.localCommand(text)) { input.value = ''; this.autosize(); return; }
+    // A conversation that starts in a new worktree: this first message names the branch, the sheet shows the command and
+    // creates it, and then the message goes (it stays in the box until then, and if the sheet is cancelled).
+    if (this.pendingWorktree && !this.sessionId && !this.busy) {
+      if (this.makingWorktree) return;
+      this.makingWorktree = true;
+      Promise.resolve(this.host.makeWorktree?.(this, text)).catch(() => false).then((ok) => { this.makingWorktree = false; if (ok) this.submit({ steer, checked: true }); });
+      return;
+    }
+    const attachments = this.attachments;
+    this.attachments = [];
+    this.renderAttachments();
+    input.value = '';
+    this.autosize();
+    // Working: queue it (Steer adds it to the current work). Never stops the turn.
+    if (this.busy && steer) { this.enqueue(text, attachments); this.steerItem(this.queue[this.queue.length - 1].id); this.renderSendButton(); return; }
+    if (this.busy) { this.enqueue(text, attachments); this.renderSendButton(); return; }
+    this.sendNow(text, attachments);
+  }
+
+  /* ---------- composer ---------- */
+
+  autosize() {
+    const { input } = this.$;
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, this.el.clientHeight * 0.4 || window.innerHeight * 0.4)}px`;
+  }
+
+  updateSlash() {
+    const v = this.$.input.value;
+    const m = v.match(/^\/(\S*)$/);
+    if (!m) { this.hideSlash(); return; }
+    const q = m[1].toLowerCase();
+    const base = this.kind === 'codex' ? CODEX_LOCAL : LOCAL;
+    const all = [...base, ...this.commands.filter((c) => !base.some((l) => l.name === c.name))];
+    const hits = all.filter((c) => c.name.toLowerCase().includes(q)).sort((a, b) => (a.name.toLowerCase().startsWith(q) ? 0 : 1) - (b.name.toLowerCase().startsWith(q) ? 0 : 1)).slice(0, 40);
+    const ul = this.$.slash;
+    ul.innerHTML = '';
+    for (const c of hits) {
+      const li = el('li', '', `<span class="n">/${esc(c.name)}</span><span class="d">${esc(c.description || '')}</span>`);
+      li.dataset.name = c.name;
+      li.onmousedown = (e) => { e.preventDefault(); this.$.input.value = `/${c.name} `; this.hideSlash(); this.$.input.focus(); };
+      ul.append(li);
+    }
+    ul.hidden = !hits.length;
+    this.slashSel = 0;
+    this.paintSlash();
+  }
+
+  paintSlash() { [...this.$.slash.children].forEach((li, i) => li.classList.toggle('on', i === this.slashSel)); }
+
+  hideSlash() { this.$.slash.hidden = true; }
+
+  /* ---------- images ---------- */
+
+  async addImageFile(file) {
+    if (!file) return;
+    // Codex reads other files by path (the engine saves them where it can): attached whole (addDocFile).
+    if (!file.type.startsWith('image/')) { if (this.kind === 'codex') await this.addDocFile(file); return; }
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, IMAGE_MAX_EDGE / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * scale);
+    const h = Math.round(bmp.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    const type = file.type === 'image/png' && w * h < 1200 * 1200 ? 'image/png' : 'image/jpeg';
+    const url = canvas.toDataURL(type, 0.9);
+    this.attachments.push({ media_type: type, data: url.split(',')[1], url, w, h });
+    this.renderAttachments();
+  }
+
+  /** A file that is not a picture, kept whole up to DOC_MAX_BYTES (what a message can carry through the relay to a phone's PC too). */
+  async addDocFile(file) {
+    if (file.size > DOC_MAX_BYTES) { this.note(`${file.name} is over ${DOC_MAX_BYTES / 1048576} MB, which is more than a message carries.`, 'warn'); return; }
+    const data = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1] || '');
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    }).catch(() => '');
+    if (!data) return;
+    this.attachments.push({ media_type: file.type || 'application/octet-stream', data, name: file.name || 'file', size: file.size, url: '', w: 0, h: 0 });
+    this.renderAttachments();
+  }
+
+  renderAttachments() {
+    this.renderSendButton();
+    const box = this.$.attachments;
+    box.innerHTML = '';
+    this.attachments.forEach((a, i) => {
+      const kb = a.size >= 1048576 ? `${(a.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round((a.size || 0) / 1024))} KB`;
+      const c = a.url ? el('div', 'chip', `<img src="${a.url}" alt=""><span class="dim">${a.w}×${a.h}</span>`) : el('div', 'chip doc', `<span class="doc-name">${esc(a.name || 'file')}</span><span class="dim">${kb}</span>`);
+      const x = el('button', 'chip-x', '×');
+      x.title = 'Remove';
+      x.onclick = () => { this.attachments.splice(i, 1); this.renderAttachments(); };
+      c.append(x);
+      box.append(c);
+    });
+  }
+
+  setVoice(available) {
+    // On the phone the mic goes to the PC's Whisper (transcribe): only when the PC takes that op (2026-10-12).
+    if (window.apakiShell === 'web' && !window.__apakiLink?.supports?.('op:transcribe')) available = false;
+    this.$.mic.disabled = !available;
+    this.$.mic.hidden = window.apakiShell === 'web' && !available;
+    this.$.mic.title = available ? 'Dictate (local Whisper): click to start, click again to stop' : 'Voice needs whisper.cpp in Programs\\Myrlin Apaki\\voice';
+  }
+
+  /* ---------- engine events for this pane ---------- */
+
+  handle(e) {
+    switch (e.ev) {
+      case 'locked':
+        // The PC's pane could not open its conversation (another window holds it): nothing to follow here any more.
+        if (this.following) this.stopFollowing();
+        this.showLocked(e);
+        break;
+      case 'taken_over':
+        // A pane that follows the PC's pane: the conversation moved to another window, so this pane is an ordinary pane that lost it
+        // (Take it back opens it here). Not following any more, so the PC drops it from its watchers.
+        if (this.following) this.stopFollowing();
+        this.showLocked(e, { lost: true });
+        break;
+      case 'opened':
+        // A pane that follows the PC's pane hears whether this phone may only watch (the PC decides, see capFollowNote).
+        if (this.following && e.follower) this.setViewOnly(Boolean(e.readOnly));
+        this.lockedBy = null;
+        // It holds its conversation again (opened, taken back, re-attached): no more following from the outside.
+        this.lockLost = false;
+        this.stopDriftWatch();
+        // (The engine clears its copy of the queue itself when a pane opens another conversation: queue-hold.js resetHeld.)
+        if (e.sessionId !== this.sessionId) { this.queue = []; this.steering.clear(); this.stoppedByUser = false; this.renderQueue(); this.closedArts.clear(); }
+        this.sessionId = e.sessionId; this.cwd = e.cwd; this.billing = e.billing;
+        // A Codex thread (2026-10-12): the engine says what model, effort and permissions it really has.
+        if (e.kind === 'codex') {
+          this.setKind('codex', { fromEngine: true });
+          this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode;
+          if (e.tune) this.tune = tuneFor('codex', e.tune);
+          this.renderChips();
+        } else if (e.tune && (this.following || e.attached)) {
+          // A pane that shows the PC's conversation hears the PC pane's Ultracode; one that opened its own already holds what it sent.
+          this.tune = tuneFor('claude', e.tune);
+          this.renderChips();
+        }
+        for (const live of this.streams.values()) painter.cancel(live);
+        this.streams.clear(); this.tools.clear(); this.cardKeys.clear();
+        this.setTitle(e.title || 'New conversation');
+        this.setCwdLine();
+        this.renderBilling();
+        // The context meter belongs to the session: another one starts empty, then measures.
+        if (this.ctx && this.ctx.sessionId !== e.sessionId) { this.ctx = null; this.renderContext(); }
+        this.askContext(1500);
+        // Reopened on the same conversation it shows, idle (a reconnect to the engine): keep the transcript on screen;
+        // the history that follows redraws only if the conversation changed (renderHistory), so nothing flashes.
+        if (e.sessionId && !(e.sessionId === this.historyShownFor && !e.busy && this.$.T.childElementCount > 0)) this.$.T.innerHTML = '';
+        else if (!e.sessionId) this.showEmpty();
+        // Re-attached after a reconnect (the phone client): busy says whether a turn is still running.
+        if (e.attached) this.setBusy(Boolean(e.busy));
+        // The queue: re-attached, the engine's copy says what is still unsent and what it sent while no window was here;
+        // opened fresh (the engine did not have this pane), this pane's own queue, restored or kept, goes to the engine.
+        if (this.host.engineQueue) {
+          if (e.attached && Array.isArray(e.queue)) this.adoptQueue(e.queue, Array.isArray(e.queueSent) ? e.queueSent : []);
+          else if (this.queue.length) this.syncQueue();
+        }
+        // Lost the engine mid-turn: re-attached means the background host kept it going; otherwise it stopped.
+        if (this.lostBusy && !e.attached) this.turnStoppedNote = true;
+        this.lostBusy = false;
+        // Notes about how this session opened go below its history, which
+        // arrives next and redraws the transcript (they were wiped before).
+        this.openNotes = [];
+        if (e.tookOver) this.openNotes.push(['Taken over: the other window is stopped before its next message, so this conversation continues only here.', '']);
+        if (e.terminal?.length) this.openNotes.push([`This session is also open in a Claude Code terminal window (${e.terminal.map((t) => t.name).join(', ')}). Stop typing there while you work here; that window must /resume to see these turns.`, 'warn']);
+        // Re-attached (the background host kept this Claude Code process running): nothing was cut off.
+        if (this.crashNote && e.attached) this.crashNote = false;
+        if (this.crashNote) { this.openNotes.push([this.kind === 'codex' ? 'Apaki closed while Codex was working here, and its Codex process stopped with it. Everything it did until then is above; send a message to carry on.' : 'Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
+        if (this.turnStoppedNote) { this.openNotes.push([`The engine restarted while ${this.agentName()} was working here, and that turn stopped. Everything until then is above; send a message to carry on.`, 'warn']); this.turnStoppedNote = false; }
+        if (e.sessionId !== this.sessionId || e.reset) this.liveTasks.clear();
+        this.renderTasksButton();
+        if (!e.sessionId) this.flushOpenNotes();
+        this.send('commands');
+        // The console (console.js): with console: true the engine still runs it and its screen follows; a pane that had
+        // it open when the window or the engine went (restored, or reconnected to an engine without it) opens it again.
+        if (e.console) this.consoleRestore = false;
+        else if (this.consoleRestore) { this.consoleRestore = false; if (this.host.consoleAvailable?.()) setTimeout(() => this.console.open(), 0); }
+        this.host.changed(this);
+        break;
+      // The console's state and output, a look at a console from elsewhere (the phone), and Open in terminal (2026-10-12).
+      case 'console': this.console.handle(e); break;
+      case 'consoleData': this.console.data(e); break;
+      case 'consoleView': this.onConsoleView(e); break;
+      case 'terminal': this.onTerminal(e); break;
+      case 'history': if (e.sessionId === this.sessionId) this.renderHistory(e.messages, e.total, e); break;
+      case 'historyChecked': this.onHistoryChecked(e); break;
+      // Earlier messages of this conversation (Load earlier, scrolling up, Ctrl+F's Search all), and one cut block in full.
+      case 'historyPage': if (e.sessionId === this.sessionId) this.prependHistory(e); break;
+      case 'historyBlock': if (!e.sessionId || e.sessionId === this.sessionId) this.onHistoryBlock(e); break;
+      // The list of your prompts, and a Codex thread's count of the prompts before its loaded pages (2026-10-12).
+      case 'historyPrompts': this.onHistoryPrompts(e); break;
+      case 'historyCount': this.onHistoryCount(e); break;
+      case 'session_id':
+        this.sessionId = e.sessionId; this.setCwdLine(); this.host.changed(this);
+        if (this.pendingName) { this.send('rename', { sessionId: e.sessionId, title: this.pendingName }); this.pendingName = null; }
+        break;
+      case 'sdk': this.onSdk(e.msg); break;
+      case 'result': {
+        this.setBusy(false);
+        queueMicrotask(() => this.flushQueue());
+        const u = e.usage || {};
+        const k = (n) => `${((n || 0) / 1000).toFixed(1)}k`;
+        const foot = e.codex ? codexFooter(e, this.billing) : [`${((e.durationMs || 0) / 1000).toFixed(1)}s`, `${k(u.cache_read_input_tokens)} cached`, `${k(u.cache_creation_input_tokens)} new`, e.cost != null ? `$${e.cost.toFixed(3)}` : null, this.billing?.name ? `${this.billing.name}${this.billing.isKey ? ' (API key)' : ''}` : null].filter(Boolean).join(' · ');
+        if (!e.quiet) this.$.T.append(el('div', 'foot', esc(foot)));
+        if (e.isError) this.note(e.result || (e.errors || []).join('; ') || e.subtype, 'error');
+        this.setStatus('');
+        this.scrollDown();
+        if (!this.commands.length) this.send('commands');
+        break;
+      }
+      case 'billing': this.billing = e; this.renderBilling(); if (e.note) this.note(e.note); break;
+      case 'context': if (!e.none && (!e.sessionId || !this.sessionId || e.sessionId === this.sessionId)) { this.ctx = e; this.renderContext(); } break;
+      case 'commands': this.commands = e.commands || []; break;
+      case 'artifact': this.onArtifact(e); break;
+      case 'openUrl': this.onOpenUrl(e); break;
+      case 'settings':
+        this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode;
+        // The engine's word on Ultracode and its size (or a Codex pane's summary and speed), including "cannot run it here".
+        if (e.tune) this.tune = tuneFor(this.kind, e.tune);
+        this.renderChips();
+        break;
+      case 'note': this.note(e.text, e.tone || ''); break;
+      case 'steered': { const it = this.steering.get(e.qid); this.steering.delete(e.qid); if (it) this.addUser(it.text, it.attachments, { steered: true }); if (this.busy) this.showWorking?.(); break; }
+      case 'steer_missed': {
+        // The turn ended before the steer arrived: send it as the next message.
+        const it = this.steering.get(e.qid);
+        this.steering.delete(e.qid);
+        if (!it) break;
+        // Still working here: try once more a moment later (the turn may be between steps) before it waits in the queue.
+        if (this.busy && !it.steerRetried) { it.steerRetried = true; setTimeout(() => (this.busy ? this.steerItem(e.qid, it) : this.sendNow(it.text, it.attachments)), 1000); break; }
+        if (this.busy) {
+          this.queue.unshift(it); this.renderQueue(); this.syncQueue();
+          this.note(`Could not add that to the running turn; it goes out as soon as ${this.agentName()} finishes.`, 'warn');
+          break;
+        }
+        this.sendNow(it.text, it.attachments);
+        break;
+      }
+      case 'error': this.setBusy(false); this.setStatus(''); this.note(e.message, 'error'); break;
+      // The shared view (2026-10-11): which phones watch this pane, and a message one of them sent into it (the engine does not
+      // echo user messages, and the phone drew its own copy).
+      case 'followers': this.setFollowers(e.phones); break;
+      case 'peerMessage': this.addUser(e.text || '', (e.images || []).map((im) => ({ url: `data:${im.media_type};base64,${im.data}` })), { steered: Boolean(e.steered), from: peerName(e.from, this.following) }); break;
+      case 'transcript': {
+        if (!this.busy) this.setStatus(e.text ? `Transcribed in ${(e.ms / 1000).toFixed(1)}s` : 'Heard nothing');
+        const { input } = this.$;
+        if (e.text) { input.value = input.value ? `${input.value.replace(/\s*$/, '')} ${e.text}` : e.text; this.autosize(); input.focus(); }
+        break;
+      }
+      default: break;
+    }
+  }
+
+  /**
+   * Called when the window lost the engine. Since 2026-10-10 the engine is a
+   * background host that may still be running this pane's turn: say nothing
+   * yet, and let the re-attach decide (see 'opened': attached means it kept
+   * going; otherwise the turn stopped and the pane says so then).
+   */
+  engineLost() {
+    // A console on screen: the engine that comes back shows it again, or this pane opens it again (see 'opened').
+    if (this.console?.shown) this.consoleRestore = true;
+    this.lostBusy = this.busy || this.lostBusy;
+    if (this.busy) this.setBusy(false);
+    this.setStatus('');
+  }
+
+  /* ---------- the console and Open in terminal (console.js, 2026-10-12) ---------- */
+
+  /** This conversation in a terminal window on the PC, with this pane's settings (engine openTerminal). */
+  openTerminal() {
+    if (!this.host.consoleAvailable?.()) return;
+    if (!this.sessionId) { this.note('Send a message first: a new conversation has nothing to open in a terminal yet.'); return; }
+    if (this.console.shown) { this.note('Switch back from the console first (Ctrl+`): one window writes to a conversation at a time.', 'warn'); return; }
+    this.send('openTerminal', { sessionId: this.sessionId, kind: this.kind });
+  }
+
+  onTerminal(e) {
+    if (e.state === 'opened') {
+      this.note(`Opened in a terminal window: ${e.display || ''}. This pane leaves the conversation alone until that window closes, then reads it again.`);
+      if (e.note) this.note(e.note, e.tone === 'warn' ? 'warn' : '');
+    } else if (e.state === 'closed') this.note('The terminal window closed, so this pane has the conversation again.');
+    else if (e.state === 'error') this.note(e.note || 'The terminal window could not open.', 'warn');
+  }
+
+  /** The "in use" card of a conversation held by the PC's console: a read-only look at it, kept fresh while it shows. */
+  watchConsole(card) {
+    const pre = el('pre', 'tk-console', '');
+    pre.setAttribute('aria-label', 'The console on the PC, read only');
+    card.querySelector('.tk-row')?.before(pre);
+    this.consoleViewPre = pre;
+    clearInterval(this.consoleViewTimer);
+    const ask = () => {
+      if (!card.isConnected) { clearInterval(this.consoleViewTimer); return; }
+      if (!document.hidden) this.send('consoleView');
+    };
+    ask();
+    this.consoleViewTimer = setInterval(ask, 1500);
+  }
+
+  onConsoleView(e) {
+    if (!this.consoleViewPre?.isConnected) return;
+    this.consoleViewPre.textContent = e.state === 'none' ? 'The console on the PC has closed.' : (e.text || '');
+    this.consoleViewPre.scrollTop = this.consoleViewPre.scrollHeight;
+  }
+
+  destroy() {
+    for (const live of this.streams.values()) painter.cancel(live);
+    clearInterval(this.tick);
+    clearInterval(this.consoleViewTimer);
+    this.console?.destroy();
+    this.stopDriftWatch();
+    this.el.remove();
+  }
+}
