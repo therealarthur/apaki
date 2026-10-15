@@ -25,6 +25,7 @@
  *   Details:  sessionFacts, detailsHtml
  *   folders:  createOpenState (which folders are open, kept in localStorage)
  *   keys:     navKey (what a key does in a list: move, open, toggle, menu, details, rename)
+ *   drawing:  placeChildren (puts a list's rows in order, moving only what moved; 2026-10-15)
  * app.js draws the rows and wires them (it holds the panes, the drag and drop and the engine).
  */
 
@@ -32,6 +33,22 @@ import { esc } from './markdown.js';
 import { explorer } from './platform.js';
 
 const DAY = 86400000;
+
+/*
+ * Intl formatters, made once per locale and options and kept (2026-10-15, window lag). Making one costs about a tenth
+ * of a millisecond; the list made three per row (its time, the hover card's exact time, the month heading) every time
+ * it was drawn, and with 400 rows drawn on every worktrees event that was a third of the window's main thread while
+ * several panes worked. A formatter gives the same text however often it is used, so keeping them changes nothing shown.
+ */
+const formatters = new Map();
+const fmt = (locale, o) => {
+  const k = `${locale || ''}|${JSON.stringify(o)}`;
+  let f = formatters.get(k);
+  if (!f) { f = new Intl.DateTimeFormat(locale, o); formatters.set(k, f); }
+  return f;
+};
+// Number(n).toLocaleString() makes a NumberFormat on every call too; this is the same default format, kept.
+const numbers = new Intl.NumberFormat();
 
 /* ---------- time ---------- */
 
@@ -60,7 +77,7 @@ export function recencyGroup(ms, now = Date.now(), locale = undefined) {
   if (days <= 30) return { key: 'month', label: 'Previous 30 days' };
   const d = new Date(ms);
   const sameYear = d.getFullYear() === new Date(now).getFullYear();
-  const label = new Intl.DateTimeFormat(locale, sameYear ? { month: 'long' } : { month: 'long', year: 'numeric' }).format(d);
+  const label = fmt(locale, sameYear ? { month: 'long' } : { month: 'long', year: 'numeric' }).format(d);
   return { key: `m:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label };
 }
 
@@ -87,7 +104,7 @@ export function groupRows(rows, now = Date.now(), { pinned = true, locale } = {}
   return groups.sort((a, b) => (b.key === 'pinned') - (a.key === 'pinned'));
 }
 
-const fmt = (locale, o) => new Intl.DateTimeFormat(locale, o);
+// (fmt, the kept formatters, is at the top of the time section since 2026-10-15.)
 
 /**
  * A row's time, short and exact enough to tell rows apart: "now" under a minute, "12m" under an hour, the clock time
@@ -144,7 +161,7 @@ export function modelName(id) {
   return `${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()} ${m[2]}${m[3] ? `.${m[3]}` : ''}${m[4] ? ' (1M)' : ''}`;
 }
 
-const plural = (n, w) => `${Number(n).toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
+const plural = (n, w) => `${numbers.format(Number(n))} ${w}${n === 1 ? '' : 's'}`;
 
 /* ---------- a row ---------- */
 
@@ -518,4 +535,24 @@ export function navKey(e, { kind = 'session', open = false, inFolder = false } =
   if (k === 'Enter' || k === ' ') return { act: 'open' };
   if (k === 'ArrowLeft' && inFolder) return { act: 'parent' };
   return null;
+}
+
+/* drawing the list again (2026-10-15, window lag) */
+
+/**
+ * Makes `want` the children of `box` in that order, moving only what is out of place, and removes the rest. app.js
+ * keeps the rows that show the same as before (rowKey) and gives them back here with the new ones, so a drawing of the
+ * list touches only what changed: an element that stays in place is not taken out and put back, which would make the
+ * browser style and lay it out again. What is not wanted is taken out as the walk reaches it, so one replaced row does
+ * not push every row after it to be moved. Works on anything with firstChild, nextSibling, insertBefore and remove.
+ */
+export function placeChildren(box, want) {
+  const wanted = new Set(want);
+  let cur = box.firstChild;
+  for (const node of want) {
+    while (cur && !wanted.has(cur)) { const next = cur.nextSibling; cur.remove(); cur = next; }
+    if (node === cur) { cur = cur.nextSibling; continue; }
+    box.insertBefore(node, cur);
+  }
+  while (cur) { const next = cur.nextSibling; cur.remove(); cur = next; }
 }

@@ -35,13 +35,69 @@ import { CLAUDE_TUI_BARE, CODEX_TUI_BARE, PaneConsole, tuiCommand } from './cons
 import { createStreamPainter } from './streampaint.js';
 // Older messages of a long conversation are folded into chunks the browser can skip (chunks.js, pane.js sealOld).
 import { planChunks } from './chunks.js';
+// Streamed replies and histories are timed for the window's minute line (perfwatch.js, 2026-10-15).
+import { watch } from './perfwatch.js';
 
 // How many nodes at the end of a transcript stay open, and the size of a chunk (sealOld). SEAL_STAYS: nodes that stay loose.
 const SEAL_KEEP = 48;
 const SEAL_SIZE = 24;
 const SEAL_STAYS = '.hist-more, .arch-line, .hist-err, .takeover, .empty, .chunk';
 
+/**
+ * Characters on a line of a conversation's text in a ground `width` px wide (0: not known yet, a typical pane is
+ * assumed). The transcript is at most 880 px wide with 26 px of padding a side; body text averages about 7.4 px a
+ * character. For sealBlind's estimates only.
+ */
+export function charsPerLine(width) {
+  const w = width > 0 ? width : 700;
+  return Math.max(24, Math.round((Math.min(880, w) - 52) / 7.4));
+}
+
+/**
+ * About how tall a top-level node of a transcript draws (its margins included), without laying it out (2026-10-15,
+ * sealBlind). Folded parts (tool lines, thinking, compaction marks) are one row; your messages and Claude's are
+ * measured by their text at `cpl` characters a line, code by its lines. Off by a little either way: the browser keeps
+ * a chunk's real height once it has drawn it, so the estimate only stands in for chunks no one has scrolled to yet.
+ */
+export function estimateHeight(node, cpl = 88) {
+  const lines = (text) => {
+    let n = 0;
+    for (const l of String(text || '').split('\n')) n += Math.max(1, Math.ceil(l.length / cpl));
+    return n;
+  };
+  if (node.tagName === 'DETAILS') return 32;
+  const cls = node.classList;
+  if (cls?.contains('turn-user')) return 58 + lines(node.textContent) * 22;
+  if (cls?.contains('turn-assistant')) {
+    let h = 18;
+    for (const b of node.children) {
+      if (b.tagName === 'PRE') h += 34 + (String(b.textContent).split('\n').length) * 19;
+      else if (b.tagName === 'UL' || b.tagName === 'OL') { h += 14; for (const li of b.children) h += lines(li.textContent) * 23 + 4; }
+      else if (b.tagName === 'TABLE' || b.classList?.contains('table-wrap')) h += 24 + (b.querySelectorAll('tr').length || 1) * 34;
+      else h += 14 + lines(b.textContent) * 23;
+    }
+    return h;
+  }
+  return 30 + lines(node.textContent) * 20;
+}
+
 const painter = createStreamPainter();
+
+/*
+ * One beat for the working line of every working pane (2026-10-15, window lag). Each pane ticked its seconds on its own
+ * 500 ms timer, started whenever its turn started, so five working panes changed the page at ten different moments a
+ * second and each was a frame to style, lay out and paint. They now share one timer: one frame per beat for all of them.
+ */
+const beating = new Set();
+let beatTimer = 0;
+function beatOn(p) {
+  beating.add(p);
+  if (!beatTimer) beatTimer = setInterval(() => { for (const x of beating) if (x.isShown()) x.showWorking(); }, 500);
+}
+function beatOff(p) {
+  beating.delete(p);
+  if (!beating.size && beatTimer) { clearInterval(beatTimer); beatTimer = 0; }
+}
 // A key press slows the stream updates for a moment, so typing never waits behind a paint.
 if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('keydown', () => painter.typed(), true);
 
@@ -89,14 +145,20 @@ export const short = (p) => String(p || '').replace(/^C:\\Users\\[^\\]+/i, '~');
 export function stamp(at, now = new Date()) {
   const d = new Date(at);
   if (Number.isNaN(d.getTime())) return '';
-  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const time = STAMP_TIME.format(d);
   const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const back = Math.round((day(now) - day(d)) / 86400000);
   if (back === 0) return time;
   if (back === 1) return `Yesterday ${time}`;
-  const date = d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
+  const date = (d.getFullYear() !== now.getFullYear() ? STAMP_DATE_YEAR : STAMP_DATE).format(d);
   return `${date}, ${time}`;
 }
+// The formatters stamp() uses, made once (2026-10-15, window lag): toLocaleTimeString made a new one for every message,
+// about a tenth of a millisecond each, so drawing a 2400 message conversation spent half a second on its hover times.
+// Same locale ([] is the default) and options as the calls they replace, so the text is the same.
+const STAMP_TIME = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' });
+const STAMP_DATE = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric' });
+const STAMP_DATE_YEAR = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric', year: 'numeric' });
 
 /** The artifact kind a file's extension gives (for cards rebuilt from history). */
 const kindFromPath = (p) => {
@@ -787,10 +849,29 @@ Click for changes, commit, push, pull request, merge`;
     // A conversation being drawn from history is scrolled once, at its end (renderHistory): asking for the end after
     // every message made the browser lay the whole page out again each time (2400 messages took half a minute).
     if (this._prepending || this._replaying) return;
+    if (force) { this.scrollEnd(true); return; }
+    // Not forced: once, at the next frame, for everything added until then (2026-10-15, window lag). Measuring after
+    // each tool line, note or card made the browser lay the page out on the spot, once per event per pane, which was
+    // most of what was left of the window's main thread with five panes working. Whether the reader follows the end is
+    // remembered (followsEnd), so several things added in one frame still keep them at the end, as one at a time did.
+    // No box (a background tab): nothing to scroll; the reader is put at the end when it shows (settleScroll).
+    if (!this.isShown() || this._endAt) return;
+    this._endAt = requestAnimationFrame(() => { this._endAt = 0; this.scrollEnd(); });
+  }
+
+  /**
+   * Scrolls to the end now (reads the layout): always when forced, otherwise when the reader follows the end (they
+   * were there when last seen, followsEnd) or is within 160 px of it, as scrollDown did before it waited for a frame.
+   */
+  scrollEnd(force = false) {
+    if (this._prepending || this._replaying) return;
     const g = this.$.ground;
-    // No box (a background tab): there is nothing to scroll yet; the reader is put at the end when it shows (settleScroll).
     if (!this.hasBox()) { if (force) this.scrollMemo = { atEnd: true, top: 0 }; return; }
-    if (force || g.scrollHeight - g.scrollTop - g.clientHeight < 160) g.scrollTop = g.scrollHeight;
+    if (force || this.followsEnd !== false || g.scrollHeight - g.scrollTop - g.clientHeight < 160) {
+      g.scrollTop = g.scrollHeight;
+      this.followsEnd = true;
+      this._autoTop = g.scrollTop;
+    }
     this.schedulePin();
   }
 
@@ -818,7 +899,13 @@ Click for changes, commit, push, pull request, merge`;
 
   /** The ground scrolled: remember it (only while it has a box; a hidden one reports 0). */
   noteScroll() {
-    if (this.hasBox()) this.scrollMemo = this.scrollState();
+    if (!this.hasBox()) return;
+    this.scrollMemo = this.scrollState();
+    // followsEnd (scrollEnd): a scroll this pane made to the end keeps it; any other (the reader's wheel, a jump, a
+    // restored place) says whether the reader is at the end now.
+    const g = this.$.ground;
+    if (this._autoTop == null || Math.abs(g.scrollTop - this._autoTop) > 1) this.followsEnd = g.scrollHeight - g.scrollTop - g.clientHeight < 160;
+    this._autoTop = null;
   }
 
   /**
@@ -828,12 +915,16 @@ Click for changes, commit, push, pull request, merge`;
   settleScroll() {
     const had = this._hadBox;
     this._hadBox = this.hasBox();
+    // Its width is kept too (2026-10-15): a conversation folded while hidden estimates its lines from it (sealBlind).
+    // Read here, from the ground's ResizeObserver, when the layout is fresh.
+    if (this._hadBox) this._groundW = this.$.ground.clientWidth || this._groundW;
     // Shown again after being hidden: replies that kept collecting text are drawn now, in one go (flushUnpainted).
     if (this._hadBox && had === false) this.flushUnpainted();
     if (this._hadBox && had === false && this._sealPending && !this._sealAt) this._sealAt = requestAnimationFrame(() => this.sealOld());
     if (!this._hadBox || had !== false) return;
     const want = this.scrollMemo || { atEnd: true, top: 0 };
     const g = this.$.ground;
+    this.followsEnd = Boolean(want.atEnd);
     const go = () => { g.scrollTop = want.atEnd ? g.scrollHeight : want.top; };
     // The composer's height is read from its box a moment later (the wrap's ResizeObserver): measure it now, so the end is the real end.
     this.el.style.setProperty('--composer-h', `${this.$.wrap.offsetHeight}px`);
@@ -866,13 +957,23 @@ Click for changes, commit, push, pull request, merge`;
   // The last SEAL_KEEP nodes stay open. Nothing is removed or rewritten: nodes are moved into a box, so every reference
   // (tools, the todo card, links) stays valid, find-in-pane still walks all the text, and the pin counts through chunks.
 
-  /** Folds the older messages into chunks, when the pane has a box to measure in. Safe to call often. */
-  sealOld() {
+  // Folding without measuring (2026-10-15, window lag). Measuring a chunk means laying it out, and a conversation that
+  // has never been on screen (a background tab, or one just drawn from history) is laid out whole to do it: switching to
+  // a tab whose pane held 2400 messages stalled the window 1.6 seconds, and every pane restored with a long history did
+  // the same. Such a conversation is now folded before its first layout, each chunk given an estimate of its height
+  // (estimateHeight) under content-visibility's `auto`, so the browser lays out only what is on screen, and keeps a
+  // chunk's real height from the first time it draws it (contain-intrinsic-size: auto). The reader is at the end, where
+  // nothing is estimated; scrolling up draws chunks as they come into view, and the browser keeps what is on screen
+  // still while the sizes above it settle. A conversation that is already on screen still folds by measuring (below).
+
+  /** Folds the older messages into chunks. Safe to call often. blind: with estimated heights, laying nothing out. */
+  sealOld({ blind = false } = {}) {
     this._sealAt = 0;
     const T = this.$.T;
     if (this._prepending || this._replaying || T.childElementCount < SEAL_KEEP + SEAL_SIZE) return;
-    // A pane in a background tab has no box to measure: it folds when it is shown (settleScroll).
-    if (!this.hasBox()) { this._sealPending = true; return; }
+    // A pane in a background tab has no box to measure: it folds with estimates now (sealBlind), which ask nothing of
+    // the layout. (Before 2026-10-15 it waited to be shown, and was then laid out whole to be measured.)
+    if (blind || !this.isShown() || !this.hasBox()) { this.sealBlind(); return; }
     this._sealPending = false;
     const kids = [...T.children];
     const kinds = kids.map((n) => (n.classList.contains('turn-user') ? 'turn' : n.matches(SEAL_STAYS) ? 'skip' : 'item'));
@@ -902,6 +1003,32 @@ Click for changes, commit, push, pull request, merge`;
     else if (anchor?.isConnected) g.scrollTop += anchor.getBoundingClientRect().top - y0;
     this.chunkCount = (this.chunkCount || 0) + made.length;
     this._sealedKids = T.childElementCount - SEAL_KEEP;
+  }
+
+  /**
+   * Folds the older messages into chunks with estimated heights (see above): no layout is read or forced.
+   * box, keep: another container (an earlier page drawn off screen, prependHistory) and how many nodes at its end stay loose.
+   */
+  sealBlind(box = null, keep = SEAL_KEEP) {
+    const T = box || this.$.T;
+    if (!box) this._sealPending = false;
+    const kids = [...T.children];
+    const kinds = kids.map((n) => (n.classList.contains('turn-user') ? 'turn' : n.matches(SEAL_STAYS) ? 'skip' : 'item'));
+    const ranges = planChunks(kinds, { keep, size: SEAL_SIZE });
+    if (!ranges.length) return;
+    // Characters per line of the conversation's text: from the width it last had on screen, else a typical pane's.
+    const cpl = charsPerLine(this._groundW || 0);
+    for (const [a, b] of ranges) {
+      const c = document.createElement('div');
+      c.className = 'chunk cv';
+      let h = 0;
+      for (let i = a; i < b; i++) h += estimateHeight(kids[i], cpl);
+      c.style.containIntrinsicSize = `auto ${Math.max(1, Math.round(h))}px`;
+      kids[a].before(c);
+      c.append(...kids.slice(a, b));
+    }
+    this.chunkCount = (this.chunkCount || 0) + ranges.length;
+    if (!box) this._sealedKids = T.childElementCount - SEAL_KEEP;
   }
 
   /** Folds soon (a frame later), once the transcript has grown enough beyond what is folded. Cheap to call after every update. */
@@ -1055,6 +1182,8 @@ Click for changes, commit, push, pull request, merge`;
     const oneLine = Boolean(lh) && txt.offsetHeight < lh * 1.5;
     const room = (this.$.pin.offsetHeight || 0) + (oneLine ? lh : 0);
     const top = u.getBoundingClientRect().top - g.getBoundingClientRect().top + g.scrollTop - room - 22;
+    // The reader goes up: a stream that keeps writing must not pull them back down before the scroll starts (scrollEnd).
+    this.followsEnd = false;
     g.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' });
     u.classList.remove('pin-arrive');
     void u.offsetWidth;
@@ -1123,8 +1252,8 @@ Click for changes, commit, push, pull request, merge`;
     painter.queue(a, () => {
       a._raf = 0;
       if (!this.isShown()) { (this._unpainted ||= new Set()).add(a); return; }
-      this.drawStream(a);
-    }, (this._settleStream ||= () => { this.scrollDown(); this.sealSoon(); }));
+      watch.time('stream', () => this.drawStream(a));
+    }, (this._settleStream ||= () => watch.time('stream', () => { this.scrollEnd(); this.sealSoon(); })));
   }
 
   /** The reply as it is now: the finished blocks stay where they are, the tail after the last safe cut is parsed again. */
@@ -1601,7 +1730,10 @@ Click for changes, commit, push, pull request, merge`;
     this._at = null;
   }
 
-  renderHistory(messages, total, e = {}) {
+  /** A conversation's history (timed for the window's minute line, perfwatch.js; drawHistory draws it). */
+  renderHistory(messages, total, e = {}) { return watch.time('history', () => this.drawHistory(messages, total, e)); }
+
+  drawHistory(messages, total, e = {}) {
     // From the transcript (engine history.js): the newest page of the whole conversation, the rest on request.
     const paged = (e.source === 'transcript' || e.source === 'codex') && e.first !== undefined;
     // The same conversation at the same revision is already on screen (a reconnect): keep it, no redraw.
@@ -1634,10 +1766,16 @@ Click for changes, commit, push, pull request, merge`;
     // (or the history event does); one quiet line at the top says so. Absent flag, nothing is drawn.
     this.setArchivedCopy(Boolean(e.archivedCopy) || Boolean(this.host.archivedCopy?.(this.historyShownFor)));
     this.flushOpenNotes();
+    // A long conversation is folded before anything is laid out (sealBlind, 2026-10-15), so going to its end lays out
+    // only the end. Not when the reader goes back to a place in the middle (a restored offset, a refresh while reading
+    // higher up): that place is a number of pixels, so the heights above it are measured as before (sealSoon below).
+    const toEnd = !(this.restoreScroll && !this.restoreScroll.atEnd) && !(e.refresh && !atEnd);
+    if (toEnd) { this._sealedKids = 0; this.sealOld({ blind: true }); }
     this.scrollDown(true);
     // Back where you were reading when the workspace was saved (crash recovery).
     // (A pane in a background tab has no box to scroll: the place waits in the memo for settleScroll.)
     if (this.restoreScroll && !this.restoreScroll.atEnd) {
+      this.followsEnd = false;
       if (this.hasBox()) this.$.ground.scrollTop = this.restoreScroll.top;
       else this.scrollMemo = { atEnd: false, top: this.restoreScroll.top };
     }
@@ -1646,9 +1784,10 @@ Click for changes, commit, push, pull request, merge`;
     this.renderTasksButton();
     if (paged) requestAnimationFrame(() => this.maybeLoadEarlier());
     if (card) { this.$.T.append(card); this.scrollDown(atEnd); }
-    if (e.refresh && !atEnd) g.scrollTop = keepTop;
-    // A long conversation: the older messages are folded into chunks a frame later (sealOld).
-    this._sealedKids = 0;
+    if (e.refresh && !atEnd) { this.followsEnd = false; g.scrollTop = keepTop; }
+    // A long conversation: the older messages are folded into chunks a frame later (sealOld); one folded already
+    // (toEnd, above) only folds what comes after.
+    if (!toEnd) this._sealedKids = 0;
     this.sealSoon();
   }
 
@@ -1783,7 +1922,10 @@ Click for changes, commit, push, pull request, merge`;
    * An earlier page arrived (ev historyPage): drawn off-screen, put on top,
    * and the scroll position kept on what you were reading.
    */
-  prependHistory(e) {
+  prependHistory(e) { return watch.time('history', () => this.drawEarlier(e)); }
+
+  /** prependHistory's work (timed there for the minute line). */
+  drawEarlier(e) {
     const h = this.history;
     if (!h || e.before !== h.first) return; // another session's, or a page already drawn
     clearTimeout(h.timer);
@@ -1814,6 +1956,10 @@ Click for changes, commit, push, pull request, merge`;
     const keepTodos = this.todoCard;
     this.todoCard = null;
     try { this.renderMessages(e.messages || []); } finally { this.$.T = real; this._prepending = false; this.todoCard = keepTodos; }
+    // A long earlier page (Load all, Ctrl+F's Search all, a prompt far back in the list) is folded before it goes in
+    // (2026-10-15, sealBlind): it lands above the reader, and putting thousands of messages there laid all of them out
+    // on the spot, and once more each time the next page came. Folded, only what scrolls into view is laid out.
+    this.sealBlind(box, 0);
     const frag = document.createDocumentFragment();
     while (box.firstChild) frag.append(box.firstChild);
     if (anchor) real.insertBefore(frag, anchor); else real.append(frag);
@@ -2068,6 +2214,7 @@ Click for changes, commit, push, pull request, merge`;
     this.renderQueue();
     this.el.classList.toggle('busy', on);
     clearInterval(this.tick);
+    beatOff(this);
     // While working, the status line above the message box carries a live grid.
     this.$.egridSlot.innerHTML = on ? effortGrid('max', { live: true }) : '';
     if (on) {
@@ -2076,7 +2223,8 @@ Click for changes, commit, push, pull request, merge`;
       this.verb = pickVerb(this.verb);
       this.phase = this.verb;
       // (A pane in a hidden tab has no one watching its seconds: it redraws them when it is shown, on the next beat.)
-      this.tick = setInterval(() => { if (this.isShown()) this.showWorking(); }, 500);
+      // (Since 2026-10-15 on the shared beat, beatOn above.)
+      beatOn(this);
       this.showWorking();
     }
     this.host.changed(this);
@@ -2641,6 +2789,7 @@ Click for changes, commit, push, pull request, merge`;
   destroy() {
     for (const live of this.streams.values()) painter.cancel(live);
     clearInterval(this.tick);
+    beatOff(this);
     clearInterval(this.consoleViewTimer);
     this.console?.destroy();
     this.stopDriftWatch();

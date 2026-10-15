@@ -22,6 +22,8 @@
 
 // The viewers preset (2026-10-13): which invented artifact each viewer pane shows (artifacts.mjs).
 import { ARTIFACT_VIEWERS, artifactKind, artifactTitle } from './artifacts.mjs';
+// The load workspace (2026-10-15, window lag): five tabs, thirteen conversations, five working (load.mjs).
+import { loadPreset } from './load.mjs';
 
 export const MIN = 60_000;
 export const HOUR = 60 * MIN;
@@ -736,3 +738,10 @@ PRESETS.viewers = () => {
     rail: { view: 'all', expanded: [], scroll: 0, width: 312, collapsed: true },
   };
 };
+
+/**
+ * A window as busy as the one that was reported laggy (2026-10-15, load.mjs): five tabs, thirteen conversations with long
+ * transcripts, five of them working at once, the side panel with three viewers, hundreds of sessions in the list and
+ * 26 repositories whose numbers keep moving. Use with desktop.html?ws=load; apaki/demo/perf.mjs measures it.
+ */
+PRESETS.load = () => loadPreset();

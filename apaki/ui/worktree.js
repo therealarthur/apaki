@@ -42,17 +42,41 @@ export function isInside(child, parent) {
   return Boolean(p) && Boolean(c) && (c === p || c.startsWith(`${p}/`));
 }
 
+/*
+ * Path keys, kept per path (2026-10-15, window lag): the session list asks wtFor for every row it draws, and wtFor
+ * compared the row's folder with every worktree of every repository, normalising both paths each time (two regular
+ * expressions and a lower-casing per side). With 400 rows and 26 repositories that was a sixth of the main thread
+ * while panes worked. The keys are the same strings keyOf makes; only the work is kept.
+ */
+const pathKeys = new Map();
+const PATH_KEYS_MAX = 4000;
+function pathKey(p) {
+  const s = String(p ?? '');
+  let k = pathKeys.get(s);
+  if (k === undefined) {
+    if (pathKeys.size >= PATH_KEYS_MAX) pathKeys.clear();
+    k = keyOf(s);
+    pathKeys.set(s, k);
+  }
+  return k;
+}
+
 /**
  * The worktree a folder is in: { repo, wt } or null. The deepest one wins, because the main checkout's folder
  * contains the worktrees Claude Code keeps under .claude/worktrees.
  */
 export function wtFor(repos, cwd) {
   if (!cwd) return null;
+  // isInside(cwd, wt.path), with the folder's key made once and each worktree's kept (pathKey).
+  const c = pathKey(cwd);
+  if (!c) return null;
   let best = null;
   for (const repo of repos || []) {
     for (const wt of repo.worktrees || []) {
-      if (!isInside(cwd, wt.path)) continue;
-      const len = normPath(wt.path).length;
+      const p = pathKey(wt.path);
+      if (!p || (c !== p && !c.startsWith(`${p}/`))) continue;
+      // keyOf only changes letter case, so its length is normPath's.
+      const len = p.length;
       if (!best || len > best.len) best = { repo, wt, len };
     }
   }
@@ -67,6 +91,21 @@ export function relPath(cwd, root) {
 
 /** A worktree with its own checkout, in a repository that has more than one: what the Worktrees filter lists. */
 export const hasLinked = (repo) => (repo?.worktrees?.length || 0) > 1;
+
+/**
+ * What the repositories look like without their numbers (2026-10-15): each one's name and root, and each worktree's
+ * folder, branch (or head when detached), main and bare. Everything the session list's rows, the tab names and the
+ * Worktrees count read from the repositories; two lists with the same key draw those the same. The numbers (lines
+ * added and removed, files, ahead, behind, merged) are left out: they move after every turn.
+ */
+export function layoutKey(repos) {
+  let k = '';
+  for (const r of repos || []) {
+    k += `\u0001${r.name}\u0002${r.root}\u0002${r.id}`;
+    for (const w of r.worktrees || []) k += `\u0003${w.path}\u0002${w.branch || ''}\u0002${w.branch ? '' : w.head || ''}\u0002${w.main ? 1 : 0}${w.bare ? 1 : 0}`;
+  }
+  return k;
+}
 
 /* ---------- labels ---------- */
 
@@ -396,16 +435,29 @@ export function initWorktrees(app) {
       if (/^worktree/.test(e.ev)) { clearTimeout(w.timer); waiting.delete(e.reqId); w.resolve(e); if (e.ev !== 'worktrees') return true; }
     }
     if (e?.ev === 'worktrees') {
+      const before = layoutKey(W.repos);
       W.repos = Array.isArray(e.repos) ? e.repos : [];
       W.seen = true;
-      app.changed();
+      found.clear();
+      // shape: false when only the numbers moved (lines added, files changed), which is what most refreshes are; the
+      // session list and the tab bar show no numbers outside the Worktrees view, so app.js leaves them alone then.
+      app.changed({ shape: layoutKey(W.repos) !== before });
       return true;
     }
     return /^worktree(Plan|Result|Diff)$/.test(e?.ev || '');
   }
 
   const repos = () => W.repos;
-  const forCwd = (cwd) => wtFor(W.repos, cwd);
+  // The answer per folder until the next worktrees event (2026-10-15, window lag): the list asks for every row it draws,
+  // the tab bar and the panes for theirs, and the repositories only change with that event.
+  const found = new Map();
+  const forCwd = (cwd) => {
+    if (!cwd) return null;
+    if (found.has(cwd)) return found.get(cwd);
+    const f = wtFor(W.repos, cwd);
+    found.set(cwd, f);
+    return f;
+  };
 
   /** Which conversations (panes here) are open inside a worktree. */
   const busyIn = (wt) => (app.openCwds() || []).some((c) => isInside(c, wt.path));

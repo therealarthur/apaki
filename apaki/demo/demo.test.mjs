@@ -22,7 +22,9 @@ const HARNESS = path.join(HERE, 'harness');
 const files = fs.readdirSync(HARNESS).filter((f) => f.endsWith('.mjs') || f.endsWith('.css')).map((f) => path.join(HARNESS, f));
 const sources = [...files, path.join(HERE, 'scenes.mjs'), path.join(HERE, 'capture.mjs'), path.join(HERE, 'server.mjs'), path.join(HERE, 'desktop.html'),
   // 2026-10-12: the phone page and the scripts that make the site's media.
-  path.join(HERE, 'phone.html'), path.join(HERE, 'site-media.mjs'), path.join(HERE, 'brand-images.mjs')];
+  path.join(HERE, 'phone.html'), path.join(HERE, 'site-media.mjs'), path.join(HERE, 'brand-images.mjs'),
+  // 2026-10-15: the load workspace's driver (harness/load.mjs is in the harness folder already).
+  path.join(HERE, 'perf.mjs')];
 
 const DOUBLE_HYPHEN = '-'.repeat(2);
 const EM_DASH = String.fromCharCode(0x2014);
