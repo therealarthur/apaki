@@ -33,6 +33,8 @@ sha2 = "0.10"
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+# The sign-in Run value with its path quoted (src/autostart.rs); the version auto-launch already builds on (Cargo.lock).
+windows-registry = "0.6"
 
 # The built-in browser on macOS (src/browser_mac.rs, 2026-10-13): one WKWebView per tab, made here and driven by a small
 # injected JS bridge (WKWebView has no DevTools protocol). These are the crates and versions Tauri's own webview (wry)

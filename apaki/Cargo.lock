@@ -2197,6 +2197,7 @@ dependencies = [
  "tokio",
  "webview2-com",
  "windows",
+ "windows-registry",
 ]
 
 [[package]]

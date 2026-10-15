@@ -16,6 +16,23 @@ use tauri_plugin_autostart::ManagerExt;
 /// The argument the sign-in entry passes, so a start at sign-in can be told apart in the log.
 pub const FLAG: &str = "--autostart";
 
+/// Rewrites the Run value the plugin just wrote with the program's path in quotes (Windows). auto-launch writes
+/// `<path> --autostart` unquoted, and Apaki's path has a space in it ("...\Programs\Myrlin Apaki\myrlin-apaki.exe"):
+/// Windows then tries "...\Programs\Myrlin.exe" first, the classic unquoted-path weakness. The plugin only checks
+/// that the value exists, so on and off keep working.
+#[cfg(windows)]
+fn quote_run_value<R: Runtime>(app: &AppHandle<R>) {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let name = app.package_info().name.clone();
+    let value = format!("\"{}\" {FLAG}", exe.display());
+    match windows_registry::CURRENT_USER.create(r"Software\Microsoft\Windows\CurrentVersion\Run").and_then(|k| k.set_string(&name, &value)) {
+        Ok(()) => {}
+        Err(e) => crate::wlog(&format!("autostart: could not quote the Run value: {e}")),
+    }
+}
+#[cfg(not(windows))]
+fn quote_run_value<R: Runtime>(_app: &AppHandle<R>) {}
+
 fn marker<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|d| d.join("autostart-chosen"))
 }
@@ -40,6 +57,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
     }
     match app.autolaunch().enable() {
         Ok(()) => {
+            quote_run_value(app);
             remember(app, true);
             crate::wlog("autostart: on (first run of a build that has it)");
         }
@@ -58,6 +76,9 @@ pub fn autostart_get<R: Runtime>(app: AppHandle<R>) -> Result<bool, String> {
 pub fn autostart_set<R: Runtime>(app: AppHandle<R>, on: bool) -> Result<bool, String> {
     let r = if on { app.autolaunch().enable() } else { app.autolaunch().disable() };
     r.map_err(|e| e.to_string())?;
+    if on {
+        quote_run_value(&app);
+    }
     remember(&app, on);
     crate::wlog(&format!("autostart: {} (from Settings)", if on { "on" } else { "off" }));
     app.autolaunch().is_enabled().map_err(|e| e.to_string())

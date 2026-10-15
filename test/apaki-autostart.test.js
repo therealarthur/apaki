@@ -37,6 +37,14 @@ test('first run turns it on once; the marker keeps a later Off from Settings', (
   assert.match(set, /remember\(&app, on\)/);
 });
 
+test('the Run value is rewritten with the path in quotes after every enable (the path has a space in it)', () => {
+  const rs = read('apaki', 'src', 'autostart.rs');
+  assert.match(rs, /let value = format!\("\\"\{\}\\" \{FLAG\}", exe\.display\(\)\);/);
+  assert.match(rs, /CURRENT_USER\.create\(r"Software\\Microsoft\\Windows\\CurrentVersion\\Run"\)/);
+  assert.equal((rs.match(/quote_run_value\(&?app\);/g) || []).length, 2, 'after the first-run enable and after an On from Settings');
+  assert.match(read('apaki', 'Cargo.toml'), /^windows-registry = "0\.6"$/m);
+});
+
 test('Settings shows Open at sign-in on the PC only, and copes with an older shell', () => {
   const settings = read('apaki', 'ui', 'settings.js');
   assert.match(settings, /autostart = null \}\) \{/);
