@@ -146,7 +146,11 @@ export function hookNote(a) {
       return { text: noteText(`${name} hook blocked this${why ? `: ${why}` : ''}`), tone: 'warn', label: 'Hook' };
     }
     case 'hook_cancelled':
-      return { text: `${name} hook was cancelled${a.timedOut ? ' (it timed out)' : ''}`, tone: 'dim', label: 'Hook' };
+      // 2026-10-15: one that ran out of time says so plainly; one cancelled because the turn or an agent stopped is
+      // only worth a line before a tool (notices.js hookWorthShowing keeps the live view the same).
+      if (a.timedOut) return { text: `${name} hook took over ${Math.round((Number(a.timeoutMs) || 10000) / 1000)} s and was skipped`, tone: 'dim', label: 'Hook' };
+      if (!/^PreToolUse/.test(String(name))) return null;
+      return { text: `${name} hook was cancelled`, tone: 'dim', label: 'Hook' };
     case 'hook_system_message':
       return str(a.content) ? { text: noteText(a.content), tone: 'warn', label: 'Hook' } : null;
     case 'hook_error_during_execution':

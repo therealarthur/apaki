@@ -27,7 +27,14 @@ test('notices: hook errors, blocks and systemMessage show; quiet successes do no
   assert.match(failed.text, /failed \(exit 1\): boom/);
   assert.equal(noticeFor(sys('hook_response', { hook_name: 'Stop', outcome: 'success', exit_code: 0, stdout: '{"systemMessage":"Em dash found"}' })).text, 'Em dash found');
   assert.equal(noticeFor(sys('hook_response', { hook_name: 'Stop', outcome: 'success', exit_code: 0, stdout: '{}' })), null);
-  assert.equal(noticeFor(sys('hook_response', { hook_name: 'Stop', outcome: 'cancelled' })).text, 'Stop hook was cancelled');
+  // 2026-10-15: a hook cancelled because the turn or its agent stopped is not news after the fact (one line per
+  // parallel edit filled the pane); one before a tool stays, dim, and says what may have happened.
+  assert.equal(noticeFor(sys('hook_response', { hook_name: 'Stop', outcome: 'cancelled' })), null);
+  assert.equal(noticeFor(sys('hook_response', { hook_name: 'PostToolUse:Edit', outcome: 'cancelled', exit_code: 1 })), null);
+  const pre = noticeFor(sys('hook_response', { hook_name: 'PreToolUse:Bash', outcome: 'cancelled' }));
+  assert.equal(pre.text, 'PreToolUse:Bash hook was cancelled (it did not finish in time, or the turn stopped)');
+  assert.equal(pre.tone, 'dim');
+  assert.equal(noticeFor(sys('hook_response', { hook_name: 'PostToolUse:Edit', outcome: 'cancelled', stderr: 'Hook timed out' })).text, 'PostToolUse:Edit hook was cancelled: Hook timed out');
   assert.equal(hookWorthShowing(sys('hook_started')), false);
 });
 
@@ -83,7 +90,9 @@ test('history: system lines and hook attachments of a transcript become notices'
   assert.match(systemNote({ subtype: 'stop_hook_summary', hookErrors: ['boom'] }).text, /Stop hook error: boom/);
   assert.equal(systemNote({ subtype: 'turn_duration' }), null);
   assert.equal(hookNote({ type: 'hook_non_blocking_error', hookName: 'SessionStart:startup', stderr: 'No such file', exitCode: 127 }).text, 'SessionStart:startup hook error (exit 127): No such file');
-  assert.equal(hookNote({ type: 'hook_cancelled', hookName: 'UserPromptSubmit', timedOut: false }).text, 'UserPromptSubmit hook was cancelled');
+  assert.equal(hookNote({ type: 'hook_cancelled', hookName: 'UserPromptSubmit', timedOut: false }), null, 'cancelled because the turn stopped: not shown');
+  assert.equal(hookNote({ type: 'hook_cancelled', hookName: 'Stop', timedOut: true, timeoutMs: 10000, durationMs: 10600 }).text, 'Stop hook took over 10 s and was skipped');
+  assert.equal(hookNote({ type: 'hook_cancelled', hookName: 'PreToolUse:Bash', timedOut: false }).text, 'PreToolUse:Bash hook was cancelled');
   assert.equal(hookNote({ type: 'hook_success', hookName: 'Stop', stdout: '' }), null, 'a quiet success stays out');
 });
 

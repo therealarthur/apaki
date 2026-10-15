@@ -44,7 +44,11 @@ function hookJson(msg) {
 export function hookWorthShowing(msg) {
   if (msg?.type !== 'system') return false;
   if (msg.subtype !== 'hook_response') return false;
-  if (msg.outcome === 'error' || msg.outcome === 'cancelled') return true;
+  // A hook Claude Code cancelled because the turn or the agent behind it stopped (2026-10-15, Arthur: "this keeps
+  // happening"): the edit or reply it followed had already happened, and a batch of parallel edits printed one warning
+  // per edit. Only a check BEFORE a tool stays (dim), or one that says why.
+  if (msg.outcome === 'cancelled') return /^PreToolUse/.test(String(msg.hook_name || msg.hook_event || '')) || Boolean(clean(msg.stderr));
+  if (msg.outcome === 'error') return true;
   if (Number.isFinite(msg.exit_code) && msg.exit_code !== 0) return true;
   if (clean(msg.stderr)) return true;
   return Boolean(clean(hookJson(msg)?.systemMessage));
@@ -115,6 +119,7 @@ export function noticeFor(msg, seen = new Map()) {
       const why = clean(msg.stderr) || clean(j?.reason) || clean(msg.output) || clean(msg.stdout);
       const what = msg.outcome === 'cancelled' ? 'was cancelled' : Number(msg.exit_code) === 2 ? 'blocked this' : 'failed';
       const code = Number.isFinite(msg.exit_code) && msg.exit_code !== 0 && msg.exit_code !== 2 ? ` (exit ${msg.exit_code})` : '';
+      if (msg.outcome === 'cancelled') return { text: `${name} hook ${what}${why ? `: ${why}` : ' (it did not finish in time, or the turn stopped)'}`, tone: 'dim', label: 'Hook' };
       return { text: `${name} hook ${what}${code}${why ? `: ${why}` : ''}`, tone: msg.outcome === 'error' && Number(msg.exit_code) !== 2 ? 'error' : 'warn', label: 'Hook' };
     }
     case 'api_retry': {
