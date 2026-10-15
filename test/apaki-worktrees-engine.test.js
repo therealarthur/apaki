@@ -199,6 +199,31 @@ test('end to end: the pane\'s folder is found, worktrees are listed with numbers
   assert.ok(!/TypeError|ReferenceError|SyntaxError/.test(h.log()), h.log().slice(-600));
 });
 
+// 2026-10-15: the worktree git runs on the engine's worker thread, and host-ctl status says how the engine's thread is doing.
+test('host-ctl status shows the event loop delay, the processes started per minute, and the worktree worker', { timeout: 120000 }, async (t) => {
+  const h = await startHost(t);
+  const { root } = makeRepo(h);
+  const w = await connectHost({ file: h.file, role: 'window' });
+  await w.next((m) => m.ev === 'ready');
+  const from = w.events.length;
+  w.send({ op: 'worktrees', reqId: 'w1', cwd: root });
+  const list = await w.next((m) => m.ev === 'worktrees' && m.reqId === 'w1', 30000, from);
+  assert.equal(list.repos[0]?.worktrees.length, 2);
+  // Let the worker's count reach the engine (it reports at most once a second), then ask the way an installer does.
+  await sleep(1200);
+  const out = execFileSync(process.execPath, [path.join(ROOT, 'apaki', 'engine', 'host-ctl.js'), 'status', '--file', h.file], { encoding: 'utf8', windowsHide: true });
+  const st = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(st.ok, true, out);
+  assert.equal(st.perf.worktrees.mode, 'worker', 'the engine reads worktrees on its worker thread');
+  assert.ok(st.perf.worktrees.gitSpawns > 0, JSON.stringify(st.perf.worktrees));
+  assert.equal(st.perf.windowMs, 60000);
+  const d = st.perf.current.loopDelayMs;
+  assert.ok(Object.keys(d).every((k) => ['p50', 'p99', 'max', 'mean', 'samples'].includes(k)), JSON.stringify(d));
+  assert.ok(d.samples > 0 && d.p99 >= 0 && d.max >= d.p50, JSON.stringify(d));
+  assert.ok(st.perf.current.spawns.worker > 0, JSON.stringify(st.perf.current.spawns));
+  w.close();
+});
+
 /* ---------- the phone ---------- */
 
 const DEV = 'abcdefghijklmnopqrstuv';
