@@ -239,6 +239,7 @@ import { bareItem, startLive } from './live.js';
 import { agentByToolUse, countSubagents, listShells, listSubagents, readEntries, readText, RUNNING_MS, watchFile } from './tasks.js';
 // A session's whole conversation, across compactions, read from its transcript (2026-10-10).
 import { HistoryStore, PAGE as HISTORY_PAGE } from './history.js';
+import { forwardToClients } from './sdk-forward.js';
 import { SessionRunner } from '../../src/runner.js';
 import { listSessions, lockInfo, lockStolen, readTail, releaseLock, rememberCreated, setLockApp, takeLock } from '../../src/sessions.js';
 import { makeLoader } from '../../src/ui/picker.js';
@@ -1266,7 +1267,9 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
     onMessage: (msg) => {
       // A turn cannot end while a question really waits (its tool call is held), so any still open now went stale.
       if (msg?.type === 'result' || msg?.type === 'latch_error') dropStaleAsks(p.id, { keepSubagents: true });
-      emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
+      // Only what windows and phones draw goes out (2026-10-15, sdk-forward.js): subagent traffic and thinking or
+      // tool-input deltas were parsed on the window's main thread and thrown away.
+      if (forwardToClients(msg)) emit({ ev: 'sdk', paneId: p.id, sessionId: p.sessionId, msg });
       // What the pane is doing (a turn, background tasks), for attach and the host's idle rules (host.js).
       paneActivity(p, runner, msg);
       // The context meter: measured once the process is up, after every turn and after a compaction, and during a
