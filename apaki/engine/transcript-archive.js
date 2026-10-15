@@ -73,6 +73,26 @@ function transcripts(dir) {
   return out;
 }
 
+/**
+ * transcripts(), reading the folders without holding up the engine's thread (2026-10-15): the archive runs inside
+ * Apaki's engine, and on Arthur's PC the walk and a stat of every transcript (subagents' included) took 1.3 to 3.6 s
+ * of that thread in one piece, a minute after start and every 6 hours. Same files, same order of discovery.
+ */
+async function transcriptsAsync(dir) {
+  const out = [];
+  const walk = async (d, rel) => {
+    let entries = [];
+    try { entries = await fs.promises.readdir(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const r = rel ? path.join(rel, e.name) : e.name;
+      if (e.isDirectory()) await walk(path.join(d, e.name), r);
+      else if (e.isFile() && e.name.endsWith('.jsonl')) out.push(r);
+    }
+  };
+  await walk(dir, '');
+  return out;
+}
+
 function readManifest(root) {
   try { return JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8')); } catch { return { v: 1, files: {} }; }
 }
@@ -133,10 +153,11 @@ export async function archiveTranscripts({ from = projectsDir(), root = archiveR
   m.files ||= {};
   const res = { copied: 0, skipped: 0, failed: 0, bytesIn: 0, bytesOut: 0 };
   let since = 0;
-  for (const rel of transcripts(from)) {
+  // The folders and each file's size and time are read asynchronously (2026-10-15, transcriptsAsync has the why).
+  for (const rel of await transcriptsAsync(from)) {
     const src = path.join(from, rel);
     let st;
-    try { st = fs.statSync(src); } catch { continue; }
+    try { st = await fs.promises.stat(src); } catch { continue; }
     const key = rel.split(path.sep).join('/');
     const had = m.files[key];
     if (had && had.size === st.size && had.mtimeMs === Math.floor(st.mtimeMs)) { res.skipped += 1; continue; }

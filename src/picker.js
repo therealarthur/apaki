@@ -250,6 +250,27 @@ export function hasTypedTurns(file) {
   return tail.includes('"entrypoint":"cli"') || tail.includes('"entrypoint":"sdk-ts"');
 }
 
+/**
+ * hasTypedTurns, kept per version of the file (its size and modified time; read with a stat when the caller has
+ * neither). WHY (2026-10-15): the list asks it of every headless session it would hide, and each answer reads the last
+ * 256 KB of a transcript: 248 of them took 220 ms of Myrlin Apaki's engine thread on Arthur's PC, on every list
+ * refresh (at most every 10 s while panes work). Only a transcript that changed is read again.
+ */
+const typedKept = new Map(); // file -> { version, typed }
+export function hasTypedTurnsKept(file, size, mtimeMs) {
+  if (!file) return false;
+  let version = Number.isFinite(size) && Number.isFinite(mtimeMs) ? `${size}:${mtimeMs}` : null;
+  if (!version) {
+    try { const st = fs.statSync(file); version = `${st.size}:${st.mtimeMs}`; } catch { return false; }
+  }
+  const hit = typedKept.get(file);
+  if (hit && hit.version === version) return hit.typed;
+  const typed = hasTypedTurns(file);
+  if (typedKept.size > 20000) typedKept.clear();
+  typedKept.set(file, { version, typed });
+  return typed;
+}
+
 
 function isTypedPrompt(text) {
   return text && !/^<(command-|local-command|system-reminder|task-notification|relayed-turns)/.test(text) && !/^Stop hook feedback/.test(text);

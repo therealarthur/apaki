@@ -250,7 +250,12 @@ import { createRemote } from './remote.js';
 import { createPermissionGate } from './permissions.js';
 import { hashText, parsePhoneId, windowOf } from './remote-policy.js';
 // Git worktrees: repositories, branches and change counts, the diff, and the guarded git and gh actions (2026-10-12, worktrees.js).
-import { WorktreeIndex, diffOf, execute as wtExecute, findRepo as wtFindRepo, plan as wtPlan, run as wtRun, samePath as wtSame, terminalCommand } from './worktrees.js';
+// Since 2026-10-15 all of their git runs on a worker thread (worktrees-worker.js) behind WorktreeIndexClient: Windows
+// creates a process on the thread that asks, and the refresh's git processes held this thread up (84% of a profile).
+import { findRepo as wtFindRepo, samePath as wtSame, terminalCommand } from './worktrees.js';
+import { WorktreeIndexClient } from './worktrees-client.js';
+// The event loop's delay and the processes started, per minute, for host-ctl status and the log (2026-10-15).
+import { createPerfMonitor } from './perf.js';
 // What a paired phone may make Claude do (2026-10-10, apaki/SECURITY.md 4.4 item 4): enforced on every phone pane below.
 import { CAP_PLAN_TEXT, capCanUseTool, capDefaultMode, capModeText, capModes, capPreToolUse, capRunnerOptions, capTuneText, clampMode } from './remote-policy.js';
 // The console: a pane's conversation in its real terminal UI, and "Open in terminal" (2026-10-12, console.js).
@@ -583,11 +588,25 @@ function compact(it, term, folderOf) {
   };
 }
 
-/** How many subagents a session has had (tasks.js; files under <session>/subagents). */
+/**
+ * How many subagents a session has had (tasks.js; files under <session>/subagents).
+ *
+ * Kept per session (2026-10-15): every row of every list sent asked the disk (two folder reads per session), 220 ms of
+ * this thread for 359 sessions on Arthur's PC, again on every list refresh (at most every 10 s while panes work). A
+ * session's count is read again when live.js reports its subagents changed (onSubagents below drops it), and at the
+ * latest after SUBAGENT_COUNT_MS, spread out so they do not all expire in the same refresh.
+ */
+const subagentCounts = new Map(); // sessionId -> { n, file, until }
+const SUBAGENT_COUNT_MS = 10 * 60 * 1000;
 function subagentCount(id) {
   const file = state.files?.get(id);
   if (!file) return 0;
-  try { return countSubagents(file); } catch { return 0; }
+  const hit = subagentCounts.get(id);
+  if (hit && hit.file === file && Date.now() < hit.until) return hit.n;
+  let n = 0;
+  try { n = countSubagents(file); } catch { n = 0; }
+  subagentCounts.set(id, { n, file, until: Date.now() + SUBAGENT_COUNT_MS * (0.5 + Math.random()) });
+  return n;
 }
 
 /**
@@ -608,20 +627,22 @@ async function loadSessions() {
     if (!memo.has(programmatic)) memo.set(programmatic, listSessions({ limit: 5000, includeProgrammatic: programmatic }));
     return memo.get(programmatic);
   };
-  const loader = makeLoader({ loadInfos });
+  // The transcripts folder is read once per list (2026-10-15): it was read four times, about 22 ms each on Arthur's PC.
+  const filesNow = transcriptMap();
+  const loader = makeLoader({ loadInfos, files: filesNow });
   const items = await loader(false);
   const shown = new Set(items.map((it) => it.id));
   const term = terminalSessions();
   const byId = new Map(items.map((it) => [it.id, it]));
   for (const it of await loader(true)) if (!byId.has(it.id)) byId.set(it.id, shown.has(it.id) ? it : { ...it, headless: true });
-  for (const [id, file] of transcriptMap()) {
+  for (const [id, file] of filesNow) {
     if (byId.has(id)) continue;
     const it = bareItem(id, file);
     if (it) byId.set(id, it);
   }
   // Conversations Claude Code deleted after 30 days but Apaki's archive kept (2026-10-12): listed, marked.
   try {
-    const live = transcriptMap();
+    const live = filesNow;
     for (const id of archivedNow().keys()) {
       if (byId.has(id) || live.has(id)) continue;
       const meta = archivedMeta(id);
@@ -1298,7 +1319,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   runner.lockGuard = () => (p.sessionId ? lockStolen(p.sessionId) : null);
   p.runner = runner;
   // A pane in a folder the lists have no numbers for yet (a new worktree): the branch label follows within a second.
-  wtSoon(600);
+  // Its own worktree is the one looked at again (2026-10-15), not every repository.
+  wtSoon(600, runner.cwd);
   emit({ ev: 'opened', tookOver: Boolean(opts.force),  reqId, paneId: p.id, sessionId: p.sessionId, cwd: runner.cwd, title: info?.customTitle || info?.summary || 'New conversation', model: p.model, effort: p.effort, mode: p.mode, tune: tuneView(p), billing: billingInfo(p), terminal: sessionId ? terminalSessions().get(sessionId) || [] : [] });
   // Phones that watch this desktop pane (the shared view) stay on it through a new conversation; the window's pane may be new.
   if (!parsePhoneId(p.id)) remote?.announceFollowers?.(p.id);
@@ -1720,15 +1742,47 @@ function voiceModelOp(c = {}) {
 //   op worktreeTerminal { path }: a terminal in the folder (the window only; a phone cannot open windows on the PC)
 // kind: create, remove, commit, push, pr, merge. A phone may read (worktrees, worktreeDiff) at any access level and
 // plan or run only with Full access (remote-policy.js).
-const wtIndex = new WorktreeIndex();
+//
+// Less often, and off this thread (2026-10-15; measured on Arthur's PC: 4 of 8 panes working, the engine at 93% of a
+// core, 84% of a profile in process creation, about 80 git processes in 2 s):
+//   - every git process, the file reads that count untracked lines, the diff, plans and actions run on a worker thread
+//     (worktrees-client.js, worktrees-worker.js); repoOf and knownPath answer here from the last snapshot;
+//   - a turn that ended marks only its own worktree changed (wtSoon with its folder): the next pass reads that
+//     repository's list and refs and that worktree, and keeps every other record (before, every repository was read again);
+//   - the 30 s refresh looks again at repositories with an open pane or one a window or phone asked about in the last
+//     few minutes (WT_ASKED_HOT_MS); any other keeps its record for minutes (worktrees.js COLD_TTL_MS);
+//   - looking again costs one status per worktree whose fingerprint did not move (worktrees.js statusPrint).
+// APAKI_WT_INLINE=1 runs it on this thread as before (a way back if a worker ever misbehaves).
+const wtIndex = new WorktreeIndexClient({ log: (line) => process.stderr.write(`apaki: ${line}\n`), inline: process.env.APAKI_WT_INLINE === '1' });
 /** Folders asked about by name (the New worktree sheet's repository), so the next refresh still lists them. */
 const wtExtra = new Set();
 let wtSent = '';
 let wtTimer = null;
 let wtChain = Promise.resolve();
+/** Folders where a turn ended since the last pass (wtSoon). */
+const wtDirty = new Set();
+/** Folders a window or phone asked about by name (worktrees with cwd, a diff), and when: their repositories stay hot a while. */
+const wtAsked = new Map();
+const WT_ASKED_HOT_MS = 3 * 60 * 1000;
 
 /** The folders conversations are open in, desktop and phone. */
 const paneCwds = () => [...panes.values()].map((p) => p.runner?.cwd).filter(Boolean);
+
+/** A window or phone asked about this folder: its repository is looked at every refresh for a few minutes. */
+function wtAsk(p) {
+  if (!p) return;
+  wtAsked.delete(p);
+  wtAsked.set(p, Date.now());
+  if (wtAsked.size > 40) wtAsked.delete(wtAsked.keys().next().value);
+}
+
+/** The folders whose repositories get fresh numbers every refresh: every pane's (Claude, Codex, console) and the ones asked about lately. */
+function wtHot() {
+  const now = Date.now();
+  const out = [...panes.values()].map((p) => paneCwd(p)).filter(Boolean);
+  for (const [p, at] of wtAsked) if (now - at < WT_ASKED_HOT_MS) out.push(p);
+  return out;
+}
 
 /**
  * `load`: read the session list first when it is not loaded yet (a window or phone asked; the timer and "a turn ended"
@@ -1737,10 +1791,10 @@ const paneCwds = () => [...panes.values()].map((p) => p.runner?.cwd).filter(Bool
 let wtLoading = null;
 async function wtRepos({ force = false, ask = null, full = false, load = false } = {}) {
   if (load && !state.items) await (wtLoading ||= loadSessions().catch(() => {}).finally(() => { wtLoading = null; }));
-  if (ask) { wtExtra.add(ask); if (wtExtra.size > 40) wtExtra.delete(wtExtra.values().next().value); }
+  if (ask) { wtExtra.add(ask); if (wtExtra.size > 40) wtExtra.delete(wtExtra.values().next().value); wtAsk(ask); }
   const open = paneCwds();
   const cwds = new Set([...(state.items || []).map((it) => it.cwd).filter(Boolean), ...open, ...wtExtra]);
-  return wtIndex.snapshot({ cwds: [...cwds], stats: [...open, ...(ask ? [ask] : [])], full: full && ask ? [ask] : [], force });
+  return wtIndex.snapshot({ cwds: [...cwds], stats: [...open, ...(ask ? [ask] : [])], full: full && ask ? [ask] : [], force, hot: wtHot() });
 }
 
 /** Sends the repositories: to whoever asked (reqId), otherwise to everyone, and only when something changed. */
@@ -1756,10 +1810,21 @@ async function sendWorktrees(c = {}) {
 
 setInterval(() => { if (listening()) sendWorktrees().catch((e) => process.stderr.write(`apaki: worktrees: ${e.message}\n`)); }, 30 * 1000).unref();
 
-/** A turn ended, a pane opened or an action ran: files or folders probably changed, so look again shortly. */
-function wtSoon(ms = 2500) {
+/**
+ * A turn ended or a pane opened in `cwd`: files there probably changed, so look again shortly. Only that worktree is
+ * marked changed (2026-10-15: this used to forget every repository, so each turn end read them all again).
+ */
+function wtSoon(ms = 2500, cwd = null) {
+  if (cwd) wtDirty.add(cwd);
   if (wtTimer) return;
-  wtTimer = setTimeout(() => { wtTimer = null; wtIndex.invalidate(); if (listening()) sendWorktrees().catch(() => {}); }, ms);
+  wtTimer = setTimeout(() => {
+    wtTimer = null;
+    const dirty = [...wtDirty];
+    wtDirty.clear();
+    // The marks reach the worker before the pass that reads them (its messages are handled in order).
+    for (const c of dirty) wtIndex.changed(c).catch(() => {});
+    if (listening()) sendWorktrees().catch(() => {});
+  }, ms);
   wtTimer.unref?.();
 }
 
@@ -1772,8 +1837,9 @@ const wtArgs = (c) => ({
 async function wtPlanFor(c, run) {
   const kind = String(c.kind || '');
   const where = String(kind === 'create' ? c.repo || c.path || '' : c.path || '');
-  const repo = where ? await wtIndex.fresh(where) : null;
-  return { repo, plan: await wtPlan(kind, wtArgs(c), repo, { run, openCwds: paneCwds() }) };
+  // The fresh record and the plan are made on the worker (2026-10-15): reading the repository is a dozen git processes.
+  const { repo, plan } = await wtIndex.plan(kind, wtArgs(c), where, { run, openCwds: paneCwds() });
+  return { repo, plan, where };
 }
 
 /** A plan as the window gets it: no steps (their folders are the engine's business), plus what the sheets need of the repository. */
@@ -1782,13 +1848,12 @@ function planEvent(reqId, plan, repo) {
   return { ev: 'worktreePlan', reqId, ...rest, repo: repo ? { root: repo.root, name: repo.name, base: repo.base, branches: repo.branches, remote: repo.remote } : null };
 }
 
-/** What Apaki remembers after an action: the base a new worktree came from, and forgetting a removed one. */
+/**
+ * What Apaki remembers after an action: the base a new worktree came from, and forgetting a removed one. Done on the
+ * worker since 2026-10-15 (worktrees.js remember), where the notes file is read, so the numbers use the new base at once.
+ */
 async function wtAfter(plan) {
-  if (plan.kind === 'create' && plan.data.path) {
-    const h = await wtRun('git', ['rev-parse', 'HEAD'], { cwd: plan.data.path });
-    wtIndex.meta.set(plan.data.path, { base: plan.data.base || '', startSha: h.code === 0 ? h.stdout.trim() : '', branch: plan.data.branch, createdAt: new Date().toISOString() });
-  }
-  if (plan.kind === 'remove' && plan.data.path) wtIndex.meta.forget(plan.data.path);
+  await wtIndex.after(plan);
 }
 
 const wtDone = (plan, r) => ({
@@ -1804,14 +1869,15 @@ const wtDone = (plan, r) => ({
 function wtRunOp(c) {
   const job = wtChain.then(async () => {
     try {
-      const { repo, plan } = await wtPlanFor(c, true);
+      const { repo, plan, where } = await wtPlanFor(c, true);
       if (!repo || plan.blockers.length) {
         emit({ ev: 'worktreeResult', reqId: c.reqId, kind: plan.kind, ok: false, error: plan.blockers[0] || 'Nothing to do.', blockers: plan.blockers, commands: plan.commands });
         return;
       }
-      const r = await wtExecute(plan);
+      const r = await wtIndex.execute(plan);
       if (r.ok) await wtAfter(plan);
-      wtIndex.invalidate();
+      // Only the repository the action ran in is read again (by its main checkout, which a removed worktree cannot take along).
+      await wtIndex.invalidate(repo.root || where).catch(() => {});
       emit({ ev: 'worktreeResult', reqId: c.reqId, kind: plan.kind, ok: r.ok, error: r.error || null, log: r.log, url: r.url || null, path: plan.data.path || null, branch: plan.data.branch || null, message: r.ok ? wtDone(plan, r) : null, commands: plan.commands });
       sendWorktrees({}).catch(() => {});
     } catch (e) {
@@ -2389,9 +2455,12 @@ const handlers = {
   // Git worktrees (see the section above). A phone may send the first four, checked by remote-policy.js against its access.
   worktrees: (c) => sendWorktrees(c),
   worktreeDiff: async (c) => {
+    // Someone is looking at this worktree's changes: its repository stays hot a while (2026-10-15).
+    if (c.path) wtAsk(String(c.path));
     const found = c.path ? await wtIndex.recordFor(String(c.path)) : null;
     if (!found || !found.wt) { emit({ ev: 'worktreeDiff', reqId: c.reqId, ok: false, path: String(c.path || ''), error: 'That folder is not a git worktree.' }); return; }
-    const d = await diffOf(found.top, { base: found.wt.base || found.rec.base || '', scope: c.scope === 'head' ? 'head' : 'base' });
+    // The diff's git and its reads of new files run on the worktree worker too.
+    const d = await wtIndex.diff(found.top, { base: found.wt.base || found.rec.base || '', scope: c.scope === 'head' ? 'head' : 'base' });
     emit({ ev: 'worktreeDiff', reqId: c.reqId, path: found.top, branch: found.wt.branch || '', repo: found.rec.name, ...d });
   },
   worktreePlan: async (c) => {
@@ -2594,6 +2663,8 @@ function shutdown(reason = 'stdin closed') {
     await consoles.shutdown().catch(() => {});
     await Promise.all([...panes.values()].map((p) => closeRunner(p)));
     await codex.shutdown();
+    // The worktree worker and the delay monitor (2026-10-15).
+    try { perf.stop(); await wtIndex.close(); } catch { /* not started yet, or already gone */ }
     process.exit(0);
   })();
   return shuttingDown;
@@ -2795,6 +2866,8 @@ startLive({
   onChange: () => refreshList(),
   // A session's subagents changed on disk: the rail's count and an open list follow.
   onSubagents: (sessionId) => {
+    // The list's kept count goes too (subagentCount reads it again on the next list).
+    subagentCounts.delete(sessionId);
     const file = transcriptMap().get(sessionId);
     emit({ ev: 'subagentsChanged', sessionId, count: file ? countSubagents(file) : 0 });
   },
@@ -2940,7 +3013,9 @@ async function glassChanged() {
 fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => { glassChanged().catch(() => {}); });
 glassChanged().catch(() => {});
 // Usage numbers move without a login change; Glass keeps them, this only reads them.
-setInterval(() => { glassChanged().catch(() => {}); }, 60 * 1000).unref();
+// Only while a window or phone listens (2026-10-15): with nobody to show it to, the minute's `glass status` process is
+// skipped; a login change still runs it (the watch above), and a window that connects reads Glass at once.
+setInterval(() => { if (listening()) glassChanged().catch(() => {}); }, 60 * 1000).unref();
 
 /* ---------- signing in to Claude (fresh installs, 2026-10-10) ---------- */
 
@@ -3030,6 +3105,13 @@ async function refreshIndexes() {
 refreshIndexes();
 setInterval(() => { refreshIndexes().catch(() => {}); }, UPDATE_EVERY_MS).unref();
 
+/* ---------- how responsive this thread is (perf.js, 2026-10-15) ---------- */
+
+// The event loop's delay (p50, p99, max) and the processes started, per minute: host-ctl status shows them (hostControl
+// below, field perf), and a minute with p99 over 200 ms leaves a line in the engine log. The worktree worker's git
+// processes are counted with the ones this thread starts.
+const perf = createPerfMonitor({ log: (line) => process.stderr.write(`${line}\n`), workerSpawns: () => wtIndex.spawns });
+
 /* ---------- the background host (host.js; Arthur 2026-10-10: sessions outlive the window) ---------- */
 
 /** How many questions wait in one pane. */
@@ -3060,7 +3142,8 @@ function paneActivity(p, runner, msg) {
   if (p.runner && p.runner !== runner) return; // a runner this pane already replaced
   noteSdkMessage(p, msg, { q: runner.q || null });
   if (msg?.type === 'result') markAway(p, { busy: false, s: p.sessionId || null, away: { at: new Date().toISOString(), sessionId: p.sessionId || null } });
-  if (msg?.type === 'result' && !msg.parent_tool_use_id) { turnEnded(p); wtSoon(); }
+  // The turn's worktree is looked at again shortly; only its repository is read (2026-10-15).
+  if (msg?.type === 'result' && !msg.parent_tool_use_id) { turnEnded(p); wtSoon(2500, paneCwd(p)); }
 }
 
 /**
@@ -3179,6 +3262,8 @@ function hostControl(c = {}) {
   return {
     ev: 'host', reqId, ok: true, host: true, app: HOST_APP_ID, pid: process.pid, startedAt: host?.startedAt || null, window: Boolean(host?.window),
     remoteOn: Boolean(remote?.state?.enabled), quit: st.quit, exiting: st.exiting, idleCloseMs: st.idleCloseMs, exitGraceMs: st.exitGraceMs, panes: hostView().panes,
+    // 2026-10-15: the event loop's delay and the processes started per minute (perf.js), and where worktrees are read.
+    perf: { ...perf.status(), worktrees: { mode: wtIndex.mode, gitSpawns: wtIndex.spawns } },
   };
 }
 

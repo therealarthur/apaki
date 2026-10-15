@@ -16,7 +16,7 @@
 
 import { Box, Text, useInput, useStdout } from 'ink';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { enrichItems, filterItems, hasTypedTurns, lastPrompt, openSessions, searchInside, terminalSessions, terms, toItems, transcriptMap } from '../picker.js';
+import { enrichItems, filterItems, hasTypedTurns, hasTypedTurnsKept, lastPrompt, openSessions, searchInside, terminalSessions, terms, toItems, transcriptMap } from '../picker.js';
 import { indexBin, kindLabel, searchIndex, updateIndex } from '../deepindex.js';
 import * as folderApi from '../folders.js';
 import { codexItem, codexResumeHint, isCodexId } from '../codex.js';
@@ -74,7 +74,8 @@ export function makeLoader({ loadInfos, files, open } = {}) {
           if (have.has(s.sessionId)) return false;
           if (created.has(s.sessionId)) return true;
           const file = fileMap.get(s.sessionId);
-          return Boolean(file) && hasTypedTurns(file);
+          // Kept per file version (2026-10-15): only a transcript that changed has its tail read again.
+          return Boolean(file) && hasTypedTurnsKept(file, s.fileSize, s.lastModified);
         });
         if (extra.length) infos = [...infos, ...extra].sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
       }

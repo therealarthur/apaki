@@ -76,6 +76,14 @@ prompt. Tests: `test/apaki-worktrees.test.js` (temp repositories),
 `apaki-worktrees-ui.test.js`. Ledger entries: `apaki/parity/features.json`
 (`worktree-*`).
 
+Cost (2026-10-15): all of the git (and the reads of new files) runs on a worker
+thread (`worktrees-worker.js`, `worktrees-client.js`), so process creation never
+holds up the engine's thread. A turn that ends marks only its own worktree; the
+30 s refresh looks again at repositories with an open pane or one asked about in
+the last 3 minutes, the others every 5 minutes; a worktree whose status and refs
+did not move keeps its numbers after one `git status`. Tests:
+`test/apaki-worktrees-perf.test.js`; benchmark: `apaki/scripts/worktree-bench.mjs`.
+
 Choices the design left open:
 
 - A worktree row's click starts a conversation in it; hover (always, on the
