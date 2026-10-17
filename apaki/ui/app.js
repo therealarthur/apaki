@@ -3852,6 +3852,8 @@ function cameBack(p, kind) {
 // recording at a time; the text lands in the message box of the pane that
 // recorded it. Audio is 16 kHz mono WAV, transcribed on this PC by whisper.cpp.
 const VOICE_MAX_MS = 120000;
+/** Where the OS lets apps use the microphone, named in the mic's notes. */
+const MIC_SETTINGS = /Mac/i.test(navigator.platform || '') ? 'System Settings, Privacy and Security, Microphone' : 'Windows Settings, Privacy and security, Microphone (let desktop apps use it)';
 let rec = null;
 
 /** Speech to 16 kHz mono for Whisper (2026-10-12: iOS records at its own rate whatever the AudioContext asked). */
@@ -3895,7 +3897,21 @@ function wavFrom(chunks, rate) {
 
 async function startVoice(pane) {
   let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); } catch (e) { pane.note(`Microphone unavailable: ${e.message}`, 'error'); return; }
+  // 2026-10-17 (Arthur: "the audio button ... doesnt work"): the request for the microphone used to wait forever on a
+  // permission prompt the window never showed (src/browser.rs now answers it). If it still takes this long, say what
+  // to check instead of doing nothing.
+  const slow = setTimeout(() => pane.setStatus(WEB ? 'Waiting for the microphone: allow it when the phone asks.' : `Waiting for the microphone. If this stays, check ${MIC_SETTINGS}.`), 4000);
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  } catch (e) {
+    clearTimeout(slow);
+    pane.setStatus('');
+    const blocked = e?.name === 'NotAllowedError' || e?.name === 'SecurityError';
+    pane.note(blocked && !WEB ? `The microphone was refused. Check ${MIC_SETTINGS}.` : e?.name === 'NotFoundError' ? 'No microphone was found.' : `Microphone unavailable: ${e.message}`, 'error');
+    return;
+  }
+  clearTimeout(slow);
+  pane.setStatus('');
   // 16 kHz when the browser allows it; some iOS versions refuse that rate, and to16k resamples whatever comes.
   let ctx;
   try { ctx = new AudioContext({ sampleRate: 16000 }); } catch { ctx = new AudioContext(); }

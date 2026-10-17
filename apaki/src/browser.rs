@@ -122,7 +122,8 @@ mod imp {
         take_pwstr, AcceleratorKeyPressedEventHandler, CallDevToolsProtocolMethodCompletedHandler,
         CreateCoreWebView2ControllerCompletedHandler, DocumentTitleChangedEventHandler, FocusChangedEventHandler,
         HistoryChangedEventHandler, NavigationCompletedEventHandler, NavigationStartingEventHandler,
-        NewWindowRequestedEventHandler, ProcessFailedEventHandler, SourceChangedEventHandler, WindowCloseRequestedEventHandler,
+        NewWindowRequestedEventHandler, PermissionRequestedEventHandler, ProcessFailedEventHandler, SourceChangedEventHandler,
+        WindowCloseRequestedEventHandler,
     };
     use windows::core::{w, Interface, BOOL, HSTRING, PCWSTR, PWSTR};
     use windows::Win32::Foundation::{E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -240,6 +241,46 @@ mod imp {
         if let Err(e) = r {
             crate::wlog(&format!("could not watch the page's processes: {e}"));
         }
+
+        // The microphone for Apaki's own page (2026-10-17, Arthur: "the audio button (where you use mic) doesnt work in
+        // the prompt box"). With no handler WebView2 shows a permission prompt of its own, which Apaki's frameless
+        // window never showed, so getUserMedia waited forever and the mic button did nothing. You press the mic to
+        // record, so the page's own request is allowed. Only the app's own origin: an artifact in a frame (served from
+        // the engine's localhost server) or anything else keeps WebView2's default, and the built-in browser's pages
+        // are other webviews this handler does not see. Every other permission keeps the default too.
+        let mut tok_perm = 0i64;
+        let r = unsafe {
+            wv.add_PermissionRequested(
+                &PermissionRequestedEventHandler::create(Box::new(move |_sender, args| {
+                    if let Some(a) = &args {
+                        let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                        let _ = a.PermissionKind(&mut kind);
+                        if kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE {
+                            let mut uri = PWSTR::null();
+                            let _ = a.Uri(&mut uri);
+                            let origin = take_pwstr(uri);
+                            if is_app_origin(&origin) {
+                                let _ = a.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW);
+                            } else {
+                                crate::wlog(&format!("microphone asked by {origin}; left to WebView2"));
+                            }
+                        }
+                    }
+                    Ok(())
+                })),
+                &mut tok_perm,
+            )
+        };
+        if let Err(e) = r {
+            crate::wlog(&format!("could not answer the page's permission requests: {e}"));
+        }
+    }
+
+    /// Apaki's own page: Tauri serves it from tauri.localhost on Windows (http or https), or tauri://localhost.
+    fn is_app_origin(uri: &str) -> bool {
+        let u = uri.to_ascii_lowercase();
+        ["http://tauri.localhost/", "https://tauri.localhost/", "tauri://localhost/"].iter().any(|o| u.starts_with(o))
+            || ["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost"].iter().any(|o| u == *o)
     }
 
     /// Runs one command on the main thread.
