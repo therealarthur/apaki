@@ -3125,7 +3125,11 @@ body.rail-narrow .wordmark { font-size: var(--fs-title); font-stretch: 100%; }
 .srow .sr-lead.sr-archived-copy { color: var(--faint); }
 .srow .sr-lead .trk { stroke-opacity: .22; }
 /* Twelve ticks a turn (2026-10-12, input lag): a spinner this size reads the same as a smooth one, and it is 12 frames a second to produce, not 60. */
-.srow .sr-lead .arc { stroke-width: 1.8; transform-origin: 8px 8px; animation: sr-spin 1s steps(12, end) infinite; }
+/* The whole icon turns, not the arc inside it (2026-10-17, window lag): a transform on an SVG shape relaid the SVG on
+   every tick (102 layouts in 5 s in Arthur's window), a transform on the <svg> box does not. The track is a full circle,
+   so turning it with the arc looks the same. */
+.srow .sr-lead .arc { stroke-width: 1.8; }
+.srow .sr-lead svg:has(.arc) { animation: sr-spin 1s steps(12, end) infinite; }
 @keyframes sr-spin { to { transform: rotate(360deg); } }
 
 /* Quiet marks after the name: pinned (outside Pinned), a linked worktree. */

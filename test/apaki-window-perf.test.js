@@ -344,7 +344,16 @@ test('the window draws the session list again only when it must, at most once a 
   assert.match(app, /S\.warm = new Set\(e\.sessions \|\| \[\]\);\n\s+if \(!S\.drag\) railSoon\(\);/);
   // Rows are kept by what they show and put in order without emptying the list.
   assert.match(app, /want\.push\(keptRow\(s, \{ grouped \}, kept\)\);/);
-  assert.match(app, /placeChildren\(list, want\);/);
+  // 2026-10-17: the end-of-list items are placed with the rows and kept while they show the same (keepTail).
+  assert.match(app, /placeChildren\(list, \[\.\.\.want, \.\.\.tail\]\);/);
+  assert.match(app, /const keepTail = \(node\) => \{ const k = node\.outerHTML; const use = tailKept\.get\(k\) \|\| node;/);
+  // The folders, the views and the tab bar go on the page only when their markup changed (swapIfChanged).
+  assert.match(app, /function swapIfChanged\(box, next\) \{\n\s+if \(next\.innerHTML === box\.innerHTML\) return false;/);
+  assert.match(app, /markRows\(next\.querySelectorAll\('li\.srow'\)\);\n\s+if \(next\.innerHTML === box\.innerHTML\) return;/);
+  assert.match(app, /swapIfChanged\(views, viewsNext\);/);
+  assert.match(app, /swapIfChanged\(bar, out\);/);
+  assert.ok(!/bar\.innerHTML = '';/.test(app), 'the tab bar is not emptied first');
+  assert.match(app, /setText\(\$\('sessionsTitle'\), /);
   assert.ok(!/list\.innerHTML = '';\n\s+if \(wtView\)/.test(app), 'the list is not emptied first');
   // The paths are timed and a busy minute is logged, desktop only.
   for (const name of ['rail', 'tabs', 'panel', 'layout', 'save', 'panes']) assert.match(app, new RegExp(`watch\\.time\\('${name}'`));

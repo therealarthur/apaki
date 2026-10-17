@@ -102,6 +102,25 @@ const WEB = window.apakiShell === 'web';
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
 
+/*
+ * Leave unchanged parts of the page alone (2026-10-17, Arthur: clicks took seconds, highlights flashed, the session list
+ * would not scroll). Measured in his live window with 27 panes: the main thread was 97% busy, 8.5 of 15 s in layout,
+ * every layout over all 14,000 elements. Small engine updates (a terminal's status, a subagent count, keep-warm) redrew
+ * the folders, the views and the tab bar about 30 times a second, each time from nothing, and every redraw changed the
+ * page and made the browser lay all of it out again. Now each is drawn into a detached copy and put on the page only
+ * when its markup differs; the kept elements' handlers close over the same tab and folder objects.
+ */
+/** Puts `next`'s children into `box` only when they differ from what `box` shows. Returns true when it swapped. */
+function swapIfChanged(box, next) {
+  if (next.innerHTML === box.innerHTML) return false;
+  box.replaceChildren(...next.childNodes);
+  return true;
+}
+/** Sets an element's text only when it changes (setting the same text still replaces its text node). */
+function setText(node, text) {
+  if (node && node.textContent !== text) node.textContent = text;
+}
+
 const SEARCH_DEBOUNCE_MS = 160;
 const SAVE_KEY = 'apaki.workspace.v1';
 const GUTTER_PX = 6;
@@ -2265,7 +2284,8 @@ function drawTabs() {
   const bar = $('tabs');
   // A tab being named keeps its field until you finish (a redraw would take the field away under your typing).
   if (S.tabEdit && bar.querySelector('.tab-rename')) return;
-  bar.innerHTML = '';
+  // Drawn into a detached copy and put on the page only when it differs (swapIfChanged, 2026-10-17).
+  const out = el('div');
   const names = tabNames();
   for (const [ti, t] of S.tabs.entries()) {
     // Its conversations, then the viewers in its side panel (2026-10-13).
@@ -2346,7 +2366,7 @@ function drawTabs() {
       // It joins that tab's layout (2026-10-12), beside its conversation when it is a viewer of one there.
       dropPane(t, t.root ? { where: 'join' } : { where: 'root' }, moving);
     });
-    bar.append(tab);
+    out.append(tab);
   }
   const plus = el('button', 'tab-plus', '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>');
   plus.title = 'New tab (Ctrl+T) · right-click for a new tab in a new worktree · drop a session here to open it in a new tab';
@@ -2378,7 +2398,7 @@ function drawTabs() {
     dropPane(t, { where: 'root' }, moving);
     switchTab(t);
   });
-  bar.append(plus);
+  out.append(plus);
   const tools = el('div', 'tabs-tools');
   const t = activeTab();
   const n = conversationsIn(t).length;
@@ -2399,7 +2419,8 @@ function drawTabs() {
   // On the PC the count and the Layout button sit outside the scrolling tab row, so many tabs never push them out of
   // sight (2026-10-12); the phone hides the whole row and keeps them in it.
   const slot = WEB ? null : $('tabTools') || (() => { const s = el('div', 'tab-tools-slot'); s.id = 'tabTools'; bar.after(s); return s; })();
-  if (slot) slot.replaceChildren(tools); else bar.append(tools);
+  if (slot) { if (slot.innerHTML !== tools.outerHTML) slot.replaceChildren(tools); } else out.append(tools);
+  swapIfChanged(bar, out);
   // A pane waiting for an answer counts like one that finished unseen (askcard.js), once.
   const unread = [...S.panes.values()].filter((p) => p.unread || asks.waiting(p.id)).length;
   const fp = focusedPane();
@@ -2560,11 +2581,32 @@ function folderDropTarget(node, onSession) {
   });
 }
 
+/**
+ * The folders, drawn into a detached copy and put on the page only when they show something new (swapIfChanged,
+ * 2026-10-17): a terminal's status or a subagent count used to rebuild every folder and the session rows of the open
+ * ones many times a second, restarting their spinners and laying out the whole window each time. Naming a folder (new
+ * or renamed) draws in place, so its field keeps the keyboard.
+ */
 function renderFolders() {
   const box = $('folders');
-  // The list is drawn again on every sessions event: the keyboard's place and the scroll stay where they were.
+  if (folderUI.creating || folderUI.renaming) { drawFoldersInto(box); return; }
+  const next = el('div');
+  drawFoldersInto(next, box);
+  markRows(next.querySelectorAll('li.srow'));
+  if (next.innerHTML === box.innerHTML) return;
   const keepFocus = navFocusKey(box);
   const keepScroll = box.querySelector('.folder-list')?.scrollTop || 0;
+  box.replaceChildren(...next.childNodes);
+  const list = box.querySelector('.folder-list');
+  if (list) list.scrollTop = keepScroll;
+  restoreNavFocus(box, keepFocus);
+}
+
+/** Draws the folders into `box`; `live` is the one on the page (the same element when drawing in place). */
+function drawFoldersInto(box, live = box) {
+  // The list is drawn again on every sessions event: the keyboard's place and the scroll stay where they were.
+  const keepFocus = navFocusKey(live);
+  const keepScroll = live.querySelector('.folder-list')?.scrollTop || 0;
   if (S.foldersKnown) folderOpen.prune(S.folders.map((f) => f.id));
   box.innerHTML = '';
   const head = el('div', 'sec-head folders-head', `<span class="sec-t">Folders</span><span class="sec-n">${S.folders.length || ''}</span>`);
@@ -2650,8 +2692,10 @@ function renderFolders() {
   }
   if (!S.folders.length && !folderUI.creating) list.append(el('li', 'folder-empty', 'Drag sessions onto + to group them.'));
   box.append(list);
-  list.scrollTop = keepScroll;
-  restoreNavFocus(box, keepFocus);
+  if (box === live) {
+    list.scrollTop = keepScroll;
+    restoreNavFocus(box, keepFocus);
+  }
 }
 
 /** Draws an open folder's sessions under its row, newest first, as compact rows (sessionRow). */
@@ -3408,6 +3452,8 @@ function sessionRow(s, o = {}) {
  */
 let railKept = new Map();
 let headsKept = new Map();
+/** The end-of-list items of the last drawing, by their markup (drawRail keepTail, 2026-10-17). */
+let tailKept = new Map();
 
 /** Everything a session row shows, as one string (sessionRow draws from exactly these). */
 function rowKey(s, o = {}) {
@@ -3545,14 +3591,16 @@ function renderRail() { return watch.time('rail', drawRail); }
 function drawRail() {
   if (railFrame) { cancelAnimationFrame(railFrame); railFrame = 0; }
   const views = $('views');
-  views.innerHTML = '';
+  // Drawn into a detached copy, put on the page only when it differs (swapIfChanged, 2026-10-17).
+  const viewsNext = el('div');
   for (const v of viewList()) {
     const b = el('button', v.id === S.view ? 'on' : '', `${esc(v.label)}<span class="count">${v.n}</span>`);
     b.onclick = () => { S.view = v.id; if (v.id === 'codex') loadCodexThreads(); renderRail(); };
     // Dropping a session on All takes it out of its folder.
     if (v.id === 'all') { b.title = 'Drop a session here to take it out of its folder'; folderDropTarget(b, (sid) => moveToFolder(sid, null)); }
-    views.append(b);
+    viewsNext.append(b);
   }
+  swapIfChanged(views, viewsNext);
   let rows;
   if (S.results) {
     rows = S.results.filter((r) => inView(r.item)).map((r) => ({ ...r.item, kind: r.kind, snippet: r.snippet, hits: r.hits, why: r.why || '', sources: r.sources || null }));
@@ -3567,10 +3615,10 @@ function drawRail() {
   if (wtView) rows = wtc.rows(S.sessions.filter((s) => !s.archived)).map((r) => (r.k === 'kid' ? { ...r.s, wtKid: true } : { wtRow: r }));
   renderFolders();
   const folder = S.folders.find((f) => f.id === S.view);
-  $('sessionsTitle').textContent = S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : S.view === 'worktrees' ? 'Worktrees' : S.view === 'archived' ? 'Archived' : S.view === 'codex' ? 'Codex threads' : 'Sessions';
-  $('sessionsCount').textContent = String(wtView ? wtc.count() : Math.min(rows.length, 400));
+  setText($('sessionsTitle'), S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : S.view === 'worktrees' ? 'Worktrees' : S.view === 'archived' ? 'Archived' : S.view === 'codex' ? 'Codex threads' : 'Sessions');
+  setText($('sessionsCount'), String(wtView ? wtc.count() : Math.min(rows.length, 400)));
   $('clearView').hidden = !folder && S.view !== 'archived';
-  $('searchState').textContent = S.results ? S.searchInfo : '';
+  setText($('searchState'), S.results ? S.searchInfo : '');
   $('searchState').hidden = !S.results;
   const list = $('sessions');
   // The list is drawn again on every sessions event: the keyboard's place stays where it was.
@@ -3603,39 +3651,47 @@ function drawRail() {
       addRow(s, false);
     }
   }
-  placeChildren(list, want);
-  restoreNavFocus(list, keepFocus);
-  if (!rows.length) list.append(el('li', 'note', S.results ? 'Nothing matches in this view.' : S.view === 'archived' ? 'Nothing archived.' : wtView ? (wtc.hasData() ? 'No worktrees yet. Start a conversation in a new worktree to see it here.' : 'Looking for worktrees…') : 'No sessions here yet.'));
+  // The end of the list (a note, the new-worktree row, "N archived", Dig deeper) is part of what is placed, and an item
+  // that shows the same as last time is the same element (2026-10-17): appending a new one after every redraw changed the
+  // list's height, flipped its scrollbar and laid out the whole window, many times a second.
+  const tail = [];
+  const tailNext = new Map();
+  const keepTail = (node) => { const k = node.outerHTML; const use = tailKept.get(k) || node; tailNext.set(k, use); tail.push(use); };
+  if (!rows.length) keepTail(el('li', 'note', S.results ? 'Nothing matches in this view.' : S.view === 'archived' ? 'Nothing archived.' : wtView ? (wtc.hasData() ? 'No worktrees yet. Start a conversation in a new worktree to see it here.' : 'Looking for worktrees…') : 'No sessions here yet.'));
   const newWt = wtView ? wtc.newRowEl() : null;
-  if (newWt) list.append(newWt);
+  if (newWt) keepTail(newWt);
   // Archived sessions: one quiet link at the end of the list opens them (right-click > Unarchive brings one back).
   const archivedN = S.sessions.filter((x) => x.archived).length;
   if (archivedN && S.view !== 'archived' && !S.results && !wtView) {
     const more = el('li', 'note archived-link', `<button class="link-btn">${archivedN} archived</button>`);
     more.querySelector('button').onclick = () => { S.view = 'archived'; renderRail(); };
-    list.append(more);
+    keepTail(more);
   }
   if (S.results && S.query) {
     const dig = el('button', 'dig', '<b>Dig deeper in a dedicated session</b>Claude searches every transcript with its tools and reports what it finds.');
     dig.onclick = () => digDeeper(S.query);
     const li = el('li', 'dig-row');
     li.append(dig);
-    list.append(li);
+    keepTail(li);
   }
+  tailKept = tailNext;
+  placeChildren(list, [...want, ...tail]);
+  restoreNavFocus(list, keepFocus);
   renderRailMarks();
 }
 
 /** Marks which rail rows are open in a pane, and which one is focused. */
 function renderRailMarks() {
+  markRows($('sessions').children);
+  // The rows under open folders too (2026-10-12): the one in the focused pane shows its second line there as well.
+  markRows($('folders').querySelectorAll('li.srow'));
+}
+
+/** Marks rows open in a pane ('shown') and the focused one ('on'); also used on a detached copy before comparing. */
+function markRows(rows) {
   const open = new Set([...S.panes.values()].map((p) => p.sessionId).filter(Boolean));
   const cur = focusedPane()?.sessionId;
-  for (const li of $('sessions').children) {
-    const id = li.dataset.id;
-    li.classList.toggle('on', Boolean(id) && id === cur);
-    li.classList.toggle('shown', Boolean(id) && id !== cur && open.has(id));
-  }
-  // The rows under open folders too (2026-10-12): the one in the focused pane shows its second line there as well.
-  for (const li of $('folders').querySelectorAll('li.srow')) {
+  for (const li of rows) {
     const id = li.dataset.id;
     li.classList.toggle('on', Boolean(id) && id === cur);
     li.classList.toggle('shown', Boolean(id) && id !== cur && open.has(id));
