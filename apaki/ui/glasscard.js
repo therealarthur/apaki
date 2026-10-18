@@ -100,7 +100,10 @@ export function heroRowHtml(provider, a, busy = false) {
   const name = a ? `<span class="gc-n">${esc(a.name)}</span>${plan}` : '<span class="gc-n gc-none">Not signed in</span>';
   return `<button class="gc-row hero${key ? ' is-key' : ''}${busy ? ' busy' : ''}${a && !usable(a) ? ' warn' : ''}" data-p="${provider}" title="${esc(rowTitle(provider, a))}">`
     + `${hero.ring}<span class="g-txt"><span class="gc-prov">${esc(prov)}</span><span class="gc-name">${name}</span>`
-    + `<span class="g-line${lineCls}">${line}</span></span></button>`;
+    + `<span class="g-line${lineCls}">${line}</span></span>`
+    // Says the row opens the account chooser (2026-10-18, Arthur: "doesnt let you choose and swap claude/codex
+    // credentials on the myrlin glass section"; the switch was there, behind a row that did not look clickable).
+    + `<span class="g-go" aria-hidden="true">Switch<svg viewBox="0 0 12 12"><path d="m4.5 3 3 3-3 3"/></svg></span></button>`;
 }
 
 /** Glass's mark: two nested arcs in the providers' colours (the widget's own brand mark), drawn small. */

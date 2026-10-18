@@ -4083,6 +4083,13 @@ body.sp-dragging, body.sp-dragging * { cursor: col-resize !important; user-selec
 .gc-row.hero + .gc-row.hero { margin-top: 2px; }
 .gc-row.hero:hover { background: var(--g-raise-1); }
 .gc-row.hero:disabled:hover { background: none; }
+/* "Switch ›" (2026-10-18): the row opens the account chooser; it said so only in a tooltip. Quiet until hover; none on
+   the phone, whose rows are read only (glasscard.js readOnly disables them). */
+.gc-row.hero { grid-template-columns: 46px minmax(0, 1fr) auto; }
+.gc-row.hero .g-go { display: inline-flex; align-items: center; gap: 2px; font: 600 var(--fs-micro)/1 var(--font-body); color: var(--faint); transition: color var(--dur-fast) var(--ease-hover); }
+.gc-row.hero .g-go svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.gc-row.hero:hover .g-go, .gc-row.hero:focus-visible .g-go { color: var(--g-acc-text, var(--ink)); }
+.gc-row.hero:disabled .g-go { display: none; }
 .gc-row[data-p="claude"] { --g-acc: var(--g-claude); --g-acc-text: var(--g-claude-text); }
 .gc-row[data-p="codex"] { --g-acc: var(--g-codex); --g-acc-text: var(--g-codex-text); }
 .gc-row.is-key { --g-acc: var(--brand); --g-acc-text: var(--brand-strong); }
