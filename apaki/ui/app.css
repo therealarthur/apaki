@@ -941,7 +941,10 @@ body.maximized .stage { inset: 0; border-radius: 0; border-width: 1px 0 0 1px; }
 .pane { grid-template-rows: auto 1fr; }
 .pane > .ground, .pane > .composer-wrap { grid-row: 2; grid-column: 1; }
 .composer-wrap { align-self: end; z-index: 3; pointer-events: none; padding-bottom: 16px; }
-.composer-wrap > .composer, .composer-wrap > .slash { pointer-events: auto; }
+/* The queued messages too (2026-10-19, Arthur: "when queing a message/prompt the steer and edit and x button do not
+   work"): the wrap lets clicks through to the conversation behind it, and the queue inherited that, so its Steer, Edit
+   and x never got a click (a click from script still worked, which is why it looked fixed on 10-10). */
+.composer-wrap > .composer, .composer-wrap > .slash, .composer-wrap > .queue { pointer-events: auto; }
 .transcript { padding-bottom: calc(var(--composer-h, 150px) + 18px); }
 /* Messages fade out in the strip under the card instead of showing sharp below it. */
 .pane > .ground { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 30px), transparent); }
