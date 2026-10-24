@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <!-- impeccable-disable marquee -- every infinite horizontal animation in this window is the pearl background's slow drift or a loading shimmer (Glass meter refreshing, an artifact or a browser page loading); none scrolls content, and all stop under prefers-reduced-motion (2026-10-12) -->
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' wss://apaki.myrlin.io; manifest-src 'self'; worker-src 'self'; frame-src 'self'; media-src 'self' blob: mediastream:; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#FDFDFF">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Apaki">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <title>Myrlin Apaki</title>
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="fonts.css">
+  <link rel="stylesheet" href="app.css?v=4fb280b974ab">
+  <link rel="stylesheet" href="web.css?v=4fb280b974ab">
+</head>
+<body class="web">
+<!-- Apaki phone client: the parts a phone adds to Apaki's own window
+     (apaki/ui/index.html). build-web.mjs puts this right after <body>.
+     boot.js fills the pairing card and the link bar. -->
+  <section class="pair-screen" id="pairScreen" aria-live="polite">
+    <div class="pair-card">
+      <div class="pair-brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 32 15" class="m-mark pair-mark" aria-hidden="true"><defs><linearGradient id="mflare" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#07B6D5"/><stop offset="1" stop-color="#3C83F6"/></linearGradient></defs><path class="m-fold" d="M12.292 9 C13.331 9 14.221 9.801 14.28 10.788 L14.554 15.346 L12.18 22.327 C11.916 23.105 11.452 23.858 11.15 24 L11.115 24 C9.996 24 9.36 23.019 9.246 21.115 L9.029 17.495 L10.838 12.173 C11.395 10.538 11.996 9.141 12.206 9 L12.292 9Z"/><path class="m-stroke" d="M0.5 24 L6.904 24 L10.925 12.173 C11.481 10.538 12.083 9.141 12.292 9 L7.042 9 C6.18 9 5.413 9.549 5.136 10.366Z"/><path class="m-fold" d="M23.369 9 C24.408 9 25.298 9.801 25.357 10.788 L25.745 17.258 C25.133 17.737 24.444 18.836 24.013 20.106 L23.257 22.327 C22.993 23.105 22.529 23.858 22.227 24 L22.192 24 C21.073 24 20.437 23.019 20.323 21.115 L20.106 17.495 L21.915 12.173 C22.471 10.538 23.073 9.141 23.283 9 L23.369 9Z"/><path class="m-stroke" d="M11.115 24 L16.538 24 C17.401 24 18.167 23.451 18.445 22.634 L22.002 12.173 C22.558 10.538 23.16 9.141 23.369 9 L18.119 9 C17.257 9 16.49 9.549 16.213 10.366 L12.146 22.327 C11.881 23.105 11.418 23.858 11.115 24Z"/><path class="m-flare" d="M22.192 24 L27.615 24 C28.478 24 29.244 23.451 29.522 22.634 L31.438 17 L26.303 17 C25.605 17 24.559 18.398 23.978 20.106 L23.223 22.327 C22.958 23.105 22.494 23.858 22.192 24Z" fill="url(#mflare)"/></svg><span class="wordmark">Myrlin Apaki</span></div>
+      <div id="pairBody"><div class="pair-kicker">Phone</div><h1>Starting…</h1></div>
+    </div>
+    <p class="pair-fine">End to end encrypted between this phone and your PC. The relay only forwards sealed frames; your Claude logins never leave the PC.</p>
+  </section>
+  <div class="link-bar" id="linkBar" role="status" hidden></div>
+  <div class="drawer-scrim" id="drawerScrim"></div>
+
+  <!-- No OS title bar (decorations off): the brand row and the tab row are
+       the top of the window. Their empty space drags it, double-click
+       maximizes, and the window buttons sit at the right of the tab row. -->
+  <aside class="rail">
+    <header class="brand" data-tauri-drag-region>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 32 15" class="m-mark brand-mark" data-tauri-drag-region aria-hidden="true"><defs><linearGradient id="mflare" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#07B6D5"/><stop offset="1" stop-color="#3C83F6"/></linearGradient></defs><path class="m-fold" d="M12.292 9 C13.331 9 14.221 9.801 14.28 10.788 L14.554 15.346 L12.18 22.327 C11.916 23.105 11.452 23.858 11.15 24 L11.115 24 C9.996 24 9.36 23.019 9.246 21.115 L9.029 17.495 L10.838 12.173 C11.395 10.538 11.996 9.141 12.206 9 L12.292 9Z"/><path class="m-stroke" d="M0.5 24 L6.904 24 L10.925 12.173 C11.481 10.538 12.083 9.141 12.292 9 L7.042 9 C6.18 9 5.413 9.549 5.136 10.366Z"/><path class="m-fold" d="M23.369 9 C24.408 9 25.298 9.801 25.357 10.788 L25.745 17.258 C25.133 17.737 24.444 18.836 24.013 20.106 L23.257 22.327 C22.993 23.105 22.529 23.858 22.227 24 L22.192 24 C21.073 24 20.437 23.019 20.323 21.115 L20.106 17.495 L21.915 12.173 C22.471 10.538 23.073 9.141 23.283 9 L23.369 9Z"/><path class="m-stroke" d="M11.115 24 L16.538 24 C17.401 24 18.167 23.451 18.445 22.634 L22.002 12.173 C22.558 10.538 23.16 9.141 23.369 9 L18.119 9 C17.257 9 16.49 9.549 16.213 10.366 L12.146 22.327 C11.881 23.105 11.418 23.858 11.115 24Z"/><path class="m-flare" d="M22.192 24 L27.615 24 C28.478 24 29.244 23.451 29.522 22.634 L31.438 17 L26.303 17 C25.605 17 24.559 18.398 23.978 20.106 L23.223 22.327 C22.958 23.105 22.494 23.858 22.192 24Z" fill="url(#mflare)"/></svg>
+      <span class="wordmark" data-tauri-drag-region>Myrlin Apaki</span>
+      <!-- Hide the sidebar (2026-10-10); the button at the left of the tab row brings it back. Ctrl+B does both. -->
+      <button class="rail-toggle" id="railHide" title="Hide the sidebar (Ctrl+B)" aria-label="Hide the sidebar"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M6 2.5v11"/></svg></button>
+    </header>
+
+    <section class="rail-sec rail-find">
+      <button class="new" id="new" title="New conversation in the focused pane (Ctrl+T for a new tab)">New conversation</button>
+      <label class="search">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+        <input id="q" placeholder="Search by words or meaning" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="lens" id="lens" hidden>
+        <span class="lens-info" id="lensInfo"></span>
+        <button class="ask" id="ask" title="">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.3 3.6 3.6 1.3-3.6 1.3L8 11.6 6.7 8 3.1 6.7l3.6-1.3zM12.6 10.4l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z"/></svg>
+          <span>Ask Claude</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="rail-sec rail-folders" id="folders"></section>
+
+    <section class="rail-sec rail-sessions">
+      <div class="sec-head">
+        <span class="sec-t" id="sessionsTitle">Sessions</span><span class="sec-n" id="sessionsCount"></span>
+        <!-- The list updates on its own (engine live.js); this reads it again now. -->
+        <button class="sec-refresh" id="refreshSessions" title="Read every session again (the list also updates on its own)" aria-label="Refresh the session list"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.7M13.2 2.6v2.9h-2.9"/></svg></button>
+        <button class="sec-clear" id="clearView" hidden title="Show all sessions">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>
+        </button>
+        <nav class="views" id="views"></nav>
+      </div>
+      <div class="search-state" id="searchState"></div>
+      <ol class="sessions" id="sessions"><li class="note">Loading sessions…</li></ol>
+    </section>
+
+    <footer class="rail-foot">
+      <div class="pc-line" id="pcLine"></div>
+      <!-- Myrlin Glass, compact (2026-10-09): the live Claude account (a key says so) and the live Codex
+           account, each with its usage; click a row to switch it. Filled in by app.js from the engine's glass event. -->
+      <div class="glass-card" id="glassState" hidden></div>
+      <div class="foot-row">
+        <span id="indexState">Loading…</span>
+        <button class="foot-icon phone-btn" id="phone" title="Use Apaki from your phone" aria-label="Phone access"></button>
+        <button class="foot-icon" id="settings" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" class="i24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
+    </footer>
+  </aside>
+
+  <!-- The sidebar's right edge: drag to resize, drag to the far left to hide it, double-click for the default width. -->
+  <div class="rail-resize" id="railResize" role="separator" aria-orientation="vertical" aria-label="Resize the sidebar" title="Drag to resize the sidebar. Drag it to the left edge to hide it; double-click for the default width."></div>
+
+  <main class="main">
+    <header class="topbar" data-tauri-drag-region>
+      <button class="rail-toggle rail-show" id="railShow" hidden title="Show the sidebar (Ctrl+B)" aria-label="Show the sidebar"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M6 2.5v11"/></svg></button>
+      <button class="drawer-btn" id="drawerBtn" aria-label="Sessions" aria-expanded="false"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 6h13M3.5 10h13M3.5 14h8"/></svg></button>
+      <nav class="tabs" id="tabs" aria-label="Tabs" data-tauri-drag-region></nav>
+      <div class="winctl" id="winctl">
+        <button data-w="min" title="Minimize"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5h8"/></svg></button>
+        <button data-w="max" title="Maximize"><svg class="i-max" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1.2"/></svg><svg class="i-restore" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="3.6" width="6.4" height="6.4" rx="1.1"/><path d="M4 3.6V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-.6"/></svg></button>
+        <button data-w="close" class="close-w" title="Close"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button>
+      </div>
+    </header>
+    <section class="stages" id="stages"></section>
+  </main>
+
+  <template id="paneTpl">
+    <section class="pane">
+      <header class="pane-bar">
+        <span class="grip" draggable="true" title="Drag to move this pane">
+          <svg viewBox="0 0 10 16" aria-hidden="true"><circle cx="3" cy="3" r="1.2"/><circle cx="7" cy="3" r="1.2"/><circle cx="3" cy="8" r="1.2"/><circle cx="7" cy="8" r="1.2"/><circle cx="3" cy="13" r="1.2"/><circle cx="7" cy="13" r="1.2"/></svg>
+        </span>
+        <!-- This conversation's artifacts (2026-10-09): shows once it has one; lit when one is closed; a click reopens it. -->
+        <button class="icon-btn art-reopen" hidden aria-label="Artifacts from this conversation"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="4.2" width="9" height="9.6" rx="1.6"/><path d="M5 4.2v-.6c0-.8.6-1.4 1.4-1.4h6.4c.8 0 1.4.6 1.4 1.4v6.8c0 .8-.6 1.4-1.4 1.4h-2"/></svg><span class="ar-n"></span></button>
+        <div class="title-block">
+          <h2 class="title">New conversation</h2>
+          <!-- Codex panes carry a small word mark (2026-10-12); Claude panes show nothing there. Git worktrees (2026-10-12): the branch and its change count when this conversation's folder is in a repository; a click opens its menu (worktree.js). -->
+          <div class="meta-line"><span class="kind-mark" hidden>Codex</span><button class="folder-chip" title="Folder"></button><button class="wt-btn" hidden></button><span class="cwd"></span></div>
+        </div>
+        <!-- This conversation's subagents, shells and monitors (tasks.js): count of running ones; click for the list. -->
+        <button class="tasks-btn" hidden aria-label="Subagents and background tasks"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="5.2" cy="5.2" r="2"/><path d="M1.8 12.8c.4-2 1.7-3.1 3.4-3.1s3 1.1 3.4 3.1"/><rect x="9.4" y="3" width="5" height="4" rx="1"/><path d="M10.4 9.6h3M10.4 12h3"/></svg><span class="tb-n"></span></button>
+        <!-- The console (2026-10-12, console.js): this conversation in the real Claude Code or Codex terminal UI, in this pane; and the same in a terminal window. -->
+        <button class="icon-btn console-btn" aria-pressed="false" title="Console: the real terminal UI of this conversation (Ctrl+`)" aria-label="Toggle the console"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="2"/><path d="M4.6 6.2l2.2 1.9-2.2 1.9M8.4 10.6h3"/></svg></button>
+        <button class="icon-btn term-btn" title="Open in a terminal window, with this pane's model, effort and mode" aria-label="Open in a terminal window"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.6 2.6H3.8c-1.1 0-2 .9-2 2v7.6c0 1.1.9 2 2 2h7.6c1.1 0 2-.9 2-2V7.4"/><path d="M10.2 1.8h4v4M14.2 1.8 8.4 7.6"/></svg></button>
+        <button class="icon-btn close" title="Close pane (Ctrl+W)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+      <div class="ground"><div class="transcript"></div></div>
+      <div class="prompt-pin" hidden></div>
+      <section class="composer-wrap">
+        <div class="status-line"><span class="egrid-slot"></span><span class="status"></span></div>
+        <ul class="slash" hidden></ul>
+        <div class="queue" hidden></div>
+        <div class="composer">
+          <div class="attachments"></div>
+          <textarea rows="1" placeholder="Message Claude, / for commands, paste or drop images" spellcheck="true"></textarea>
+          <div class="composer-row">
+            <label class="icon-btn" title="Attach images">
+              <input type="file" accept="image/*" multiple hidden>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 4.5 5.4 9.6a1.6 1.6 0 0 0 2.3 2.3l5.4-5.4a3 3 0 0 0-4.3-4.3L3.4 7.6a4.4 4.4 0 0 0 6.2 6.2l4-4"/></svg>
+            </label>
+            <button class="icon-btn mic" disabled title="Dictate with the local Whisper model">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5V15"/></svg>
+            </button>
+            <div class="chips">
+              <button class="chip-btn model" title="Model"></button>
+              <button class="chip-btn effort" title="Effort"></button>
+              <button class="chip-btn mode" title="Permission mode (Shift+Tab to cycle)"></button>
+              <button class="chip-btn billing" title="Billing"></button>
+              <!-- How full the context window is (2026-10-10): a thin meter and the percentage; click for the breakdown. -->
+              <button class="chip-btn ctx" hidden title="Context window"><span class="ctx-bar" aria-hidden="true"><i></i></span><span class="ctx-n"></span></button>
+            </div>
+            <button class="send">Send</button>
+          </div>
+        </div>
+      </section>
+    </section>
+  </template>
+
+  <div class="sheet-scrim" id="scrim" hidden>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <script type="module" src="boot.js?v=4fb280b974ab"></script>
+</body>
+</html>
