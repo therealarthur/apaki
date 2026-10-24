@@ -3875,8 +3875,8 @@ if ($('theme')) $('theme').onclick = () => window.apakiTheme.set(THEME_UI[window
 
 /* ---------- the rail's bottom-left corner: Glass, Settings, Phone (2026-10-09) ---------- */
 
-// On the phone (WEB) the card only shows: switching accounts and keep-warm are billing, which a phone never runs (remote-policy.js).
-const glassCard = initGlassCard({ root: $('glassState'), send, menu, readOnly: WEB, note: (text, tone) => focusedPane()?.note(text, tone) });
+// The phone shares usage details and provider settings; swapping the computer's account needs Full access.
+const glassCard = initGlassCard({ root: $('glassState'), send, menu, readOnly: WEB, can: (op) => phoneCan(op) && (op !== 'glassSwap' || phoneCap() === 'full'), note: (text, tone) => focusedPane()?.note(text, tone) });
 const settings = initSettings({
   button: $('settings'), sheet, send, theme: window.apakiTheme, themeUi: THEME_UI, indexText, warm: !WEB,
   // Auto-compact is the PC's: it applies to every Claude Code Apaki starts, and a phone cannot send that op (remote-policy.js).
@@ -4522,9 +4522,10 @@ await listen('engine', watch.wrap('events', ({ payload: e }) => {
     case 'places': startUI?.places(e); break;
     case 'dir': startUI?.dir(e); break;
     case 'glass':
+    case 'glass_providers':
     case 'glass_op':
     case 'glass_swap':
-      // What Myrlin Glass has Claude Code and Codex on right now; updates the moment Glass swaps (glasscard.js).
+      // What Myrlin Glass has Claude Code, Codex and Kimi on right now; updates the moment Glass swaps (glasscard.js).
       glassCard.handle(e);
       break;
     case 'warmState': settings.handle(e); break;
@@ -4546,6 +4547,7 @@ await listen('engine', watch.wrap('events', ({ payload: e }) => {
       if (WEB) phoneShowChat();
       break;
     case 'error':
+      glassCard.handle(e);
       focusedPane()?.note(e.message, 'error');
       // A phone's menu action the PC refused (access, an older PC): the pane's note may be off screen, so a toast says it too.
       if (WEB && e.refused) phoneToast(e.message, false);

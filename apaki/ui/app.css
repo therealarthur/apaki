@@ -4214,3 +4214,7 @@ body.sp-dragging, body.sp-dragging * { cursor: col-resize !important; user-selec
   .tab, .tab-tool, .composer, .chip-btn, .pin-card, .gc-row.hero, .g-ring .g-a, .ask-card, .sp-rail-g, .at-filter { transition: none; }
   .gc-row.hero.busy .g-ring svg { animation: none; }
 }
+
+/* Hidden Glass providers also hide their billing chip. */
+.chip-btn.billing[hidden] { display: none; }
+.glass-panel[data-p="settings"] .gp-toggle span:first-child { min-width: 0; overflow-wrap: anywhere; }

@@ -26,7 +26,8 @@
  *   pin                                      Pin to top, a session-list write like folder (Full and No shell)
  *   consoleView                              read only (2026-10-12): the text of the PC console that has the
  *                                            conversation its pane asked for; the console itself is PC_ONLY_OPS
- * Never billing, never the remote* ops (pairing, devices), never voice,
+ * Per-pane billing stays on the PC. Glass display settings are shared; only Full phones may swap accounts.
+ * Never the remote* ops (pairing, devices), never voice,
  * Dig deeper (it starts an Opus session outside a conversation), folders
  * beyond move and create, stopSession, revealFolder or openExternal (they act
  * on the PC's screen or on another window's panes), and nothing that reaches
@@ -104,6 +105,8 @@ export const PHONE_PREFIX = 'phone:';
 /** Engine ops a phone may send. artifactGet only when the engine has that op. */
 export const PHONE_OPS = Object.freeze([
   'sessions', 'search',
+  // Shared display preference at every access level; account swaps require Full access.
+  'glass', 'glassProviders', 'glassSwap',
   'open', 'attach', 'send', 'interrupt', 'answer', 'model', 'effort', 'mode', 'commands', 'close',
   // 2026-10-13 (tune.js): Ultracode and its workflow size on a Claude pane, the reasoning summary and speed on a Codex pane.
   // Turning Ultracode ON needs Full access (capTuneText); everything else here is open to every access level.
@@ -304,12 +307,13 @@ export function capDeniedText(cap, name) {
  */
 export function capAllowsOp(cap, op) {
   if (SESSION_WRITE_OPS.includes(op)) return cap === 'full' || cap === 'noshell';
-  if (op === 'browserView') return cap === 'full';
+  if (op === 'browserView' || op === 'glassSwap') return cap === 'full';
   return true;
 }
 
 /** Why an op was refused for this capability, for the person on the phone. */
 export function capOpText(cap, op) {
+  if (op === 'glassSwap') return 'Switching the computer’s Glass account requires Full phone access.';
   if (op === 'browserView') return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC: Claude cannot use the browser from it, so there is no page to show.`;
   return `This phone is set to ${CAP_LABEL[cap] || cap} on the PC, which only reads: it cannot ${{ rename: 'rename', forkSession: 'fork', archive: 'archive', folder: 'move', pin: 'pin' }[op] || 'change'} sessions. Change the phone's access in Apaki's Phone sheet on the PC.`;
 }
@@ -635,6 +639,20 @@ export function checkPhoneCommand(cmd, ctx) {
   const codexPane = paneId !== null && ctx.paneKind?.(paneId) === 'codex';
 
   switch (op) {
+    case 'glass':
+      if (cmd.refresh !== undefined) out.refresh = cmd.refresh === true;
+      break;
+    case 'glassProviders':
+      if (cmd.provider === undefined && cmd.visible === undefined) break;
+      if (typeof cmd.provider !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/.test(cmd.provider) || typeof cmd.visible !== 'boolean') return fail('Bad Glass provider setting.', cmd);
+      out.provider = cmd.provider;
+      out.visible = cmd.visible;
+      break;
+    case 'glassSwap':
+      if (!['claude', 'codex', 'kimi'].includes(cmd.provider) || typeof cmd.account !== 'string' || !cmd.account || cmd.account.length > 256 || /^-/.test(cmd.account) || /[\x00-\x1f\x7f]/.test(cmd.account)) return fail('Bad Glass account.', cmd);
+      out.provider = cmd.provider;
+      out.account = cmd.account;
+      break;
     case 'sessions':
       break;
     case 'codexModels':

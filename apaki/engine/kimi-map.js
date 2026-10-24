@@ -1,4 +1,6 @@
 /** ACP updates and requests translated to Apaki's existing conversation and question shapes. */
+import { providerVisible } from '../ui/glass-providers.js';
+
 export const KIMI_MODES = ['default', 'plan', 'auto', 'yolo'];
 export const acpText = (content) => (Array.isArray(content) ? content : []).map((c) => {
   if (c.type === 'content') return c.content?.text || '';
@@ -11,7 +13,7 @@ export function kimiBilling(status) {
   if (!account) return { name: 'Kimi OAuth', source: 'kimi', follow: false, isKey: false, headroom: null };
   return {
     name: String(account.label || account.email?.split('@')[0] || 'Kimi OAuth'), source: 'kimi', follow: true, isKey: false,
-    headroom: Number.isFinite(account.headroom) ? account.headroom : null,
+    headroom: Number.isFinite(account.headroom) ? account.headroom : null, glassVisible: providerVisible(status, 'kimi'),
   };
 }
 

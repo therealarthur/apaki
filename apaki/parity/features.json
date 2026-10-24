@@ -1064,7 +1064,7 @@
       "commits": ["8f4406f", "bb94ca5", "1a622ca", "9cc905e"],
       "sessions": ["c6e7b179-2ed4-4ae5-afac-7845f0c7b029"],
       "verifiedAgainst": { "claude-sdk": "0.3.295" },
-      "notes": "The corner card shows the live Claude account (an API key reads as one, with dollars left) and the live Codex account; Glass swaps restart a Glass-following pane's runner on its next message, resumed from disk. The manage panel renames, reconnects, adds, hides and removes credentials (9cc905e). Phone: glass state is broadcast (read only); swaps and the panel are PC only (never billing ops)."
+      "notes": "The corner card and panel show Claude, Codex and Kimi usage, including every Kimi monthly window and reset. Provider toggles read and write the shared Glass preference. Phone: the same panel, usage details, Kimi login hint and provider toggles are available. Account swaps require Full access. Existing rename, account hide, API key management and browser sign-in stay on the desktop. Kimi swaps do not depend on Workbook."
     },
     {
       "id": "per-conversation-billing",

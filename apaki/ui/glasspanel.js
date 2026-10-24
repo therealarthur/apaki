@@ -37,9 +37,9 @@
 import { esc } from './markdown.js';
 import { pc } from './platform.js';
 import { leftShare, leftText } from './glasscard.js';
-import { paintRings, windowsDetailHtml } from './usage-rings.js';
+import { paintRings, resetAtText, windowsDetailHtml } from './usage-rings.js';
 
-const NAMES = { claude: 'Claude', codex: 'Codex' };
+import { PROVIDER_NAMES as NAMES, KIMI_LOGIN_HINT, providerChoices, providerVisible, displayProviders } from './glass-providers.js';
 const NEEDS = new Set(['needsLogin', 'noSubscription']);
 const ICON = {
   edit: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5-7.6 7.6-3 .5.5-3z"/></svg>',
@@ -65,13 +65,6 @@ export function closeGlassPanel() {
 /** Which provider the open panel shows (the card redraws it as Glass changes), or null. */
 export const glassPanelProvider = () => open?.provider || null;
 
-const resetText = (iso) => {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const soon = d.getTime() - Date.now() < 20 * 3600 * 1000;
-  return d.toLocaleString(undefined, soon ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-};
-
 /**
  * The faint line under a name: plan or org, when the tightest limit resets,
  * or why it needs attention. The usage column already says how much is left,
@@ -81,12 +74,13 @@ function subLine(a) {
   if (NEEDS.has(a.state)) return a.state === 'noSubscription' ? 'No subscription on this login' : a.detail || 'Needs signing in again';
   if (a.isKey) return [a.detail, a.keyHint, a.error].filter(Boolean).join(' · ') || 'Console org';
   const w = (a.windows || []).filter((x) => x.resetsAt).sort((x, y) => y.percent - x.percent)[0];
-  return [a.plan, w ? `${String(w.label || '').toLowerCase()} resets ${resetText(w.resetsAt)}` : '', a.state === 'stale' ? 'usage out of date' : ''].filter(Boolean).join(' · ');
+  return [a.plan, w ? `${String(w.label || '').toLowerCase()} resets ${resetAtText(w.resetsAt)}` : '', a.state === 'stale' ? 'usage out of date' : ''].filter(Boolean).join(' · ');
 }
 
 /** The row's "more" menu: rename, sign in again, hide or show, remove (API keys). */
 function menu(a, ui) {
   const confirming = ui.confirm === a.id;
+  if (ui.provider === 'kimi') return `<div class="gp-menu" role="menu"><button data-a="login">${ICON.refresh}<span>Sign in again<small>${KIMI_LOGIN_HINT}</small></span></button></div>`;
   // Lite mode (no Workbook): a subscription's name and hiding live in Workbook, so only signing in again is offered.
   if (ui.lite && !a.isKey) return `<div class="gp-menu" role="menu"><button data-a="login">${ICON.refresh}<span>Sign in again<small>${ui.provider === 'codex' ? 'Codex signs in with codex login in a terminal' : "Claude Code's own sign-in, in a new window"}</small></span></button></div>`;
   const items = [`<button data-a="rename">${ICON.edit}<span>Rename${a.isKey ? '' : '<small>in Workbook, so it shows everywhere</small>'}</span></button>`];
@@ -107,18 +101,26 @@ function row(provider, a, ui) {
     : `<span class="gp-n" title="${esc(a.name)}">${esc(a.name)}</span>${tag}`;
   const use = needs ? '' : `<div class="gp-use${low ? ' low' : ''}"><span class="gp-left">${esc(leftText(a) || '')}</span><span class="gp-meter" aria-hidden="true"><i data-v="${share == null ? 0 : (share / 100).toFixed(3)}"></i></span></div>`;
   // The live account's details (2026-10-12): every usage window, its ring, the share used and the exact reset.
-  const detail = a.active && !a.isKey && !needs ? windowsDetailHtml(a.windows || []) : '';
+  const detail = (a.active || provider === 'kimi') && !a.isKey && !needs ? windowsDetailHtml(a.windows || []) : '';
   const acts = [];
-  if (!a.active && !needs) acts.push('<button class="gp-btn primary" data-a="use" title="Make this the live login on this ' + pc() + '">Use</button>');
-  if (needs) acts.push(`<button class="gp-btn" data-a="login" title="Sign this account in again in a browser window">Sign in</button>`);
+  if (ui.canSwap && !a.active && !needs) acts.push('<button class="gp-btn primary" data-a="use" title="Make this the live login on this ' + pc() + '">Use</button>');
+  if (needs && (!ui.readOnly || provider === 'kimi')) acts.push(`<button class="gp-btn" data-a="login" title="${provider === 'kimi' ? 'Sign in with /login in the Kimi CLI' : 'Sign this account in again in a browser window'}">Sign in</button>`);
   const menuOpen = ui.menu === a.id;
-  acts.push(`<button class="gp-icon gp-more${menuOpen ? ' on' : ''}" data-a="menu" aria-haspopup="menu" aria-expanded="${menuOpen}" title="Rename, sign in again, ${a.isKey ? 'remove' : 'hide'}">${ICON.more}</button>`);
+  if (!ui.readOnly || provider === 'kimi') acts.push(`<button class="gp-icon gp-more${menuOpen ? ' on' : ''}" data-a="menu" aria-haspopup="menu" aria-expanded="${menuOpen}" title="${provider === 'kimi' ? 'Sign in again' : 'Rename, sign in again, ' + (a.isKey ? 'remove' : 'hide')}">${ICON.more}</button>`);
   return `<div class="gp-row${a.active ? ' live' : ''}${needs ? ' needs' : ''}${a.hidden ? ' hidden-acct' : ''}${menuOpen ? ' menu-open' : ''}" data-id="${esc(a.id)}">
     <div class="gp-main"><div class="gp-name">${name}</div><div class="gp-sub" title="${esc(subLine(a))}">${esc(subLine(a))}</div></div>
     ${use}<div class="gp-act">${acts.join('')}</div>${menuOpen ? menu(a, ui) : ''}${detail}</div>`;
 }
 
 function render(box, provider, data, ui) {
+  if (provider === 'settings') {
+    box.innerHTML = `<div class="gp-head"><span class="gp-h">Providers</span><span class="gp-brand">Myrlin Glass</span></div>
+      <div class="gp-body"><p class="gp-note">Shown here and in Myrlin Glass. Usage checks and account switching keep working.</p>
+      ${providerChoices(data).map((id) => `<button class="gp-sec gp-toggle" data-a="provider" data-provider="${esc(id)}" aria-pressed="${providerVisible(data, id)}"${ui.saving || !ui.canSettings ? ' disabled' : ''}><span>${esc(NAMES[id] || id)}</span><span class="gp-chev">${providerVisible(data, id) ? 'Shown' : 'Hidden'}</span></button>`).join('')}
+      ${ui.canSettings ? '' : '<p class="gp-note">Update Apaki on the computer to change this setting from the phone.</p>'}</div>
+      ${ui.msg ? `<div class="gp-msg${ui.msg.ok ? '' : ' err'}">${esc(ui.msg.text)}</div>` : ''}`;
+    return;
+  }
   const list = (data?.lists?.[provider] || []).slice();
   const byLeft = (x, y) => (leftShare(y) ?? -1) - (leftShare(x) ?? -1);
   const live = list.find((a) => a.active) || data?.[provider] || null;
@@ -142,24 +144,26 @@ function render(box, provider, data, ui) {
   ui.lite = lite;
   ui.provider = provider;
   // Lite mode (no Workbook): Claude's "add" is Claude Code's own sign-in; Codex has none here.
-  const addLogin = !lite
+  const addLogin = provider === 'kimi' ? `<button class="gp-btn" data-a="add-login">${ICON.plus}Add a Kimi account</button>` : ui.readOnly ? '' : !lite
     ? `<button class="gp-btn" data-a="add-login">${ICON.plus}Add a ${NAMES[provider]} ${provider === 'claude' ? 'subscription' : 'account'}</button>`
     : provider === 'claude' ? `<button class="gp-btn" data-a="signin" title="Claude Code's own sign-in, in a window of its own">${ICON.plus}${live ? 'Sign in with another Claude account' : 'Sign in to Claude'}</button>` : '';
   box.innerHTML = `
     <div class="gp-head"><span class="gp-h">${NAMES[provider]}</span><span class="gp-brand">Myrlin Glass</span>
       <button class="gp-icon" data-a="refresh" title="Ask Glass to check usage now">${ICON.refresh}</button></div>
     <div class="gp-body">
-      ${lite && data.mode.note ? `<p class="gp-note">${esc(data.mode.note)}</p>` : ''}
+      ${provider === 'kimi' ? `<p class="gp-note">${KIMI_LOGIN_HINT}</p>` : ''}
+      ${provider !== 'kimi' && lite && data.mode.note ? `<p class="gp-note">${esc(data.mode.note)}</p>` : ''}
       ${live ? `<div class="gp-sec"><span>Live on this ${pc()}</span></div>${row(provider, { ...live, active: true }, ui)}` : `<p class="gp-empty">No ${NAMES[provider]} account is live on this ${pc()}.</p>`}
-      ${sec('Subscriptions', subs)}
+      ${sec(provider === 'kimi' ? 'Accounts' : 'Subscriptions', subs)}
       ${provider === 'claude' ? sec('API keys · billed per token', keys) : ''}
       ${sec('Needs signing in', needs)}
       ${hidden.length ? `<button class="gp-sec gp-toggle" data-a="toggle-hidden" aria-expanded="${ui.showHidden}"><span>Hidden</span><span class="gp-sec-n">${hidden.length}</span><span class="gp-chev">${ui.showHidden ? 'hide' : 'show'}</span></button>${ui.showHidden ? hidden.map((a) => row(provider, a, ui)).join('') : ''}` : ''}
       ${form}
     </div>
     <div class="gp-foot">
+      <button class="gp-btn" data-a="settings">Settings</button>
       ${addLogin}
-      ${provider === 'claude' ? `<button class="gp-btn" data-a="add-key">${ICON.plus}Add an API key</button>` : ''}
+      ${provider === 'claude' && !ui.readOnly ? `<button class="gp-btn" data-a="add-key">${ICON.plus}Add an API key</button>` : ''}
     </div>
     ${ui.msg ? `<div class="gp-msg${ui.msg.ok ? '' : ' err'}">${esc(ui.msg.text)}</div>` : ''}`;
   paintRings(box);
@@ -167,9 +171,13 @@ function render(box, provider, data, ui) {
 }
 
 export function openGlassPanel(anchor, provider, data, actions) {
+  if (provider !== 'settings' && !displayProviders(data).includes(provider)) provider = 'settings';
   const again = open?.provider === provider;
   if (open && !again) closeGlassPanel();
   const ui = again ? open.ui : { renaming: null, confirm: null, menu: null, adding: null, showHidden: false, msg: null };
+  ui.readOnly = Boolean(actions.readOnly);
+  ui.canSwap = actions.can ? actions.can('glassSwap') : !ui.readOnly;
+  ui.canSettings = actions.can ? actions.can('glassProviders') : true;
   const box = again ? open.el : document.createElement('div');
   const keep = again ? box.querySelector('.gp-body')?.scrollTop || 0 : 0;
   if (!again) box.className = 'glass-panel';
@@ -191,7 +199,17 @@ export function openGlassPanel(anchor, provider, data, actions) {
         const acct = id ? find(id) : null;
         if (a === 'menu' && acct) { ui.menu = ui.menu === acct.id ? null : acct.id; ui.confirm = null; paint(); box.querySelector('.gp-menu button')?.focus({ preventScroll: true }); return; }
         if (a !== 'remove') { ui.menu = null; ui.confirm = null; }
-        if (a === 'refresh') { actions.send('glass', { refresh: true }); say('Asked Glass to check usage now.'); return; }
+        if (a === 'settings') { actions.onSettings(); return; }
+        if (a === 'provider') {
+          if (ui.saving || !ui.canSettings) return;
+          const id = b.dataset.provider;
+          ui.saving = true;
+          actions.send('glassProviders', { provider: id, visible: !providerVisible(data, id) });
+          say('Saving in Glass…');
+          return;
+        }
+        if (provider === 'kimi' && (a === 'login' || a === 'add-login')) { say(KIMI_LOGIN_HINT); return; }
+        if (a === 'refresh') { if (actions.can && !actions.can('glass')) { say('Usage updates with the computer.'); return; } actions.send('glass', { refresh: true }); say('Asked Glass to check usage now.'); return; }
         if (a === 'use' && acct) { actions.onSwitch(provider, acct.id); say(`Switching ${NAMES[provider]} to ${acct.name}…`); return; }
         // Lite mode (no Workbook): Claude Code's own sign-in instead of Glass's Workbook capture.
         if ((a === 'signin' || a === 'login') && data?.mode?.lite && provider === 'claude') { actions.send('signIn', {}); say('A Claude sign-in window is opening; finish it there and the login shows here.'); return; }
@@ -251,7 +269,7 @@ export function openGlassPanel(anchor, provider, data, actions) {
       r.onclick = (e) => {
         if (ui.menu) { e.stopPropagation(); ui.menu = null; ui.confirm = null; paint(); return; }
         const acct = find(r.dataset.id);
-        if (acct && !acct.active && !NEEDS.has(acct.state) && !ui.renaming) { actions.onSwitch(provider, acct.id); say(`Switching ${NAMES[provider]} to ${acct.name}…`); }
+        if (ui.canSwap && acct && !acct.active && !NEEDS.has(acct.state) && !ui.renaming) { actions.onSwitch(provider, acct.id); say(`Switching ${NAMES[provider]} to ${acct.name}…`); }
       };
     });
   };
@@ -259,7 +277,7 @@ export function openGlassPanel(anchor, provider, data, actions) {
   if (!again) {
     document.body.append(box);
     const r = anchor.getBoundingClientRect();
-    const w = 420;
+    const w = Math.min(420, window.innerWidth - 16);
     box.style.width = `${w}px`;
     box.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
     box.style.bottom = `${Math.max(8, window.innerHeight - r.top + 8)}px`;
@@ -279,6 +297,6 @@ export function openGlassPanel(anchor, provider, data, actions) {
   }
   return {
     /** A glass_op result: what Glass said, in the panel's message line. */
-    result(e) { if (open?.el === box) say(e.ok ? (e.message || 'Done.') : `Glass said: ${e.message || 'it did not work'}`, e.ok); },
+    result(e) { if (e.ev === 'glass_providers') ui.saving = false; if (open?.el === box) say(e.ok ? (e.message || 'Done.') : `Glass said: ${e.message || 'it did not work'}`, e.ok); },
   };
 }

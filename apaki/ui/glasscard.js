@@ -14,15 +14,15 @@
  * the `glassSwap` op and comes back as `glass_swap`.
  *
  * initGlassCard({ root, send, menu, note, readOnly }) returns { handle(e) }.
- * readOnly (the phone client) shows the card without the switch menus.
+ * readOnly keeps account management on the desktop; can controls phone swaps and settings.
  */
 
 import { esc } from './markdown.js';
 import { pc } from './platform.js';
 import { glassPanelProvider, openGlassPanel } from './glasspanel.js';
-import { heroFor, heroRingHtml, paintRings, ringPairHtml, sevOf } from './usage-rings.js';
+import { heroFor, heroRingHtml, paintRings, resetAtText, ringPairHtml, sevOf } from './usage-rings.js';
 
-const PROVIDERS = { claude: 'Claude', codex: 'Codex' };
+import { PROVIDER_NAMES as PROVIDERS, displayProviders } from './glass-providers.js';
 // At or under this share left the meter turns peach.
 const LOW = 15;
 const STATE_HINT = { needsLogin: 'sign in again in Glass', noSubscription: 'no subscription', stale: 'usage out of date', unknown: 'not checked yet' };
@@ -42,19 +42,12 @@ export function leftShare(a) {
   return a.headroom == null ? null : Math.max(0, Math.min(100, a.headroom));
 }
 
-function resetText(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const soon = d.getTime() - Date.now() < 20 * 3600 * 1000;
-  return d.toLocaleString(undefined, soon ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-}
-
 /** The row's tooltip: every usage window Glass tracks, and why an account is not usable. */
 function rowTitle(provider, a) {
   if (!a) return `${PROVIDERS[provider]}: no account is signed in. Click to choose one.`;
   const lines = [`${PROVIDERS[provider]}: ${a.name}${a.isKey ? ' (API key, billed per token)' : a.plan ? ` (${a.plan})` : ''}`];
   if (a.isKey && a.leftUsd != null) lines.push(`${money(a.leftUsd)}${a.creditUsd ? ` of ${money(a.creditUsd)}` : ''} left this month${a.detail ? ` · ${a.detail}` : ''}`);
-  else for (const w of a.windows || []) lines.push(`${w.label}: ${w.percent}% used${w.resetsAt ? `, resets ${resetText(w.resetsAt)}` : ''}`);
+  else for (const w of a.windows || []) lines.push(`${w.label}: ${w.percent}% used${w.resetsAt ? `, resets ${resetAtText(w.resetsAt)}` : ''}`);
   if (a.state !== 'ok' && a.detail) lines.push(a.detail);
   lines.push('Click to switch account');
   return lines.join('\n');
@@ -131,20 +124,34 @@ export function accountItems(provider, list = []) {
   return items;
 }
 
-export function initGlassCard({ root, send, menu, note, readOnly = false }) {
+export function initGlassCard({ root, send, menu, note, readOnly = false, can = (op) => op !== 'glassSwap' || !readOnly }) {
   let last = null;
   let panel = null;
+  let sequence = 0;
+  const requests = new Map();
+  const request = (op, args = {}) => {
+    if (op !== 'glassProviders' && op !== 'glassSwap') return send(op, args);
+    const reqId = `glass${++sequence}`;
+    requests.set(reqId, { op, provider: args.provider });
+    const failed = (message) => handle({ ev: 'error', reqId, message });
+    try {
+      return Promise.resolve(send(op, { ...args, reqId })).then((ok) => {
+        if (ok === false) failed('The computer is disconnected. Try again after it reconnects.');
+      }, (error) => failed(error.message));
+    } catch (error) { failed(error.message); }
+  };
   const panelActions = {
-    send,
+    send: request, readOnly, can,
+    onSettings: () => { panel = openGlassPanel(root, 'settings', last, panelActions); if (can('glassProviders')) request('glassProviders'); },
     onSwitch: (provider, id) => {
-      if (last?.[provider]?.id === id) return;
+      if (!can('glassSwap') || last?.[provider]?.id === id) return;
       busy.add(provider);
       render();
-      send('glassSwap', { provider, account: id });
+      request('glassSwap', { provider, account: id });
     },
   };
   const busy = new Set();
-  const seen = { claude: null, codex: null };
+  const seen = { claude: null, codex: null, kimi: null };
   // The countdowns under the rings stay true: one redraw a minute, only while the window is visible.
   setInterval(() => { if (last && document.visibilityState === 'visible') render(); }, 60000);
 
@@ -157,20 +164,27 @@ export function initGlassCard({ root, send, menu, note, readOnly = false }) {
     }
     root.hidden = false;
     // Glass's hero rows (heroRowHtml, 2026-10-13); rowHtml above is the earlier two-ring row, kept for reference.
-    root.innerHTML = `<div class="gc-head"><span class="gl">${GLASS_MARK}<b>Myrlin</b> Glass</span><span class="gc-sub">live on this ${pc()}</span></div>${heroRowHtml('claude', last.claude, busy.has('claude'))}${heroRowHtml('codex', last.codex, busy.has('codex'))}`;
+    root.innerHTML = `<div class="gc-head"><span class="gl">${GLASS_MARK}<b>Myrlin</b> Glass</span><button class="gp-btn gc-sub" data-settings title="Choose providers shown in Glass">Settings</button></div>${displayProviders(last).map((p) => heroRowHtml(p, last[p], busy.has(p))).join('')}${displayProviders(last).length ? '' : '<div class="gc-off">All providers are hidden.</div>'}`;
+    root.querySelector('[data-settings]').onclick = panelActions.onSettings;
     // Fills from script, not style attributes in markup (the phone page's CSP refuses those).
     paintRings(root);
     for (const i of root.querySelectorAll('.gc-meter i[data-v]')) i.style.setProperty('--v', i.dataset.v);
     for (const b of root.querySelectorAll('.gc-row')) {
       const provider = b.dataset.p;
       if (flash.includes(provider)) b.classList.add('flash');
-      if (readOnly) { b.disabled = true; b.title = b.title.replace('Click to switch account', `Switch accounts on the ${pc()}`); continue; }
+      if (!can('glassSwap')) { b.title = b.title.replace('Click to switch account', 'Click for usage details'); b.querySelector('.g-go').textContent = 'Details'; }
       // The Glass panel (glasspanel.js, 2026-10-10): sections, usage, switch, rename, sign in, hide, add.
       b.onclick = () => { panel = openGlassPanel(root, provider, last, panelActions); };
     }
   }
 
   function handle(e) {
+    if (e.ev === 'error') {
+      const pending = requests.get(e.reqId);
+      if (!pending) return;
+      e = { ...e, ev: pending.op === 'glassProviders' ? 'glass_providers' : 'glass_swap', provider: pending.provider, ok: false };
+    }
+    if (e.ev === 'glass_providers' || e.ev === 'glass_swap') requests.delete(e.reqId);
     if (e.ev === 'glass') {
       // A row flashes when its live account changed (a swap here, in Glass, or by an agent).
       const flash = [];
@@ -184,7 +198,13 @@ export function initGlassCard({ root, send, menu, note, readOnly = false }) {
       render(flash);
       // An open panel follows Glass: a rename, a hide, a new account, a swap.
       const open = glassPanelProvider();
-      if (open) panel = openGlassPanel(root, open, last, panelActions);
+      if (open) panel = openGlassPanel(root, open === 'settings' || displayProviders(last).includes(open) ? open : 'settings', last, panelActions);
+      return;
+    }
+    if (e.ev === 'glass_providers') {
+      if (e.ok && last) handle({ ...last, visibleProviders: e.visibleProviders, knownProviders: e.knownProviders });
+      panel?.result(e);
+      if (!e.ok) note?.(`Glass settings: ${e.message}`, 'error');
       return;
     }
     if (e.ev === 'glass_op') { panel?.result(e); return; }

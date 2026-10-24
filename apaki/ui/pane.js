@@ -692,6 +692,8 @@ Click for changes, commit, push, pull request, merge`;
   renderBilling() {
     const b = this.billing;
     if (!b) return;
+    this.$.billing.hidden = b.glassVisible === false;
+    if (b.glassVisible === false) { this.$.billing.textContent = ''; setTip(this.$.billing, null); this.$.billing.removeAttribute('aria-description'); return; }
     if (this.kind === 'kimi') {
       this.$.billing.textContent = `${b.name}${Number.isFinite(b.headroom) ? ` · ${Math.round(b.headroom)}% left` : ''}`;
       setTip(this.$.billing, { head: `Kimi: ${b.name}`, rows: [['Billing', 'CLI OAuth login']], hint: b.follow ? 'Reported by Myrlin Glass' : 'Myrlin Glass usage is not available yet' });

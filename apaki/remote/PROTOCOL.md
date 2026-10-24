@@ -266,6 +266,16 @@ Glass and index broadcasts) go back to it. A phone that reconnects sends
 `attach` for each pane it had open: same pane, same Claude Code process, its
 history sent again.
 
+Glass provider visibility (2026-10-24): `glass` reads status or refreshes usage;
+`glassProviders` reads the shared Glass setting, or changes one provider with
+`{ provider, visible }`. Both are available at every phone access level.
+`glassSwap` takes `{ provider, account }` and requires Full access because it
+changes the computer's active account. Claude, Codex and Kimi are supported.
+The `glass_providers` and `glass_swap` responses carry the request id; the
+refreshed `glass` event goes to every connected window and phone. Account
+management such as API key entry and browser sign-in remains on the desktop.
+Kimi's add-account control shows the CLI /login hint on both surfaces.
+
 ### Phone keys on account connections (version 2, 2026-10-11)
 
 Full rules in `ENROLL.md`; the messages, all inside the channel:

@@ -1,0 +1,17 @@
+{
+  "visibleProviders": null,
+  "knownProviders": ["claude", "codex", "kimi"],
+  "workbook": { "lite": true },
+  "swapsEnabled": false,
+  "accounts": [
+    { "id": "c1", "provider": "claude", "label": "Clay fixture", "active": true, "plan": "Max", "headroom": 70, "windows": [{ "label": "Session", "percent": 30, "resetsAt": "2026-11-01T15:00:00Z", "windowSeconds": 18000 }] },
+    { "id": "x1", "provider": "codex", "label": "Green fixture", "active": true, "headroom": 60, "windows": [{ "label": "Weekly", "percent": 40, "resetsAt": "2026-11-05T12:00:00Z", "windowSeconds": 604800 }] },
+    { "id": "k1", "provider": "kimi", "label": "Moon fixture", "active": true, "headroom": 8, "windows": [
+      { "label": "5h", "percent": 15, "resetsAt": "2026-11-01T14:00:00Z", "windowSeconds": 18000 },
+      { "label": "Monthly", "percent": 92, "resetsAt": "2026-12-01T00:00:00Z" },
+      { "label": "Monthly coding", "percent": 44, "resetsAt": "2026-11-29T00:00:00Z" }
+    ] },
+    { "id": "k2", "provider": "kimi", "label": "Second moon fixture", "active": false, "headroom": 81, "windows": [{ "label": "Monthly coding", "percent": 19, "resetsAt": "2026-11-30T00:00:00Z" }] }
+  ],
+  "apiCredits": [{ "id": "api1", "label": "Credits fixture", "creditUsd": 200, "leftUsd": 160, "keyStatus": "active" }]
+}

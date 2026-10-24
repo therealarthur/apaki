@@ -220,6 +220,8 @@ import { SESSION_ID_RE, codexMarkdown, diskSize, exportName, findRollout, freePa
 import { archiveRoot, archiveTranscripts, archivedMeta, archivedSessions, openArchived, restoreArchived } from './transcript-archive.js';
 // What a phone shows of the desktop's tabs (2026-10-11).
 import { desktopTabs } from './desktop-tabs.js';
+import { glassView, glassProviderSettings } from './glass.js';
+import { KIMI_LOGIN_HINT, providerVisible } from '../ui/glass-providers.js';
 import { CLAUDE_DIR, chooseCredential, childEnv, glassCredential, keySections } from '../../src/auth.js';
 // Signing in on a fresh install (2026-10-10, see "signing in to Claude" below).
 import { liveLogin } from '../../src/auth.js';
@@ -1042,7 +1044,7 @@ async function historyRevOf(sessionId) {
 function billingInfo(p) {
   if (isKimiPane(p)) return kimi.billing();
   const c = p ? p.credential : defaults.credential;
-  return { name: c.name, source: c.source, follow: Boolean(c.follow), isKey: Boolean(c.key) };
+  return { name: c.name, source: c.source, follow: Boolean(c.follow), isKey: Boolean(c.key), glassVisible: !c.follow || providerVisible(lastGlassStatus, 'claude') };
 }
 
 async function closeRunner(p) {
@@ -2233,8 +2235,19 @@ const handlers = {
   glass: (c) => (c.refresh
     ? new Promise((resolve) => execFile(GLASS_CLI, ['refresh', '--json'], { timeout: 30000, windowsHide: true }, () => resolve())).then(() => glassChanged())
     : glassChanged()),
+  glassProviders: async (c) => {
+    try {
+      const settings = await glassProviderSettings(GLASS_CLI, c, execFile);
+      glassReadVersion += 1;
+      lastGlassStatus = { ...(lastGlassStatus || {}), ...settings };
+      emit({ ev: 'glass_providers', reqId: c.reqId, ok: true, ...settings });
+      await glassChanged();
+    } catch (error) {
+      emit({ ev: 'glass_providers', reqId: c.reqId, ok: false, message: error.message });
+    }
+  },
   glassSwap: (c) => new Promise((resolve) => {
-    const provider = c.provider === 'codex' ? 'codex' : 'claude';
+    const provider = glassProvider(c);
     // No Glass on this PC (2026-10-10): say so instead of "spawn ... ENOENT".
     if (!fs.existsSync(GLASS_CLI)) { emit({ ev: 'glass_swap', reqId: c.reqId, provider, account: c.account, ok: false, message: GLASS_MISSING, detail: '' }); resolve(); return; }
     const args = ['swap', provider, String(c.account || ''), '--reason', 'Picked in Myrlin Apaki', '--requester', 'myrlin-apaki', '--user-asked', '--json'];
@@ -2252,7 +2265,9 @@ const handlers = {
   glassRename: (c) => glassOp(c, ['rename', glassProvider(c), String(c.account || ''), String(c.name || '').slice(0, 60)]),
   glassHide: (c) => glassOp(c, [c.hidden === false ? 'unhide' : 'hide', glassProvider(c), String(c.account || '')]),
   // Reconnect an account (its email) or add a new one: a browser sign-in a person finishes.
-  glassLogin: (c) => glassOp(c, ['login', glassProvider(c), ...(c.email ? [String(c.email)] : [])]),
+  glassLogin: (c) => c.provider === 'kimi'
+    ? emit({ ev: 'glass_op', reqId: c.reqId, op: c.op, provider: 'kimi', ok: true, message: KIMI_LOGIN_HINT })
+    : glassOp(c, ['login', glassProvider(c), ...(c.email ? [String(c.email)] : [])]),
   // A Console org's API credits: the keys go to Glass on stdin only, never on a command line.
   glassApiAdd: (c) => glassOp(c, ['api', 'add', '--label', String(c.label || '').trim(), '--credit', String(Number(c.credit) || 200), '--reset-day', String(Number(c.resetDay) || 1)],
     `${String(c.adminKey || '').trim()}\n${String(c.usageKey || '').trim()}\n`),
@@ -2975,14 +2990,15 @@ const LIVE_LOGIN = process.env.LATCH_LIVE_LOGIN_FILE || path.join(CLAUDE_DIR, '.
 // Per platform (src/platform.js): the same Windows path as before; on a Mac the usual app and command-line places.
 const GLASS_CLI = glassCli();
 let glassSeen = null;
+let glassReadVersion = 0;
+let lastGlassStatus = null;
 // Fresh installs (2026-10-10): what the window says when Glass is missing, or runs without Workbook.
 // macOS port (2026-10-12): Myrlin Glass is a Windows widget today; Apaki runs without it.
 const GLASS_MISSING = process.platform === 'darwin'
   ? 'Myrlin Glass is not installed on this Mac (Glass is a Windows app for now). Apaki works without it; sign in with Claude Code instead.'
   : 'Myrlin Glass is not installed. Run the Myrlin Apaki installer again to add it.';
-const GLASS_LITE_NOTE = 'Myrlin Workbook is not installed, so Glass works with the live Claude and Codex logins and your API keys. Keeping several subscription logins and switching between them is Workbook\'s job.';
 
-const glassProvider = (c) => (c.provider === 'codex' ? 'codex' : 'claude');
+const glassProvider = (c) => (c.provider === 'kimi' ? 'kimi' : c.provider === 'codex' ? 'codex' : 'claude');
 
 /**
  * Runs one Glass command for the Glass panel and reports it as glass_op
@@ -3005,7 +3021,7 @@ function glassOp(c, args, input = null) {
   });
 }
 
-/** Glass's full status (both providers, their accounts, API credit orgs), or null. */
+/** Glass's full status (all providers, their accounts, API credit orgs), or null. */
 function glassStatus() {
   return new Promise((resolve) => {
     if (!fs.existsSync(GLASS_CLI)) { resolve(null); return; }
@@ -3016,62 +3032,14 @@ function glassStatus() {
   });
 }
 
-const accountName = (a) => a?.label || (a?.email ? String(a.email).split('@')[0] : '') || 'Account';
-
-/**
- * One Glass account for the footer and its menu. An API-credit entry is
- * marked isKey and its plan reads "API key" (Arthur, 2026-10-09: it must be
- * apparent when Claude bills a key, not a subscription).
- */
-function glassAccount(a) {
-  if (!a) return null;
-  const isKey = /api credits/i.test(a.plan || '');
-  const seen = new Set();
-  const windows = (a.windows || []).filter((w) => { const k = `${w.label}:${Math.round(w.percent)}`; if (seen.has(k)) return false; seen.add(k); return true; })
-    .map((w) => ({ label: w.label, percent: Math.round(w.percent ?? 0), resetsAt: w.resetsAt || null, seconds: Number(w.windowSeconds) || null }));
-  return {
-    id: a.id, name: accountName(a), plan: isKey ? 'API key' : (a.plan || ''), isKey, state: a.state || 'ok',
-    headroom: a.headroom == null ? null : Math.round(a.headroom), detail: a.stateDetail || '', windows, active: Boolean(a.active),
-    leftUsd: a.apiCredit?.leftUsd ?? null,
-    // 2026-10-10, for the Glass panel: hidden by the user (glass hide), and what rename and reconnect start from.
-    hidden: Boolean(a.hidden), label: a.label || '', email: a.email || '',
-  };
-}
-
-/** The live account and the swappable list for each provider, from glassStatus(). */
-function glassView(st) {
-  if (!st) return null;
-  const acc = st.accounts || [];
-  const live = (p) => glassAccount(acc.find((a) => a.provider === p && a.active));
-  const claude = live('claude');
-  // A key's dollars live on its API-credit entry, not on the account Glass made for it.
-  const credit = claude?.isKey ? (st.apiCredits || []).find((c) => c.id === claude.id) || (st.apiCredits || []).find((c) => c.active) : null;
-  if (credit) Object.assign(claude, { leftUsd: credit.leftUsd ?? null, creditUsd: credit.creditUsd ?? null, detail: credit.orgName || claude.detail });
-  // Subscriptions come from the accounts; every API-credit org is offered as a key.
-  const subs = acc.filter((a) => a.provider === 'claude' && !/api credits/i.test(a.plan || '')).map(glassAccount);
-  const keys = (st.apiCredits || []).map((c) => ({
-    id: c.id, name: c.label, plan: 'API key', isKey: true, state: c.keyStatus === 'active' ? 'ok' : (c.keyStatus || 'unknown'),
-    headroom: c.creditUsd ? Math.round((100 * (c.leftUsd ?? 0)) / c.creditUsd) : null, leftUsd: c.leftUsd ?? null, creditUsd: c.creditUsd ?? null, windows: [],
-    active: Boolean(c.active) || Boolean(claude?.isKey && claude.id === c.id), detail: c.orgName || '',
-    label: c.label, hidden: false, keyHint: c.usageKeyHint || c.adminKeyHint || '', spentUsd: c.spentUsd ?? null, error: c.error || '',
-  }));
-  return {
-    claude, codex: live('codex'), lists: { claude: [...keys, ...subs], codex: acc.filter((a) => a.provider === 'codex').map(glassAccount) },
-    // 2026-10-10: how Glass runs here. lite = no Myrlin Workbook on this PC: Glass shows the live
-    // logins and API-credit entries and switches between the live login and API keys; keeping
-    // several subscription logins is Workbook's job (the panel says so).
-    mode: {
-      lite: Boolean(st.workbook?.lite), swapsEnabled: Boolean(st.swapsEnabled),
-      swapsReason: st.swapsDisabledReason || null, signInReason: st.signInDisabledReason || null,
-      note: st.workbook?.lite ? GLASS_LITE_NOTE : null,
-    },
-  };
-}
-
 async function glassChanged() {
+  const version = ++glassReadVersion;
   const c = glassCredential();
   const id = `${c.source}:${c.key ? c.key.slice(-12) : ''}`;
-  const status = await glassStatus();
+  const fresh = await glassStatus();
+  if (version !== glassReadVersion) return;
+  const status = fresh || lastGlassStatus;
+  lastGlassStatus = status;
   kimi.updateBilling(status);
   const view = glassView(status);
   const account = view?.claude ? { label: view.claude.name, plan: view.claude.plan, headroom: view.claude.headroom } : null;
@@ -3087,7 +3055,7 @@ async function glassChanged() {
     p.credential = next;
     if (changed || moved) billingChanged(p); emit({ ev: 'billing', paneId: p.id, ...billingInfo(p), note: moved ? `Myrlin Glass switched Claude to ${name}; the next message here uses it.` : undefined });
   }
-  emit({ ev: 'glass', installed: fs.existsSync(GLASS_CLI), name, source: c.source, plan: account?.plan || null, headroom: account?.headroom ?? null, changed, isKey: Boolean(c.key), claude: view?.claude || null, codex: view?.codex || null, lists: view?.lists || null, mode: view?.mode || null });
+  emit({ ev: 'glass', installed: fs.existsSync(GLASS_CLI), name, source: c.source, plan: account?.plan || null, headroom: account?.headroom ?? null, changed, isKey: Boolean(c.key), claude: view?.claude || null, codex: view?.codex || null, kimi: view?.kimi || null, visibleProviders: view?.visibleProviders ?? null, knownProviders: view?.knownProviders ?? null, lists: view?.lists || null, mode: view?.mode || null });
 }
 
 fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => { glassChanged().catch(() => {}); });

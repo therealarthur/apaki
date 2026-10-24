@@ -30,6 +30,7 @@ export function windowSeconds(w) {
   if (Number.isFinite(w?.seconds) && w.seconds > 0) return w.seconds;
   const l = String(w?.label || '').toLowerCase();
   if (/session|5[ -]?h|hour/.test(l)) return 5 * 3600;
+  if (/month/.test(l)) return 30 * 24 * 3600;
   if (/week|7[ -]?d/.test(l)) return 7 * 24 * 3600;
   return null;
 }
@@ -93,20 +94,22 @@ export function ringHtml(w, label, { size = 'sm' } = {}) {
 export function ringPairHtml(windows, now = Date.now()) {
   const { short, long } = pickWindows(windows);
   const unit = (w, label, name) => (w ? `<span class="u-unit" aria-label="${esc(`${name}: ${leftOf(w)}% left, resets in ${untilText(w.resetsAt, now) || 'unknown'}`)}">${ringHtml(w, label)}<span class="u-until">${esc(untilText(w.resetsAt, now))}</span></span>` : '');
-  const html = unit(short, '5h', '5-hour window') + unit(long, '7d', long ? String(long.label || 'Weekly') : 'Weekly');
+  const html = unit(short, '5h', '5-hour window') + unit(long, windowLabel(long), long ? String(long.label || 'Weekly') : 'Weekly');
   return html ? `<span class="u-pair">${html}</span>` : '';
 }
+
+const windowLabel = (w) => /month/i.test(w?.label || '') || (windowSeconds(w) || 0) >= 28 * 86400 ? 'mo'
+  : (windowSeconds(w) || 0) >= LONG_MIN_S ? '7d' : windowSeconds(w) != null && windowSeconds(w) <= SHORT_MAX_S ? '5h' : '';
 
 /** The panel's details: every window, a larger ring, the share used and the exact reset. */
 export function windowsDetailHtml(windows = [], now = Date.now()) {
   const list = windows.filter((w) => w && Number.isFinite(Number(w.percent)))
     .sort((x, y) => (windowSeconds(x) ?? 0) - (windowSeconds(y) ?? 0) || String(x.label).localeCompare(String(y.label)));
   if (!list.length) return '';
-  const short = (w) => ((windowSeconds(w) ?? 0) <= SHORT_MAX_S ? '5h' : (windowSeconds(w) ?? 0) >= LONG_MIN_S ? '7d' : '');
   return `<div class="u-detail">${list.map((w) => {
     const until = untilText(w.resetsAt, now);
     const at = resetAtText(w.resetsAt, now);
-    return `<div class="u-win">${ringHtml(w, short(w), { size: 'md' })}<span class="u-txt"><span class="u-l">${esc(w.label || 'Usage')}</span>`
+    return `<div class="u-win">${ringHtml(w, windowLabel(w), { size: 'md' })}<span class="u-txt"><span class="u-l">${esc(w.label || 'Usage')}</span>`
       + `<span class="u-v">${Math.round(Number(w.percent) || 0)}% used${at ? ` · resets ${esc(at)}` : ''}${until && until !== 'now' ? ` <span class="u-in">in ${esc(until)}</span>` : ''}</span></span></div>`;
   }).join('')}</div>`;
 }
@@ -139,7 +142,7 @@ export function heroWindows(windows = []) {
   if (!list.length) return { outer: null, inner: null };
   const base = list.filter((w) => !scopedWeekly(w));
   const secs = (w) => windowSeconds(w) ?? Number.MAX_SAFE_INTEGER;
-  const pool = (base.length ? base : list).slice().sort((x, y) => secs(x) - secs(y));
+  const pool = (base.length ? base : list).slice().sort((x, y) => secs(x) - secs(y) || Number(x.percent) - Number(y.percent));
   return { outer: pool[0], inner: pool.length > 1 ? pool[pool.length - 1] : null };
 }
 
@@ -173,7 +176,10 @@ export function heroRingHtml({ outer = null, inner = null, center = '', dim = fa
  */
 export function heroFor(windows = [], { headroom = null, dim = false, now = Date.now() } = {}) {
   const pick = heroWindows(windows);
-  const worst = worstWindow(pick);
+  // Monthly and Monthly coding are independent limits. The summary must consider both.
+  const monthly = windows.some((w) => windowLabel(w) === 'mo');
+  const worst = monthly ? windows.filter((w) => w && Number.isFinite(Number(w.percent)))
+    .reduce((best, w) => !best || Number(w.percent) > Number(best.percent) ? w : best, null) : worstWindow(pick);
   if (!worst) {
     const used = headroom == null ? null : 100 - Math.max(0, Math.min(100, Math.round(headroom)));
     return {
