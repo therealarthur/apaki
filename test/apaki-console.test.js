@@ -399,7 +399,7 @@ test('wiring: the engine handles every console op, keeps one writer, and the win
   for (const op of [...PC_ONLY_OPS, 'consoleView']) assert.match(engine, new RegExp(`\\n  ${op}: `), `engine.js handles ${op}`);
   assert.match(engine, /if \(consoleCtl\.active\(p\.id\)\) \{ emit\(\{ ev: 'error'/, 'no send while the console has the conversation');
   assert.match(engine, /const termHeld = p\.sessionId \? readHeld\(CONSOLE_DIR, p\.sessionId\) : null;\n\s+if \(termHeld\) \{ emit\(\{ ev: 'taken_over'/, 'no send over a terminal window');
-  assert.match(engine, /\(p\.runner \|\| isCodexPane\(p\) \|\| consoles\.has\(p\.id\)\) && p\.sessionId/, 'a console holds its conversation for other windows');
+  assert.match(engine, /\(p\.runner \|\| isCodexPane\(p\) \|\| isKimiPane\(p\) \|\| consoles\.has\(p\.id\)\) && p\.sessionId/, 'a console holds its conversation for other windows');
   assert.match(engine, /await consoles\.shutdown\(\)/);
   const app = read('../apaki/ui/app.js');
   for (const ev of ['console', 'consoleData', 'consoleView', 'terminal']) assert.match(app, new RegExp(`PANE_EVENTS = new Set\\(\\[[^\\]]*'${ev}'`), ev);

@@ -1,3 +1,4 @@
+import { isKimiRow } from './kimi.js';
 /**
  * sessionlist.js: the sidebar's session list and folders, in the ChatGPT app's manner (2026-10-12).
  *
@@ -219,9 +220,9 @@ const LEAD_ORDER = ['waiting', 'working', 'terminal', 'archived-copy'];
 
 /** The one leading state of a row: { k, label, provider } (k: waiting, working, terminal, archived-copy or mark). */
 export function leadOf(s, live = {}) {
-  const provider = s?.codex || String(s?.id || '').startsWith('codex:') ? 'codex' : 'claude';
+  const provider = isKimiRow(s) ? 'kimi' : s?.codex || String(s?.id || '').startsWith('codex:') ? 'codex' : 'claude';
   const states = rowStates(s, live);
-  const who = provider === 'codex' ? 'Codex' : 'Claude Code';
+  const who = provider === 'kimi' ? 'Kimi' : provider === 'codex' ? 'Codex' : 'Claude Code';
   const top = LEAD_ORDER.map((k) => states.find((x) => x.k === k)).find(Boolean);
   return top ? { k: top.k, label: `${who}: ${top.label}`, provider } : { k: 'mark', label: who, provider };
 }
@@ -229,7 +230,7 @@ export function leadOf(s, live = {}) {
 /** The leading glyph as HTML. */
 export function leadHtml(s, live = {}) {
   const l = leadOf(s, live);
-  const glyph = l.k === 'mark' ? GLYPH[l.provider] : l.k === 'working' ? GLYPH.spin : GLYPH[l.k];
+  const glyph = l.k === 'mark' ? (l.provider === 'kimi' ? GLYPH.terminal : GLYPH[l.provider]) : l.k === 'working' ? GLYPH.spin : GLYPH[l.k];
   return `<span class="sr-lead sr-${l.k} is-${l.provider}" role="img" aria-label="${esc(l.label)}">${glyph || ''}</span>`;
 }
 
@@ -246,7 +247,7 @@ export function rowTip(s, c = {}) {
   const branch = c.branch || s.branch || '';
   if (c.worktree) rows.push(['Worktree', `${branch || 'detached'} · ${c.worktree}`]);
   else if (branch) rows.push(['Branch', branch]);
-  rows.push(['Agent', s.codex ? 'Codex' : 'Claude Code']);
+  rows.push(['Agent', isKimiRow(s) ? 'Kimi' : s.codex ? 'Codex' : 'Claude Code']);
   const model = c.model || s.model || '';
   if (model) rows.push(['Model', modelName(model)]);
   if (s.size) rows.push(['Size', bytesText(s.size)]);
@@ -330,6 +331,12 @@ export function sessionMenuItems(s, ctx = {}) {
   if (s.cwd) items.push({ value: 'reveal', label: `Show folder in ${explorer()}`, hint: ctx.shortCwd || '' });
   items.push({ divider: true });
   items.push({ value: 'details', label: 'Details', hint: 'Alt+Enter' });
+  if (isKimiRow(s)) {
+    for (const item of items) if (['terminal', 'copy-resume', 'rename', 'fork', 'export', 'ask', 'subs'].includes(item.value)) {
+      item.disabled = 'Not available for Kimi yet'; item.hint = item.disabled; item.value = null;
+    }
+    if (s.kimiArchived) for (const item of items) if (['archive', 'unarchive'].includes(item.value)) { item.value = null; item.label = 'Archived in Kimi'; item.disabled = 'Unarchive in Kimi before continuing'; }
+  }
   return items;
 }
 
@@ -372,7 +379,7 @@ export function sessionFacts(s, info, c = {}) {
   const wait = reading ? 'Reading…' : '';
   const codex = Boolean(s.codex || i.provider === 'codex' || String(s.id || '').startsWith('codex:'));
   const title = i.customTitle || s.title || i.title || '(untitled)';
-  const resume = `${s.cwd ? `cd "${s.cwd}" && ` : ''}${codex ? `codex resume ${String(s.id).replace(/^codex:/, '')}` : `claude --resume ${s.id}`}`;
+  const resume = isKimiRow(s) ? 'Continue this session in a Kimi pane. Terminal handoff with max effort is not available yet.' : `${s.cwd ? `cd "${s.cwd}" && ` : ''}${codex ? `codex resume ${String(s.id).replace(/^codex:/, '')}` : `claude --resume ${s.id}`}`;
   const copies = { id: s.id, resume, ...(s.cwd ? { cwd: s.cwd } : {}), ...(i.transcript ? { transcript: i.transcript } : {}) };
   const row = (k, v, o = {}) => ({ k, v: v === undefined || v === null ? '' : String(v), ...o });
   const sections = [];
@@ -381,7 +388,7 @@ export function sessionFacts(s, info, c = {}) {
   const conv = [
     ...(s.title && s.title !== title ? [row('Listed as', s.title)] : []),
     row('Session id', s.id, { mono: true, copy: 'id' }),
-    row('Agent', `${codex ? 'Codex' : 'Claude Code'}${i.version ? ` ${i.version}` : ''}${i.originator ? ` (${i.originator})` : ''}`),
+    row('Agent', `${isKimiRow(s) ? 'Kimi' : codex ? 'Codex' : 'Claude Code'}${i.version ? ` ${i.version}` : ''}${i.originator ? ` (${i.originator})` : ''}`),
   ];
   const first = i.firstPromptFull || s.firstPrompt || '';
   if (first && first !== title) conv.push(row('First prompt', first, { long: true }));
@@ -458,7 +465,7 @@ export function sessionFacts(s, info, c = {}) {
   return {
     id: s.id, title, codex, sections, copies, reading,
     error: info?.error || '',
-    sub: [codex ? 'Codex' : 'Claude Code', last ? `last message ${agoText(last, now)}` : ''].filter(Boolean).join(' · '),
+    sub: [isKimiRow(s) ? 'Kimi' : codex ? 'Codex' : 'Claude Code', last ? `last message ${agoText(last, now)}` : ''].filter(Boolean).join(' · '),
   };
 }
 

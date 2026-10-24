@@ -175,5 +175,5 @@ test('the window: Codex threads interleaved with Claude\'s in All, under the sam
   assert.match(engine, /function codexRowsById\(\) \{ return new Map\(codexRowsNow\(\)/, 'search hits use the same rows');
   assert.equal(/codexList[^\n]*new CodexAppServer|codexList[^\n]*getClient/.test(engine), false, 'listing never starts the app-server');
   const archive = read('../apaki/engine/archive.js');
-  assert.match(archive, /const ID_RE = \/\^\(\?:codex:\)\?/, 'a Codex thread archives in the list like a Claude session');
+  assert.match(archive, /const ID_RE = \/\^\(\?:\(\?:codex\|kimi\):\)\?/, 'a Codex thread archives in the list like a Claude session');
 });

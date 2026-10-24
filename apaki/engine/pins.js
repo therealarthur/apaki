@@ -15,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const file = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'latch', 'pinned.json');
-const ID_RE = /^(?:codex:)?[A-Za-z0-9_-]{8,80}$/;
+const ID_RE = /^(?:(?:codex|kimi):)?[A-Za-z0-9_-]{8,128}$/;
 /** Most pins kept (a list of pins longer than this is not "the top" any more). */
 export const MAX_PINS = 200;
 

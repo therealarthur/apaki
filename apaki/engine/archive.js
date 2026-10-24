@@ -18,7 +18,7 @@ import path from 'node:path';
 
 const file = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'latch', 'archived.json');
 // A Codex thread (codex:<id>) archives in Apaki's list too (2026-10-12: Codex threads are in the main list from the start).
-const ID_RE = /^(?:codex:)?[A-Za-z0-9_-]{8,80}$/;
+const ID_RE = /^(?:(?:codex|kimi):)?[A-Za-z0-9_-]{8,128}$/;
 
 let cache = null;
 

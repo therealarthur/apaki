@@ -282,6 +282,7 @@ export class PaneConsole {
 
   /** Opens the console (command: a slash command to run in it, e.g. '/config'; wait or stop: what to do about a running turn). */
   async open({ command = null, wait = false, stop = false } = {}) {
+    if (this.pane.kind === 'kimi') { this.pane.note('Kimi console handoff is not available yet.'); return; }
     if (!this.pane.host.consoleAvailable?.()) {
       this.pane.note(`${command ? `${command} opens` : 'The console is'} ${this.agent() === 'Codex' ? 'Codex' : 'Claude Code'}'s own terminal UI, which runs on the PC. Open the conversation there and switch it to the console.`, 'warn');
       return;

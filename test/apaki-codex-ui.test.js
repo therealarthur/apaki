@@ -149,7 +149,7 @@ test('the permission sheet speaks Codex: its buttons, the diff of a patch, the a
 
 test('the pane and the window are wired for Codex: picks only, no inherited modes, rows, cards and the question sheet', () => {
   const pane = read('apaki', 'ui', 'pane.js');
-  assert.ok(pane.includes("this.kind = settings.kind === 'codex' || isCodexId(settings.sessionId) ? 'codex' : 'claude';"));
+  assert.ok(pane.includes("settings.kind === 'codex' || isCodexId(settings.sessionId) ? 'codex' : 'claude';"));
   // open sends only what was picked in a Codex pane.
   assert.ok(pane.includes("...(this.picked.model ? { model: this.model } : {})"));
   assert.ok(pane.includes("s.id !== this.sessionId) this.setKind('claude')"), 'a restored Codex pane stays Codex when the row has no flag');

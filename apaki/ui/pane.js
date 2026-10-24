@@ -15,6 +15,7 @@
  */
 
 import { esc, md, streamCut, streamState } from './markdown.js';
+import { KIMI_MODEL, KIMI_EFFORT, KIMI_MODES, KIMI_LOCAL, isKimiId, isKimiRow, kimiChoices } from './kimi.js';
 import { EFFORTS, effortGrid, menu } from './menu.js';
 import { pickVerb } from './verbs.js';
 // The effort popup beyond the effort levels: Ultracode and its workflow size (Claude), reasoning summary and speed (Codex), tune.js.
@@ -213,7 +214,7 @@ export class Pane {
     this.mode = settings.mode || host.defaults.mode;
     // 'claude' or 'codex' (2026-10-12): a Codex session id, or the engine's opened event, makes the pane a Codex one. Its model,
     // effort and mode are Codex's, left empty until the engine says what the thread has (or a new conversation is picked).
-    this.kind = settings.kind === 'codex' || isCodexId(settings.sessionId) ? 'codex' : 'claude';
+    this.kind = settings.kind === 'kimi' || isKimiId(settings.sessionId) ? 'kimi' : settings.kind === 'codex' || isCodexId(settings.sessionId) ? 'codex' : 'claude';
     if (this.kind === 'codex') { this.model = settings.model || ''; this.effort = settings.effort || ''; this.mode = settings.mode || ''; }
     // What the person chose in this Codex pane (the rest is the thread's own or the user's Codex config): only picks travel with open.
     this.picked = { model: false, effort: false, mode: false };
@@ -222,6 +223,7 @@ export class Pane {
     // A phone below Full access never has Ultracode on (the PC keeps it off; a pane restored with it on says what is true).
     if (this.kind !== 'codex' && ultracodeLock(host.phoneCap?.() || 'full')) this.tune.ultracode = false;
     this.billing = host.defaults.billing;
+    if (this.kind === 'kimi') { this.model = KIMI_MODEL; this.effort = KIMI_EFFORT; this.mode = KIMI_MODES.some((m) => m.value === settings.mode) ? settings.mode : 'default'; this.tune = {}; this.billing = { name: 'Kimi OAuth', source: 'kimi' }; }
     this.busy = false;
     this.unread = false;
     this.attachments = [];
@@ -302,10 +304,10 @@ export class Pane {
     this.$.file.addEventListener('change', async (e) => { for (const f of e.target.files) await this.addImageFile(f); e.target.value = ''; });
     this.$.mic.onclick = () => this.host.voice(this);
     // A Codex pane's pickers list Codex's models, their efforts and the Codex app's permission presets (codexMenu below).
-    this.$.model.onclick = () => (this.kind === 'codex' ? this.codexMenu('model') : menu(this.$.model, Object.entries(MODEL_NAMES).map(([value, label]) => ({ value, label, checked: value === this.model })), { onPick: (v) => this.setModel(v) }));
+    this.$.model.onclick = () => (this.kind === 'kimi' ? this.kimiMenu('model') : this.kind === 'codex' ? this.codexMenu('model') : menu(this.$.model, Object.entries(MODEL_NAMES).map(([value, label]) => ({ value, label, checked: value === this.model })), { onPick: (v) => this.setModel(v) }));
     // The effort popup (2026-10-13): the levels, and under them Ultracode with its size (Claude) or the reasoning summary and speed (Codex).
     this.$.effort.onclick = () => (this.kind === 'codex' ? this.codexMenu('effort') : this.effortMenu());
-    this.$.mode.onclick = () => (this.kind === 'codex' ? this.codexMenu('mode') : menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 }));
+    this.$.mode.onclick = () => (this.kind === 'kimi' ? this.kimiMenu('mode') : this.kind === 'codex' ? this.codexMenu('mode') : menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 }));
     this.$.folder.onclick = () => this.host.folderMenu(this, this.$.folder);
     // The branch label: changes, commit, push, pull request, merge, remove (worktree.js paneMenu).
     this.$.wt.onclick = () => this.host.worktreeMenu?.(this, this.$.wt);
@@ -320,14 +322,14 @@ export class Pane {
     // The phone cannot host a terminal: no buttons there (a conversation in the PC's console shows read only, showLocked).
     if (!this.host.consoleAvailable?.()) for (const b of [this.$.consoleBtn, this.$.termBtn]) if (b) b.hidden = true;
     this.$.title.closest('.title-block')?.addEventListener('contextmenu', (e) => {
-      if (!this.host.consoleAvailable?.()) return;
+      if (!this.host.consoleAvailable?.() || this.kind === 'kimi') return;
       e.preventDefault();
       menu({ x: e.clientX, y: e.clientY }, [
         { value: 'console', label: this.console.shown ? 'Back to Apaki\'s view' : 'Open the console', hint: 'Ctrl+`' },
         { value: 'terminal', label: 'Open in a terminal window' },
       ], { above: false, width: 230, onPick: (v) => (v === 'console' ? this.console.toggle() : this.openTerminal()) });
     });
-    this.$.title.ondblclick = () => this.host.renameSession?.(this, this.$.title);
+    this.$.title.ondblclick = () => { if (this.kind !== 'kimi') this.host.renameSession?.(this, this.$.title); };
     this.$.title.title = 'Double-click to rename';
     this.$.grip.addEventListener('dragstart', (e) => this.host.dragPane(this, e));
     this.$.grip.addEventListener('dragend', () => this.host.dragEnd());
@@ -356,7 +358,7 @@ export class Pane {
   }
 
   cycleMode() {
-    const list = this.kind === 'codex' ? CODEX_MODES : MODES;
+    const list = this.kind === 'kimi' ? KIMI_MODES : this.kind === 'codex' ? CODEX_MODES : MODES;
     const i = list.findIndex((m) => m.value === this.mode);
     this.setMode(list[(i + 1) % list.length].value);
   }
@@ -368,7 +370,7 @@ export class Pane {
 
   /** Switches the pane between Claude Code and Codex (before its first message), or follows what the engine opened. */
   setKind(kind, { fromEngine = false } = {}) {
-    if (kind !== 'codex' && kind !== 'claude') return;
+    if (!['kimi', 'codex', 'claude'].includes(kind)) return;
     if (kind === this.kind && !fromEngine) return;
     const was = this.kind;
     this.kind = kind;
@@ -376,7 +378,10 @@ export class Pane {
       // The picks of one are not the other's: a Claude model means nothing to Codex.
       this.tune = tuneFor(kind, kind === 'codex' ? null : this.host.defaults.tune);
       if (kind !== 'codex' && ultracodeLock(this.host.phoneCap?.() || 'full')) this.tune.ultracode = false;
-      if (kind === 'codex') {
+      if (kind === 'kimi') {
+        this.model = KIMI_MODEL; this.effort = KIMI_EFFORT; this.mode = 'default'; this.tune = {};
+        this.billing = { name: 'Kimi OAuth', source: 'kimi' }; this.renderBilling();
+      } else if (kind === 'codex') {
         this.model = ''; this.effort = ''; this.mode = ''; this.picked = { model: false, effort: false, mode: false };
         // Codex bills the ChatGPT account it is signed in with, not Claude's: blank until the engine says which.
         this.billing = this.codexInfo()?.account || null;
@@ -399,6 +404,9 @@ export class Pane {
       : (codex ? 'Message Codex, / for commands, paste or drop files' : 'Message Claude, / for commands, paste or drop images');
     this.$.file.accept = codex ? '' : 'image/*';
     this.$.file.closest('label')?.setAttribute('title', codex ? 'Attach images or files' : 'Attach images');
+    if (this.kind === 'kimi') this.$.input.placeholder = 'Message Kimi, / for commands';
+    this.$.title.title = this.kind === 'kimi' ? 'Kimi conversation' : 'Double-click to rename';
+    for (const b of [this.$.consoleBtn, this.$.termBtn, this.$.tasksBtn]) if (b) b.hidden = this.kind === 'kimi' || (b !== this.$.tasksBtn && !this.host.consoleAvailable?.());
     this.renderChips();
     if (!this.sessionId && !this.$.T.querySelector('.turn-user')) this.showEmpty();
   }
@@ -471,10 +479,23 @@ export class Pane {
   }
 
   /** The Claude effort popup (Max, Ultracode and its workflow size). */
-  effortMenu() { return this.openEffortPopup(300); }
+  effortMenu() { return this.kind === 'kimi' ? this.kimiMenu('effort') : this.openEffortPopup(300); }
 
   /** The settings line under the message box: model, effort grid, mode, billing. */
+  kimiMenu(which) {
+    menu(this.$[which], kimiChoices(which, this.mode), { onPick: (v) => which === 'model' ? this.setModel(v) : which === 'effort' ? this.setEffort(v) : this.setMode(v) });
+  }
+
   renderChips() {
+    if (this.kind === 'kimi') {
+      const m = KIMI_MODES.find((v) => v.value === this.mode) || KIMI_MODES[0];
+      this.$.model.textContent = 'Kimi K3.1 Pro'; this.$.model.title = KIMI_MODEL;
+      this.$.effort.innerHTML = `${effortGrid('max')}<span>max</span>`; this.$.effort.title = 'Max effort';
+      this.$.mode.innerHTML = `<span class="mm">${m.mark}</span><span class="ml-full">${esc(m.label)}</span><span class="ml-short">${esc(m.short || m.label)}</span>`;
+      this.$.mode.title = m.hint; this.$.mode.dataset.mode = m.value;
+      this.$.mode.setAttribute('aria-label', `Permissions: ${m.label}`);
+      return;
+    }
     if (this.kind === 'codex') { this.renderCodexChips(); return; }
     const { model, effort, mode } = this.$;
     model.textContent = MODEL_NAMES[this.model] || this.model;
@@ -614,7 +635,7 @@ Click for changes, commit, push, pull request, merge`;
    */
   takeOver() {
     if (!this.following) return;
-    const s = { id: this.sessionId, cwd: this.cwd, title: this.title, codex: this.kind === 'codex' };
+    const s = { id: this.sessionId, cwd: this.cwd, title: this.title, codex: this.kind === 'codex', kimi: this.kind === 'kimi' };
     this.stopFollowing();
     this.open(s, { warm: true, force: true });
     this.host.changed(this);
@@ -636,7 +657,7 @@ Click for changes, commit, push, pull request, merge`;
       <p>${this.sessionId ? 'Nothing is watching it now. You can open it here and carry on, or close this pane.' : 'It had not started yet. Close this pane or start a new conversation here.'}</p>
       <div class="tk-row">${this.sessionId ? '<button class="tk-go">Open here</button>' : ''}<button class="tk-no">Close pane</button></div>`);
     const go = card.querySelector('.tk-go');
-    if (go) go.onclick = () => { card.remove(); this.open({ id: this.sessionId, cwd: this.cwd, title: this.title, codex: this.kind === 'codex' }, { warm: true }); this.host.changed(this); };
+    if (go) go.onclick = () => { card.remove(); this.open({ id: this.sessionId, cwd: this.cwd, title: this.title, codex: this.kind === 'codex', kimi: this.kind === 'kimi' }, { warm: true }); this.host.changed(this); };
     card.querySelector('.tk-no').onclick = () => this.host.close(this);
     this.$.T.append(card);
     this.scrollDown(true);
@@ -656,6 +677,11 @@ Click for changes, commit, push, pull request, merge`;
   renderBilling() {
     const b = this.billing;
     if (!b) return;
+    if (this.kind === 'kimi') {
+      this.$.billing.textContent = `${b.name}${Number.isFinite(b.headroom) ? ` · ${Math.round(b.headroom)}% left` : ''}`;
+      setTip(this.$.billing, { head: `Kimi: ${b.name}`, rows: [['Billing', 'CLI OAuth login']], hint: b.follow ? 'Reported by Myrlin Glass' : 'Myrlin Glass usage is not available yet' });
+      return;
+    }
     // A key says so beside its name (Arthur, 2026-10-09): it bills per token, a subscription does not.
     const key = b.isKey ? '<span class="key-tag" aria-label="(API key)">API key</span>' : '';
     // A Codex account says how much of its plan's windows is used (the server's numbers, kept current by the engine).
@@ -678,7 +704,7 @@ Click for changes, commit, push, pull request, merge`;
     this.folderId = f?.id || null;
   }
 
-  setModel(m) { this.model = m; this.picked.model = true; this.renderChips(); this.send('model', { model: m }); this.host.changed(this); this.askContext(1500); }
+  setModel(m) { if (this.kind === 'kimi' && m !== KIMI_MODEL) { this.note('Kimi panes use K3.1 Pro.'); return; } this.model = m; this.picked.model = true; this.renderChips(); this.send('model', { model: m }); this.host.changed(this); this.askContext(1500); }
 
   /* ---------- the context meter (2026-10-10) ---------- */
 
@@ -690,7 +716,7 @@ Click for changes, commit, push, pull request, merge`;
 
   /** The meter in the settings line: a thin bar and the percentage, warmer as the window fills. */
   /** The name of what runs this conversation, for the lines that say who is working. */
-  agentName() { return this.kind === 'codex' ? 'Codex' : 'Claude'; }
+  agentName() { return this.kind === 'kimi' ? 'Kimi' : this.kind === 'codex' ? 'Codex' : 'Claude'; }
 
   renderContext() {
     const b = this.$.ctx;
@@ -732,7 +758,7 @@ Click for changes, commit, push, pull request, merge`;
       },
     });
   }
-  setEffort(x) { this.effort = x; this.picked.effort = true; this.renderChips(); this.send('effort', { effort: x }); this.host.changed(this); }
+  setEffort(x) { if (this.kind === 'kimi' && x !== KIMI_EFFORT) { this.note('Kimi main sessions use max effort.'); return; } this.effort = x; this.picked.effort = true; this.renderChips(); this.send('effort', { effort: x }); this.host.changed(this); }
   /**
    * Ultracode and its workflow size (Claude), the reasoning summary and the speed (Codex): `change` names only the keys that
    * moved. The engine applies it to the running session at once and keeps it for the pane; the window saves it with the workspace.
@@ -743,7 +769,7 @@ Click for changes, commit, push, pull request, merge`;
     this.send('tune', change);
     this.host.changed(this);
   }
-  setMode(x) { this.mode = x; this.picked.mode = true; this.renderChips(); this.send('mode', { mode: x }); this.host.changed(this); }
+  setMode(x) { if (this.kind === 'kimi') { if (this.busy || !KIMI_MODES.some((m) => m.value === x)) { this.note('Choose a Kimi permission mode when the turn is idle.'); return; } } this.mode = x; this.picked.mode = true; this.renderChips(); this.send('mode', { mode: x }); this.host.changed(this); }
 
   /* ---------- open ---------- */
 
@@ -759,11 +785,12 @@ Click for changes, commit, push, pull request, merge`;
     this.stopDriftWatch();
     this.lastOpen = s ? { id: s.id, cwd: s.cwd, title: s.title } : null;
     // A Codex thread (a list row marked codex, or its id) makes this a Codex pane before anything is sent.
-    if (s?.codex || isCodexId(s?.id)) this.setKind('codex');
-    else if (s && this.kind === 'codex' && s.id !== this.sessionId) this.setKind('claude');
+    if (isKimiRow(s)) this.setKind('kimi');
+    else if (s?.codex || isCodexId(s?.id)) this.setKind('codex');
+    else if (s && this.kind !== 'claude' && s.id !== this.sessionId) this.setKind('claude');
     // A Codex pane sends only what the person picked here; the thread's own model, effort and permissions are the engine's to read.
     // The tune (Ultracode and size; summary and speed) travels with open like the picks do.
-    const picks = this.kind === 'codex'
+    const picks = this.kind === 'kimi' ? { kind: 'kimi', model: KIMI_MODEL, effort: KIMI_EFFORT, mode: this.mode } : this.kind === 'codex'
       ? { kind: 'codex', ...(this.picked.model ? { model: this.model } : {}), ...(this.picked.effort ? { effort: this.effort } : {}), ...(this.picked.mode ? { mode: this.mode } : {}), tune: this.tune }
       : { model: this.model, effort: this.effort, mode: this.mode, tune: { ultracode: this.tune?.ultracode === true, size: this.tune?.size || null } };
     this.send('open', { sessionId, cwd: s?.cwd || this.cwd || null, warm, force, ...picks });
@@ -839,7 +866,7 @@ Click for changes, commit, push, pull request, merge`;
     const peach = new Set();
     while (peach.size < 2) peach.add(Math.floor(Math.random() * 40));
     const cells = Array.from({ length: 40 }, (_, i) => `<i${peach.has(i) ? ' class="pk"' : ''} style="--d:${(-Math.random() * 9).toFixed(2)}s"></i>`).join('');
-    this.$.T.append(el('div', 'empty', `<div class="empty-grid rand" aria-hidden="true">${cells}</div><h3>New conversation</h3><p>${this.kind === 'codex' ? 'It becomes a Codex thread with your first message.' : 'It becomes a Claude Code session with your first message.'}</p>${this.host.codexAvailable?.() ? `<div class="kind-pick" role="group" aria-label="Start with"><button data-kind="claude" aria-pressed="${this.kind !== 'codex'}">Claude Code</button><button data-kind="codex" aria-pressed="${this.kind === 'codex'}">Codex</button></div>` : ''}<button class="start-in" title="Choose the folder this conversation starts in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.6 0-1.2-.5-1.2-1.2z"/></svg><span class="start-label">Starts in</span><span class="start-path">${esc(this.startPathText())}</span><span class="start-change">Change</span></button><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
+    this.$.T.append(el('div', 'empty', `<div class="empty-grid rand" aria-hidden="true">${cells}</div><h3>New conversation</h3><p>${this.kind === 'kimi' ? 'It becomes a Kimi session with your first message.' : this.kind === 'codex' ? 'It becomes a Codex thread with your first message.' : 'It becomes a Claude Code session with your first message.'}</p>${this.host.codexAvailable?.() || this.host.kimiAvailable?.() ? `<div class="kind-pick" role="group" aria-label="Start with"><button data-kind="claude" aria-pressed="${this.kind === 'claude'}">Claude Code</button>${this.host.codexAvailable?.() ? `<button data-kind="codex" aria-pressed="${this.kind === 'codex'}">Codex</button>` : ''}${this.host.kimiAvailable?.() ? `<button data-kind="kimi" aria-pressed="${this.kind === 'kimi'}">Kimi</button>` : ''}</div>` : ''}<button class="start-in" title="Choose the folder this conversation starts in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.6 0-1.2-.5-1.2-1.2z"/></svg><span class="start-label">Starts in</span><span class="start-path">${esc(this.startPathText())}</span><span class="start-change">Change</span></button><p class="hint">Drag a session from the left onto an edge to split, up to six panes.</p>`));
   }
 
   /* ---------- transcript ---------- */
@@ -1735,7 +1762,7 @@ Click for changes, commit, push, pull request, merge`;
 
   drawHistory(messages, total, e = {}) {
     // From the transcript (engine history.js): the newest page of the whole conversation, the rest on request.
-    const paged = (e.source === 'transcript' || e.source === 'codex') && e.first !== undefined;
+    const paged = (e.source === 'transcript' || e.source === 'codex' || e.source === 'kimi') && e.first !== undefined;
     // The same conversation at the same revision is already on screen (a reconnect): keep it, no redraw.
     if (!e.refresh && e.rev && e.rev === this.historyRev && e.sessionId === this.historyShownFor && this.$.T.childElementCount > 0) return;
     // The transcript's revision as drawn here, for checkDrift (2026-10-11).
@@ -2149,7 +2176,7 @@ Click for changes, commit, push, pull request, merge`;
           } else this.addAssistant(b.text);
         } else if (b.type === 'tool_use') {
           this.addTool(b);
-        } else if (b.type === 'thinking' && b.thinking && msg.codex) {
+        } else if (b.type === 'thinking' && b.thinking && (msg.codex || msg.kimi)) {
           // Codex's reasoning summary (2026-10-12), collapsed under "Thinking" like the ones history draws.
           this.addThinking(b);
         }
@@ -2267,6 +2294,7 @@ Click for changes, commit, push, pull request, merge`;
     const [cmd, ...rest] = text.slice(1).split(/\s+/);
     const arg = rest.join(' ').trim();
     if (this.kind === 'codex') return this.codexLocalCommand(cmd, arg);
+    if (this.kind === 'kimi' && !KIMI_LOCAL.some((c) => c.name === cmd) && !['clear', 'continue'].includes(cmd)) return false;
     switch (cmd) {
       case 'new': case 'clear': this.host.newConversation(this); return true;
       // Claude Code's /resume picker is terminal-only (the SDK answers "isn't available in this environment"): Apaki's search instead.
@@ -2469,7 +2497,7 @@ Click for changes, commit, push, pull request, merge`;
     this.hideSlash();
     // Commands that only work in the terminal UI (/config, the /model picker, /permissions...) open the console for
     // themselves instead of failing (2026-10-12). Without a console (the phone), the bare ones keep Apaki's answer.
-    const tui = text.startsWith('/') && !this.attachments.length ? tuiCommand(this.kind, text) : null;
+    const tui = this.kind !== 'kimi' && text.startsWith('/') && !this.attachments.length ? tuiCommand(this.kind, text) : null;
     const bare = tui && (this.kind === 'codex' ? CODEX_TUI_BARE : CLAUDE_TUI_BARE).includes(tui.slice(1));
     if (tui && (this.host.consoleAvailable?.() || !bare)) { input.value = ''; this.autosize(); this.console.open({ command: tui }); return; }
     if (text.startsWith('/') && !this.attachments.length && this.localCommand(text)) { input.value = ''; this.autosize(); return; }
@@ -2505,7 +2533,7 @@ Click for changes, commit, push, pull request, merge`;
     const m = v.match(/^\/(\S*)$/);
     if (!m) { this.hideSlash(); return; }
     const q = m[1].toLowerCase();
-    const base = this.kind === 'codex' ? CODEX_LOCAL : LOCAL;
+    const base = this.kind === 'kimi' ? KIMI_LOCAL : this.kind === 'codex' ? CODEX_LOCAL : LOCAL;
     const all = [...base, ...this.commands.filter((c) => !base.some((l) => l.name === c.name))];
     const hits = all.filter((c) => c.name.toLowerCase().includes(q)).sort((a, b) => (a.name.toLowerCase().startsWith(q) ? 0 : 1) - (b.name.toLowerCase().startsWith(q) ? 0 : 1)).slice(0, 40);
     const ul = this.$.slash;
@@ -2607,7 +2635,11 @@ Click for changes, commit, push, pull request, merge`;
         if (e.sessionId !== this.sessionId) { this.queue = []; this.steering.clear(); this.stoppedByUser = false; this.renderQueue(); this.closedArts.clear(); }
         this.sessionId = e.sessionId; this.cwd = e.cwd; this.billing = e.billing;
         // A Codex thread (2026-10-12): the engine says what model, effort and permissions it really has.
-        if (e.kind === 'codex') {
+        if (e.kind === 'kimi') {
+          this.setKind('kimi', { fromEngine: true });
+          this.model = e.model; this.effort = e.effort; this.mode = e.mode; this.billing = e.billing;
+          this.renderChips();
+        } else if (e.kind === 'codex') {
           this.setKind('codex', { fromEngine: true });
           this.model = e.model || this.model; this.effort = e.effort || this.effort; this.mode = e.mode || this.mode;
           if (e.tune) this.tune = tuneFor('codex', e.tune);
@@ -2647,7 +2679,7 @@ Click for changes, commit, push, pull request, merge`;
         if (e.terminal?.length) this.openNotes.push([`This session is also open in a Claude Code terminal window (${e.terminal.map((t) => t.name).join(', ')}). Stop typing there while you work here; that window must /resume to see these turns.`, 'warn']);
         // Re-attached (the background host kept this Claude Code process running): nothing was cut off.
         if (this.crashNote && e.attached) this.crashNote = false;
-        if (this.crashNote) { this.openNotes.push([this.kind === 'codex' ? 'Apaki closed while Codex was working here, and its Codex process stopped with it. Everything it did until then is above; send a message to carry on.' : 'Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
+        if (this.crashNote) { this.openNotes.push([this.kind === 'kimi' ? 'Apaki closed while Kimi was working here. Its current saved context is above; send a message to carry on.' : this.kind === 'codex' ? 'Apaki closed while Codex was working here, and its Codex process stopped with it. Everything it did until then is above; send a message to carry on.' : 'Apaki closed while Claude was working here, and its Claude Code process stopped with it. Everything it did until then is above; send a message to carry on.', 'warn']); this.crashNote = false; }
         if (this.turnStoppedNote) { this.openNotes.push([`The engine restarted while ${this.agentName()} was working here, and that turn stopped. Everything until then is above; send a message to carry on.`, 'warn']); this.turnStoppedNote = false; }
         if (e.sessionId !== this.sessionId || e.reset) this.liveTasks.clear();
         this.renderTasksButton();
@@ -2682,7 +2714,7 @@ Click for changes, commit, push, pull request, merge`;
         queueMicrotask(() => this.flushQueue());
         const u = e.usage || {};
         const k = (n) => `${((n || 0) / 1000).toFixed(1)}k`;
-        const foot = e.codex ? codexFooter(e, this.billing) : [`${((e.durationMs || 0) / 1000).toFixed(1)}s`, `${k(u.cache_read_input_tokens)} cached`, `${k(u.cache_creation_input_tokens)} new`, e.cost != null ? `$${e.cost.toFixed(3)}` : null, this.billing?.name ? `${this.billing.name}${this.billing.isKey ? ' (API key)' : ''}` : null].filter(Boolean).join(' · ');
+        const foot = e.kimi ? [`${((e.durationMs || 0) / 1000).toFixed(1)}s`, this.billing?.name].filter(Boolean).join(' · ') : e.codex ? codexFooter(e, this.billing) : [`${((e.durationMs || 0) / 1000).toFixed(1)}s`, `${k(u.cache_read_input_tokens)} cached`, `${k(u.cache_creation_input_tokens)} new`, e.cost != null ? `$${e.cost.toFixed(3)}` : null, this.billing?.name ? `${this.billing.name}${this.billing.isKey ? ' (API key)' : ''}` : null].filter(Boolean).join(' · ');
         if (!e.quiet) this.$.T.append(el('div', 'foot', esc(foot)));
         if (e.isError) this.note(e.result || (e.errors || []).join('; ') || e.subtype, 'error');
         this.setStatus('');
@@ -2718,7 +2750,7 @@ Click for changes, commit, push, pull request, merge`;
         this.sendNow(it.text, it.attachments);
         break;
       }
-      case 'error': this.setBusy(false); this.setStatus(''); this.note(e.message, 'error'); break;
+      case 'error': if (this.kind !== 'kimi' || !e.busy) { this.setBusy(false); this.setStatus(''); } this.note(e.message, 'error'); break;
       // The shared view (2026-10-11): which phones watch this pane, and a message one of them sent into it (the engine does not
       // echo user messages, and the phone drew its own copy).
       case 'followers': this.setFollowers(e.phones); break;
@@ -2751,6 +2783,7 @@ Click for changes, commit, push, pull request, merge`;
 
   /** This conversation in a terminal window on the PC, with this pane's settings (engine openTerminal). */
   openTerminal() {
+    if (this.kind === 'kimi') { this.note('Kimi terminal handoff is not available yet.'); return; }
     if (!this.host.consoleAvailable?.()) return;
     if (!this.sessionId) { this.note('Send a message first: a new conversation has nothing to open in a terminal yet.'); return; }
     if (this.console.shown) { this.note('Switch back from the console first (Ctrl+`): one window writes to a conversation at a time.', 'warn'); return; }

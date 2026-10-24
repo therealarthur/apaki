@@ -69,11 +69,12 @@ export function questionsModel(e) {
 export const answered = (ui, i) => Boolean(str(ui?.other?.[i]).trim()) || (ui?.picks?.[i]?.length || 0) > 0;
 
 /** The answers object AskUserQuestion takes: per question its typed answer, else its picks joined by commas (as the sheet sent). */
-export function questionAnswers(model, ui) {
+export function questionAnswers(model, ui, arrays = false) {
   const answers = {};
   model.questions.forEach((q, i) => {
     const other = str(ui.other[i]).trim();
-    answers[q.key] = other || (ui.picks[i] || []).map((oi) => q.options[oi]?.label).filter(Boolean).join(', ');
+    const picks = (ui.picks[i] || []).map((oi) => q.options[oi]?.label).filter(Boolean);
+    answers[q.key] = other || (arrays && q.multi ? picks : picks.join(', '));
   });
   return answers;
 }
@@ -346,7 +347,7 @@ export class AskBoard {
 
   /** Sends the questions' answers, whatever is there (the Answer button), as the sheet did. */
   submit(entry) {
-    return this.finish(entry, { behavior: 'allow', updatedInput: { ...(isObj(entry.e.input) ? entry.e.input : {}), answers: questionAnswers(entry.model, entry.ui) } });
+    return this.finish(entry, { behavior: 'allow', updatedInput: { ...(isObj(entry.e.input) ? entry.e.input : {}), answers: questionAnswers(entry.model, entry.ui, entry.e.sessionId?.startsWith('kimi:')) } });
   }
 
   /** A permission or plan choice. */
@@ -685,7 +686,7 @@ export function createAsks({ send, isFocusedPane = () => false, onChange = () =>
     /** An ask event for `pane`: its entry when it is new (ding), null for a repeat or a pane that is not here. */
     ask(e, pane) {
       if (!pane?.el || pane.isViewer) return null;
-      const entry = board.add(e, { who: pane.kind === 'codex' ? 'Codex' : 'Claude' });
+      const entry = board.add(e, { who: pane.kind === 'kimi' ? 'Kimi' : pane.kind === 'codex' ? 'Codex' : 'Claude' });
       if (!entry) return null;
       viewOf(pane).render();
       onChange(pane);

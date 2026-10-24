@@ -586,6 +586,12 @@ export function checkPhoneCommand(cmd, ctx) {
   const cap = ctx.cap === undefined ? 'full' : (CAPS.includes(ctx.cap) ? ctx.cap : 'chat');
   if (!isObj(cmd)) return fail('A command must be an object.', null);
   const op = cmd.op;
+  // Kimi currently executes tools locally without a phone capability adapter.
+  const localPane = typeof cmd.paneId === 'string' ? phonePaneId(deviceId, cmd.paneId) : null;
+  const targetPane = ctx.followOf?.(localPane) || localPane;
+  if (cmd.kind === 'kimi' || String(cmd.sessionId || '').startsWith('kimi:') || ctx.paneKind?.(targetPane) === 'kimi'
+    || (cmd.desktopPaneId && ctx.paneKind?.(cmd.desktopPaneId) === 'kimi')
+    || (cmd.askId && ctx.paneKind?.(ctx.askPane?.(cmd.askId)) === 'kimi')) return fail('Kimi panes are available on the desktop only.', cmd);
   if (typeof op !== 'string' || !PHONE_OPS.includes(op)) return fail(`"${String(op).slice(0, 40)}" is not available from a phone.`, cmd);
   if (op === 'artifactGet' && !(ctx.hasOp?.(op))) return fail('Artifacts are not available on this PC.', cmd);
   // 2026-10-12: the session list's actions need Full or No shell; the browser view needs Full.

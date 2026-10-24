@@ -147,7 +147,7 @@ const S = {
   defaults: { model: 'claude-opus-5-5', effort: 'xhigh', mode: 'bypassPermissions', billing: null, tune: { ultracode: false, size: null } },
   tabs: [], active: null, panes: new Map(), drag: null,
   // Codex (2026-10-12): installed here (the engine's ready event), and the model list it read (event codexModels).
-  codexAvailable: false, codex: null,
+  codexAvailable: false, codex: null, kimiAvailable: false,
   // The session list (2026-10-12, sessionlist.js): what the engine read for Details (sessionInfo, by session id), the
   // questions and permission prompts waiting for an answer (askId -> paneId: a row says "waiting"), and whether the
   // folder list has arrived (the open folders are pruned only against a real list).
@@ -715,6 +715,7 @@ const host = {
   sessionTitle: (id) => S.sessions.find((s) => s.id === id)?.title || paneBySession(id)?.title || null,
   // Codex panes (pane.js): whether Codex is installed, the model list the engine read, and a request for it.
   codexAvailable: () => S.codexAvailable,
+  kimiAvailable: () => S.kimiAvailable && !WEB,
   codexModels: () => S.codex,
   askCodexModels: () => askCodexModels(),
   showSession: (id) => { const p = paneBySession(id); if (p) { revealPane(p); return; } const s = S.sessions.find((x) => x.id === id); if (s) openFromRail(s, { ctrlKey: true }); },
@@ -1309,7 +1310,7 @@ function createTab(root = null, { name = '', arrange = 'auto', max = null, shape
  * Ultracode itself is not passed on (2026-10-13): it spends far more than any effort level, so each pane turns it on
  * where it is wanted; the workflow size a person picked is kept, ready for when they do.
  */
-const inheritable = (base) => (base && base.kind !== 'codex' ? { model: base.model, effort: base.effort, mode: base.mode, tune: { ultracode: false, size: base.tune?.size || null } } : {});
+const inheritable = (base) => (base && base.kind === 'claude' ? { model: base.model, effort: base.effort, mode: base.mode, tune: { ultracode: false, size: base.tune?.size || null } } : {});
 
 /** A new tab with one pane, holding `session` or a new conversation. */
 function addTab({ session = null, cwd = null, activate = true } = {}) {
@@ -2505,6 +2506,7 @@ function viewList() {
     { id: 'terminal', label: 'In terminals', n: term },
     // Codex threads (2026-10-12): their own view, next to Claude's, read from the Codex app-server when it is opened.
     ...(S.codexAvailable ? [{ id: 'codex', label: 'Codex', n: codex }] : []),
+    ...(S.kimiAvailable || live.some((s) => s.kimi) ? [{ id: 'kimi', label: 'Kimi', n: live.filter((s) => s.kimi).length }] : []),
     // Worktrees (2026-10-12): repositories with their worktrees and the conversations in each (worktree.js).
     { id: 'worktrees', label: 'Worktrees', n: wtc.count() },
     // Archived sessions (right-click > Archive) open from a link under the list (renderRail), so the
@@ -3057,7 +3059,7 @@ function sessionMenu(s, e, row = null) {
       else if (v === 'export') exportSession(s);
       else if (v === 'subs') toggleSubs(s.id);
       else if (v === 'copy-id') copyText(s.id, 'Session id copied.');
-      else if (v === 'copy-resume') copyText(`${s.cwd ? `cd "${s.cwd}" && ` : ''}${s.codex ? `codex resume ${s.id.replace(/^codex:/, '')}` : `claude --resume ${s.id}`}`, 'Resume command copied.');
+      else if (v === 'copy-resume' && !s.kimi) copyText(`${s.cwd ? `cd "${s.cwd}" && ` : ''}${s.codex ? `codex resume ${s.id.replace(/^codex:/, '')}` : `claude --resume ${s.id}`}`, 'Resume command copied.');
       else if (v === 'reveal') send('revealFolder', { cwd: s.cwd });
       else if (v === 'details') detailsSheet(s);
       else if (v === 'new') startNewFolder(s.id);
@@ -3284,7 +3286,7 @@ function phoneSessionMenu(s, at, { pane = null } = {}) {
       else if (v === 'fork') send('forkSession', { sessionId: s.id });
       else if (v === 'archive' || v === 'unarchive') send('archive', { sessionId: s.id, archived: v === 'archive' });
       else if (v === 'copy-id') copyText(s.id, 'Session id copied.');
-      else if (v === 'copy-resume') copyText(`${s.cwd ? `cd "${s.cwd}" && ` : ''}${s.codex ? `codex resume ${s.id.replace(/^codex:/, '')}` : `claude --resume ${s.id}`}`, 'Resume command copied.');
+      else if (v === 'copy-resume' && !s.kimi) copyText(`${s.cwd ? `cd "${s.cwd}" && ` : ''}${s.codex ? `codex resume ${s.id.replace(/^codex:/, '')}` : `claude --resume ${s.id}`}`, 'Resume command copied.');
       else if (v === 'new') startNewFolder(s.id);
       else if (v === 'out') moveToFolder(s.id, null);
       else if (typeof v === 'string' && v.startsWith('f:')) moveToFolder(s.id, v.slice(2));
@@ -3297,7 +3299,7 @@ if (WEB) {
   window.addEventListener('apaki:pane-menu', (e) => {
     const p = S.panes.get(e.detail?.pane);
     if (!p || p.isViewer) return;
-    const s = S.sessions.find((x) => x.id === p.sessionId) || { id: p.sessionId || null, title: p.title, cwd: p.cwd, codex: p.kind === 'codex' };
+    const s = S.sessions.find((x) => x.id === p.sessionId) || { id: p.sessionId || null, title: p.title, cwd: p.cwd, codex: p.kind === 'codex', kimi: p.kind === 'kimi' };
     phoneSessionMenu(s, { x: 0, y: 0 }, { pane: p });
   });
 }
@@ -3345,6 +3347,7 @@ function copyText(text, said) {
 function inView(s) {
   if (S.view === 'archived') return Boolean(s.archived);
   if (s.archived) return false;
+  if (S.view === 'kimi') return Boolean(s.kimi);
   if (S.view === 'codex') return Boolean(s.codex);
   // Codex threads are listed in All with Claude's (2026-10-12, Arthur: integrated exactly like Claude's; the engine lists
   // them from their rollouts at startup, codex-list.js), marked Codex; the Codex view shows them alone, a search shows
@@ -3615,7 +3618,7 @@ function drawRail() {
   if (wtView) rows = wtc.rows(S.sessions.filter((s) => !s.archived)).map((r) => (r.k === 'kid' ? { ...r.s, wtKid: true } : { wtRow: r }));
   renderFolders();
   const folder = S.folders.find((f) => f.id === S.view);
-  setText($('sessionsTitle'), S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : S.view === 'worktrees' ? 'Worktrees' : S.view === 'archived' ? 'Archived' : S.view === 'codex' ? 'Codex threads' : 'Sessions');
+  setText($('sessionsTitle'), S.results ? (S.ai ? 'Picks' : 'Results') : folder ? folder.name : S.view === 'terminal' ? 'In terminals' : S.view === 'worktrees' ? 'Worktrees' : S.view === 'archived' ? 'Archived' : S.view === 'kimi' ? 'Kimi sessions' : S.view === 'codex' ? 'Codex threads' : 'Sessions');
   setText($('sessionsCount'), String(wtView ? wtc.count() : Math.min(rows.length, 400)));
   $('clearView').hidden = !folder && S.view !== 'archived';
   setText($('searchState'), S.results ? S.searchInfo : '');
@@ -4137,7 +4140,7 @@ function snapshot() {
         // Ultracode and its size (Claude), the reasoning summary and speed (Codex): kept with the pane in the saved workspace (tune.js).
         tune: p?.tune || null,
         // A new Codex conversation has no session id to say so yet (2026-10-12).
-        ...(p?.kind === 'codex' ? { kind: 'codex' } : {}),
+        ...(['codex', 'kimi'].includes(p?.kind) ? { kind: p.kind } : {}),
         draft: p?.$?.input?.value || '', queue: (p?.queue || []).filter((q) => q.text).map((q) => ({ id: q.id, text: q.text })),
         // A pane in a background tab has no box to measure: its remembered place is saved, not "at the end, 0" (pane.js scrollState, 2026-10-12).
         scroll: p?.scrollState ? p.scrollState() : null,
@@ -4329,6 +4332,7 @@ await listen('engine', watch.wrap('events', ({ payload: e }) => {
       S.defaults.billing = e.billing;
       // Codex is installed here: the Codex view and the new-conversation choice show. Back in that view from the last session, read its threads.
       S.codexAvailable = Boolean(e.codex);
+      S.kimiAvailable = Boolean(e.kimi);
       if (S.view === 'codex') loadCodexThreads();
       if (!S.codexAvailable && S.view === 'codex') S.view = 'all';
       for (const p of S.panes.values()) p.setVoice(S.voice);

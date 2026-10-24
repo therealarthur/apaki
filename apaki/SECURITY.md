@@ -1023,3 +1023,7 @@ Not edited (other sessions own these files). Suggested replacements:
   and https://discussions.agilebits.com/discussion/comment/360996
 - Proton Key Transparency: https://proton.me/support/key-transparency ; Proton
   Pass audit by Cure53: https://proton.me/blog/pass-open-source-security-audit
+
+## Kimi panes (2026-10-24)
+
+Kimi ACP children run locally with the CLI OAuth login and existing Kimi tool approvals. They are desktop only. Phone commands cannot open or follow a Kimi pane, including Full access phones, until a Kimi tool policy can enforce the phone restrictions. The adapter advertises no client filesystem or terminal execution methods. Unsupported reverse RPC requests fail. Kimi uses its own local filesystem and process implementations and is not sandboxed by Apaki.

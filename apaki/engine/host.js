@@ -542,7 +542,7 @@ export function taskReplay(p) {
  */
 export function restoreAsAttach(c, p) {
   // A Codex pane (2026-10-12) holds its thread without a Claude Code process: it is taken over the same way.
-  if (!c || c.op !== 'open' || c.warm !== false || c.force || !p || !(p.runner || p.kind === 'codex')) return null;
+  if (!c || c.op !== 'open' || c.warm !== false || c.force || !p || !(p.runner || p.kind === 'codex' || p.kind === 'kimi')) return null;
   const want = c.sessionId || null;
   const have = p.sessionId || null;
   if (want !== have && !(want === null && have && p.createdHere)) return null;

@@ -230,6 +230,9 @@ import { codexItem, codexResumeHint, isCodexId } from '../../src/codex.js';
 // Codex threads as panes, through one `codex app-server` process (2026-10-12).
 import { findCodex } from './codex-client.js';
 import { CODEX_SHARED, createCodex, isCodexPane } from './codex-panes.js';
+import { findKimi, isKimiId, isKimiPane } from './kimi-client.js';
+import { createKimiList } from './kimi-list.js';
+import { createKimi } from './kimi-panes.js';
 import { threadIdOf } from './codex-map.js';
 import { searchHybrid, startIndexServer, updateIndex, updateViaServer } from '../../src/deepindex.js';
 import { askSearch, digPrompt } from './asksearch.js';
@@ -484,6 +487,15 @@ const codex = createCodex({
 });
 // Whether Codex is installed here, so the window offers it; looked up once, without starting anything.
 const CODEX_FOUND = Boolean(findCodex());
+const KIMI_FOUND = Boolean(findKimi());
+const kimiList = createKimiList({ enabled: !process.env.APAKI_NO_KIMI_LIST && (!process.env.LATCH_NO_INDEX || Boolean(process.env.KIMI_CODE_HOME)) });
+const kimi = createKimi({
+  emit, asks: state.asks, panes, list: kimiList,
+  onSession: (p) => { rememberCreated(p.sessionId); markAway(p, { s: p.sessionId }); },
+  onRowsChange: () => { if (state.items && listening()) emitSessions(null); },
+  activity: (p, msg) => paneActivity(p, { q: null }, msg),
+  turnEnded: (p) => { markAway(p, { busy: false, s: p.sessionId || null, away: { at: new Date().toISOString(), sessionId: p.sessionId || null } }); turnEnded(p); },
+});
 
 /*
  * Codex threads in the main session list from the start (2026-10-12, codex-list.js; Arthur: Codex sessions integrated
@@ -569,20 +581,20 @@ async function tuneCheck(p) {
 function compact(it, term, folderOf) {
   return {
     id: it.id, title: it.title, firstPrompt: it.firstPrompt || '', cwd: it.cwd || '', branch: it.branch || '',
-    lastModified: it.lastModified || 0, size: it.size || 0, codex: Boolean(it.codex),
+    lastModified: it.lastModified || 0, size: it.size || 0, codex: Boolean(it.codex), ...(it.kimi ? { kimi: true, kind: 'kimi', kimiArchived: Boolean(it.kimiArchived) } : {}),
     terminal: term ? { name: term.name, status: term.status, pid: term.pid } : null,
     folder: folderOf.get(it.id)?.id || null,
     // Started headless and never typed in (claude -p, workers, relayed-only windows); shown, and marked.
     headless: Boolean(it.headless), bare: Boolean(it.bare), warm: state.warm.has(it.id),
     subagents: subagentCount(it.id),
     // Archived in Apaki's list (archive.js): hidden from All, In terminals and folders, shown under Archived.
-    archived: archive.archived().has(it.id) || Boolean(it.codexArchived),
+    archived: archive.archived().has(it.id) || Boolean(it.codexArchived) || Boolean(it.kimiArchived),
     // A Codex thread whose rollout sits in ~/.codex/archived_sessions: archived in Codex, so Apaki lists it under Archived too.
     ...(it.codexArchived ? { codexArchived: true } : {}),
     // Claude Code deleted its transcript; Apaki's transcript archive kept a copy (transcript-archive.js, 2026-10-12).
     ...(it.archivedCopy ? { archivedCopy: true, restorable: true } : {}),
     // A turn is running in this engine (a pane here, a phone's pane, or one kept running in the background).
-    running: [...panes.values()].some((p) => p.sessionId === it.id && (p.runner?.turnRunning || p.runner?.turnActive || (isCodexPane(p) && p.busy))),
+    running: [...panes.values()].some((p) => p.sessionId === it.id && (p.runner?.turnRunning || p.runner?.turnActive || ((isCodexPane(p) || isKimiPane(p)) && p.busy))),
     // Pinned to the top of the list (pins.js), and the model of its last reply when its tail says (last-active.js), 2026-10-12.
     ...(pins.pinned().has(it.id) ? { pinned: true } : {}),
     ...(it.model ? { model: it.model } : {}),
@@ -649,6 +661,8 @@ async function loadSessions() {
       const meta = archivedMeta(id);
       if (!meta) continue;
       byId.set(id, { id, title: meta.title || (meta.firstPrompt ? meta.firstPrompt.slice(0, 80) : 'Archived conversation'), cwd: meta.cwd || '', lastModified: meta.lastActive || 0, firstPrompt: meta.firstPrompt || '', archivedCopy: true });
+      // The no-index search fallback (filterItems) reads hay and titleLower; archived rows lacked them and crashed search (2026-10-24).
+      { const row = byId.get(id); row.titleLower = String(row.title || '').toLowerCase(); row.hay = [id, row.title, row.firstPrompt, row.cwd].join(' ').toLowerCase(); }
     }
   } catch (e) { process.stderr.write(`archived sessions: ${e.message || e}\n`); }
   state.byId = byId;
@@ -662,6 +676,7 @@ async function loadSessions() {
 
 async function sessions(reqId) {
   const term = await loadSessions();
+  await kimiList.refresh();
   emitSessions(reqId, term);
   // Codex threads: a background pass over the rollouts (codex-list.js), at most every 30 s; a change sends the list again.
   codexList?.refresh();
@@ -678,6 +693,7 @@ function emitSessions(reqId, term = terminalSessions()) {
   // The Codex threads, from the start (2026-10-12, codex-list.js: the rollouts, read only, with the Codex view's rows over
   // them): listed with the rest, marked codex.
   for (const row of codexRowsNow()) list.push(compact(row, null, folderOf));
+  for (const row of kimiList.rows()) list.push(compact(row, null, folderOf));
   emit({ ev: 'sessions', reqId, items: list, folders: folders.listFolders(), billing: billingInfo(), voice: voiceReady() });
 }
 
@@ -686,21 +702,22 @@ async function search(reqId, query) {
   const folderOf = folders.folderOfSessions();
   const term = terminalSessions();
   const t0 = Date.now();
+  const kimiHits = (await kimiList.search(query)).map((h) => ({ ...h, item: compact(h.item, null, folderOf) }));
   const res = await searchHybrid(query, { limit: 80 });
   if (!res) {
     // No index: the titles and folders of the Claude sessions and of the Codex threads the Codex view has read (2026-10-12).
     const quick = filterItems([...state.items, ...codexSearchRows()], query).map((it) => ({ item: compact(it, term.get(it.id)?.[0], folderOf), kind: null, snippet: '' }));
-    emit({ ev: 'search', reqId, query, elapsed: Date.now() - t0, deep: false, results: quick });
+    emit({ ev: 'search', reqId, query, elapsed: Date.now() - t0, deep: false, results: [...quick, ...kimiHits] });
     return;
   }
-  const results = [];
+  const results = [...kimiHits];
   for (const hit of res.sessions) {
     let it = state.byId.get(hit.session);
     if (!it && isCodexId(hit.session)) it = await codexHitItem(hit);
     if (!it) it = { id: hit.session, title: '(session hidden from the list)', cwd: '', lastModified: Date.parse(hit.latest || '') || 0 };
     results.push({ item: compact(it, term.get(it.id)?.[0], folderOf), kind: hit.kind, snippet: hit.snippet, hits: hit.hits, sources: hit.sources || ['words'] });
   }
-  emit({ ev: 'search', reqId, query, elapsed: res.elapsed_ms, total: res.total_hits, deep: true, semantic: Boolean(res.semantic), terms: res.terms || null, results });
+  emit({ ev: 'search', reqId, query, elapsed: res.elapsed_ms, total: res.total_hits + kimiHits.length, deep: true, semantic: Boolean(res.semantic), terms: res.terms || null, results });
 }
 
 /*
@@ -729,6 +746,7 @@ async function codexHitItem(hit) {
 
 /** A list item for a session the list does not show (hidden headless, Codex). */
 function itemFor(id, hit) {
+  if (isKimiId(id) && kimiList.get(id)) return kimiList.get(id);
   if (state.byId.get(id)) return state.byId.get(id);
   if (isCodexId(id)) { const row = codexRowsById().get(id); if (row) return row; }
   if (isCodexId(id) && hit) return { ...codexItem(hit), title: codexItem(hit).title.replace(/^Codex: /, '') };
@@ -789,7 +807,7 @@ async function sessionInfoOf(id) {
   info.terminal = (terminalSessions().get(id) || []).map((t) => ({ name: t.name || '', status: t.status || '', pid: t.pid || null }));
   for (const p of panes.values()) {
     if (p.sessionId !== id) continue;
-    const running = Boolean(p.runner?.turnRunning || p.runner?.turnActive || (isCodexPane(p) && p.busy));
+    const running = Boolean(p.runner?.turnRunning || p.runner?.turnActive || ((isCodexPane(p) || isKimiPane(p)) && p.busy));
     info.panes.push({ where: parsePhoneId(p.id) ? 'phone' : 'desktop', model: p.model || '', effort: p.effort || '', mode: p.mode || '', billing: p.credential?.name || '', running });
   }
   if (codexId) {
@@ -1022,11 +1040,13 @@ async function historyRevOf(sessionId) {
 /* ---------- the open conversations (one per pane) ---------- */
 
 function billingInfo(p) {
+  if (isKimiPane(p)) return kimi.billing();
   const c = p ? p.credential : defaults.credential;
   return { name: c.name, source: c.source, follow: Boolean(c.follow), isKey: Boolean(c.key) };
 }
 
 async function closeRunner(p) {
+  if (isKimiPane(p)) { await kimi.close(p); return; }
   // A Codex pane has no Claude Code process: stopping it interrupts a running turn and lets go of the thread (codex-panes.js).
   if (isCodexPane(p)) { await codex.close(p); return; }
   const r = p.runner;
@@ -1042,7 +1062,7 @@ async function closeRunner(p) {
  */
 function paneWith(sessionId, exceptId) {
   // A pane whose conversation is in its console has it too (console.js): its TUI is the writer.
-  for (const p of panes.values()) if (p.id !== exceptId && (p.runner || isCodexPane(p) || consoles.has(p.id)) && p.sessionId && p.sessionId === sessionId) return p;
+  for (const p of panes.values()) if (p.id !== exceptId && (p.runner || isCodexPane(p) || isKimiPane(p) || consoles.has(p.id)) && p.sessionId && p.sessionId === sessionId) return p;
   return null;
 }
 
@@ -1079,7 +1099,8 @@ async function takeFrom(other, taker) {
   // Interrupted for the takeover: what it had queued stays unsent, like after a Stop.
   other.userStopped = true;
   // A Codex pane lets go of its thread (an interrupt first, if a turn runs); then it is no longer busy.
-  if (isCodexPane(other)) await codex.close(other);
+  if (isKimiPane(other)) await kimi.close(other);
+  else if (isCodexPane(other)) await codex.close(other);
   other.busy = false;
   if (r) {
     if (r.running) await r.interrupt();
@@ -1164,7 +1185,20 @@ function dropStaleAsks(paneId, { olderThanMs = 0, questionsOnly = false, keepSub
  * starting Claude Code to the first message, so restoring six panes at launch
  * does not start six processes.
  */
+const kimiOpens = new Map();
 async function open(reqId, paneId, sessionId, cwd, opts = {}) {
+  if (!isKimiId(sessionId)) return openPane(reqId, paneId, sessionId, cwd, opts);
+  // Different pane queues can open the same saved session at once. Reserve it until ownership is established.
+  const previous = kimiOpens.get(sessionId) || Promise.resolve();
+  let release;
+  const reservation = new Promise((resolve) => { release = resolve; });
+  kimiOpens.set(sessionId, reservation);
+  await previous;
+  try { return await openPane(reqId, paneId, sessionId, cwd, opts); }
+  finally { release(); if (kimiOpens.get(sessionId) === reservation) kimiOpens.delete(sessionId); }
+}
+
+async function openPane(reqId, paneId, sessionId, cwd, opts = {}) {
   const p = getPane(paneId);
   // The pane's conversation is in its console (a window that reloaded or came back): it stays there and shows again.
   // Another conversation asked for: the console ends first, without taking the old one back (console.js).
@@ -1175,7 +1209,16 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   // Only in the archive: shown from it, and nothing starts until a message restores it (send, 2026-10-12).
   if (archivedOnly(sessionId)) opts = { ...opts, warm: false };
   // A Codex thread, or a new conversation asked to be Codex (2026-10-12): without the codex command the old hint stays.
-  const wantCodex = isCodexId(sessionId) || opts.kind === 'codex';
+  const wantKimi = isKimiId(sessionId) || opts.kind === 'kimi';
+  if (wantKimi && parsePhoneId(p.id)) throw new Error('Kimi panes are available on the desktop only.');
+  if (wantKimi && !KIMI_FOUND) {
+    await closeRunner(p);
+    await kimi.open(reqId, p, sessionId || null, cwd || null, opts);
+    emit({ ev: 'error', reqId, paneId: p.id, message: 'Kimi Code was not found. Configure APAKI_KIMI_BIN and APAKI_KIMI_NODE, then restart the Apaki host.' });
+    return;
+  }
+  if (wantKimi && sessionId && isKimiPane(p) && p.sessionId === sessionId && p.busy) { await kimi.attach(reqId, p); return; }
+  const wantCodex = !wantKimi && (isCodexId(sessionId) || opts.kind === 'codex');
   if (wantCodex && !CODEX_FOUND) { emit({ ev: 'note', reqId, paneId: p.id, tone: 'warn', text: sessionId ? `${codexResumeHint(sessionId)} (Codex is not installed on this PC, so Apaki cannot open it.)` : 'Codex is not installed on this PC (no codex command was found). Install it with npm install -g @openai/codex.' }); return; }
   // The same Codex thread already open and working in this pane (a window that came back): it is kept, not restarted.
   if (wantCodex && sessionId && isCodexPane(p) && p.sessionId === sessionId && p.busy) { await codex.attach(reqId, p); return; }
@@ -1201,6 +1244,12 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
   }
   if (termHeld) await takeBackHeld(CONSOLE_DIR, sessionId);
   await closeRunner(p);
+  if (wantKimi) {
+    if ((p.sessionId || null) !== (sessionId || null)) resetHeld(p);
+    p.createdHere = false;
+    await kimi.open(reqId, p, sessionId || null, cwd || null, opts);
+    return;
+  }
   if (wantCodex) {
     // Another conversation in this pane: what was queued for the old one no longer applies (as below for Claude).
     if ((p.sessionId || null) !== (sessionId || null)) resetHeld(p);
@@ -1340,10 +1389,15 @@ async function send(reqId, paneId, text, images = []) {
   const termHeld = p.sessionId ? readHeld(CONSOLE_DIR, p.sessionId) : null;
   if (termHeld) { emit({ ev: 'taken_over', reqId, paneId: p.id, sessionId: p.sessionId, holder: termHeld }); return; }
   // A Codex thread whose pane let go of it (idle with no window, or taken over and taken back): open it again, then send.
+  if (!isKimiPane(p) && isKimiId(p.sessionId)) {
+    await open(null, p.id, p.sessionId, null, { warm: false });
+    if (!isKimiPane(p)) return;
+  }
   if (!isCodexPane(p) && isCodexId(p.sessionId)) {
     await open(null, p.id, p.sessionId, null, { warm: false });
     if (!isCodexPane(p)) return;
   }
+  if (isKimiPane(p)) { await kimi.send(reqId, p, text, images); return; }
   if (isCodexPane(p)) { await codex.send(reqId, p, text, images); return; }
   // A conversation only the archive still has goes back where Claude Code keeps it, then continues (2026-10-12).
   if (p.sessionId && archivedOnly(p.sessionId)) {
@@ -1397,7 +1451,7 @@ async function attach(reqId, paneId, sessionId, cwd) {
   if (p && consoles.has(p.id) && (p.sessionId || null) === (sessionId || null)) { await consoleAttach(reqId, p); return; }
   // A Codex pane that is still here: its state and history again, the server and its turn untouched.
   if (p && isCodexPane(p) && (p.sessionId || null) === (sessionId || null)) { await codex.attach(reqId, p); return; }
-  if (!p || !p.runner || (p.sessionId || null) !== (sessionId || null)) { await open(reqId, paneId, sessionId, cwd, { warm: false, kind: isCodexId(sessionId) ? 'codex' : undefined }); return; }
+  if (!p || !p.runner || (p.sessionId || null) !== (sessionId || null)) { await open(reqId, paneId, sessionId, cwd, { warm: false, kind: isKimiId(sessionId) ? 'kimi' : isCodexId(sessionId) ? 'codex' : undefined }); return; }
   const info = p.sessionId ? await getSessionInfo(p.sessionId).catch(() => null) : null;
   // busy: a message sent here is still running (its result event follows, which clears it in the window);
   // turn: any turn is running, also one Claude started by itself (the window picks that up from its next
@@ -1461,6 +1515,7 @@ async function followState(c) {
 async function closePane(reqId, paneId) {
   const p = panes.get(String(paneId));
   if (!p) return;
+  if (isKimiPane(p)) p.userStopped = true;
   for (const [id, a] of state.asks) {
     if (a.paneId !== p.id) continue;
     state.asks.delete(id);
@@ -1725,7 +1780,7 @@ function voiceModelOp(c = {}) {
     emit({ ev: 'note', tone: 'info', text: 'The voice model is installed. The mic button is on.' });
     status('ready', 'Voice is ready.');
     // A fresh ready event: the window turns the mic on from it (and asks for the session list again, which is cheap).
-    emit({ ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND });
+    emit({ ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND, kimi: KIMI_FOUND });
   }).catch((e) => {
     emit({ ev: 'note', tone: 'warn', text: e.message });
     status('error', e.message);
@@ -1938,7 +1993,7 @@ const handlers = {
   },
   close: (c) => closePane(c.reqId, c.paneId),
   // A Stop: the queue stays unsent after it (queue-hold.js), until the next message is sent.
-  interrupt: (c) => { const p = getPane(c.paneId); p.userStopped = true; return isCodexPane(p) ? codex.interrupt(p) : p.runner?.interrupt(); },
+  interrupt: (c) => { const p = getPane(c.paneId); p.userStopped = true; return isKimiPane(p) ? kimi.interrupt(p) : isCodexPane(p) ? codex.interrupt(p) : p.runner?.interrupt(); },
   // The window's queued messages, kept here so they can go out with no window connected (queue-hold.js).
   // Never for a phone pane: remote-policy.js does not let a phone send it, and phone queues stay window-side.
   queueSet: (c) => {
@@ -2380,6 +2435,7 @@ const handlers = {
   stopSession: (c) => {
     let n = 0;
     for (const p of panes.values()) {
+      if (isKimiPane(p) && p.sessionId === c.sessionId && p.busy) { p.userStopped = true; kimi.interrupt(p); n += 1; continue; }
       if (isCodexPane(p) && p.sessionId === c.sessionId && p.busy) { p.userStopped = true; codex.interrupt(p); n += 1; continue; }
       if (p.sessionId !== c.sessionId || !(p.runner?.turnRunning || p.runner?.turnActive)) continue;
       p.userStopped = true;
@@ -2531,7 +2587,24 @@ const SERIAL_OPS = new Set(['open', 'attach', 'send', 'close', 'model', 'mode', 
 
 /** Runs one command, from the window (stdin) or from a phone (remote.js, already checked). */
 async function dispatch(c) {
-  const h = handlers[c.op];
+  let h = handlers[c.op];
+  const kp = panes.get(String(c.paneId || ''));
+  const kimiTarget = isKimiPane(kp) || isKimiId(c.sessionId) || c.kind === 'kimi';
+  if (kimiTarget && (c.follower || parsePhoneId(c.paneId))) { emit({ ev: 'error', reqId: c.reqId, paneId: c.paneId, message: 'Kimi panes are available on the desktop only.', refused: true }); return; }
+  if (kimiTarget) {
+    // Keep unsupported Kimi operations away from Claude credentials, transcripts and console commands.
+    const allowed = new Set(['open', 'attach', 'send', 'interrupt', 'answer', 'close', 'queueSet', 'folder', 'pin', 'archive', 'sessionInfo', 'stopSession', 'model', 'effort', 'mode', 'contextUsage', 'commands', 'historyBefore', 'historyCheck', 'historyPrompts', 'steer', 'billingOptions']);
+    if (!allowed.has(c.op)) { emit({ ev: 'error', reqId: c.reqId, paneId: c.paneId, busy: Boolean(kp?.busy), message: `The ${c.op} operation is not supported for Kimi panes yet.` }); return; }
+    if (c.op === 'sessionInfo') h = async () => {
+      await kimiList.refresh();
+      const row = kimiList.get(c.sessionId);
+      emit({ ev: 'sessionInfo', reqId: c.reqId, sessionId: c.sessionId, ok: Boolean(row), info: row ? { ...row, provider: 'kimi', transcript: row.file, transcriptSize: row.size, archived: row.kimiArchived } : null });
+    };
+    else if (isKimiPane(kp) && !['open', 'send', 'interrupt', 'answer', 'close', 'queueSet', 'folder', 'pin', 'archive', 'stopSession'].includes(c.op)) h = async () => {
+      if (c.op === 'attach' && (c.sessionId || null) !== (kp.sessionId || null)) return attach(c.reqId, c.paneId, c.sessionId || null, c.cwd || null);
+      await kimi.handle(c, kp);
+    };
+  }
   if (!h) { emit({ ev: 'error', reqId: c.reqId, message: `unknown op ${c.op}` }); return; }
   // A send or steer takes its queued messages out of this engine's copy at once, before it waits its turn in the
   // pane's chain below: the copy must never still hold what a window is sending (queue-hold.js, no double send).
@@ -2546,7 +2619,7 @@ async function dispatch(c) {
       if (c.op === 'send') hp.userStopped = false;
     }
   }
-  const run = async () => { try { await h(c); } catch (e) { emit({ ev: 'error', reqId: c.reqId, paneId: c.paneId, message: e.message || String(e) }); } };
+  const run = async () => { try { await h(c); } catch (e) { emit({ ev: 'error', reqId: c.reqId, paneId: c.paneId, ...(isKimiPane(kp) ? { busy: Boolean(kp.busy) } : {}), message: e.message || String(e) }); } };
   // A pane's opens, sends, closes and setting changes run one after another.
   // Without this, a message sent while the pane was still switching
   // conversations started a second runner and its turn landed in a new
@@ -2559,7 +2632,7 @@ async function dispatch(c) {
     // ended, and behind a question it was meant to ask again for good
     // (2026-10-10, found re-attaching to the background host mid-turn). An
     // attach that falls back to open stays in the queue.
-    if (c.op === 'attach' && p.runner && (p.sessionId || null) === (c.sessionId || null)) { await run(); return; }
+    if (c.op === 'attach' && (p.runner || isKimiPane(p)) && (p.sessionId || null) === (c.sessionId || null)) { await run(); return; }
     p.queue = (p.queue || Promise.resolve()).then(run);
     return;
   }
@@ -2607,15 +2680,15 @@ remote = createRemote({
   emit,
   dispatch: (c) => dispatch(c),
   // voice: whether this PC has Whisper, so a phone shows its mic (op transcribe, 2026-10-12); it was always false here.
-  readyEvent: () => ({ ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), codex: CODEX_FOUND }),
+  readyEvent: () => ({ ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), codex: CODEX_FOUND, kimi: KIMI_FOUND }),
   engine: {
     hasOp: (op) => typeof handlers[op] === 'function',
     paneExists: (id) => panes.has(id),
     paneCount: (deviceId) => phonePanes(deviceId).length,
     phonePanes,
-    paneInfo: (id) => { const p = panes.get(id); return p ? { sessionId: p.sessionId, running: Boolean(p.runner) || isCodexPane(p), busy: Boolean(p.busy), model: p.model, effort: p.effort, mode: p.mode, tune: tuneView(p), kind: isCodexPane(p) ? 'codex' : 'claude' } : null; },
+    paneInfo: (id) => { const p = panes.get(id); return p ? { sessionId: p.sessionId, running: Boolean(p.runner) || isCodexPane(p) || isKimiPane(p), busy: Boolean(p.busy), model: p.model, effort: p.effort, mode: p.mode, tune: tuneView(p), kind: isKimiPane(p) ? 'kimi' : isCodexPane(p) ? 'codex' : 'claude' } : null; },
     // Whether a pane runs a Codex thread: its model, effort and mode are Codex's (remote-policy.js checks them against that).
-    paneKind: (id) => (isCodexPane(panes.get(id)) ? 'codex' : 'claude'),
+    paneKind: (id) => (isKimiPane(panes.get(id)) ? 'kimi' : isCodexPane(panes.get(id)) ? 'codex' : 'claude'),
     capChanged: (deviceId) => { capChanged(deviceId).catch((e) => process.stderr.write(`apaki: applying a phone's access: ${e.message}
 `)); },
     askPane: (askId) => state.asks.get(askId)?.paneId || null,
@@ -2665,6 +2738,7 @@ function shutdown(reason = 'stdin closed') {
     // Consoles quit the way a person quits them (console.js), before the engine goes.
     await consoles.shutdown().catch(() => {});
     await Promise.all([...panes.values()].map((p) => closeRunner(p)));
+    await kimi.shutdown();
     await codex.shutdown();
     // The worktree worker and the delay monitor (2026-10-15).
     try { perf.stop(); await wtIndex.close(); } catch { /* not started yet, or already gone */ }
@@ -2997,7 +3071,9 @@ function glassView(st) {
 async function glassChanged() {
   const c = glassCredential();
   const id = `${c.source}:${c.key ? c.key.slice(-12) : ''}`;
-  const view = glassView(await glassStatus());
+  const status = await glassStatus();
+  kimi.updateBilling(status);
+  const view = glassView(status);
   const account = view?.claude ? { label: view.claude.name, plan: view.claude.plan, headroom: view.claude.headroom } : null;
   const name = c.key ? (view?.claude?.isKey ? view.claude.name : c.name) : account?.label ? `${account.label} (${account.plan || 'subscription'})` : c.name;
   const changed = glassSeen !== null && glassSeen !== id;
@@ -3005,6 +3081,7 @@ async function glassChanged() {
   const next = { ...c, name };
   if (defaults.credential.follow) defaults.credential = next;
   for (const p of panes.values()) {
+    if (isKimiPane(p)) continue;
     if (!p.credential.follow) continue;
     const moved = (p.credential.key ?? null) !== (next.key ?? null);
     p.credential = next;
@@ -3081,7 +3158,7 @@ fs.watchFile(LIVE_LOGIN, { interval: 1500 }, () => {
 });
 setTimeout(() => { authStatus(null).catch(() => {}); }, 1500).unref();
 
-emit({ ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND });
+emit({ ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND, kimi: KIMI_FOUND });
 // The transcript archive: a minute after start, then every 6 hours (2026-10-12).
 setTimeout(() => { runTranscriptArchive(); }, 60 * 1000).unref();
 setInterval(() => { runTranscriptArchive(); }, 6 * 60 * 60 * 1000).unref();
@@ -3195,7 +3272,7 @@ function hostWindowConnected(conn) {
   lifecycle?.windowConnected();
   const desk = [...panes.values()].filter((p) => !parsePhoneId(p.id));
   conn.send({
-    ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND,
+    ev: 'ready', version: APP_VERSION, billing: billingInfo(), model: defaults.model, effort: defaults.effort, mode: defaults.mode, pid: process.pid, voice: voiceReady(), artifacts: Boolean(openServer), codex: CODEX_FOUND, kimi: KIMI_FOUND,
     host: { pid: process.pid, startedAt: host?.startedAt || null, panes: desk.length, running: desk.filter((p) => p.runner?.running).length, working: desk.filter((p) => paneWorking(p)).length },
   });
   // What changed while no window was connected: the index lines and keep-warm marks as last sent, Glass read now.
@@ -3217,11 +3294,11 @@ function hostView() {
     remoteOn: Boolean(remote?.state?.enabled),
     panes: [...panes.values()].map((p) => ({
       // A console (console.js) counts as open and running, and as working while a turn runs in its TUI.
-      id: p.id, sessionId: p.sessionId || null, phone: Boolean(parsePhoneId(p.id)), open: Boolean(p.runner) || isCodexPane(p) || consoles.has(p.id), running: Boolean(p.runner?.running) || (isCodexPane(p) && Boolean(p.busy)) || consoles.has(p.id),
+      id: p.id, sessionId: p.sessionId || null, phone: Boolean(parsePhoneId(p.id)), open: Boolean(p.runner) || isCodexPane(p) || isKimiPane(p) || consoles.has(p.id), running: Boolean(p.runner?.running) || (isCodexPane(p) && Boolean(p.busy)) || consoles.has(p.id),
       busy: paneTurnBusy(p) || consoles.busy(p.id), working: paneWorking(p) || consoles.busy(p.id), tasks: p.bgTasks?.size || 0, asks: asksOf(p.id), lastActiveAt: p.lastActiveAt || 0,
       // The window's tab that holds this pane is not showing, since when (hiddenDesktopPanes); a Codex pane is never released for it.
       // A pane in its console is never released for it either (its TUI holds the conversation): it counts as a Codex one here.
-      hiddenSince: hiddenSince.get(p.id) || 0, codex: isCodexPane(p) || consoles.has(p.id),
+      hiddenSince: hiddenSince.get(p.id) || 0, codex: isCodexPane(p) || isKimiPane(p) || consoles.has(p.id),
     })),
   };
 }
