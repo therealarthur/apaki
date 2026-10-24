@@ -4,12 +4,25 @@ import { randomUUID } from 'node:crypto';
 import { KimiClient, KIMI_MODEL, KIMI_EFFORT, isKimiPane, kimiSessionId } from './kimi-client.js';
 import { kimiExcluded } from './kimi-list.js';
 import { KIMI_MODES, KimiTranscript, permissionAsk, elicitationAsk, kimiBilling } from './kimi-map.js';
+import { KimiJournalReader, KimiJournalTranscript } from './kimi-journal.js';
 import { heldView } from './queue-hold.js';
 
-export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, activity = () => {}, onSession = () => {}, onRowsChange = () => {}, clientFactory = (opts) => new KimiClient(opts), cancelMs = 5000 } = {}) {
+const READ_ONLY = 'This session is running in another Kimi process and is shown read only. Sending will be enabled when it becomes available.';
+export function mayBeHeld(error) {
+  const codes = [error?.code, error?.data?.code, error?.data?.type, error?.data?.error?.code];
+  return (error?.kimiLoad && Number(error.code) === -32603) || codes.includes('session.busy');
+}
+function openError(error) {
+  const message = String(error?.message || '').trim();
+  return !message || /^internal error[.!]?$/i.test(message)
+    ? 'Kimi could not open the conversation because its ACP service failed. Check the Kimi CLI status and reopen this pane.'
+    : `Kimi could not open the conversation: ${message}`;
+}
+
+export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, activity = () => {}, onSession = () => {}, onRowsChange = () => {}, clientFactory = (opts) => new KimiClient(opts), cancelMs = 5000, followMs = 1000, now = Date.now } = {}) {
   let billing = kimiBilling(null);
   const event = (p, ev, data = {}) => emit({ ev, paneId: p.id, sessionId: p.sessionId, ...data });
-  const settings = (p) => event(p, 'settings', { kind: 'kimi', model: p.model, effort: p.effort, mode: p.mode, tune: {} });
+  const settings = (p) => event(p, 'settings', { kind: 'kimi', model: p.model, effort: p.effort, mode: p.mode, tune: {}, readOnly: Boolean(p.kimi?.readOnly), readOnlyReason: p.kimi?.readOnly ? READ_ONLY : '' });
   const note = (p, text, tone = 'warn') => event(p, 'note', { text, tone });
   function clearAsks(p, why) {
     for (const [id, a] of asks) if (a.paneId === p.id && a.kimi) {
@@ -19,6 +32,7 @@ export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, acti
   }
   function finish(p, cx, error = null, stopReason = 'end_turn') {
     if (p.kimi !== cx || !cx.turn) return;
+    if (error && /^internal error[.!]?$/i.test(String(error.message).trim())) error = new Error('Kimi could not continue because its ACP service failed. Reopen this pane; the last prompt was not retried.');
     const turn = cx.turn; cx.turn = null;
     clearTimeout(cx.cancelTimer); cx.cancelTimer = null;
     cx.transcript.flush();
@@ -66,6 +80,7 @@ export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, acti
   function onUpdate(p, cx, method, params) {
     if (p.kimi !== cx || cx.closing || method !== 'session/update' || params.sessionId !== cx.rawId) return;
     const u = params.update || {};
+    if (cx.replay) { cx.replay.update(u); return; }
     switch (u.sessionUpdate) {
       case 'available_commands_update':
         cx.commands = (u.availableCommands || []).filter((c) => typeof c.name === 'string').map((c) => ({ name: c.name, description: String(c.description || ''), argumentHint: c.input?.hint || '' }));
@@ -94,20 +109,27 @@ export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, acti
     p.model = KIMI_MODEL; p.effort = KIMI_EFFORT;
     settings(p);
   }
-  async function load(p, cx) {
+  async function load(p, cx, { recover = false } = {}) {
     if (cx.loaded && !cx.client.closed) return;
     if (cx.failed) throw new Error('Reopen this Kimi pane before sending again. Its previous prompt was not retried.');
     const client = cx.client = clientFactory({ cwd: cx.cwd });
-    client.on('request', (id, method, params) => onRequest(p, cx, id, method, params));
-    client.on('notification', (method, params) => onUpdate(p, cx, method, params));
+    if (recover) cx.replay = new KimiTranscript();
+    client.on('request', (id, method, params) => { if (cx.client === client) onRequest(p, cx, id, method, params); });
+    client.on('notification', (method, params) => { if (cx.client === client) onUpdate(p, cx, method, params); });
     client.on('gone', (e) => {
+      if (cx.client !== client || !cx.loaded || cx.readOnly) return;
       cx.failed = true; cx.loaded = false;
       clearAsks(p, 'cancelled');
       if (!cx.closing && p.kimi === cx) { if (cx.turn) finish(p, cx, e); else event(p, 'error', { message: e.message }); }
     });
     await client.start();
+    if (cx.closing) throw new Error('Kimi pane closed.');
     const resumed = Boolean(cx.rawId);
-    const result = await client.request(resumed ? 'session/load' : 'session/new', { ...(resumed ? { sessionId: cx.rawId } : {}), cwd: cx.cwd, mcpServers: [] });
+    let result;
+    try {
+      result = await client.request(resumed ? 'session/load' : 'session/new', { ...(resumed ? { sessionId: cx.rawId } : {}), cwd: cx.cwd, mcpServers: [] });
+    } catch (error) { error.kimiLoad = resumed; throw error; }
+    if (cx.closing) throw new Error('Kimi pane closed.');
     if (!resumed) {
       cx.rawId = kimiSessionId(result?.sessionId);
       p.sessionId = `kimi:${cx.rawId}`;
@@ -115,11 +137,68 @@ export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, acti
       onSession(p);
       event(p, 'session_id');
     }
-    cx.transcript.flush();
+    (cx.replay || cx.transcript).flush();
     await enforce(p, cx);
     await client.request('session/set_mode', { sessionId: cx.rawId, modeId: p.mode });
     cx.loaded = true;
-    cx.transcript.live = true;
+    cx.replay = null;
+    if (!recover) cx.transcript.live = true;
+  }
+  function transcript(p, cx) {
+    return new KimiTranscript((msg) => {
+      // Journal messages already carry complete blocks; the existing renderer folds their thinking.
+      if (cx.readOnly && msg.type === 'stream_event') return;
+      if (cx.closing || p.kimi !== cx) return;
+      event(p, 'sdk', { msg });
+      if (!cx.readOnly) activity(p, msg);
+    });
+  }
+  async function stopClient(cx) {
+    const client = cx.client;
+    cx.client = null; cx.replay = null; cx.loaded = false;
+    await client?.stop();
+  }
+  async function readJournal(p, cx, opts) {
+    const read = await cx.reader.read(opts);
+    cx.transcript.flush();
+    if (read.bytes || read.reset || cx.lastGrowth === undefined) cx.lastGrowth = now();
+    if (read.reset) note(p, 'Kimi replaced or shortened its journal. The history already shown is kept.', 'dim');
+    return read;
+  }
+  function follow(p, cx, visible = false) {
+    if (cx.closing || p.kimi !== cx || !cx.readOnly) return Promise.resolve();
+    if (cx.followWork) return visible ? cx.followWork.then(() => follow(p, cx, true)) : cx.followWork;
+    cx.followWork = (async () => {
+      const read = await readJournal(p, cx);
+      if (cx.closing || !visible || read.more || read.bytes || cx.retryBlocked
+        || now() - cx.lastGrowth < 30000 || now() - cx.lastAttempt < 30000) return;
+      cx.lastAttempt = now();
+      try {
+        await load(p, cx, { recover: true });
+        // Successful loading holds the session here. Finish the final journal write before enabling sends.
+        let tail;
+        do { tail = await readJournal(p, cx, { final: true }); } while (tail.more && !cx.closing);
+        if (cx.closing) return;
+        cx.readOnly = false;
+        clearInterval(cx.followTimer);
+        settings(p);
+        note(p, 'Kimi is available here now. You can continue the conversation.', 'dim');
+      } catch (error) {
+        await stopClient(cx);
+        if (cx.closing) return;
+        if (!mayBeHeld(error)) {
+          cx.retryBlocked = true;
+          event(p, 'error', { message: `${openError(error)} The journal remains read only. Reopen the pane to retry.` });
+        }
+      }
+    })().catch((error) => {
+      if (!cx.closing && !cx.journalError) {
+        cx.journalError = true;
+        event(p, 'error', { message: `Kimi journal following paused: ${error.message} Reopen the pane to retry.` });
+        clearInterval(cx.followTimer);
+      }
+    }).finally(() => { cx.followWork = null; });
+    return cx.followWork;
   }
   async function open(reqId, p, sessionId, cwd, opts = {}) {
     await list.refresh();
@@ -129,8 +208,8 @@ export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, acti
     p.kind = 'kimi'; p.runner = null; p.busy = false; p.inTurn = false; p.userStopped = false;
     p.model = KIMI_MODEL; p.effort = KIMI_EFFORT; p.mode = KIMI_MODES.includes(opts.mode) ? opts.mode : 'default'; p.tune = {};
     p.sessionId = sessionId || null; p.cwd = folder; p.createdHere = false; p.openedAt = new Date().toISOString();
-    const cx = p.kimi = { rawId: null, cwd: folder, title: row?.title || 'New conversation', commands: [], turn: null, loaded: false, failed: false };
-    cx.transcript = new KimiTranscript((msg) => { event(p, 'sdk', { msg }); activity(p, msg); });
+    const cx = p.kimi = { readOnly: false, lastAttempt: now(), rawId: null, cwd: folder, title: row?.title || 'New conversation', commands: [], turn: null, loaded: false, failed: false };
+    cx.transcript = transcript(p, cx);
     try {
       if (kimiExcluded(folder)) throw new Error('This folder is excluded by the owner.');
       if (sessionId && !row) throw new Error('Kimi session metadata was not found in the configured KIMI_CODE_HOME, or the session is excluded. Refresh the list and check the Kimi home.');
@@ -138,10 +217,26 @@ export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, acti
       if (sessionId) { cx.rawId = kimiSessionId(sessionId); await load(p, cx); }
     }
     catch (e) {
-      cx.failed = true; cx.closing = true;
-      await cx.client?.stop(); cx.closing = false;
+      await stopClient(cx);
+      if (mayBeHeld(e) && row) {
+        try {
+          cx.readOnly = true;
+          cx.transcript = transcript(p, cx);
+          cx.journal = new KimiJournalTranscript(cx.transcript);
+          cx.reader = new KimiJournalReader(row.file, list.root, (r) => cx.journal.consume(r));
+          await readJournal(p, cx, { maxBytes: 8 * 1024 * 1024 });
+          await attach(reqId, p, false);
+          cx.transcript.live = true;
+          cx.followTimer = setInterval(() => follow(p, cx), followMs);
+          cx.followTimer.unref();
+          return;
+        } catch (journalError) {
+          e = new Error(`The session may be in use, but Apaki could not read its journal. ${journalError.message}`);
+        }
+      }
+      cx.failed = true;
       await attach(reqId, p);
-      event(p, 'error', { reqId, message: `Kimi could not open the conversation: ${e.message}` });
+      event(p, 'error', { reqId, message: openError(e) });
       return;
     }
     await attach(reqId, p, false);
@@ -152,14 +247,17 @@ export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, acti
     cx.transcript.flush();
     event(p, 'opened', {
       reqId, kind: 'kimi', attached, cwd: cx.cwd, title: cx.title, model: p.model, effort: p.effort, mode: p.mode,
+      readOnly: Boolean(cx.readOnly), readOnlyReason: cx.readOnly ? READ_ONLY : '',
       billing, terminal: [], busy: Boolean(p.busy), turn: Boolean(p.busy), running: Boolean(cx.loaded), queue: heldView(p), tune: {},
     });
     event(p, 'history', { ...cx.transcript.page(), reqId });
     for (const [askId, a] of asks) if (a.kimi && a.paneId === p.id) event(p, 'ask', { askId, toolName: a.toolName, input: a.input, ...(a.permission ? { permission: a.permission } : {}) });
     event(p, 'commands', { commands: cx.commands });
+    if (cx.readOnly) note(p, READ_ONLY, 'dim');
   }
   async function send(reqId, p, text, images = []) {
     const cx = p.kimi;
+    if (cx.readOnly) { event(p, 'error', { reqId, message: READ_ONLY, busy: false }); return; }
     if (p.busy) { event(p, 'error', { reqId, message: 'Kimi is working. Queue the message or stop the turn first.' }); return; }
     p.busy = true; p.inTurn = true;
     cx.turn = { reqId, at: Date.now() };
@@ -202,16 +300,19 @@ export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, acti
     p.userStopped = true;
     clearAsks(p, 'closed');
     clearTimeout(cx.cancelTimer);
-    if (cx.client && !cx.client.closed && cx.rawId) {
+    clearInterval(cx.followTimer);
+    if (cx.loaded && cx.client && !cx.client.closed && cx.rawId) {
       try { cx.client.notify('session/cancel', { sessionId: cx.rawId }); } catch { /* Already gone. */ }
       await cx.client.request('session/close', { sessionId: cx.rawId }, 2000).catch(() => {});
     }
-    await cx.client?.stop();
+    await stopClient(cx);
+    await cx.followWork;
     p.busy = false; p.inTurn = false; p.kimi = null; p.kind = null;
   }
   async function setting(p, op, value) {
     const cx = p.kimi;
     try {
+      if (cx.readOnly) throw new Error(READ_ONLY);
       if (op === 'model' && value !== KIMI_MODEL) throw new Error('Kimi panes use kimi-code/k3.1-pro.');
       if (op === 'effort' && value !== KIMI_EFFORT) throw new Error('Kimi main sessions use max effort.');
       if (op === 'mode') {
@@ -231,7 +332,9 @@ export function createKimi({ emit, asks, panes, list, turnEnded = () => {}, acti
       case 'contextUsage': event(p, 'context', { reqId: c.reqId, ...(cx.context || { none: true }) }); return true;
       case 'commands': event(p, 'commands', { reqId: c.reqId, commands: cx.commands }); return true;
       case 'historyBefore': event(p, 'historyPage', { reqId: c.reqId, ...cx.transcript.page(c) }); return true;
-      case 'historyCheck': event(p, 'historyChecked', { reqId: c.reqId, fresh: true }); return true;
+      case 'historyCheck':
+        if (cx.readOnly) await follow(p, cx, c.visible === true);
+        event(p, 'historyChecked', { reqId: c.reqId, fresh: true }); return true;
       case 'historyPrompts': {
         const prompts = cx.transcript.messages.filter((m) => m.prompt).map((m) => ({ id: m.uuid, at: m.at, ...m.prompt }));
         event(p, 'historyPrompts', { reqId: c.reqId, prompts, total: prompts.length }); return true;

@@ -144,6 +144,7 @@ export class KimiClient extends EventEmitter {
         if (m.error) {
           const e = new Error(m.error.code === -32000 ? 'Kimi needs its CLI OAuth login. Sign in through the portable Kimi CLI, then reopen this pane.' : String(m.error.message || 'Kimi rejected the request.'));
           e.code = m.error.code;
+          e.data = m.error.data;
           pending.reject(e);
         } else pending.resolve(m.result);
       }

@@ -581,7 +581,7 @@ async function tuneCheck(p) {
 function compact(it, term, folderOf) {
   return {
     id: it.id, title: it.title, firstPrompt: it.firstPrompt || '', cwd: it.cwd || '', branch: it.branch || '',
-    lastModified: it.lastModified || 0, size: it.size || 0, codex: Boolean(it.codex), ...(it.kimi ? { kimi: true, kind: 'kimi', kimiArchived: Boolean(it.kimiArchived) } : {}),
+    lastModified: it.lastModified || 0, size: it.size || 0, codex: Boolean(it.codex), ...(it.kimi ? { kimi: true, kind: 'kimi', kimiArchived: Boolean(it.kimiArchived), ...(it.kimiRole ? { kimiRole: it.kimiRole } : {}) } : {}),
     terminal: term ? { name: term.name, status: term.status, pid: term.pid } : null,
     folder: folderOf.get(it.id)?.id || null,
     // Started headless and never typed in (claude -p, workers, relayed-only windows); shown, and marked.

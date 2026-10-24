@@ -3408,7 +3408,7 @@ function sessionRow(s, o = {}) {
   const wtMark = worktree && !s.wtKid ? `<span class="sr-s sr-wt" role="img" aria-label="${esc(`In the worktree of ${branch}`)}">${GLYPH_WORKTREE}</span>` : '';
   // Glass's row (2026-10-12): one leading glyph for the provider and the state, the name, then quiet marks and the time.
   const pinMark = !o.grouped && s.pinned ? `<span class="sr-s sr-pinned" role="img" aria-label="Pinned">${GLYPH.pinned}</span>` : '';
-  li.innerHTML = `<div class="sr-line">${leadHtml(s, live)}<span class="t">${esc(s.title || '(untitled)')}</span>${pinMark}${wtMark}<span class="sr-end"><time class="sr-time" data-at="${at}">${esc(shortTime(at, Date.now(), { grouped: Boolean(o.grouped) }))}</time><button class="sr-more" tabindex="-1" aria-label="More for this session">${GLYPH.more}</button></span></div>`
+  li.innerHTML = `<div class="sr-line">${leadHtml(s, live)}<span class="t">${esc(`${s.kimiRole ? `[${s.kimiRole}] ` : ''}${s.title || '(untitled)'}`)}</span>${pinMark}${wtMark}<span class="sr-end"><time class="sr-time" data-at="${at}">${esc(shortTime(at, Date.now(), { grouped: Boolean(o.grouped) }))}</time><button class="sr-more" tabindex="-1" aria-label="More for this session">${GLYPH.more}</button></span></div>`
     + `<div class="sr-detail"><div class="sr-detail-in"><div class="m">${esc(detail)}</div></div></div>${s.why ? `<div class="why">${esc(s.why)}</div>` : snip}`;
   // Its subagents (2026-10-10): a count to click open, in the row's second line; the list follows the row.
   const subsOpen = S.expanded.has(s.id);

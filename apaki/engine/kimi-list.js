@@ -3,27 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { kimiHome, kimiSessionId } from './kimi-client.js';
 
-/** Arthur's exclusions also apply to the metadata paths we are willing to open. */
-export function kimiExcluded(raw) {
-  const s = String(raw || '').replaceAll('\\', '/').toLowerCase();
-  return /signalsentry|signalsecure|signal-secure|pantex|soc-usa/.test(s)
-    || /(?:^|\/)user_[^/]*\.md(?:\/|$)/.test(s)
-    || /(?:^|\/)users\/[^/]+\/(?:documents\/chatgpt|desktop\/desktop\/work|pictures)(?:\/|$)/.test(s);
-}
+import { kimiExcluded, kimiRegular as regular } from './kimi-files.js';
+import { readKimiTitle } from './kimi-journal.js';
+export { kimiExcluded } from './kimi-files.js';
 
-async function regular(file, root) {
-  if (kimiExcluded(file)) return null;
-  const rel = path.relative(root, file);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
-  let part = root;
-  for (const bit of ['', ...rel.split(path.sep)]) {
-    if (bit) part = path.join(part, bit);
-    const st = await fs.promises.lstat(part).catch(() => null);
-    if (!st || st.isSymbolicLink()) return null;
-    if (part === file) return st.isFile() ? st : null;
-  }
-  return null;
-}
 async function json(file, root) {
   const st = await regular(file, root);
   if (!st || st.size > 1024 * 1024) return null;
@@ -71,7 +54,7 @@ async function* lines(file) {
 export function createKimiList({ home = kimiHome(), enabled = true, ttlMs = 10000 } = {}) {
   const root = path.resolve(home, 'sessions');
   let rows = [], byId = new Map(), refreshed = 0, loading = null;
-  const hitCache = new Map();
+  const hitCache = new Map(), titleCache = new Map();
   async function scan() {
     const found = [];
     const rootStat = await fs.promises.lstat(root).catch(() => null);
@@ -86,15 +69,27 @@ export function createKimiList({ home = kimiHome(), enabled = true, ttlMs = 1000
         if (!cwd || typeof cwd !== 'string' || kimiExcluded(cwd)) continue;
         const wire = path.join(dir, 'agents', 'main', 'wire.jsonl');
         const stat = await regular(wire, root);
-        const title = String(meta.title || meta.lastPrompt || 'Kimi conversation').slice(0, 240);
+        const stamp = stat ? `${stat.size}:${stat.mtimeMs}` : '';
+        let derived = titleCache.get(wire);
+        if (stat && derived?.stamp !== stamp) {
+          derived = { stamp, ...await readKimiTitle(wire, root).catch(() => ({})) };
+          titleCache.set(wire, derived);
+        }
+        if (!stat) { titleCache.delete(wire); derived = null; }
+        const savedTitle = typeof meta.title === 'string' ? meta.title.replace(/\s+/g, ' ').trim() : '';
+        const title = (savedTitle || derived?.title || 'Kimi conversation').slice(0, 240);
         found.push({
-          id: `kimi:${id}`, kimi: true, kind: 'kimi', title, cwd, firstPrompt: String(meta.lastPrompt || '').slice(0, 500),
+          id: `kimi:${id}`, kimi: true, kind: 'kimi', title, cwd, firstPrompt: derived?.firstPrompt || '',
+          ...(derived?.role ? { kimiRole: derived.role } : {}),
           lastModified: time(meta.updatedAt) || stat?.mtimeMs || time(meta.createdAt), createdAt: time(meta.createdAt),
           size: stat?.size || 0, kimiArchived: meta.archived === true,
-          file: stat ? wire : null, stamp: stat ? `${stat.size}:${stat.mtimeMs}` : '',
+          file: stat ? wire : null, stamp,
         });
       }
     }
+    const files = new Set(found.map((r) => r.file));
+    for (const file of titleCache.keys()) if (!files.has(file)) titleCache.delete(file);
+    if (titleCache.size > 1000) titleCache.clear();
     return found.sort((a, b) => b.lastModified - a.lastModified);
   }
   async function refresh(force = false) {

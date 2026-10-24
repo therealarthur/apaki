@@ -17,7 +17,7 @@ async function until(fn, ms = 15000) {
   const end = Date.now() + ms;
   for (;;) { const value = fn(); if (value) return value; if (Date.now() > end) throw new Error('Timed out waiting for isolated engine'); await delay(20); }
 }
-async function host(t) {
+async function host(t, { held = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apaki-kimi-engine-'));
   const claude = path.join(dir, 'claude');
   const home = path.join(dir, 'kimi');
@@ -25,6 +25,11 @@ async function host(t) {
   fs.mkdirSync(path.join(session, 'agents', 'main'), { recursive: true });
   fs.writeFileSync(path.join(session, 'state.json'), JSON.stringify({ title: 'Invented Kimi session', cwd: dir, updatedAt: 1700000000000 }));
   fs.writeFileSync(path.join(session, 'agents/main/wire.jsonl'), JSON.stringify({ type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'Rare amber seahorse fixture' }] } }) + '\n');
+  if (held) {
+    fs.writeFileSync(path.join(session, 'state.json'), JSON.stringify({ cwd: dir, updatedAt: 1700000000000 }));
+    fs.copyFileSync(path.join(ROOT, 'test-fixtures/kimi-wire.jsonl'), path.join(session, 'agents/main/wire.jsonl'));
+    fs.writeFileSync(path.join(session, 'held'), 'invented holder');
+  }
   fs.mkdirSync(path.join(claude, 'latch'), { recursive: true });
   const file = path.join(claude, 'latch', 'host.json');
   const log = path.join(dir, 'fake-rpc.jsonl');
@@ -48,7 +53,7 @@ async function host(t) {
   await until(() => readHostInfo(file)?.pid === child.pid || child.exitCode !== null);
   assert.equal(child.exitCode, null, stderr);
   const connect = async () => { const w = await connectHost({ file, role: 'window' }); connections.push(w); await w.next((e) => e.ev === 'ready'); return w; };
-  return { child, dir, home, connect, calls: () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : [] };
+  return { child, dir, home, session, connect, calls: () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : [] };
 }
 const next = async (w, ev, reqId, from = 0) => {
   try { return await w.next((e) => e.ev === ev && (!reqId || e.reqId === reqId), 15000, from); }
@@ -137,4 +142,39 @@ test('engine creates independent Kimi panes and refuses sends after a failed ope
   w.send({ op: 'send', paneId: 'bad', reqId: 'bad-send', text: 'must not run' });
   assert.equal((await next(w, 'result', 'bad-send')).isError, true);
   assert.equal(h.calls().filter((c) => c.in?.method === 'session/prompt').length, 2);
+});
+
+
+test('host opens held Kimi journals and changes to live after a quiet visible retry', { timeout: 60000 }, async (t) => {
+  const h = await host(t, { held: true }), w = await h.connect();
+  const loads = () => h.calls().filter((c) => c.in?.method === 'session/load').length;
+  w.send({ op: 'sessions', reqId: 'held-list' });
+  assert.match((await next(w, 'sessions', 'held-list')).items.find((r) => r.id === ID).title, /Invented first prompt/);
+  w.send({ op: 'open', paneId: 'held', reqId: 'held-open', sessionId: ID });
+  assert.equal((await next(w, 'opened', 'held-open')).readOnly, true);
+  const initial = await next(w, 'history', 'held-open');
+  assert.equal(initial.messages.length, 5);
+  assert.equal(w.events.some((e) => e.ev === 'error'), false);
+  w.send({ op: 'send', paneId: 'held', reqId: 'held-send', text: 'must not run' });
+  assert.match((await next(w, 'error', 'held-send')).message, /read only/);
+  const record = { type: 'context.append_loop_event', event: { type: 'content.part', part: { type: 'text', text: 'Invented host append' } } };
+  fs.appendFileSync(path.join(h.session, 'agents/main/wire.jsonl'), JSON.stringify(record) + '\n');
+  await w.next((e) => e.ev === 'sdk' && e.msg.message?.content?.some((b) => b.text === 'Invented host append'));
+  fs.unlinkSync(path.join(h.session, 'held'));
+  // Use the production interval here; adapter tests exercise its exact boundaries with an injected clock.
+  await delay(30100);
+  w.send({ op: 'historyCheck', paneId: 'held', reqId: 'hidden', sessionId: ID, visible: false });
+  await next(w, 'historyChecked', 'hidden'); assert.equal(loads(), 1);
+  w.send({ op: 'historyCheck', paneId: 'held', reqId: 'visible', sessionId: ID, visible: true });
+  await next(w, 'historyChecked', 'visible'); assert.equal(loads(), 2);
+  assert.equal(w.events.filter((e) => e.ev === 'settings' && e.paneId === 'held').at(-1).readOnly, false);
+  assert.equal(w.events.filter((e) => e.ev === 'history').length, 1, 'switching keeps the screen intact');
+  w.send({ op: 'attach', paneId: 'held', reqId: 'after-switch', sessionId: ID });
+  assert.equal((await next(w, 'opened', 'after-switch')).readOnly, false);
+  const recovered = await next(w, 'history', 'after-switch');
+  assert.deepEqual(recovered.messages.slice(0, initial.messages.length), initial.messages);
+  assert.ok(recovered.messages.some((m) => m.message.content.some((b) => b.text === 'Invented host append')));
+  w.send({ op: 'send', paneId: 'held', reqId: 'continue', text: 'hello' });
+  assert.equal((await next(w, 'result', 'continue')).isError, false);
+  w.send({ op: 'close', paneId: 'held', reqId: 'close-held' }); await next(w, 'closed', 'close-held');
 });

@@ -603,11 +603,26 @@ Click for changes, commit, push, pull request, merge`;
   }
 
   /** The "View only" line in place of the message box (a follower whose phone may watch but not send). */
-  setViewOnly(on) {
+  setViewOnly(on, reason) {
+    this.viewOnly = Boolean(on);
+    if (this.$.input) this.$.input.disabled = Boolean(on);
+    if (this.$.send) this.$.send.disabled = Boolean(on);
     this.el.classList.toggle('view-only', Boolean(on));
     const note = this.el.querySelector('.view-only-note');
     if (!on) { note?.remove(); return; }
-    if (!note) this.$.wrap?.append(el('div', 'view-only-note', '<b>View only</b><span>This phone can watch this conversation but not send to it. Take over to continue it here.</span>'));
+    const line = note || el('div', 'view-only-note', '<b>View only</b><span></span>');
+    line.querySelector('span').textContent = reason || 'This phone can watch this conversation but not send to it. Take over to continue it here.';
+    if (!note) this.$.wrap?.append(line);
+  }
+
+  /** Kimi's journal watcher uses the same view only composer as a phone follower. */
+  setJournalReadOnly(on, reason) {
+    const was = this.journalReadOnly;
+    this.journalReadOnly = Boolean(on);
+    if (!this.following) this.setViewOnly(on, reason);
+    for (const k of ['model', 'effort', 'mode']) if (this.$[k]) this.$[k].disabled = Boolean(on || this.following);
+    if (on) this.startDriftWatch();
+    else if (was) this.stopDriftWatch();
   }
 
   /** The follow bar: "Watching on <PC>" and Take over, sticky at the top of the conversation. Gone when the pane does not follow. */
@@ -1836,11 +1851,11 @@ Click for changes, commit, push, pull request, merge`;
     if (this.lockedBy && !this.lockLost) return Promise.resolve(true);
     const now = Date.now();
     // Streaming now, or a moment ago: this pane holds the session and its stream is the newest there is.
-    if (now - (this.lastLiveAt || 0) < 15000) return Promise.resolve(true);
+    if (!this.journalReadOnly && now - (this.lastLiveAt || 0) < 15000) return Promise.resolve(true);
     if (!wait && now - (this.driftAt || 0) < 1500) return Promise.resolve(true);
     this.driftAt = now;
     const reqId = `drift-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-    this.send('historyCheck', { reqId, sessionId: this.sessionId, rev: this.historyRev || null });
+    this.send('historyCheck', { reqId, sessionId: this.sessionId, rev: this.historyRev || null, ...(this.journalReadOnly ? { visible: document.visibilityState === 'visible' && this.isShown() } : {}) });
     if (!wait) return Promise.resolve(true);
     if (!this.driftWaits) this.driftWaits = new Map();
     return new Promise((resolve) => {
@@ -2186,6 +2201,7 @@ Click for changes, commit, push, pull request, merge`;
     }
     if (msg.type === 'user') {
       const content = Array.isArray(msg.message?.content) ? msg.message.content : [];
+      if (msg.kimi && msg.prompt) { this.addUser(msg.prompt.text, [], { mid: msg.uuid }); return; }
       for (const b of content) if (b.type === 'tool_result') this.toolResult(b.tool_use_id, b.content, b.is_error);
       // Text the harness adds (Stop hook feedback, a slash command's output) shows as a system line, never as you.
       if (!content.some((b) => b.type === 'tool_result')) { const n = noticeFor(msg, this.noticeSeen); if (n) this.sysline(n); }
@@ -2440,6 +2456,7 @@ Click for changes, commit, push, pull request, merge`;
 
   /** Steer: hand a queued message to the running turn; it is shown once Claude Code took it. */
   steerItem(id, it = null) {
+    if (this.viewOnly) return;
     // The steer op names this item (qid), so the engine drops its copy with it.
     it = it || this.takeItem(id, { sync: false });
     if (!it) return;
@@ -2450,6 +2467,7 @@ Click for changes, commit, push, pull request, merge`;
   }
 
   sendItem(id) {
+    if (this.viewOnly) return;
     const it = this.takeItem(id, { sync: false });
     if (it) this.sendNow(it.text, it.attachments, [it.id]);
   }
@@ -2461,6 +2479,7 @@ Click for changes, commit, push, pull request, merge`;
    * engine to send again).
    */
   sendNow(text, attachments = [], queued = []) {
+    if (this.viewOnly) return;
     const images = attachments.map(({ media_type, data, name }) => ({ media_type, data, ...(name ? { name } : {}) }));
     this.stoppedByUser = false;
     this.addUser(text, attachments);
@@ -2474,7 +2493,7 @@ Click for changes, commit, push, pull request, merge`;
    * no window is connected (queue-hold.js), and the send names the ids so it never sends them again.
    */
   flushQueue() {
-    if (this.busy || this.stoppedByUser || !this.queue.length) return;
+    if (this.viewOnly || this.busy || this.stoppedByUser || !this.queue.length) return;
     const items = this.queue.splice(0);
     this.renderQueue();
     this.sendNow(items.map((it) => it.text).filter(Boolean).join('\n\n'), items.flatMap((it) => it.attachments), items.map((it) => it.id));
@@ -2482,6 +2501,7 @@ Click for changes, commit, push, pull request, merge`;
 
   /** Sends the box. While Claude works it queues, or with { steer: true } (Ctrl+Enter) goes into the running turn now. */
   submit({ steer = false, checked = false } = {}) {
+    if (this.viewOnly) return;
     // The window is reconnecting to the engine: the message stays in the box until it is back (2026-10-11).
     if (this.host.engineLost?.()) { this.setStatus('Reconnecting to the engine; your message is still here.'); return; }
     // Idle for a while: make sure the transcript here is the newest before adding to it (checkDrift, 2026-10-11).
@@ -2689,6 +2709,7 @@ Click for changes, commit, push, pull request, merge`;
         // it open when the window or the engine went (restored, or reconnected to an engine without it) opens it again.
         if (e.console) this.consoleRestore = false;
         else if (this.consoleRestore) { this.consoleRestore = false; if (this.host.consoleAvailable?.()) setTimeout(() => this.console.open(), 0); }
+        if (e.kind === 'kimi' || this.journalReadOnly) this.setJournalReadOnly(e.kind === 'kimi' && e.readOnly, e.readOnlyReason);
         this.host.changed(this);
         break;
       // The console's state and output, a look at a console from elsewhere (the phone), and Open in terminal (2026-10-12).
@@ -2732,6 +2753,7 @@ Click for changes, commit, push, pull request, merge`;
         // The engine's word on Ultracode and its size (or a Codex pane's summary and speed), including "cannot run it here".
         if (e.tune) this.tune = tuneFor(this.kind, e.tune);
         this.renderChips();
+        if (this.kind === 'kimi' && e.readOnly !== undefined) this.setJournalReadOnly(e.readOnly, e.readOnlyReason);
         break;
       case 'note': this.note(e.text, e.tone || ''); break;
       case 'steered': { const it = this.steering.get(e.qid); this.steering.delete(e.qid); if (it) this.addUser(it.text, it.attachments, { steered: true }); if (this.busy) this.showWorking?.(); break; }

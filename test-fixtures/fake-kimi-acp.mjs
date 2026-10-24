@@ -9,7 +9,7 @@ const log = (entry) => fs.appendFileSync(process.env.FAKE_KIMI_LOG, `${JSON.stri
 log({ argv: process.argv.slice(2), model: process.env.KIMI_SECONDARY_MODEL, effort: process.env.KIMI_SECONDARY_EFFORT });
 const send = (message) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
 const reply = (id, result = {}) => send({ id, result });
-const fail = (id, code, message) => send({ id, error: { code, message } });
+const fail = (id, code, message, data) => send({ id, error: { code, message, ...(data ? { data } : {}) } });
 const sessions = new Map();
 const prompts = new Map();
 const pending = new Map();
@@ -42,6 +42,7 @@ async function input(m) {
   const s = sessions.get(p.sessionId);
   switch (m.method) {
     case 'initialize':
+      if (process.env.FAKE_KIMI_START === 'init-error') { fail(m.id, -32603, 'Internal error'); return; }
       if (process.env.FAKE_KIMI_START === 'timeout') return;
       if (process.env.FAKE_KIMI_START === 'bad') { process.stdout.write('bad json\n'); return; }
       reply(m.id, { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true }, sessionCapabilities: { close: {} } } }); return;
@@ -53,6 +54,13 @@ async function input(m) {
       return;
     }
     case 'session/load': {
+      if (process.env.FAKE_KIMI_LOAD_DELAY) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_KIMI_LOAD_DELAY)));
+      if (fs.existsSync(path.join(dir(p.sessionId), 'held'))) {
+        if (process.env.FAKE_KIMI_HELD === 'busy') fail(m.id, -32001, 'Session busy', { code: 'session.busy' });
+        else fail(m.id, -32603, 'Internal error');
+        return;
+      }
+      if (process.env.FAKE_KIMI_START === 'load-error') { fail(m.id, -32602, 'Internal error'); return; }
       if (process.env.FAKE_KIMI_START === 'auth') { fail(m.id, -32000, 'Authentication required'); return; }
       const session = { id: p.sessionId, cwd: p.cwd, model: 'other', thinking: 'low' };
       sessions.set(session.id, session);

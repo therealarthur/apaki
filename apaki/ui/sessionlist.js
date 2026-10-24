@@ -248,6 +248,7 @@ export function rowTip(s, c = {}) {
   if (c.worktree) rows.push(['Worktree', `${branch || 'detached'} · ${c.worktree}`]);
   else if (branch) rows.push(['Branch', branch]);
   rows.push(['Agent', isKimiRow(s) ? 'Kimi' : s.codex ? 'Codex' : 'Claude Code']);
+  if (s.kimiRole) rows.push(['Role', s.kimiRole]);
   const model = c.model || s.model || '';
   if (model) rows.push(['Model', modelName(model)]);
   if (s.size) rows.push(['Size', bytesText(s.size)]);
@@ -269,6 +270,7 @@ export function rowTip(s, c = {}) {
 /** The one more line the row in the focused pane (or under the keyboard) shows: folder, branch, model, size. */
 export function detailLine(s, c = {}) {
   const parts = [];
+  if (s.kimiRole) parts.push(s.kimiRole);
   if (s.cwd) parts.push(c.shortPath ? c.shortPath(s.cwd) : s.cwd);
   const branch = c.branch || s.branch || '';
   if (branch) parts.push(branch);
@@ -439,6 +441,7 @@ export function sessionFacts(s, info, c = {}) {
   if (run.length) sections.push({ title: 'Model', rows: run });
 
   const st = [];
+  if (s.kimiRole || i.kimiRole) st.push(row('Role', s.kimiRole || i.kimiRole));
   const panes = i.panes || [];
   if (c.pane) st.push(row('In Apaki', c.pane.busy ? 'Open in a pane here, working' : 'Open in a pane here'));
   else if (panes.length) st.push(row('In Apaki', panes.map((p) => `${p.where === 'phone' ? 'on a phone' : 'in a pane'}${p.running ? ', working' : ''}`).join(' · ')));

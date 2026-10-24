@@ -1,0 +1,17 @@
+{"type": "metadata", "protocol_version": "1.5", "created_at": 1792803531527}
+{"type": "runtime.set_binding", "workspaceId": "wd_fixture_0001", "runtimeId": "local", "agentId": "main", "time": 1792803531538}
+{"type": "profile.bind", "agentId": "main", "modelAlias": "kimi-code/k3.1-pro", "profileName": "agent", "thinkingEffort": "max", "systemPrompt": "(invented system prompt)"}
+{"type": "permission.set_mode", "agentId": "main", "mode": "auto", "time": 1792803531578}
+{"message": {"message": {"role": "user", "content": [{"type": "text", "text": "Invented first prompt: summarize the fixture folder."}]}, "meta": {"source": "input"}}, "type": "agent.message.appended", "kind": "event"}
+{"turnId": 0, "queueItemId": "msg_fixture", "type": "agent.turn.started", "time": 1792803531589, "kind": "event"}
+{"type": "turn.prompt", "agentId": "main", "input": [{"type": "text", "text": "Invented first prompt: summarize the fixture folder."}], "origin": {"kind": "user"}, "promptId": "msg_fixture"}
+{"type": "context.append_message", "agentId": "main", "message": {"role": "user", "content": [{"type": "text", "text": "Invented first prompt: summarize the fixture folder."}]}}
+{"type": "context.append_message", "agentId": "main", "message": {"role": "user", "content": [{"type": "text", "text": "<system-reminder>\nInvented reminder text.\n</system-reminder>"}]}}
+{"type": "context.append_loop_event", "agentId": "main", "event": {"type": "step.begin", "uuid": "s1", "turnId": "0", "step": 1}, "time": 1792803531616}
+{"type": "context.append_loop_event", "agentId": "main", "event": {"type": "content.part", "uuid": "p1", "turnId": "0", "step": 1, "stepUuid": "s1", "part": {"type": "think", "think": "Invented thinking."}}}
+{"type": "context.append_loop_event", "agentId": "main", "event": {"type": "tool.call", "uuid": "c1", "turnId": "0", "step": 1, "stepUuid": "s1", "toolCallId": "tool_1", "name": "Shell", "args": {"command": "ls"}}}
+{"type": "context.append_loop_event", "agentId": "main", "event": {"type": "tool.result", "parentUuid": "c1", "toolCallId": "tool_1", "result": {"output": [{"type": "text", "text": "a.txt\nb.txt"}]}}}
+{"type": "context.append_loop_event", "agentId": "main", "event": {"type": "content.part", "uuid": "p2", "turnId": "0", "step": 2, "stepUuid": "s2", "part": {"type": "text", "text": "Invented answer: two files."}}}
+{"type": "context.append_loop_event", "agentId": "main", "event": {"type": "step.end", "uuid": "s1", "turnId": "0", "step": 1, "finishReason": "end_turn"}}
+{"turnId": 0, "outcome": "done", "type": "agent.turn.ended", "time": 1792803543428, "kind": "event"}
+{"type": "turn.ended", "agentId": "main", "turnId": 0, "reason": "completed", "durationMs": 11834, "time": 1792803543434}

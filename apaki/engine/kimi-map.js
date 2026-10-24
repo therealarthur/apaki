@@ -115,11 +115,12 @@ export class KimiTranscript {
     this.current = null;
     this.add('assistant', content, { id });
   }
-  user(content) {
+  user(content, { emit = false } = {}) {
     this.flush();
     const text = content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
     const msg = { type: 'user', uuid: this.next(), at: new Date().toISOString(), prompt: { text, images: content.filter((c) => c.type === 'image').length }, message: { role: 'user', content } };
     this.messages.push(msg);
+    if (emit) this.emit(msg);
   }
   update(u) {
     const type = u.sessionUpdate;
