@@ -124,6 +124,8 @@ export const PHONE_OPS = Object.freeze([
   // Codex (2026-10-12, codex-panes.js): its model list (each model's own efforts) for the pickers, and the Codex threads for the
   // Codex view of the list. Both read only; a Codex pane then uses the ops above (open, send, steer, interrupt, answer...).
   'codexModels', 'codexThreads',
+  // Claude Code's own model list for the model menus (2026-11-09, claude-models.js): read only, every access level.
+  'claudeModels',
   // Git worktrees (2026-10-12, worktrees.js; WORKTREES.md): looking at repositories, branches and diffs is allowed at every
   // access level (the same files are readable through Claude in plan mode); planning or running an action (create, remove,
   // commit, push, pull request, merge) needs Full, like running commands from the phone. Not here on purpose:
@@ -187,7 +189,8 @@ export const MAX_PHONE_PANES = 6;
 /** Events every connected phone gets, besides those for its own panes and requests. */
 // desktopTabs (2026-10-11): the desktop's tabs and their panes, so a phone shows them (engine desktop-tabs.js).
 // worktrees (2026-10-12): the repositories and worktrees with their change counts (engine worktrees.js), cached for later phones.
-export const BROADCAST_EVENTS = new Set(['folders', 'glass', 'index', 'meaning', 'desktopTabs', 'worktrees']);
+// claudeModels (2026-11-09): the model list the engine sends by itself once a Claude Code has started; model names only.
+export const BROADCAST_EVENTS = new Set(['folders', 'glass', 'index', 'meaning', 'desktopTabs', 'worktrees', 'claudeModels']);
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const MODES = ['bypassPermissions', 'acceptEdits', 'plan', 'default'];
@@ -632,6 +635,8 @@ export function checkPhoneCommand(cmd, ctx) {
     case 'sessions':
       break;
     case 'codexModels':
+      break;
+    case 'claudeModels':
       break;
     case 'codexThreads':
       if (cmd.refresh !== undefined) out.refresh = cmd.refresh === true;

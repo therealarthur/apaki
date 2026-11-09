@@ -340,7 +340,8 @@ test('the window draws the session list again only when it must, at most once a 
   assert.match(app, /function wtChanged\(\{ save: keep = false, shape = true \} = \{\}\) \{[\s\S]*?if \(shape \|\| S\.view === 'worktrees'\) \{\n\s+if \(!S\.drag\) railSoon\(\);\n\s+renderTabs\(\);/);
   // The engine's subagent counts, terminals and keep-warm ask for one drawing on the next frame.
   assert.match(app, /else if \(s && !S\.drag\) railSoon\(\);/);
-  assert.match(app, /if \(!S\.drag\) railSoon\(\);\n\s+break;\n\s+\}\n\s+case 'codexModels'/);
+  // The terminals case ends here; the next case is claudeModels since 2026-11-09 (codexModels before that).
+  assert.match(app, /if \(!S\.drag\) railSoon\(\);\n\s+break;\n\s+\}\n\s+case '(?:claude|codex)Models'/);
   assert.match(app, /S\.warm = new Set\(e\.sessions \|\| \[\]\);\n\s+if \(!S\.drag\) railSoon\(\);/);
   // Rows are kept by what they show and put in order without emptying the list.
   assert.match(app, /want\.push\(keptRow\(s, \{ grouped \}, kept\)\);/);

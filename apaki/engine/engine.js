@@ -240,6 +240,7 @@ import { agentByToolUse, countSubagents, listShells, listSubagents, readEntries,
 // A session's whole conversation, across compactions, read from its transcript (2026-10-10).
 import { HistoryStore, PAGE as HISTORY_PAGE } from './history.js';
 import { forwardToClients } from './sdk-forward.js';
+import { claudeModelRows } from './claude-models.js';
 import { SessionRunner } from '../../src/runner.js';
 import { listSessions, lockInfo, lockStolen, readTail, releaseLock, rememberCreated, setLockApp, takeLock } from '../../src/sessions.js';
 import { makeLoader } from '../../src/ui/picker.js';
@@ -1120,6 +1121,29 @@ function contextSoon(p, ms = 400) {
   p.contextTimer = setTimeout(() => sendContext(p).catch(() => {}), ms);
 }
 
+/*
+ * Claude's models as Claude Code lists them (2026-11-09, Arthur: "myrlin apaki needs is not picking up fable 5.2"): the
+ * model menus were a fixed list in pane.js. The first pane whose Claude Code starts is asked for supportedModels (a
+ * control request: no message is sent, nothing is billed); the list is kept for the engine's life and sent to the window
+ * when it arrives and to whoever asks (op claudeModels). New models then appear when the SDK is updated, with no change
+ * here.
+ */
+let claudeModelList = null;
+let claudeModelsAsking = null;
+
+/** Asks one running Claude Code for its models, once at a time; the window hears the list when it comes. */
+function refreshClaudeModels(runner) {
+  if (claudeModelsAsking || typeof runner?.supportedModels !== 'function') return claudeModelsAsking;
+  claudeModelsAsking = Promise.resolve(runner.supportedModels())
+    .then((list) => {
+      const rows = claudeModelRows(list);
+      if (rows.length) { claudeModelList = rows; emit({ ev: 'claudeModels', models: rows }); }
+    })
+    .catch(() => {})
+    .finally(() => { claudeModelsAsking = null; });
+  return claudeModelsAsking;
+}
+
 async function sendContext(p, reqId = null) {
   const u = await p.runner?.contextUsage?.();
   if (!u) { if (reqId) emit({ ev: 'context', reqId, paneId: p.id, none: true }); return; }
@@ -1276,6 +1300,8 @@ async function open(reqId, paneId, sessionId, cwd, opts = {}) {
       // turn after each model step (an assistant message), so it moves while Claude works (2026-10-11, Arthur:
       // "make sure that context dynamically is displayed"). contextSoon debounces: at most one measure per 1.5 s.
       if (msg?.type === 'result' || (msg?.type === 'system' && (msg.subtype === 'init' || msg.subtype === 'compact_boundary'))) contextSoon(p);
+      // Claude Code's model list, asked of the first Claude Code that starts (2026-11-09, claudeModelRows).
+      if (msg?.type === 'system' && msg.subtype === 'init' && !claudeModelList) refreshClaudeModels(runner);
       else if (msg?.type === 'assistant' && !msg.parent_tool_use_id) contextSoon(p, 1500);
     },
     onStderr: (d) => process.stderr.write(String(d).replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***')),
@@ -2216,6 +2242,15 @@ const handlers = {
   // Codex (2026-10-12, codex-panes.js): the model list with each model's own efforts and the account line (model/list),
   // and the Codex threads on this PC for the list's Codex view (thread/list). Both start the app-server on first use.
   codexModels: (c) => codex.models(c.reqId || null),
+  // Claude Code's model list for the model menus (2026-11-09): what is known now (empty until a Claude Code has started);
+  // a running one is asked when nothing is known yet, and the window hears the list when it comes.
+  claudeModels: (c) => {
+    emit({ ev: 'claudeModels', reqId: c.reqId ?? null, models: claudeModelList || [] });
+    if (!claudeModelList) {
+      const running = [...panes.values()].find((p) => !isCodexPane(p) && p.runner?.running);
+      if (running) refreshClaudeModels(running.runner);
+    }
+  },
   // A file this Codex pane changed, in the viewer (the patch line's file name; codex-panes.js openFile checks the path).
   codexOpenFile: async (c) => {
     const p = panes.get(String(c.paneId || ''));

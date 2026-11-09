@@ -144,6 +144,8 @@ const S = {
   subs: new Map(), // sessionId -> { agents, shells, at } from the engine's subagents op
   sessions: [], folders: [], view: 'all', query: '', results: null, searchInfo: '', ai: null, asking: null, lastSearch: null,
   voice: false, seq: 0, engineLost: false,
+  // Claude's models as Claude Code lists them (engine claudeModels, 2026-11-09): [{ id, name, description }]; null until known.
+  claudeModels: null,
   defaults: { model: 'claude-opus-5-5', effort: 'xhigh', mode: 'bypassPermissions', billing: null, tune: { ultracode: false, size: null } },
   tabs: [], active: null, panes: new Map(), drag: null,
   // Codex (2026-10-12): installed here (the engine's ready event), and the model list it read (event codexModels).
@@ -665,6 +667,8 @@ function phoneRoot(t) {
 
 const host = {
   defaults: S.defaults,
+  // Claude Code's own model list for the model menu (pane.js modelOptions); null until the engine has it.
+  claudeModels: () => S.claudeModels,
   // This window's access on the PC: 'full' on the desktop, a phone's own below Full (the effort popup dims Ultracode under it).
   phoneCap: () => phoneCap(),
   send,
@@ -4349,6 +4353,8 @@ await listen('engine', watch.wrap('events', ({ payload: e }) => {
       }
       send('sessions');
       send('worktrees');
+      // Claude Code's model list for the model menus (2026-11-09); it comes again by itself once a pane's Claude Code starts.
+      send('claudeModels');
       phone?.refresh();
       break;
     case 'index':
@@ -4393,6 +4399,10 @@ await listen('engine', watch.wrap('events', ({ payload: e }) => {
       if (!S.drag) railSoon();
       break;
     }
+    case 'claudeModels':
+      // Claude Code's model list (engine claudeModels, 2026-11-09): every Claude pane's model menu and chip name follow.
+      if (Array.isArray(e.models) && e.models.length) { S.claudeModels = e.models; for (const p of S.panes.values()) p.modelsChanged?.(); }
+      break;
     case 'codexModels':
       // Codex's models with each one's efforts (engine codexModels): the pickers of every Codex pane use them.
       if (!e.error) { S.codex = { models: e.models || [], defaults: e.defaults || null, presets: e.presets || [], account: e.account || null }; for (const p of S.panes.values()) p.codexModelsChanged?.(); }

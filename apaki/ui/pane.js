@@ -123,8 +123,10 @@ const LOCAL = [
   { name: 'folder', description: 'Move this conversation to a folder (name)' },
   { name: 'warm', description: 'Keep the prompt cache warm between messages (on, off, status)' },
 ];
-const MODELS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-1' };
-const MODEL_NAMES = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5', 'claude-fable-5-1': 'Fable 5.1' };
+// The fallback list, used until Claude Code's own list arrives (engine op claudeModels, 2026-11-09: Arthur, "myrlin apaki
+// ... is not picking up fable 5.2"; the menu was only this list). "fable" is Fable 5.2 since Claude Code 2.1.321.
+const MODELS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-2' };
+const MODEL_NAMES = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5', 'claude-fable-5-2': 'Fable 5.2', 'claude-fable-5-1': 'Fable 5.1' };
 // Permission modes, in Shift+Tab order, worded like Claude Code's footer.
 // bypassPermissions is "full access" in Codex terms. `short` is the chip's word in a narrow message box
 // (a phone, a narrow split; 2026-10-12), so every setting shows whole instead of being cut at the edge.
@@ -302,7 +304,7 @@ export class Pane {
     this.$.file.addEventListener('change', async (e) => { for (const f of e.target.files) await this.addImageFile(f); e.target.value = ''; });
     this.$.mic.onclick = () => this.host.voice(this);
     // A Codex pane's pickers list Codex's models, their efforts and the Codex app's permission presets (codexMenu below).
-    this.$.model.onclick = () => (this.kind === 'codex' ? this.codexMenu('model') : menu(this.$.model, Object.entries(MODEL_NAMES).map(([value, label]) => ({ value, label, checked: value === this.model })), { onPick: (v) => this.setModel(v) }));
+    this.$.model.onclick = () => (this.kind === 'codex' ? this.codexMenu('model') : menu(this.$.model, this.modelOptions().map(([value, label]) => ({ value, label, checked: value === this.model })), { onPick: (v) => this.setModel(v) }));
     // The effort popup (2026-10-13): the levels, and under them Ultracode with its size (Claude) or the reasoning summary and speed (Codex).
     this.$.effort.onclick = () => (this.kind === 'codex' ? this.codexMenu('effort') : this.effortMenu());
     this.$.mode.onclick = () => (this.kind === 'codex' ? this.codexMenu('mode') : menu(this.$.mode, MODES.map((m) => ({ value: m.value, html: `<span class="mm ${m.value}">${m.mark}</span><span class="ml">${m.label}</span>`, hint: m.hint, checked: m.value === this.mode })), { onPick: (v) => this.setMode(v), width: 330 }));
@@ -473,11 +475,30 @@ export class Pane {
   /** The Claude effort popup (Max, Ultracode and its workflow size). */
   effortMenu() { return this.openEffortPopup(300); }
 
+  /**
+   * The model menu's choices as [id, name]: Claude Code's own list when the engine has it (claudeModels), else the
+   * fallback above; the pane's current model is always among them.
+   */
+  modelOptions() {
+    const live = this.host.claudeModels?.();
+    const list = Array.isArray(live) && live.length ? live.map((m) => [m.id, m.name]) : Object.entries(MODEL_NAMES);
+    if (this.model && !list.some(([id]) => id === this.model)) list.unshift([this.model, this.modelName(this.model)]);
+    return list;
+  }
+
+  /** A model id's name: Claude Code's list first, then the fallback, else the id itself. */
+  modelName(id) {
+    return this.host.claudeModels?.()?.find((m) => m.id === id)?.name || MODEL_NAMES[id] || id;
+  }
+
+  /** Claude Code's model list arrived or changed: the chip's name follows. */
+  modelsChanged() { if (this.kind !== 'codex') this.renderChips(); }
+
   /** The settings line under the message box: model, effort grid, mode, billing. */
   renderChips() {
     if (this.kind === 'codex') { this.renderCodexChips(); return; }
     const { model, effort, mode } = this.$;
-    model.textContent = MODEL_NAMES[this.model] || this.model;
+    model.textContent = this.modelName(this.model);
     // Ultracode on shows as "+ ultracode" after the effort word ("+ ultra" in a narrow box): a word, not a pill (tune.js chipExtra).
     effort.innerHTML = `${effortGrid(this.effort)}<span>${esc(this.effort)}${chipExtraHtml(chipExtra('claude', this.tune))}</span>`;
     effort.title = chipTitle('claude', this.effort, this.tune);

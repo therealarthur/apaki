@@ -1088,9 +1088,18 @@ async function onPrompt(input) {
     const loadedAt = windowLoadedAt(sid);
     const { turns, last } = sdkTurnsSince(readText(input.transcript_path).slice(-8 * 1024 * 1024), loadedAt);
     if (last) {
-      block(`[latch] This conversation continued in latch (${turns || 'some'} turn${turns === 1 ? '' : 's'}, last at ${new Date(last).toLocaleTimeString()}) after this window loaded it, so this window does not have that work yet.\n`
-        + `Load it first, then send your message again:\n  /resume ${sid}\n`
-        + 'Typing here before that would continue the old copy and could hide latch\'s work from later resumes.');
+      // Who wrote it (2026-11-09, Arthur: "weird attach issues"; the message said "latch" while a Myrlin Apaki pane was
+      // working in the conversation, and each /resume was overtaken by the pane's next turn): the session's lock names the
+      // app even after it let go; and while that app still holds it, a /resume here cannot catch up.
+      let lock = null;
+      try { lock = JSON.parse(fs.readFileSync(path.join(LOCK_DIR, `${sid}.json`), 'utf8')); } catch { lock = null; }
+      const who = (lock && LOCK_APP_NAMES[lock.app]) || 'Myrlin Apaki or latch';
+      const stillThere = Boolean(lock && pidAlive(lock.pid));
+      block(`[latch] This conversation continued in ${who} (${turns || 'some'} turn${turns === 1 ? '' : 's'}, last at ${new Date(last).toLocaleTimeString()}) after this window loaded it, so this window does not have that work yet.\n`
+        + (stillThere
+          ? `It is still open there. Continue it in ${who}; to use it here instead, close it there first, then run:\n  /resume ${sid}\n`
+          : `Load it first, then send your message again:\n  /resume ${sid}\n`)
+        + `Typing here before that would continue the old copy and could hide ${who}'s work from later resumes.`);
       return;
     }
   }
