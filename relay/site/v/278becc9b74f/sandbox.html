@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  sandbox.html: where an HTML artifact runs on the phone (apaki/ui/artifacts.js renderOnPhone, 2026-10-12).
+
+  Arthur: "The artifacts are not loading and showing on my phone". On the PC an HTML artifact runs from Apaki's local
+  artifact server in a sandboxed frame; a phone cannot reach that server, and the phone page's own CSP (rightly) allows
+  no inline script. So the phone page loads this file in <iframe sandbox="allow-scripts allow-forms allow-modals">:
+  without allow-same-origin it runs as an origin of its own, so nothing in it can reach the phone page, its keys or its
+  storage. This file's CSP lets the artifact's own scripts and styles run and gives it no network at all (no fetch, no
+  images or fonts from anywhere but data: and blob:, no form posts), the way the desktop runs artifacts with no network.
+  The phone page posts the artifact's HTML once; it replaces this document. It is part of the phone build, so the PC's
+  page check covers it like every other file.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' data: blob:; style-src 'unsafe-inline' data:; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Artifact</title>
+</head>
+<body>
+<script>
+  // Only the page that framed this one may hand it an artifact, and only once.
+  window.addEventListener('message', function onArtifact(e) {
+    if (e.source !== window.parent || !e.data || typeof e.data.apakiArtifact !== 'string') return;
+    window.removeEventListener('message', onArtifact);
+    document.open();
+    document.write(e.data.apakiArtifact);
+    document.close();
+  });
+</script>
+</body>
+</html>
