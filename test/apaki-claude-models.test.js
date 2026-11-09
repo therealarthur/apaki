@@ -65,3 +65,8 @@ test('the SDK is the one whose Claude Code knows Fable 5.2', () => {
   const pkg = JSON.parse(read('package.json'));
   assert.equal(pkg.dependencies['@anthropic-ai/claude-agent-sdk'], '0.3.321');
 });
+
+test('an older engine that does not know claudeModels is not shown as an error', () => {
+  const app = read('apaki', 'ui', 'app.js');
+  assert.match(app, /if \(\/\^unknown op claudeModels\$\/\.test\(String\(e\.message \|\| ''\)\)\) break;/);
+});

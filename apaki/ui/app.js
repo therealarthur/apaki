@@ -4552,6 +4552,8 @@ await listen('engine', watch.wrap('events', ({ payload: e }) => {
       if (WEB) phoneShowChat();
       break;
     case 'error':
+      // An engine from before 2026-11-09 does not know claudeModels: the menus keep their own list, nothing to say.
+      if (/^unknown op claudeModels$/.test(String(e.message || ''))) break;
       focusedPane()?.note(e.message, 'error');
       // A phone's menu action the PC refused (access, an older PC): the pane's note may be off screen, so a toast says it too.
       if (WEB && e.refused) phoneToast(e.message, false);
