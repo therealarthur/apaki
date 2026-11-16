@@ -18,7 +18,16 @@ export function claudeModelRows(list) {
     const id = String(m?.resolvedModel || m?.value || '');
     if (!/^claude-/.test(id) || m.value === 'default' || seen.has(id)) continue;
     seen.add(id);
-    out.push({ id, name: String(m.displayName || id), description: String(m.description || '') });
+    const shown = String(m.displayName || '');
+    // A name without its version (some logins' alias rows say just "Opus" or "Fable", 2026-11-16) is made from the id.
+    out.push({ id, name: /\d/.test(shown) ? shown : versionedName(id) || shown || id, description: String(m.description || '') });
   }
   return out;
+}
+
+/** "claude-opus-5-5" is "Opus 5.5", "claude-haiku-4-5-20251001" is "Haiku 4.5", "claude-sonnet-5" is "Sonnet 5"; else null. */
+export function versionedName(id) {
+  const m = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$/i.exec(String(id || ''));
+  if (!m) return null;
+  return `${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()} ${m[2]}${m[3] ? `.${m[3]}` : ''}${m[4] ? ' (1M)' : ''}`;
 }

@@ -29,6 +29,8 @@ import { CODEX_LOCAL, CODEX_MODES, codexFooter, codexMode, earlierText, effortNa
 // The branch label in the header when the conversation's folder is in a git repository (worktree.js, 2026-10-12).
 import { GLYPH_WORKTREE, branchLabel, branchName, changeText, relPath, tooltip, trouble } from './worktree.js';
 import { setTip } from './tooltip.js';
+// A model id as people say it ("claude-opus-5-5" is "Opus 5.5"): names the model menu shows always carry the version.
+import { modelName as idModelName } from './sessionlist.js';
 // The console: this conversation in the real Claude Code or Codex terminal UI, toggled in place (console.js, 2026-10-12).
 import { CLAUDE_TUI_BARE, CODEX_TUI_BARE, PaneConsole, tuiCommand } from './console.js';
 // Every streaming reply in the window is painted by one painter (streampaint.js, 2026-10-12, input lag).
@@ -126,6 +128,16 @@ const LOCAL = [
 // The fallback list, used until Claude Code's own list arrives (engine op claudeModels, 2026-11-09: Arthur, "myrlin apaki
 // ... is not picking up fable 5.2"; the menu was only this list). "fable" is Fable 5.2 since Claude Code 2.1.321.
 const MODELS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-2' };
+/**
+ * A model's name with its version (2026-11-16, Arthur: "i only see the general models like opus, fable, etc - no
+ * versions"): some logins' Claude Code names its alias rows "Opus" or "Fable"; the id always carries the version, so a
+ * name without a number is made from the id ("claude-fable-5-2" is "Fable 5.2").
+ */
+function withVersion(id, name) {
+  if (name && /\d/.test(name)) return name;
+  const fromId = idModelName(id);
+  return fromId && fromId !== id ? fromId : name || id;
+}
 const MODEL_NAMES = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5', 'claude-fable-5-2': 'Fable 5.2', 'claude-fable-5-1': 'Fable 5.1' };
 // Permission modes, in Shift+Tab order, worded like Claude Code's footer.
 // bypassPermissions is "full access" in Codex terms. `short` is the chip's word in a narrow message box
@@ -481,14 +493,15 @@ export class Pane {
    */
   modelOptions() {
     const live = this.host.claudeModels?.();
-    const list = Array.isArray(live) && live.length ? live.map((m) => [m.id, m.name]) : Object.entries(MODEL_NAMES);
+    const list = Array.isArray(live) && live.length ? live.map((m) => [m.id, withVersion(m.id, m.name)]) : Object.entries(MODEL_NAMES);
     if (this.model && !list.some(([id]) => id === this.model)) list.unshift([this.model, this.modelName(this.model)]);
     return list;
   }
 
-  /** A model id's name: Claude Code's list first, then the fallback, else the id itself. */
+  /** A model id's name: Claude Code's list first, then the fallback, else the id itself; always with its version. */
   modelName(id) {
-    return this.host.claudeModels?.()?.find((m) => m.id === id)?.name || MODEL_NAMES[id] || id;
+    const live = this.host.claudeModels?.()?.find((m) => m.id === id)?.name;
+    return withVersion(id, live || MODEL_NAMES[id] || '') || id;
   }
 
   /** Claude Code's model list arrived or changed: the chip's name follows. */

@@ -70,3 +70,21 @@ test('an older engine that does not know claudeModels is not shown as an error',
   const app = read('apaki', 'ui', 'app.js');
   assert.match(app, /if \(\/\^unknown op claudeModels\$\/\.test\(String\(e\.message \|\| ''\)\)\) break;/);
 });
+
+// 2026-11-16, Arthur: "i only see the general models like opus, fable, etc - no versions".
+test('a model row whose name has no version gets one from its id, on the engine and in the window', async () => {
+  const { versionedName } = await import('../apaki/engine/claude-models.js');
+  const rows = claudeModelRows([
+    { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus' },
+    { value: 'fable', resolvedModel: 'claude-fable-5-2', displayName: 'Fable' },
+    { value: 'claude-haiku-4-5-20251001', resolvedModel: 'claude-haiku-4-5-20251001', displayName: 'Haiku' },
+    { value: 'sonnet', resolvedModel: 'claude-sonnet-5-5', displayName: 'Sonnet 5.5' },
+  ]);
+  assert.deepEqual(rows.map((r) => r.name), ['Opus 5.5', 'Fable 5.2', 'Haiku 4.5', 'Sonnet 5.5']);
+  assert.equal(versionedName('claude-sonnet-5'), 'Sonnet 5');
+  assert.equal(versionedName('gpt-6'), null);
+  const pane = read('apaki', 'ui', 'pane.js');
+  assert.match(pane, /import \{ modelName as idModelName \} from '\.\/sessionlist\.js';/);
+  assert.match(pane, /function withVersion\(id, name\) \{\r?\n\s+if \(name && \/\\d\/\.test\(name\)\) return name;/);
+  assert.match(pane, /live\.map\(\(m\) => \[m\.id, withVersion\(m\.id, m\.name\)\]\)/);
+});
