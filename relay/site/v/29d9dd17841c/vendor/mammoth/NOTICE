@@ -1,0 +1,20 @@
+mammoth.browser.min.js is mammoth 1.13.0 (https://github.com/mwilliamson/mammoth.js), BSD-2-Clause (LICENSE in
+this folder), taken unchanged from the npm package. Myrlin Apaki loads it only when a Word document opens in a viewer
+(apaki/ui/lazy.js, apaki/ui/docview.js).
+
+The browser build bundles these packages, each under its own permissive license:
+
+  jszip 3.x               MIT (dual licensed MIT or GPL-3.0-or-later; used under MIT)
+  pako (inside jszip)     MIT and Zlib
+  underscore 1.13         MIT
+  bluebird 3.x            MIT
+  @xmldom/xmldom 0.8      MIT
+  lop 0.4                 BSD-2-Clause
+  option 0.2              BSD-2-Clause
+  dingbat-to-unicode 1.x  BSD-2-Clause
+  base64-js 1.x           MIT
+  xmlbuilder 10.x         MIT
+  path-is-absolute 1.x    MIT
+  browserify shims (process, setimmediate, buffer, events, inherits, util)   MIT
+
+Their copyright notices are kept in the bundle as published.
